@@ -1,5 +1,7 @@
-{"updated":"2026-10-29T00:28:23Z",
-"ci":[],
+{"updated":"2026-10-29T00:28:58Z",
+"ci":[
+{"id":40793427787,"at":"2026-10-29T00:20:38Z","sha":"1d603b179","title":"Playback: a new play never blocks the UI on the previous player's Unload; a hung Unload fails typed after 10 s","pr":1116,"conclusion":"failure","attempt":1,"jobs":{"which gates apply":5,"host python/shell/C gates":191,"host lint + type-checks":172,"armv7 cross-build and artifact assertions":471,"host harness tests":306,"cross-build (armv7) + artifact assertions":3},"failed":["host checks (NOT a device gate)","host unit tests (default features)","host unit tests (hostsim)"]}
+],
 "sim":[
 {"id":40793427704,"at":"2026-10-29T00:20:38Z","sha":"1d603b179","title":"Playback: a new play never blocks the UI on the previous player's Unload; a hung Unload fails typed after 10 s","pr":1116,"conclusion":"success","attempt":1,"jobs":{"macOS simulator build + launch":428,"Windows launcher syntax":16,"macOS tests against bundled FFmpeg and ASS":384,"Linux simulator build + launch":454}}
 ],
