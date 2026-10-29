@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Player</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  body { background: #000; }
+  .picture { position: absolute; left: 0; top: 140px; width: 1920px; height: 800px; display: block; }
+  .subtitle { position: absolute; left: 50%; transform: translateX(-50%); text-align: center; font-size: 44px; font-weight: 600; line-height: 1.25; color: #fff; padding: 6px 22px; border-radius: 12px; background: rgba(0,0,0,.62); white-space: nowrap; }
+  /* transport: one group, one reading surface over the picture; the whole group is a single opacity track */
+  .transport { left: var(--lu-edge-x); right: var(--lu-edge-x); bottom: var(--lu-edge-y); padding: 28px 36px; display: flex; flex-direction: column; gap: 18px; }
+  .t-top { display: flex; align-items: center; gap: 20px; }
+  .t-top h1 { margin: 0; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+  .t-top .grow { flex: 1; }
+  .t-top .cluster { display: flex; gap: 12px; }
+  .t-bar { display: flex; align-items: center; gap: 24px; }
+  .t-bar .time { font-size: var(--f-label); font-weight: 500; color: var(--lu-ink-2); min-width: calc(76px * var(--ts)); }
+  .t-bar .time.r { text-align: right; }
+  .t-bar .scrub { position: relative; flex: 1; height: 56px; display: flex; align-items: center; }
+  .scrub .track { flex: 1; height: 10px; }
+  .scrub .track .fill { background: var(--lu-ink); }
+  .scrub .thumb { position: absolute; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: var(--lu-ink); box-shadow: var(--control-raised), 0 2px 6px rgba(0,0,0,.35); }
+  .scrub .chap { position: absolute; top: 50%; width: 4px; height: 10px; margin: -5px 0 0 -2px; background: var(--overlay-fill); }
+  .scrub.f .track { height: 14px; }
+  .focusname { left: 1370px; bottom: 346px; min-height: 56px; padding: 8px 22px; border-radius: 18px; display: flex; align-items: center; font-size: var(--f-label); font-weight: 600; background: var(--overlay-fill); }
+  .preview { left: 996px; bottom: 360px; width: 340px; padding: 10px; border-radius: 22px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .preview img { width: 320px; height: 180px; object-fit: cover; border-radius: 14px; display: block; }
+  .preview .tm { font-size: var(--f-label); font-weight: 600; }
+  /* failure */
+  .fail { left: 50%; top: 50%; transform: translate(-50%, -50%); width: 1000px; padding: 48px 56px 44px; display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center; }
+  .fail .big { width: 96px; height: 96px; color: var(--lu-ink-2); }
+  .fail h1 { margin: 0; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; }
+  .fail p { margin: 0; font-size: var(--f-body); font-weight: 500; color: var(--lu-ink-2); line-height: 1.35; }
+  .ladder { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .ladder .chip .ic { color: var(--lu-ink-2); }
+  .fail .actions { display: flex; gap: 16px; margin-top: 16px; }
+  .closeb { right: var(--lu-edge-x); top: var(--lu-edge-y); }
+  [data-text="200"] .transport { padding: 24px 32px; }
+  [data-text="200"] .t-top h1 { font-size: calc(40px * var(--ts) * .8); }
+</style>
+</head>
+<body data-default="chrome" class="video">
+
+<div data-v="chrome scrub hidden">
+  <img class="picture" src="art/video-tears.jpg" alt="">
+</div>
+
+<!-- chrome shown: one reading surface, one fade track; the subtitle lifts above it -->
+<div data-v="chrome scrub">
+  <div class="subtitle" style="top:620px" data-v="chrome">Everything is going to be fine.</div>
+  <div class="glass focusname" data-v="chrome" role="tooltip">Subtitles</div>
+  <div class="glass preview" data-v="scrub">
+    <img src="art/video-tears.jpg" alt="">
+    <span class="tm num">9:12</span>
+  </div>
+  <div class="glass transport" role="group" aria-label="Playback">
+    <div class="t-top">
+      <h1>Tears of Steel</h1>
+      <span class="chip" aria-label="Plays the original file"><i data-ic="monitor-play" class="ic"></i>Direct</span>
+      <span class="grow"></span>
+      <div class="cluster">
+        <span class="btn icon f" data-v="chrome" role="button" aria-label="Subtitles"><i data-ic="captions" class="ic"></i></span>
+        <span class="btn icon" data-v="scrub" role="button" aria-label="Subtitles"><i data-ic="captions" class="ic"></i></span>
+        <span class="btn icon" role="button" aria-label="Audio"><i data-ic="audio-lines" class="ic"></i></span>
+        <span class="btn icon" role="button" aria-label="Chapters"><i data-ic="list-video" class="ic"></i></span>
+        <span class="btn icon" role="button" aria-label="Info"><i data-ic="info" class="ic"></i></span>
+        <span class="btn icon" role="button" aria-label="More"><i data-ic="ellipsis" class="ic"></i></span>
+      </div>
+    </div>
+    <div class="t-bar">
+      <span class="btn icon primary" role="button" aria-label="Pause"><i data-ic="pause" class="ic"></i></span>
+      <span class="time num">7:26</span>
+      <div class="scrub" data-v="chrome">
+        <div class="track"><div class="fill" style="width:61%"></div></div>
+        <i class="chap" style="left:18%"></i><i class="chap" style="left:42%"></i><i class="chap" style="left:73%"></i>
+        <i class="thumb" style="left:61%"></i>
+      </div>
+      <div class="scrub f" data-v="scrub">
+        <div class="track"><div class="fill" style="width:61%"></div></div>
+        <i class="chap" style="left:18%"></i><i class="chap" style="left:42%"></i><i class="chap" style="left:73%"></i>
+        <i class="thumb" style="left:61%"></i>
+      </div>
+      <span class="time r num">−4:48</span>
+    </div>
+  </div>
+</div>
+
+<!-- hidden: nothing laid over the picture; a key or pointer move only brings the chrome back -->
+<div data-v="hidden">
+  <div class="subtitle" style="top:824px">Everything is going to be fine.</div>
+</div>
+
+<!-- failed: the whole ladder was tried; the words stay, there is no Back word, the way out is the key or the close mark -->
+<div data-v="failed">
+  <span class="btn icon closeb glass" style="position:absolute;border-radius:50%" role="button" aria-label="Close"><i data-ic="x" class="ic"></i></span>
+  <div class="overlay fail" role="alertdialog" aria-label="Can’t play this file">
+    <i data-ic="circle-alert" class="big"></i>
+    <h1>Can’t play this file</h1>
+    <p>The server can’t convert it either.</p>
+    <div class="ladder" role="list" aria-label="Tried, in order">
+      <span class="chip" role="listitem"><i data-ic="x" class="ic"></i>Direct</span>
+      <span class="chip" role="listitem"><i data-ic="x" class="ic"></i>Remux</span>
+      <span class="chip" role="listitem"><i data-ic="x" class="ic"></i>Decode</span>
+      <span class="chip" role="listitem"><i data-ic="x" class="ic"></i>Convert</span>
+    </div>
+    <div class="actions">
+      <span class="btn primary f"><i data-ic="sliders-horizontal" class="ic"></i>Change quality</span>
+      <span class="btn"><i data-ic="refresh-cw" class="ic"></i>Try again</span>
+    </div>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

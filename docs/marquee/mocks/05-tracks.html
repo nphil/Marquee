@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Audio and subtitles</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  body { background: #000; }
+  .picture { position: absolute; left: 0; top: 140px; width: 1920px; height: 800px; display: block; }
+  .transport { z-index: 2; left: var(--lu-edge-x); right: var(--lu-edge-x); bottom: var(--lu-edge-y); padding: 28px 36px; display: flex; flex-direction: column; gap: 18px; }
+  .t-top { display: flex; align-items: center; gap: 20px; }
+  .t-top h1 { margin: 0; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+  .t-top .grow { flex: 1; }
+  .t-top .cluster { display: flex; gap: 12px; }
+  .t-bar { display: flex; align-items: center; gap: 24px; }
+  .t-bar .time { font-size: var(--f-label); font-weight: 500; color: var(--lu-ink-2); min-width: calc(76px * var(--ts)); }
+  .t-bar .time.r { text-align: right; }
+  .t-bar .scrub { position: relative; flex: 1; height: 56px; display: flex; align-items: center; }
+  .scrub .track { flex: 1; height: 10px; }
+  .scrub .track .fill { background: var(--lu-ink); }
+  .scrub .thumb { position: absolute; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: var(--lu-ink); box-shadow: var(--control-raised), 0 2px 6px rgba(0,0,0,.35); }
+  .sheet { right: var(--lu-edge-x); width: 776px; bottom: 296px; padding: 20px 20px 16px; display: flex; flex-direction: column; gap: 14px; border-radius: var(--lu-radius-sheet); }
+  .sheet .head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-right: 8px; }
+  .sheet .seg > span { min-width: 150px; }
+  .sheet .opt { min-height: 72px; }
+  [data-text="200"] .sheet { width: 1000px; bottom: 330px; }
+  [data-text="200"] .sheet .seg > span { min-width: 0; }
+  .twoline { min-height: 96px; }
+</style>
+</head>
+<body data-default="subs" class="video">
+<img class="picture" src="art/video-tears.jpg" alt="">
+<div class="dim" style="background:rgba(0,0,0,.35);z-index:1"></div>
+
+<div class="glass transport" role="group" aria-label="Playback">
+  <div class="t-top">
+    <h1>Tears of Steel</h1>
+    <span class="chip" aria-label="Plays the original file"><i data-ic="monitor-play" class="ic"></i>Direct</span>
+    <span class="grow"></span>
+    <div class="cluster">
+      <span class="btn icon" role="button" aria-label="Subtitles" data-v="subs" style="background:var(--selected-wash)"><i data-ic="captions" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Audio" data-v="subs"><i data-ic="audio-lines" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Subtitles" data-v="audio"><i data-ic="captions" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Audio" data-v="audio" style="background:var(--selected-wash)"><i data-ic="audio-lines" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Chapters"><i data-ic="list-video" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Info"><i data-ic="info" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="More"><i data-ic="ellipsis" class="ic"></i></span>
+    </div>
+  </div>
+  <div class="t-bar">
+    <span class="btn icon primary" role="button" aria-label="Play"><i data-ic="play" class="ic"></i></span>
+    <span class="time num">7:26</span>
+    <div class="scrub"><div class="track"><div class="fill" style="width:61%"></div></div><i class="thumb" style="left:61%"></i></div>
+    <span class="time r num">−4:48</span>
+  </div>
+</div>
+
+<!-- the picker: one overlay above the chrome it opened from, anchored over the button cluster, Back closes it -->
+<div class="overlay sheet" role="dialog" aria-label="Audio and subtitles">
+  <div class="head">
+    <div class="seg" role="tablist">
+      <span role="tab" aria-selected="false" data-v="subs"><i data-ic="audio-lines" class="ic"></i>Audio</span>
+      <span role="tab" aria-selected="true" class="f" data-v="subs"><i data-ic="captions" class="ic"></i>Subtitles</span>
+      <span role="tab" aria-selected="true" class="f" data-v="audio"><i data-ic="audio-lines" class="ic"></i>Audio</span>
+      <span role="tab" aria-selected="false" data-v="audio"><i data-ic="captions" class="ic"></i>Subtitles</span>
+    </div>
+    <span class="hint" data-hint="key-left key-right" data-name="Left and Right, switch tab"></span>
+  </div>
+
+  <div class="menu" style="padding:0" data-v="subs" role="listbox" aria-label="Subtitles">
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Off</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Forced only</span><span class="v">English</span></div>
+    <div class="opt f" role="option" aria-selected="true" aria-checked="true"><i data-ic="check" class="mark"></i><span class="grow">English</span><span class="v">SubRip</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">English</span><span class="v"><i data-ic="server" class="ic"></i>Burned in</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Other languages</span><span class="v num">12<i data-ic="chevron-right" class="ic"></i></span></div>
+    <div class="sep" data-t200="hide"></div>
+    <div class="opt" data-t200="hide" role="option"><i data-ic="timer" class="ic"></i><span class="grow">Timing</span><span class="v num">0.0 s<i data-ic="chevron-right" class="ic"></i></span></div>
+    <div class="opt" data-t200="hide" role="option"><i data-ic="a-large-small" class="ic"></i><span class="grow">Style</span><span class="v">Medium<i data-ic="chevron-right" class="ic"></i></span></div>
+  </div>
+
+  <div class="menu" style="padding:0" data-v="audio" role="listbox" aria-label="Audio">
+    <div class="opt twoline f" role="option" aria-checked="true"><i data-ic="check" class="mark"></i><span class="grow">English<div class="d">Dolby Digital Plus · 5.1</div></span><span class="v">Default</span></div>
+    <div class="opt twoline" role="option"><i data-ic="check" class="mark none"></i><span class="grow">English<div class="d">AAC · Stereo · Commentary</div></span></div>
+    <div class="opt twoline" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Dutch<div class="d">Dolby Digital · 5.1</div></span></div>
+    <div class="opt twoline" role="option"><i data-ic="check" class="mark none"></i><span class="grow">French<div class="d">AAC · Stereo</div></span></div>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

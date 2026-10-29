@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Settings</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  .rail { left: var(--lu-edge-x); top: 150px; width: 448px; bottom: var(--lu-edge-y); padding: 20px 16px; overflow: hidden; }
+  .rail-entry { position: relative; display: grid; grid-template-columns: 56px 1fr; column-gap: 20px; align-items: center; min-height: 88px; padding: 0 16px 0 20px; border-radius: var(--lu-radius-row); border: 1px solid transparent; }
+  .rail-entry + .rail-entry { margin-top: 4px; }
+  .rail-entry .tile { position: relative; width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--tile-ink-wash); }
+  .rail-entry .tile .ic { width: 30px; height: 30px; }
+  .rail-entry .name { font-size: var(--f-body); font-weight: 600; line-height: 1.15; letter-spacing: -.005em; }
+  .rail-entry .line { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); line-height: 1.2; margin-top: 3px; }
+  .rail-entry[aria-current] { background: var(--raise-fill); border-color: var(--lu-edge-raised); box-shadow: var(--highlight-raised), var(--shadow-pressed); }
+  .rail-entry[aria-current] .tile { background: var(--lu-accent); color: var(--lu-accent-ink); }
+  .rail-entry.f { background: var(--sheen), var(--raise-fill); border-color: var(--lu-edge-raised); box-shadow: var(--highlight-raised), var(--shadow-raised), var(--focus-halo); transform: translateY(-4px) scale(1.02); }
+  .page { left: 568px; right: var(--lu-edge-x); top: 150px; bottom: var(--lu-edge-y); padding: 32px 48px 24px; display: flex; flex-direction: column; overflow: hidden; }
+  .page h1 { margin: 0 0 12px; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+  .page .rows { flex: 1; min-height: 0; }
+  .page .row .d { max-width: 760px; }
+  .foot { margin-top: 12px; display: flex; align-items: center; gap: 24px; min-height: 80px; padding: 12px 24px; border-radius: 22px; background: var(--tile-ink-wash); }
+  .foot .st { font-size: var(--f-body); font-weight: 600; flex: 1; }
+  [data-text="200"] .rail-entry .line { display: none; }
+  [data-text="200"] .rail { width: 520px; top: 210px; }
+  [data-text="200"] .page { left: 640px; top: 210px; padding: 28px 40px 20px; }
+  [data-text="200"] .slider { width: 260px; }
+</style>
+</head>
+<body data-default="playback">
+<div class="canvas"></div>
+
+<nav class="glass crumb" aria-label="Back to Home">
+  <span class="nav"><span class="hint" data-hint="key-back" data-name="Back"></span>Home</span>
+</nav>
+
+<nav class="glass rail" aria-label="Settings sections">
+  <div class="rail-entry" data-v="language"><div class="tile"><i data-ic="clapperboard" class="ic"></i></div><div><div class="name">Video &amp; playback</div><div class="line">Original</div></div></div>
+  <div class="rail-entry" aria-current="page" data-v="playback"><div class="tile"><i data-ic="clapperboard" class="ic"></i></div><div><div class="name">Video &amp; playback</div><div class="line">Original</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="audio-lines" class="ic"></i></div><div><div class="name">Audio &amp; subtitles</div><div class="line">English</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="layers" class="ic"></i></div><div><div class="name">Libraries</div><div class="line">3 favorites</div></div></div>
+  <div class="rail-entry" aria-current="page" data-v="language"><div class="tile"><i data-ic="languages" class="ic"></i></div><div><div class="name">Language</div><div class="line">English</div></div></div>
+  <div class="rail-entry" data-v="playback"><div class="tile"><i data-ic="languages" class="ic"></i></div><div><div class="name">Language</div><div class="line">English</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="user" class="ic"></i></div><div><div class="name">Account</div><div class="line">Nitin</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="shield" class="ic"></i></div><div><div class="name">Privacy &amp; data</div><div class="line">Reports off</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="info" class="ic"></i></div><div><div class="name">About</div><div class="line">Marquee 0.1</div></div></div>
+</nav>
+
+<!-- Video & playback: one row is one decision; a switch never opens anything; the slider is adjusted with Left and Right -->
+<main class="glass page" data-v="playback">
+  <h1>Video &amp; playback</h1>
+  <div class="rows">
+    <div class="group" data-t200="hide">Quality</div>
+    <div class="row" data-t200="hide"><div class="text"><div class="t">Default quality</div></div><div class="v">Original<i data-ic="chevron-right" class="ic"></i></div></div>
+    <div class="row" data-t200="hide"><div class="text"><div class="t">Direct play</div></div><div class="v">Auto<i data-ic="chevron-right" class="ic"></i></div></div>
+    <div class="group">If a file can’t play as it is</div>
+    <div class="row" role="switch" aria-checked="true"><div class="text"><div class="t">Remux</div><div class="d">Repack it, no re-encoding</div></div><div class="toggle" aria-checked="true"></div></div>
+    <div class="row f" role="switch" aria-checked="true"><div class="text"><div class="t">Decode on this TV</div><div class="d">Slower, covers more formats</div></div><div class="toggle" aria-checked="true"></div></div>
+    <div class="row" role="switch" aria-checked="false"><div class="text"><div class="t">Convert on the server</div><div class="d">Uses the server’s processor</div></div><div class="toggle" aria-checked="false"></div></div>
+    <div class="group" data-t200="hide">Player</div>
+    <div class="row" data-t200="hide"><div class="text"><div class="t">Skip interval</div></div><div class="slider"><div class="track"><div class="fill" style="width:33%"></div></div><i class="thumb" style="left:33%"></i></div><div class="v num" style="min-width:70px;justify-content:flex-end;color:var(--lu-ink)">10 s</div></div>
+  </div>
+</main>
+
+<!-- Language: a choice list, and the one state that needs the remote, shown as the keys themselves -->
+<main class="glass page" data-v="language">
+  <h1>Language</h1>
+  <div class="rows">
+    <div class="row" role="radio" aria-checked="false"><div class="text"><div class="t">System default</div></div></div>
+    <div class="row" role="radio" aria-checked="true" aria-current="true"><div class="text"><div class="t">English</div></div><i data-ic="check" class="ic" style="color:var(--lu-accent)"></i></div>
+    <div class="row f" role="radio" aria-checked="false"><div class="text"><div class="t">Deutsch</div></div></div>
+    <div class="row" role="radio" aria-checked="false"><div class="text"><div class="t">Español</div></div></div>
+    <div class="row" role="radio" aria-checked="false" data-t200="hide"><div class="text"><div class="t">Français</div></div></div>
+    <div class="row" role="radio" aria-checked="false" data-t200="hide"><div class="text"><div class="t">Беларуская</div></div></div>
+  </div>
+  <div class="foot">
+    <span class="st">Restart to apply</span>
+    <span class="hint" data-hint="key-back hold power" data-name="Hold Back, close the app"></span>
+  </div>
+</main>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

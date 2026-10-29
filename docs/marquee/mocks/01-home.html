@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Home</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  .hero-block { bottom: 452px; width: 780px; gap: 16px; }
+  [data-text="200"] .hero-block { bottom: 150px; width: 1040px; }
+  [data-text="200"] .scrim-h { background: linear-gradient(90deg, rgb(var(--canvas-rgb) / .97) 0%, rgb(var(--canvas-rgb) / .93) 42%, rgb(var(--canvas-rgb) / .62) 64%, rgb(var(--canvas-rgb) / 0) 86%); }
+  [data-text="200"] .flow { top: 200px; }
+  .hero-block .syn { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  [data-text="200"] .hero-block .syn { -webkit-line-clamp: 2; }
+  .hero-block .actions { margin-top: 12px; }
+  .hero-block .cw { font-size: var(--f-label); font-weight: 500; color: var(--ink-2-art); }
+  .pager-pos { left: var(--lu-edge-x); top: 664px; position: absolute; }
+  .cell { position: relative; flex: none; width: 384px; }
+  .cell .tile { width: 384px; height: 216px; }
+  .flow { position: absolute; left: var(--lu-edge-x); top: 158px; }
+  .flow .shelf-title { position: static; margin: 0 0 22px; }
+  .flow .shelf-title.second { margin-top: 18px; }
+  .flow .shelf { position: static; }
+  .cell .tile { margin-bottom: 4px; }
+  .cell .cap { position: static; margin-top: 12px; padding: 10px 18px 16px; border: 1px solid transparent; }
+  .cell .cap.plate { position: relative; margin-top: 12px; }
+  .above { position: relative; z-index: 6; }
+  .pcell { position: relative; flex: none; width: 240px; }
+  .menu-pos { left: 504px; top: 196px; width: 560px; }
+</style>
+</head>
+<body data-default="hero">
+<div class="canvas"></div>
+
+<!-- hero: the pinned title, art on the right, a reading scrim into the canvas colour on the left -->
+<div data-v="hero">
+  <img class="art" src="art/hero-sintel.jpg" alt="">
+  <div class="scrim-h"></div><div class="scrim-v"></div>
+  <div class="hero hero-block">
+    <h1 class="title">Sintel</h1>
+    <div class="meta"><span>Movie</span><i class="dot"></i><span>2010</span><i class="dot"></i><span>Not rated</span><i class="dot"></i><span>14 min</span></div>
+    <p class="syn">A lone young woman crosses frozen wastes and ruined cities in search of Scales, the baby dragon she rescued and raised before it was taken from her.</p>
+    <div class="actions">
+      <span class="btn primary f"><i data-ic="play" class="ic"></i>Resume</span>
+      <span class="btn icon" role="img" aria-label="More info"><i data-ic="info" class="ic"></i></span>
+      <span class="btn icon" role="img" aria-label="Add to watchlist"><i data-ic="bookmark" class="ic"></i></span>
+      <span class="cw">8 min left</span>
+    </div>
+  </div>
+  <div class="pager pager-pos" data-t200="hide" role="img" aria-label="Page 1 of 8"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div data-t200="hide">
+  <div class="shelf-title" style="top:692px">Continue Watching</div>
+  <div class="shelf" style="top:740px">
+    <div class="cell"><div class="tile card"><img src="art/c-sintel.jpg" alt=""><div class="prog"><i style="width:44%"></i></div></div>
+      <div class="cap"><div class="t">Sintel</div><div class="d">8 min left</div></div></div>
+    <div class="cell"><div class="tile card"><img src="art/c-spring.jpg" alt=""><div class="prog"><i style="width:71%"></i></div></div>
+      <div class="cap"><div class="t">Spring</div><div class="d">3 min left</div></div></div>
+    <div class="cell"><div class="tile card"><img src="art/c-tears.jpg" alt=""><div class="prog"><i style="width:30%"></i></div></div>
+      <div class="cap"><div class="t">Tears of Steel</div><div class="d">9 min left</div></div></div>
+    <div class="cell"><div class="tile card"><img src="art/c-llamigos.jpg" alt=""><div class="prog"><i style="width:58%"></i></div></div>
+      <div class="cap"><div class="t">Llamigos</div><div class="d">S3 · E1 · 2 min left</div></div></div>
+    <div class="cell"><div class="tile card"><img src="art/c-elephants.jpg" alt=""></div></div>
+  </div>
+  </div>
+</div>
+
+<!-- shelves: the page scrolled; the focused card's caption becomes a plate, the pointer only hovers the next card -->
+<div data-v="shelves menu">
+  <div class="flow">
+    <div class="shelf-title">Continue Watching</div>
+    <div class="shelf">
+      <div class="cell above"><div class="tile card card-row f"><img src="art/c-tears.jpg" alt=""><div class="prog"><i style="width:30%"></i></div></div>
+        <div class="cap plate"><div class="grow"><div class="t">Tears of Steel</div><div class="d">9 min left</div></div>
+          <span class="hint cap" data-hint="key-ok-hold options" data-name="Hold OK, options"></span></div></div>
+      <div class="cell"><div class="tile card h"><img src="art/c-spring.jpg" alt=""><div class="prog"><i style="width:71%"></i></div></div>
+        <div class="cap"><div class="t">Spring</div><div class="d">3 min left</div></div></div>
+      <div class="cell"><div class="tile card"><img src="art/c-sintel.jpg" alt=""><div class="prog"><i style="width:44%"></i></div></div>
+        <div class="cap"><div class="t">Sintel</div><div class="d">8 min left</div></div></div>
+      <div class="cell"><div class="tile card"><img src="art/c-llamigos.jpg" alt=""><div class="prog"><i style="width:58%"></i></div></div>
+        <div class="cap"><div class="t">Llamigos</div><div class="d">S3 · E1 · 2 min left</div></div></div>
+      <div class="cell"><div class="tile card"><img src="art/c-elephants.jpg" alt=""></div></div>
+    </div>
+    <div class="shelf-title second" data-t200="hide">Recently Added in Movies</div>
+    <div class="shelf" data-t200="hide">
+      <div class="pcell"><div class="tile poster"><img src="art/p-charge.jpg" alt=""></div></div>
+      <div class="pcell"><div class="tile poster"><img src="art/p-bunny.jpg" alt=""><span class="badge" role="img" aria-label="Watched"><i data-ic="check" class="ic"></i></span></div></div>
+      <div class="pcell"><div class="tile poster"><img src="art/p-sprite.jpg" alt=""></div></div>
+      <div class="pcell"><div class="tile poster"><img src="art/p-coffee.jpg" alt=""></div></div>
+      <div class="pcell"><div class="tile poster"><img src="art/p-elephants.jpg" alt=""><div class="prog"><i style="width:22%"></i></div></div></div>
+      <div class="pcell"><div class="tile poster"><img src="art/p-cosmos.jpg" alt=""></div></div>
+      <div class="pcell"><div class="tile poster"><img src="art/p-moon.jpg" alt=""></div></div>
+    </div>
+  </div>
+  <div class="pointer" style="left:760px;top:330px" data-v="shelves"></div>
+</div>
+
+<div data-v="menu">
+  <div class="dim hide"></div>
+  <div class="overlay menu menu-pos" role="menu" aria-label="Tears of Steel">
+    <div class="opt f" role="menuitem"><i data-ic="play" class="ic"></i><span class="grow">Resume</span></div>
+    <div class="opt" role="menuitem"><i data-ic="rotate-ccw" class="ic"></i><span class="grow">Play from start</span></div>
+    <div class="opt" role="menuitem"><i data-ic="circle-check" class="ic"></i><span class="grow">Mark as watched</span></div>
+    <div class="opt" role="menuitem"><i data-ic="x" class="ic"></i><span class="grow">Remove from Continue Watching</span></div>
+  </div>
+</div>
+
+<!-- chrome: profile and the one navigation pill; present on every Home view -->
+<div class="glass disc" role="img" aria-label="Profile"><i data-ic="user" class="ic"></i></div>
+<nav class="glass navpill" aria-label="Sections">
+  <span class="nav" aria-current="page">Home</span>
+  <span class="nav">Movies</span>
+  <span class="nav">TV Shows</span>
+  <span class="nav icon" role="img" aria-label="Watchlist"><i data-ic="bookmark" class="ic"></i></span>
+  <span class="nav icon" role="img" aria-label="Search"><i data-ic="search" class="ic"></i></span>
+</nav>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

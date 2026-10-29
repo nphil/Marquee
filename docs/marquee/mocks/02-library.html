@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Library</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  .pagehead { top: 150px; }
+  .controls { position: absolute; right: var(--lu-edge-x); top: 142px; display: flex; align-items: center; gap: 16px; }
+  .grid { position: absolute; left: var(--lu-edge-x); top: 262px; display: grid; grid-template-columns: repeat(6, 268px); column-gap: 24px; row-gap: 116px; }
+  .grid .cellp { position: relative; width: 268px; height: 402px; }
+  .grid .cellp:has(.f) { z-index: 6; }
+  .grid .tile.poster { width: 268px; height: 402px; }
+  .plate.under { top: 414px; left: 50%; right: auto; transform: translateX(-50%); min-width: 100%; width: max-content; max-width: 540px; flex-direction: column; align-items: flex-start; gap: 0; }
+  [data-text="200"] .pagehead { top: 200px; }
+  [data-text="200"] .controls { top: 322px; right: auto; left: var(--lu-edge-x); }
+  [data-text="200"] .grid { top: 472px; row-gap: 190px; }
+  .sort-menu { right: var(--lu-edge-x); top: 238px; width: 480px; }
+  /* in the sort view the opener (Sort) owns focus: the grid is under the scrim and shows no lit state */
+  html[data-v="sort"] .grid .plate { display: none; }
+  html[data-v="sort"] .grid .tile.f { transform: none; box-shadow: none; }
+  html[data-v="sort"] .grid .cellp:has(.f) { z-index: auto; }
+</style>
+</head>
+<body data-default="grid">
+<div class="canvas"></div>
+
+<div class="pagehead"><h1>Movies</h1><span class="count num">128</span></div>
+<div class="controls">
+  <div class="seg" role="tablist" aria-label="View">
+    <span role="tab" aria-selected="true">Library</span>
+    <span role="tab" aria-selected="false">Collections <span class="n num">6</span></span>
+    <span role="tab" aria-selected="false">Recommended</span>
+  </div>
+  <span class="btn above f" data-v="sort"><span></span>Sort<span class="sub">· Title</span><i data-ic="chevron-down" class="ic"></i></span>
+  <span class="btn" data-v="grid">Sort<span class="sub">· Title</span><i data-ic="chevron-down" class="ic"></i></span>
+  <span class="btn icon" role="img" aria-label="Filter"><i data-ic="list-filter" class="ic"></i></span>
+</div>
+
+<div class="grid">
+  <div class="cellp"><div class="tile poster"><img src="art/p-bunny.jpg" alt=""><span class="badge" role="img" aria-label="Watched"><i data-ic="check" class="ic"></i></span></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-moon.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster f"><img src="art/p-charge.jpg" alt=""></div>
+    <div class="plate under"><div class="t">Charge</div><div class="d">2022 · 6 min</div></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-coffee.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster h"><img src="art/p-cosmos.jpg" alt=""><div class="prog"><i style="width:36%"></i></div></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-elephants.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-sprite.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-spring.jpg" alt=""><span class="badge" role="img" aria-label="Watched"><i data-ic="check" class="ic"></i></span></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-tears.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-sintel.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-bunny.jpg" alt=""></div></div>
+  <div class="cellp"><div class="tile poster"><img src="art/p-moon.jpg" alt=""></div></div>
+</div>
+<div class="pointer" style="left:1272px;top:420px" data-v="grid"></div>
+
+<div data-v="sort">
+  <div class="dim hide"></div>
+  <div class="overlay menu sort-menu" role="menu" aria-label="Sort by">
+    <div class="opt" role="menuitemradio" aria-checked="true"><i data-ic="check" class="mark"></i><span class="grow">Title</span><span class="v">A–Z</span></div>
+    <div class="opt f" role="menuitemradio"><i data-ic="check" class="mark none"></i><span class="grow">Date added</span></div>
+    <div class="opt" role="menuitemradio"><i data-ic="check" class="mark none"></i><span class="grow">Release date</span></div>
+    <div class="opt" role="menuitemradio"><i data-ic="check" class="mark none"></i><span class="grow">Rating</span></div>
+    <div class="opt" role="menuitemradio"><i data-ic="check" class="mark none"></i><span class="grow">Date viewed</span></div>
+    <div class="opt" role="menuitemradio"><i data-ic="check" class="mark none"></i><span class="grow">Random</span></div>
+    <div class="opt" role="menuitemradio"><i data-ic="check" class="mark none"></i><span class="grow">Plays</span></div>
+  </div>
+</div>
+
+<div class="glass disc" role="img" aria-label="Profile"><i data-ic="user" class="ic"></i></div>
+<nav class="glass navpill" aria-label="Sections">
+  <span class="nav">Home</span>
+  <span class="nav" aria-current="page">Movies</span>
+  <span class="nav">TV Shows</span>
+  <span class="nav icon" role="img" aria-label="Watchlist"><i data-ic="bookmark" class="ic"></i></span>
+  <span class="nav icon" role="img" aria-label="Search"><i data-ic="search" class="ic"></i></span>
+</nav>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

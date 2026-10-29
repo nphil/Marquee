@@ -1,0 +1,331 @@
+/* Marquee mocks: one token layer (Lucent v2, TV profile, Rosé Pine) and the component kit every screen shares.
+ * Values are 1920×1080 reference pixels. Names mirror languages/lucent/tokens.css (--lu-*) so a Rust port is a rename.
+ * Text sizes read --ts (1 at 100 %, 2 at 200 % text); layout is written to grow, never to clip. */
+
+@font-face {
+  font-family: "Manrope";
+  src: url("fonts/Manrope-Variable.ttf") format("truetype");
+  font-weight: 200 800;
+  font-display: block;
+}
+
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --pal-canvas: #191724;
+  --canvas-rgb: 25 23 36;
+  --pal-edge: #FFFFFF2B;
+  --pal-edge-raised: #FFFFFF3D;
+  --pal-ink: #F2EFF6;
+  --pal-ink-2: #F2EFF6A8;
+  --pal-ink-3: #F2EFF66B;
+  --pal-track-off: #FFFFFF29;
+  --pal-accent: #A79BF5;
+  --pal-accent-ink: #17131F;
+  --pal-positive: #9CCFD8;
+  --pal-warning: #F6C177;
+  --pal-danger: #EB6F92;
+  --pal-info: #9CCFD8;
+  /* reading glass: the sheet over artwork or video is near-opaque (Lucent section 3, step 5) */
+  --glass-art: rgba(26, 22, 38, .82);
+  --glass-video: rgba(22, 17, 32, .90);
+  --overlay-fill: rgba(31, 29, 46, .97);
+  --raise-fill: rgba(52, 46, 70, .96);
+  --ctl-fill: rgba(242, 239, 246, .09);
+  --overlay-scrim: rgba(11, 9, 20, .62);
+  --shadow-rest: 0 28px 72px rgba(0,0,0,.40), 0 4px 14px rgba(0,0,0,.20);
+  --shadow-raised: 0 22px 52px rgba(0,0,0,.48), 0 6px 14px rgba(0,0,0,.30);
+  --shadow-pressed: 0 6px 14px rgba(0,0,0,.30);
+  --highlight-rest: inset 0 1px 0 rgba(255,255,255,.10);
+  --highlight-raised: inset 0 1px 0 rgba(255,255,255,.22), inset 0 -1px 0 rgba(0,0,0,.22);
+  --sheen: linear-gradient(135deg, rgba(255,255,255,.14) 0%, rgba(255,255,255,.05) 38%, transparent 60%);
+  --focus-wash: rgba(242,239,246,.07);
+  --hover-wash: rgba(242,239,246,.04);
+  --selected-wash: rgba(242,239,246,.06);
+  --well: rgba(8, 6, 16, .42);
+  --well-inset: inset 2px 2px 4px rgba(0,0,0,.32), inset -2px -2px 4px rgba(255,255,255,.08);
+  --control-raised: -2px -2px 4px rgba(255,255,255,.10), 2px 2px 4px rgba(0,0,0,.32);
+  --focus-halo: 0 0 0 1px color-mix(in srgb, var(--lu-accent) 45%, transparent), 0 12px 36px color-mix(in srgb, var(--lu-accent) 30%, transparent);
+  --tile-ink-wash: rgba(242,239,246,.10);
+  --canvas-wash: radial-gradient(1300px 760px at 82% -12%, rgba(167,155,245,.16), transparent 62%), radial-gradient(1000px 700px at 6% 112%, rgba(235,111,146,.07), transparent 60%), linear-gradient(180deg, #1c1929 0%, #191724 100%);
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --pal-canvas: #FAF4ED;
+  --canvas-rgb: 250 244 237;
+  --pal-edge: #FFFFFFD9;
+  --pal-edge-raised: #FFFFFFE6;
+  --pal-ink: #17131F;
+  --pal-ink-2: #17131FA8;
+  --pal-ink-3: #17131F6B;
+  --pal-track-off: #17131F1F;
+  --pal-accent: #907AA9;
+  --pal-accent-ink: #17131F;
+  --pal-positive: #286983;
+  --pal-warning: #EA9D34;
+  --pal-danger: #B4637A;
+  --pal-info: #56949F;
+  --glass-art: rgba(255, 250, 243, .88);
+  --glass-video: rgba(255, 250, 243, .94);
+  --overlay-fill: rgba(255, 250, 243, .97);
+  --raise-fill: rgba(255, 255, 255, .97);
+  --ctl-fill: rgba(23, 19, 31, .07);
+  --overlay-scrim: rgba(250,244,237,.62);
+  --shadow-rest: 0 24px 60px rgba(60,40,70,.16);
+  --shadow-raised: 0 18px 44px rgba(60,40,70,.22), 0 6px 14px rgba(60,40,70,.12);
+  --shadow-pressed: 0 6px 14px rgba(60,40,70,.14);
+  --highlight-rest: inset 0 1px 0 rgba(255,255,255,.60);
+  --highlight-raised: inset 0 1px 0 rgba(255,255,255,.90), inset 0 -1px 0 rgba(0,0,0,.10);
+  --sheen: linear-gradient(135deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.18) 38%, transparent 60%);
+  --focus-wash: rgba(23,19,31,.06);
+  --hover-wash: rgba(23,19,31,.04);
+  --selected-wash: rgba(23,19,31,.06);
+  --well: rgba(23,19,31,.09);
+  --well-inset: inset 2px 2px 4px rgba(23,19,31,.12), inset -2px -2px 4px rgba(255,255,255,.86);
+  --control-raised: -2px -2px 4px rgba(255,255,255,.86), 2px 2px 4px rgba(23,19,31,.10);
+  --focus-halo: 0 0 0 1px color-mix(in srgb, var(--lu-accent) 50%, transparent), 0 12px 32px color-mix(in srgb, var(--lu-accent) 24%, transparent);
+  --tile-ink-wash: rgba(23,19,31,.08);
+  --canvas-wash: radial-gradient(1300px 760px at 82% -12%, rgba(144,122,169,.20), transparent 62%), radial-gradient(1000px 700px at 6% 112%, rgba(215,130,126,.12), transparent 60%), linear-gradient(180deg, #FBF6F0 0%, #FAF4ED 100%);
+}
+
+:root {
+  --lu-ink: var(--pal-ink);
+  --lu-ink-2: var(--pal-ink-2);
+  --lu-ink-3: var(--pal-ink-3);
+  /* ink2 promoted for words that sit on artwork behind a scrim: the palette's .66 alpha is not a contrast guarantee there */
+  --ink-2-art: color-mix(in srgb, var(--pal-ink) 88%, transparent);
+  --lu-edge: var(--pal-edge);
+  --lu-edge-raised: var(--pal-edge-raised);
+  --lu-accent: var(--pal-accent);
+  --lu-accent-ink: var(--pal-accent-ink);
+  --lu-danger: var(--pal-danger);
+  --lu-positive: var(--pal-positive);
+  --lu-warning: var(--pal-warning);
+  --lu-track-off: var(--pal-track-off);
+  --lu-radius-sheet: 28px;
+  --lu-radius-card: 28px;
+  --lu-radius-tile: 22px;
+  --lu-radius-row: 22px;
+  --lu-radius-control: 16px;
+  --lu-radius-pill: 999px;
+  --lu-edge-x: 96px;   /* TV safe area, 5 % */
+  --lu-edge-y: 54px;
+  --lu-target: 64px;
+  /* at 200 % text the targets and icons grow with the type (half as fast as the text for the target); they never shrink */
+  --k: calc(1 + (var(--ts) - 1) * .5);
+  --tgt: calc(64px * var(--k));
+  --ic: calc(32px * var(--ts));
+  --ic-s: calc(24px * var(--ts));
+  --lu-row: 80px;
+  --ts: 1;
+  --f-display: calc(92px * var(--ts));
+  --f-title: calc(40px * var(--ts));
+  --f-body: calc(28px * var(--ts));
+  --f-label: calc(26px * var(--ts));
+  --f-cap: calc(24px * var(--ts));
+  --lu-blur: 30px;
+  --lu-font: "Manrope", system-ui, sans-serif;
+  --lu-ease: cubic-bezier(.33,1,.68,1);
+  /* motion.spring: 260 ms response, critically damped, retargetable; CSS has no spring, so linear() samples x(t) = 1 - (1 + wt)e^(-wt), w = 2pi / 0.26 s */
+  --lu-motion-spring: 260ms;
+  --lu-ease-spring: linear(0.0000, 0.0596, 0.1860, 0.3294, 0.4656, 0.5840, 0.6819, 0.7601, 0.8210, 0.8677, 0.9029, 0.9292, 0.9487, 0.9630, 0.9734, 0.9809, 1);
+  --lu-scale-card: 1.03;
+  --lu-scale-poster: 1.06;
+  --lu-lift: 4px;
+}
+[data-text="200"] { --ts: 2; }
+[data-text="200"] .row { padding-top: 22px; padding-bottom: 22px; }
+[data-text="200"] .opt { padding-top: 14px; padding-bottom: 14px; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  width: 1920px; height: 1080px; overflow: hidden; position: relative;
+  font-family: var(--lu-font); font-size: var(--f-body); font-weight: 500; line-height: 1.3;
+  color: var(--lu-ink); background: var(--pal-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+.num { font-variant-numeric: tabular-nums; }
+i.ic, svg.ic { width: var(--ic); height: var(--ic); flex: none; display: inline-block; vertical-align: middle; }
+[hidden] { display: none !important; }
+
+/* ---- canvas (level 0) ------------------------------------------------------------------ */
+.canvas { position: absolute; inset: 0; background: var(--canvas-wash); }
+.art { position: absolute; inset: 0; width: 1920px; height: 1080px; object-fit: cover; display: block; }
+/* The reading scrim fades the picture into the canvas colour, so text on it is always on a known, near-flat ground. */
+.scrim-h { position: absolute; inset: 0; background: linear-gradient(90deg, rgb(var(--canvas-rgb) / .96) 0%, rgb(var(--canvas-rgb) / .86) 24%, rgb(var(--canvas-rgb) / .44) 48%, rgb(var(--canvas-rgb) / 0) 70%); }
+.scrim-v { position: absolute; inset: 0; background: linear-gradient(0deg, rgb(var(--canvas-rgb) / .98) 0%, rgb(var(--canvas-rgb) / .78) 16%, rgb(var(--canvas-rgb) / .30) 32%, rgb(var(--canvas-rgb) / 0) 46%); }
+.dim { position: absolute; inset: 0; background: var(--overlay-scrim); z-index: 5; }
+/* a menu or dialog that opens over the page hides it: .97, not a veil that lets words read through (scrim.hidesMin) */
+.dim.hide { background: rgb(var(--canvas-rgb) / .97); }
+.overlay { z-index: 7; }
+.above { position: relative; z-index: 6 !important; }
+
+/* ---- glass (levels 1 and 4) ------------------------------------------------------------ */
+.glass, .overlay {
+  position: absolute;
+  background: var(--glass-art);
+  -webkit-backdrop-filter: blur(var(--lu-blur)); backdrop-filter: blur(var(--lu-blur));
+  border: 1px solid var(--lu-edge);
+  border-radius: var(--lu-radius-sheet);
+  box-shadow: var(--highlight-rest), var(--shadow-rest);
+}
+.overlay { background: var(--overlay-fill); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.video .glass { background: var(--glass-video); -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---- chrome: profile disc and navigation pill ------------------------------------------ */
+.disc { left: var(--lu-edge-x); top: var(--lu-edge-y); width: calc(16px + var(--tgt)); height: calc(16px + var(--tgt)); border-radius: 50%; display: grid; place-items: center; }
+.disc .ic { width: calc(34px * var(--k)); height: calc(34px * var(--k)); }
+.navpill { left: 50%; top: var(--lu-edge-y); transform: translateX(-50%); height: calc(16px + var(--tgt)); padding: 8px; display: flex; gap: 4px; border-radius: 999px; }
+.nav { white-space: nowrap; position: relative; min-height: var(--tgt); min-width: var(--tgt); padding: 0 30px 0 38px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; font-size: var(--f-label); font-weight: 600; letter-spacing: -.005em; color: var(--lu-ink-2); border: 1px solid transparent; }
+.nav.icon { padding: 0 22px 0 30px; }
+.nav[aria-current] { color: var(--lu-ink); background: var(--selected-wash); }
+/* selected = a small accent dot, never the focus cue (Lucent: selection is independent state) */
+.nav[aria-current]::before { content: ""; position: absolute; left: 17px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: var(--lu-accent); }
+.crumb { left: var(--lu-edge-x); top: var(--lu-edge-y); height: calc(16px + var(--tgt)); padding: 8px; border-radius: 999px; display: flex; align-items: center; }
+.crumb .nav { padding: 0 28px 0 20px; color: var(--lu-ink); }
+
+
+/* ---- hint glyphs: the key as drawn on the Magic Remote, then what it does (Lucent section 4) ------ */
+.hint { display: inline-flex; align-items: center; gap: .3em; font-size: var(--f-label); color: var(--lu-ink-2); line-height: 1; }
+.hint.cap { font-size: var(--f-cap); }
+.hint .gl { width: 1.45em; height: 1.45em; flex: none; color: var(--lu-ink); stroke-width: 1.9; }
+.hint .gl.act, .hint .act { color: var(--lu-ink-2); }
+.hint .gl + .gl.act { margin-left: .15em; }
+.hint .sep { width: .9em; height: .9em; color: var(--lu-ink-3); }
+.hint [data-tone="danger"] { color: var(--lu-danger); } .hint [data-tone="positive"] { color: var(--lu-positive); }
+
+/* ---- focus, hover, press, selected: light on the existing material, never an outline --------------- */
+.f, .h, .pr { transition: transform var(--lu-motion-spring) var(--lu-ease-spring), box-shadow var(--lu-motion-spring) var(--lu-ease-spring); }
+/* Hover is the cue only: the hover wash and a rim at 60 % of the raised edge. No lift, halo, scale or name plate. */
+.h { background-color: var(--hover-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lu-edge-raised) 60%, transparent); }
+.tile.h, .poster.h, .card.h { background-color: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lu-edge-raised) 60%, transparent); }
+.tile.h::after, .poster.h::after, .card.h::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--sheen); opacity: .3; pointer-events: none; }
+/* Focus: the old and the new target move at the same time on the one 260 ms spring: the outgoing one settles back while the incoming one comes forward, its glass brightens and a soft accent halo lands under it; a new key mid-flight retargets from the current position. */
+.f { z-index: 3; }
+.btn.f, .nav.f, .row.f, .opt.f, .tab.f {
+  background: var(--sheen), var(--raise-fill); border-color: var(--lu-edge-raised);
+  box-shadow: var(--highlight-raised), var(--shadow-raised), var(--focus-halo);
+}
+.btn.f, .nav.f { transform: translateY(calc(-1 * var(--lu-lift))) scale(1.04); }
+.row.f, .opt.f { transform: translateY(calc(-1 * var(--lu-lift))) scale(1.02); }
+.btn.primary.f { background: var(--sheen), var(--lu-accent); color: var(--lu-accent-ink); }
+.pr { transform: scale(.97) !important; box-shadow: var(--shadow-pressed) !important; }
+
+.btn.f::after, .nav.f::after, .row.f::after, .opt.f::after, .seg > span.f::after, .plate::after {
+  /* the landing bar: a 2 px inset mark in ink that arrives with focus, the 3:1 cue the wash cannot give alone (Lucent section 2) */
+  content: ""; position: absolute; left: 16px; right: 16px; bottom: 6px; height: 2px; border-radius: 1px; background: var(--lu-ink); pointer-events: none;
+}
+.btn.icon.f::after { left: 20px; right: 20px; bottom: 8px; }
+.btn.primary.f::after { background: var(--lu-accent-ink); }
+[data-bar="off"] .f::after, [data-bar="off"] .plate::after { display: none; }
+.row.f::after { left: 24px; right: 24px; }
+.plate::after { left: 18px; right: 18px; bottom: 5px; }
+
+/* ---- buttons: one size per screen, 64 tall ---------------------------------------------- */
+.btn { position: relative; min-height: var(--tgt); min-width: var(--tgt); padding: 0 30px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 12px; font-size: var(--f-label); font-weight: 600; letter-spacing: -.005em; color: var(--lu-ink); background: var(--ctl-fill); border: 1px solid transparent; white-space: nowrap; }
+.btn.icon { padding: 0; width: var(--tgt); }
+.btn.primary { background: var(--lu-accent); color: var(--lu-accent-ink); padding: 0 36px 0 30px; }
+.btn .sub { font-weight: 500; }
+.btn.flat { background: transparent; }
+
+/* ---- chips: passive state text with an icon, never focusable ---------------------------------------- */
+.chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 16px 0 12px; border-radius: 999px; font-size: var(--f-cap); font-weight: 600; color: var(--lu-ink); background: var(--tile-ink-wash); border: 1px solid var(--lu-edge); white-space: nowrap; }
+.chip .ic { width: var(--ic-s); height: var(--ic-s); }
+.chip.t { padding: 0 16px; }
+.chip.tone-info .ic { color: var(--lu-positive); }
+.chip.tone-warn .ic { color: var(--lu-warning); }
+
+/* ---- wells: progress and tracks ------------------------------------------------------- */
+.track { position: relative; height: 8px; border-radius: 4px; background: var(--well); box-shadow: var(--well-inset); }
+.track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--lu-accent); }
+
+/* ---- shelves, posters, cards, plates ------------------------------------------------------ */
+.shelf-title { position: absolute; left: var(--lu-edge-x); font-size: var(--f-body); font-weight: 600; letter-spacing: -.005em; line-height: 1.2; }
+.shelf { position: absolute; left: var(--lu-edge-x); display: flex; gap: 24px; }
+.tile { position: relative; flex: none; border-radius: var(--lu-radius-tile); }
+.poster { width: 240px; height: 360px; overflow: hidden; border-radius: var(--lu-radius-tile); background: var(--well); }
+.poster img, .card > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card { width: 384px; height: 216px; overflow: hidden; border-radius: var(--lu-radius-tile); background: var(--well); }
+.tile.f { transform: translateY(-4px) scale(var(--lu-scale-poster)); box-shadow: var(--shadow-raised), var(--focus-halo); z-index: 3; }
+.tile.f.card-row { transform: translateY(-4px) scale(1.04); }
+.prog { position: absolute; left: 14px; right: 14px; bottom: 14px; height: 8px; border-radius: 4px; background: rgb(var(--canvas-rgb) / .72); overflow: hidden; }
+.prog i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--lu-accent); border-radius: 4px; }
+.badge { position: absolute; top: 12px; right: 12px; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--overlay-fill); color: var(--lu-ink); border: 1px solid var(--lu-edge); }
+.badge .ic { width: 24px; height: 24px; }
+/* The caption plate: a card's words live on their own surface that arrives under the focused card. */
+.plate { position: absolute; left: 0; right: 0; min-height: 60px; padding: 10px 18px 16px; border-radius: 20px; display: flex; align-items: center; gap: 14px; background: var(--overlay-fill); border: 1px solid var(--lu-edge-raised); box-shadow: var(--highlight-raised), var(--shadow-raised); }
+.plate .t { font-size: var(--f-label); font-weight: 600; line-height: 1.25; letter-spacing: -.005em; }
+.plate .d { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); line-height: 1.3; }
+.plate .grow { flex: 1; min-width: 0; }
+.plate { flex-wrap: wrap; }
+[data-text="200"] .plate .grow { flex-basis: 100%; }
+.cap { position: absolute; padding: 10px 18px 16px; }
+.cap .t { font-size: var(--f-label); font-weight: 600; line-height: 1.25; }
+.cap .d { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); line-height: 1.3; }
+
+/* ---- rows, groups, controls ---------------------------------------------------------- */
+.rows { display: flex; flex-direction: column; }
+.row { flex: none; position: relative; display: flex; align-items: center; gap: 28px; min-height: var(--lu-row); padding: 14px 24px; margin: 0 -24px; border-radius: var(--lu-radius-row); border: 1px solid transparent; color: var(--lu-ink); }
+.row + .row::before, .row + .group + .row::before { content: ""; position: absolute; left: 24px; right: 24px; top: -1px; height: 1px; background: var(--lu-edge); }
+.row.f::before, .row.f + .row::before, .row.h::before, .row.h + .row::before { display: none; }
+.row .lead { width: calc(56px * var(--k)); height: calc(56px * var(--k)); border-radius: 16px; display: grid; place-items: center; background: var(--tile-ink-wash); flex: none; }
+.row .text { flex: 1; min-width: 0; }
+.row .t { font-size: var(--f-body); font-weight: 600; line-height: 1.2; letter-spacing: -.005em; }
+.row .d { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); line-height: 1.3; margin-top: 3px; }
+.row .v { font-size: var(--f-body); font-weight: 500; color: var(--lu-ink-2); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.row .v .ic { color: var(--lu-ink-3); }
+.row[aria-current] { background: var(--selected-wash); }
+.group { font-size: var(--f-cap); font-weight: 600; color: var(--lu-ink-2); letter-spacing: .01em; padding: 22px 0 8px; }
+.group:first-child { padding-top: 4px; }
+.toggle { width: 92px; height: 52px; border-radius: 999px; position: relative; flex: none; background: var(--well); box-shadow: var(--well-inset); }
+.toggle::after { content: ""; position: absolute; top: 5px; left: 5px; width: 42px; height: 42px; border-radius: 50%; background: var(--lu-ink); box-shadow: var(--control-raised); }
+.toggle[aria-checked="true"] { background: color-mix(in srgb, var(--lu-accent) 55%, var(--well)); }
+.toggle[aria-checked="true"]::after { left: 45px; }
+/* the tick sits on the knob in the accent, darkened to 3:1 on the knob (Lucent section 3) */
+.toggle[aria-checked="true"]::before { content: ""; position: absolute; z-index: 1; left: 58px; top: 20px; width: 16px; height: 10px; border-left: 3px solid color-mix(in srgb, var(--lu-accent) 55%, #000); border-bottom: 3px solid color-mix(in srgb, var(--lu-accent) 55%, #000); transform: rotate(-45deg) translate(1px, -2px); }
+.slider { position: relative; width: 420px; height: 52px; display: flex; align-items: center; }
+.slider .track { flex: 1; height: 12px; }
+.slider .track .fill { background: color-mix(in srgb, var(--lu-ink) 60%, var(--well)); }
+.slider .thumb { position: absolute; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: var(--lu-ink); box-shadow: var(--control-raised), 0 2px 6px rgba(0,0,0,.3); }
+.seg { display: inline-flex; gap: 6px; padding: 6px; border-radius: 22px; background: var(--well); box-shadow: var(--well-inset); }
+.seg > span { position: relative; min-height: var(--tgt); min-width: 120px; padding: 0 24px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; border-radius: 16px; font-size: var(--f-label); font-weight: 600; color: var(--lu-ink-2); border: 1px solid transparent; white-space: nowrap; }
+.seg > span[aria-selected="true"] { color: var(--lu-ink); background: var(--raise-fill); border-color: var(--lu-edge-raised); box-shadow: var(--highlight-raised), var(--shadow-pressed); }
+.seg > span.f { background: var(--sheen), var(--raise-fill); box-shadow: var(--highlight-raised), var(--shadow-raised), var(--focus-halo); }
+.seg .ic { width: calc(28px * var(--ts)); height: calc(28px * var(--ts)); }
+.seg .n { color: var(--lu-ink-2); font-weight: 500; }
+
+/* ---- popovers and sheets (level 4): one reading surface, one shadow ------------------------ */
+.menu { padding: 12px; border-radius: var(--lu-radius-card); display: flex; flex-direction: column; gap: 2px; }
+.opt { flex: none; position: relative; display: flex; align-items: center; gap: 20px; min-height: 72px; padding: 8px 22px; border-radius: 18px; font-size: var(--f-body); font-weight: 600; letter-spacing: -.005em; border: 1px solid transparent; color: var(--lu-ink); }
+.opt .ic { width: var(--ic); height: var(--ic); color: var(--lu-ink-2); }
+.opt .grow { flex: 1; min-width: 0; }
+.opt .d { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); line-height: 1.3; margin-top: 2px; }
+.opt .v { font-size: var(--f-label); font-weight: 500; color: var(--lu-ink-2); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.opt .mark { width: var(--ic); height: var(--ic); flex: none; color: var(--lu-accent); }
+.opt .mark.none { visibility: hidden; }
+.opt[aria-checked="true"] { background: var(--selected-wash); }
+.opt.off { color: var(--lu-ink); }
+.opt.off .ic { opacity: .55; }
+.sep { height: 1px; margin: 6px 22px; background: var(--lu-edge); }
+
+/* ---- shared page furniture ----------------------------------------------------------- */
+.pagehead { position: absolute; left: var(--lu-edge-x); display: flex; align-items: center; gap: 20px; }
+.pagehead h1 { margin: 0; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+.pagehead .count { font-size: var(--f-cap); font-weight: 600; color: var(--lu-ink-2); }
+.pointer { position: absolute; width: 44px; height: 44px; z-index: 9; color: #fff; filter: drop-shadow(0 2px 3px rgba(0,0,0,.55)); }
+.pointer svg { width: 44px; height: 44px; fill: #fff; stroke: #17131F; stroke-width: 1.4; }
+.toast { position: absolute; right: var(--lu-edge-x); top: calc(var(--lu-edge-y) + 100px); max-width: 760px; min-height: 80px; padding: 12px 28px 12px 18px; border-radius: 24px; display: flex; align-items: center; gap: 18px; }
+.toast .lead { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--tile-ink-wash); flex: none; }
+.toast .t { font-size: var(--f-label); font-weight: 600; }
+
+/* ---- hero (Home, Detail) ------------------------------------------------------------------ */
+.hero { position: absolute; left: var(--lu-edge-x); display: flex; flex-direction: column; align-items: flex-start; }
+.hero .title { font-size: var(--f-display); font-weight: 500; letter-spacing: -.02em; line-height: 1; margin: 0; }
+.hero .meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; font-size: var(--f-label); font-weight: 500; color: var(--ink-2-art); line-height: 1.3; }
+.hero .meta .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--lu-ink-3); }
+.hero .syn { margin: 0; font-size: var(--f-label); font-weight: 500; line-height: 1.45; color: var(--lu-ink); }
+.hero .actions { display: flex; align-items: center; gap: 16px; }
+.pager { display: flex; align-items: center; gap: 10px; }
+.pager i { width: 10px; height: 10px; border-radius: 5px; background: var(--lu-ink-2); opacity: .7; }
+.pager i.on { width: 32px; background: var(--lu-accent); opacity: 1; }
+[data-theme="light"] .logo { filter: brightness(0) saturate(0); opacity: .9; }

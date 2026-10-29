@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Detail</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  .block { bottom: 392px; width: 820px; gap: 16px; }
+  [data-text="200"] .block { bottom: 120px; width: 1100px; }
+  .block .logo { width: 540px; height: auto; display: block; margin-bottom: 4px; }
+  .chips { display: flex; gap: 12px; flex-wrap: wrap; }
+  .block .syn { max-width: 780px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  [data-text="200"] .block .syn { -webkit-line-clamp: 2; }
+  .block .actions { margin-top: 12px; }
+  .castwrap { position: absolute; left: var(--lu-edge-x); top: 730px; }
+  .castwrap .shelf-title { position: static; margin-bottom: 20px; }
+  .cast { display: flex; gap: 24px; }
+  .person { width: 156px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+  .person .face { width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center; background: var(--tile-ink-wash); color: var(--lu-ink-2); border: 1px solid var(--lu-edge); }
+  .person .face .ic { width: 48px; height: 48px; }
+  .person .n { font-size: var(--f-cap); font-weight: 600; line-height: 1.25; }
+  .person.f .face { transform: translateY(-4px) scale(1.1); box-shadow: var(--shadow-raised), var(--focus-halo); background: var(--raise-fill); }
+</style>
+</head>
+<body data-default="detail">
+<div class="canvas"></div>
+<img class="art" src="art/hero-tears.jpg" alt="">
+<div class="scrim-h"></div><div class="scrim-v"></div>
+
+<nav class="glass crumb" aria-label="Back to Movies">
+  <span class="nav"><span class="hint" data-hint="key-back" data-name="Back"></span>Movies</span>
+</nav>
+
+<div class="hero block">
+  <img class="logo" src="art/logo-tears.png" alt="Tears of Steel">
+  <div class="meta"><span>Movie</span><i class="dot"></i><span>Science Fiction</span><i class="dot"></i><span>2012</span><i class="dot"></i><span>12 min</span></div>
+  <div class="chips">
+    <span class="chip t">1080p</span>
+    <span class="chip t">CC</span>
+    <span class="chip" aria-label="Plays the original file"><i data-ic="monitor-play" class="ic"></i>Direct</span>
+  </div>
+  <p class="syn">In a future Amsterdam overrun by machines, a band of scientists and soldiers gathers in the Oude Kerk to restage one heartbreaking moment from the past, in the hope that changing it will stop the robots before they ever rise.</p>
+  <div class="actions">
+    <span class="btn primary f"><i data-ic="play" class="ic"></i>Resume<span class="sub num">· 4 min left</span></span>
+    <span class="btn icon" role="img" aria-label="Play from start"><i data-ic="rotate-ccw" class="ic"></i></span>
+    <span class="btn icon" role="img" aria-label="Mark as watched"><i data-ic="circle-check" class="ic"></i></span>
+    <span class="btn icon" role="img" aria-label="Add to watchlist"><i data-ic="bookmark" class="ic"></i></span>
+    <span class="btn icon" role="img" aria-label="More"><i data-ic="ellipsis" class="ic"></i></span>
+  </div>
+</div>
+
+<div class="castwrap" data-t200="hide">
+  <div class="shelf-title">Cast</div>
+  <div class="cast">
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Derek de Lint</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Sergio Hasselbaink</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Vanja Rukavina</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Denise Rebergen</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Rogier Schippers</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Jody Bhe</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Mike Pannekoek</span></div>
+    <div class="person"><span class="face"><i data-ic="user" class="ic"></i></span><span class="n">Ian Hubert</span></div>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

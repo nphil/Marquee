@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Kit</title>
+<link rel="stylesheet" href="marquee.css">
+<style>
+  .sheet { left: var(--lu-edge-x); right: var(--lu-edge-x); top: 64px; bottom: 54px; padding: 32px 44px; display: flex; flex-direction: column; }
+  .sheet h1 { margin: 0 0 20px; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; }
+  .grid5 { display: grid; grid-template-columns: 260px repeat(5, 1fr); column-gap: 24px; row-gap: 22px; align-items: center; }
+  .grid5 .colh { font-size: var(--f-cap); font-weight: 600; color: var(--lu-ink-2); }
+  .grid5 .rowh { font-size: var(--f-label); font-weight: 600; }
+  .grid5 .rowh .d { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); margin-top: 2px; }
+  .cellx { position: relative; height: 112px; display: flex; align-items: center; justify-content: center; }
+  .cellx .btn, .cellx .nav { min-width: 150px; }
+  .cellx .row { margin: 0; width: 100%; min-height: 80px; padding: 10px 22px; }
+  .cellx .tile.card { width: 200px; height: 112px; }
+  .cellx.tall { height: 160px; }
+  .cellx .tile.poster { width: 100px; height: 150px; border-radius: 16px; }
+  .legend { display: grid; grid-template-columns: repeat(6, 1fr); gap: 18px 24px; }
+  .gcell { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 8px 22px; border-radius: 22px; background: var(--tile-ink-wash); }
+  .gcell .big { font-size: 84px; display: flex; gap: 8px; }
+  .gcell .big .gl { width: 1em; height: 1em; color: var(--lu-ink); }
+  .gcell .nm { font-size: var(--f-cap); font-weight: 600; text-align: center; line-height: 1.2; }
+  .gcell .us { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); text-align: center; line-height: 1.2; }
+  .compose { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 24px; margin-top: 26px; }
+  .compose .ex { display: flex; align-items: center; gap: 20px; min-height: 80px; padding: 8px 22px; border-radius: 22px; background: var(--tile-ink-wash); }
+  .compose .ex .hint { font-size: var(--f-label); }
+  .compose .ex .a { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); }
+</style>
+</head>
+<body data-default="states">
+<div class="canvas"></div>
+
+<!-- states: every interactive material goes rest, hover (cue), focus (D-pad), pressed, selected -->
+<div class="overlay sheet" data-v="states">
+  <h1>States</h1>
+  <div class="grid5">
+    <span></span><span class="colh">Rest</span><span class="colh">Hover</span><span class="colh">Focus</span><span class="colh">Pressed</span><span class="colh">Selected</span>
+
+    <div class="rowh">Button<div class="d">64 high, one size</div></div>
+    <div class="cellx"><span class="btn">Sort</span></div>
+    <div class="cellx"><span class="btn h">Sort</span></div>
+    <div class="cellx"><span class="btn f">Sort</span></div>
+    <div class="cellx"><span class="btn pr">Sort</span></div>
+    <div class="cellx"><span class="btn" style="background:var(--selected-wash)">Sort</span></div>
+
+    <div class="rowh">Primary<div class="d">one per task</div></div>
+    <div class="cellx"><span class="btn primary">Resume</span></div>
+    <div class="cellx"><span class="btn primary h">Resume</span></div>
+    <div class="cellx"><span class="btn primary f">Resume</span></div>
+    <div class="cellx"><span class="btn primary pr">Resume</span></div>
+    <div class="cellx"></div>
+
+    <div class="rowh">Tab<div class="d">selected ≠ focused</div></div>
+    <div class="cellx"><span class="nav">Movies</span></div>
+    <div class="cellx"><span class="nav h">Movies</span></div>
+    <div class="cellx"><span class="nav f">Movies</span></div>
+    <div class="cellx"><span class="nav pr">Movies</span></div>
+    <div class="cellx"><span class="nav" aria-current="page">Movies</span></div>
+
+    <div class="rowh">Row<div class="d">80 high</div></div>
+    <div class="cellx"><div class="row"><div class="text"><div class="t">Remux</div></div><div class="toggle" aria-checked="true"></div></div></div>
+    <div class="cellx"><div class="row h"><div class="text"><div class="t">Remux</div></div><div class="toggle" aria-checked="true"></div></div></div>
+    <div class="cellx"><div class="row f"><div class="text"><div class="t">Remux</div></div><div class="toggle" aria-checked="true"></div></div></div>
+    <div class="cellx"><div class="row pr"><div class="text"><div class="t">Remux</div></div><div class="toggle" aria-checked="true"></div></div></div>
+    <div class="cellx"><div class="row" aria-current="true"><div class="text"><div class="t">English</div></div><i data-ic="check" class="ic" style="color:var(--lu-accent)"></i></div></div>
+
+    <div class="rowh">Poster<div class="d">pointer shows 30 % of the lit state</div></div>
+    <div class="cellx tall"><div class="tile poster"><img src="art/p-charge.jpg" alt=""></div></div>
+    <div class="cellx tall"><div class="tile poster h"><img src="art/p-charge.jpg" alt=""></div></div>
+    <div class="cellx tall"><div class="tile poster f" style="transform:translateY(-3px) scale(1.12)"><img src="art/p-charge.jpg" alt=""></div></div>
+    <div class="cellx tall"><div class="tile poster pr"><img src="art/p-charge.jpg" alt=""></div></div>
+    <div class="cellx tall"><div class="tile poster"><img src="art/p-charge.jpg" alt=""><span class="badge" style="width:30px;height:30px;top:6px;right:6px" role="img" aria-label="Watched"><i data-ic="check" class="ic" style="width:18px;height:18px"></i></span></div></div>
+  </div>
+</div>
+
+<!-- glyphs: the keys as printed on the Magic Remote, then what they do -->
+<div class="overlay sheet" data-v="glyphs">
+  <h1>Hint glyphs</h1>
+  <div class="legend">
+    <div class="gcell"><div class="big"><span data-hint="key-ok"></span></div><div class="nm">OK</div><div class="us">wheel pressed</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-ok-hold"></span></div><div class="nm">Hold OK</div><div class="us">options</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-up"></span><span data-hint="key-down"></span></div><div class="nm">Up, Down</div><div class="us">move</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-left"></span><span data-hint="key-right"></span></div><div class="nm">Left, Right</div><div class="us">adjust, switch tab</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-back"></span></div><div class="nm">Back</div><div class="us">curved return</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-back hold"></span></div><div class="nm">Hold Back</div><div class="us">close the app</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-home"></span></div><div class="nm">Home</div><div class="us">house</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-menu"></span></div><div class="nm">Menu</div><div class="us">three bars</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-mic"></span></div><div class="nm">Voice key</div><div class="us">search by voice</div></div>
+    <div class="gcell"><div class="big"><span data-hint="key-red"></span><span data-hint="key-green"></span><span data-hint="key-yellow"></span><span data-hint="key-blue"></span></div><div class="nm">Colour keys</div><div class="us">not used yet</div></div>
+    <div class="gcell"><div class="big"><span data-hint="options"></span></div><div class="nm">Options</div><div class="us">item menu</div></div>
+    <div class="gcell"><div class="big"><span data-hint="close"></span></div><div class="nm">Close</div><div class="us">pointer target</div></div>
+  </div>
+  <div class="compose">
+    <div class="ex"><span class="hint" data-hint="key-ok-hold options" data-name="Hold OK, options"></span><span class="a">Home card</span></div>
+    <div class="ex"><span class="hint" data-hint="key-left key-right" data-name="Left and Right, switch tab"></span><span class="a">Track menu</span></div>
+    <div class="ex"><span class="hint" data-hint="key-back hold power" data-name="Hold Back, close the app"></span><span class="a">Language</span></div>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>
