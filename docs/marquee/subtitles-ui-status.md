@@ -2,25 +2,16 @@
 
 ## Resume here
 
-Branch `subtitles-ui` (pushed to origin) holds everything for 0.9.3 on top of the 0.9.2 content. State at
-the last push: all code, tests, docs and the 0.9.3 version bump are committed; `make check-cargo` (lint,
-the full unit suites as user `node`) is green. Left, in order:
+Done: 0.9.3 is squash-merged on `main` (`1e30af01`) and pushed, and the stable ARM ipk
+(`com.beb.plxnative_0.9.3_arm.ipk`, sha256 in `marquee-latest.ipk.sha256`) is staged in
+`/data/home/Marquee-release/`. Nothing is installed on a television. Next, if wanted: Round22 installs it on
+the set and looks at Settings > Subtitles, the Bazarr page and a file with its own styling.
 
-1. Squash-merge `subtitles-ui` into `main` from `/data/home/Marquee` (`git merge --squash subtitles-ui`, one
-   commit), push `main`.
-2. Build the stable ARM ipk from the merged commit: `/tmp/subs-work/arm-build.sh` (cd's to
-   `/data/home/Marquee-subs`; check that tree out detached at the new `main` first; WEBOS_SDK under
-   `/tmp/webos-ndk`, `FLAVOR=stable RELEASE=1`, id `com.beb.plxnative`).
-3. Restage `/data/home/Marquee-release/marquee-latest.ipk` and run
-   `sha256sum marquee-latest.ipk > marquee-latest.ipk.sha256` there. The `__IPK_SHA256__` line in
-   `docs/release-notes/v0.9.3.md` is filled in by the release workflow, not by hand.
-4. Delete the worktrees and build dirs: `/data/home/Marquee-subs2`, `/tmp/subs2-render`, `/tmp/subs2-app`,
-   `/tmp/subs2-sim`, `/tmp/cargo-target-marquee-*`.
-
-Gates that stay red on this host for reasons outside the change: `ci/test_build_gc.py`,
-`ci/test_disk_budget.py`, `ci/test_disk_preflight.py` (they read this machine's free-disk state),
-`ci/test_test_fast.py` and `ci/test_managed_targets.py` fail only when `rust-modules/target*` are symlinks
-(they are real directories in the final run).
+Gates that stayed red on the build host for reasons outside the change: `ci/test_build_gc.py`,
+`ci/test_disk_budget.py` and `ci/test_disk_preflight.py` read the machine's free-disk state, and
+`ci/test_build_not_always_dirty.py::test_script_stamp_only_for_this_package` rewrites a file twice inside one
+filesystem timestamp tick. `tests/test_link_conditioner.py` passes alone and fails when the host is loaded.
+Everything else of `make check` ran green as user `node`.
 
 ## What was built
 
