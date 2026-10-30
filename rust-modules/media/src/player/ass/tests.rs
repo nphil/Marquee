@@ -72,6 +72,7 @@ fn request_key(source: &Source) -> Key {
         height: 180,
         storage_width: 320,
         storage_height: 180,
+        mine: None,
     }
 }
 
@@ -225,6 +226,7 @@ fn job(source: &Arc<Source>, now_ms: i64, width: i32, height: i32, storage_width
             height,
             storage_width,
             storage_height,
+            mine: None,
         },
         now_ms,
         seq: 1,
@@ -603,6 +605,7 @@ fn native_key() -> Key {
         height: 180,
         storage_width: 320,
         storage_height: 180,
+        mine: None,
     }
 }
 
@@ -666,10 +669,10 @@ fn faces_script(lines: &str) -> String {
 
 #[test]
 #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
-fn native_the_facade_is_abi_four() {
+fn native_the_facade_is_abi_five() {
     assert!(native_ass::load(Some(asset_dir())).ok());
-    assert_eq!(unsafe { plx_ass_abi_version() }, 4);
-    assert_eq!(NATIVE_ABI, 4);
+    assert_eq!(unsafe { plx_ass_abi_version() }, 5);
+    assert_eq!(NATIVE_ABI, 5);
 }
 
 /// The bundled libass was built without libunibreak until the ABI 3 bump, so a CJK line with no
@@ -1208,7 +1211,7 @@ fn track(header: &str, events: &[(i64, i64, &str)]) -> Arc<Source> {
 }
 
 fn style(size: SubtitleSize, position: SubtitlePosition) -> TextStyle {
-    TextStyle { size, position }
+    TextStyle::picks(size, position)
 }
 
 /// Render a Text-origin source into the full logical screen, as the screen asks for it.
@@ -1648,4 +1651,46 @@ fn a_changed_offset_on_a_paused_playhead_publishes_the_frame_of_the_new_clock() 
         let published = mailbox.published.as_ref().map(|p| p.validity).expect("published");
         assert!(published.contains(clock), "clock {clock}: the frame on screen covers {published:?} ({:?})", shown.serial);
     }
+}
+
+/// How many pixels of `frame` inside `area` (`x0, y0, x1, y1`) satisfy `want`.
+fn pixels_where(frame: &Frame, area: (i32, i32, i32, i32), want: impl Fn([u8; 4]) -> bool) -> usize {
+    let mut n = 0;
+    for y in area.1..area.3 {
+        for x in area.0..area.2 {
+            if want(pixel(frame, x, y)) {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// "Use my look" on an authored script: the viewer's colours replace the script's on events that are
+/// not explicitly placed, and a positioned event (a sign) keeps its own.
+#[test]
+#[ignore = "requires the pinned native host libass artifact and packaged fonts"]
+fn native_use_my_look_restyles_dialogue_and_leaves_a_placed_sign_alone() {
+    let mut engine = Engine::default();
+    let source = script(
+        "Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,HHHH\n\
+         Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{\\an7\\pos(160,120)}HHHH\n",
+    );
+    let (dialogue, sign) = ((0, 0, 150, 60), (150, 110, 320, 180));
+    let green = |p: [u8; 4]| p[3] > 200 && p[1] > 200 && p[0] < 60 && p[2] < 60;
+    let light = |p: [u8; 4]| p[3] > 200 && p[0] > 150 && p[1] > 150 && p[2] > 150;
+    let kept = render(&mut engine, &source, 500);
+    assert!(pixels_where(&kept, dialogue, green) > 0 && pixels_where(&kept, dialogue, light) == 0, "as authored");
+    assert!(pixels_where(&kept, sign, green) > 0);
+
+    let mut mine = job(&source, 500, 320, 180, 320, 180);
+    mine.key.mine = Some(crate::player::text_style::TextStyle::default());
+    let styled = engine.render(&mine).frame;
+    assert_eq!(styled.error, None);
+    assert!(pixels_where(&styled, dialogue, light) > 0, "the dialogue wears the viewer's white");
+    assert_eq!(pixels_where(&styled, dialogue, green), 0, "and none of the script's green");
+    assert!(pixels_where(&styled, sign, green) > 0, "a positioned event keeps the script's look");
+
+    let back = engine.render(&job(&source, 500, 320, 180, 320, 180)).frame;
+    assert!(pixels_where(&back, dialogue, green) > 0, "turning it off restores the script");
 }

@@ -3,7 +3,9 @@
 //! Authored placement is retained even while the transport HUD is visible; a text subtitle's
 //! bottom-anchored regions rise clear of it (plan `libass-text-subs` §2.4).
 use plx_media::player::{
-    ass, ass_source, sidecar,
+    ass, ass_source, blend,
+    paint::{self, Band, Placement},
+    sidecar,
     text_style::{self, HudBand},
     video_geometry::Viewport,
 };
@@ -11,7 +13,26 @@ use plx_ui::{
     consts::{SCR_H, SCR_W},
     Painter, Rect,
 };
+use plx_plex::plex::session::AssMode;
 use std::sync::Arc;
+
+/// Where a frame's pixels land on the screen: `x`, `y` the origin and `s` the scale. The player draws
+/// them one to one ([`Mapping::SCREEN`]); the Settings preview draws the whole 1920 by 1080 frame
+/// scaled into its picture, so its caption is placed, spaced and boxed by the player's own arithmetic.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mapping {
+    pub x: f32,
+    pub y: f32,
+    pub s: f32,
+}
+
+impl Mapping {
+    pub const SCREEN: Mapping = Mapping { x: 0.0, y: 0.0, s: 1.0 };
+
+    fn rect(self, x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::new(self.x + x * self.s, self.y + y * self.s, w * self.s, h * self.s)
+    }
+}
 
 #[derive(Default)]
 pub struct AssSubtitles {
@@ -31,6 +52,16 @@ pub struct AssSubtitles {
     /// Reused each draw so the 60 fps path allocates nothing.
     spans: Vec<(i32, i32)>,
     dys: Vec<f32>,
+    /// The lines of ink of the frame with serial `bands_serial`, found only while the look draws a
+    /// box (`paint::line_bands`).
+    bands: Vec<Band>,
+    bands_serial: u64,
+    /// The frame clock of the last `update`/`preview`, which the Blend follower eases by.
+    now: u32,
+    follower: blend::Follower,
+    /// What is known of the picture behind the caption (`blend::Scene`): the HDR flag from the
+    /// player, the luma only when a preview knows it.
+    scene: blend::Scene,
 }
 
 /// Every class present: the rule for a frame whose own classes are not known. It never lifts a
@@ -38,7 +69,9 @@ pub struct AssSubtitles {
 const UNKNOWN_ALIGNS: ass::AlignSet = ass::AlignSet { bottom: true, middle: true, top: true };
 
 impl AssSubtitles {
-    pub fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32) {
+    pub fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, source_hdr: bool) {
+        self.now = now;
+        self.scene = blend::Scene { luma: None, hdr: source_hdr };
         let source = if plx_media::route::subtitles_burned(ps) || plx_media::player::loading(ps) {
             None
         } else {
@@ -65,26 +98,68 @@ impl AssSubtitles {
             plx_media::player::is_playing(ps),
         );
         let clock = clock.saturating_sub(plx_media::player::subtitle_offset_ms());
-        let (viewport, (coded_w, coded_h)) = frame_geometry(
+        let (viewport, coded) = frame_geometry(
             source.origin,
             plx_media::player::video_viewport(SCR_W as i32, SCR_H as i32),
             plx_media::player::video_raster(),
         );
+        // A script with its own styling is drawn in the viewer's look when they asked for that.
+        let mine = (!source.origin.is_text() && plx_media::route::subtitle_look().ass == AssMode::Mine)
+            .then(text_style::TextStyle::current);
+        self.follow(source, clock, viewport, coded, mine);
+    }
+
+    /// **The Settings preview's entry**: show `source` at `clock` ms over a picture whose luma is
+    /// `luma`. The frame is rendered for the whole logical screen (`viewport`, as the player does for a
+    /// text subtitle) and nothing is drawn until [`AssSubtitles::draw_look`], which scales it into the
+    /// preview's picture ([`Mapping`]): the preview is the real renderer with the player's own
+    /// geometry, line pitch and placement.
+    pub fn preview(
+        &mut self,
+        source: Arc<ass::Source>,
+        clock: i64,
+        viewport: Viewport,
+        luma: f32,
+        now: u32,
+        mine: Option<text_style::TextStyle>,
+    ) {
+        self.now = now;
+        self.scene = blend::Scene { luma: Some(luma), hdr: false };
+        if self.source != source.id {
+            self.source = source.id;
+            self.frame = None;
+            self.aligns = None;
+        }
+        self.follow(source, clock, viewport, (viewport.width, viewport.height), mine);
+    }
+
+    fn follow(
+        &mut self,
+        source: Arc<ass::Source>,
+        clock: i64,
+        viewport: Viewport,
+        coded: (i32, i32),
+        mine: Option<text_style::TextStyle>,
+    ) {
         if self.viewport != viewport {
             self.viewport = viewport;
             self.frame = None;
         }
         let origin = source.origin;
-        if let Some(frame) =
-            ass::request(source, clock, viewport.width, viewport.height, coded_w, coded_h)
-        {
+        if let Some(frame) = ass::request_styled(source, clock, viewport.width, viewport.height, coded.0, coded.1, mine) {
             self.frame = Some(frame);
             self.frame_origin = origin;
         }
     }
 
+    /// What the player's frame-fingerprint reads: the frame's serial, so a cue appearing owes a
+    /// frame; the live look's painted half, so a colour, opacity, box, shadow or nudge change
+    /// owes one too; and the clock while Blend with video is still easing toward its level.
     pub fn fingerprint(&self) -> u64 {
-        self.frame.as_ref().map_or(0, |f| f.serial)
+        let serial = self.frame.as_ref().map_or(0, |f| f.serial);
+        let look = plx_media::route::subtitle_look();
+        let easing = u64::from(look.blend && !self.follower.settled()) * u64::from(self.now);
+        serial.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ look.stamp() ^ easing
     }
 
     /// Present a frame with `serial` and no regions, as the worker's answer to a cue change would:
@@ -106,6 +181,26 @@ impl AssSubtitles {
     /// and nothing else: an authored script keeps its own placement. `model` is the frame's HUD
     /// snapshot, which the caption ink's tone is read from.
     pub fn draw(&mut self, lift: bool, band: HudBand, model: &plx_appkit::player_hud::model::HudModel) {
+        self.draw_ink(lift, band, plx_appkit::player_hud::subtitle_ink(model));
+    }
+
+    /// [`AssSubtitles::draw`] with the tone ladder's tint (`base_ink`) given directly: what the
+    /// Settings preview draws with.
+    pub fn draw_ink(&mut self, lift: bool, band: HudBand, base_ink: [f32; 4]) {
+        self.draw_look(lift, band, base_ink, &plx_media::route::subtitle_look(), Mapping::SCREEN);
+    }
+
+    /// [`AssSubtitles::draw_ink`] with the look given directly rather than read from the live
+    /// setting: the Settings preview draws the look its rows show, which is the pick the viewer has
+    /// just made and not yet the stored one.
+    pub fn draw_look(
+        &mut self,
+        lift: bool,
+        band: HudBand,
+        base_ink: [f32; 4],
+        look: &plx_plex::plex::session::SubtitleLook,
+        map: Mapping,
+    ) {
         let Some(frame) = self.frame.clone() else {
             if self.source == 0 {
                 clear_textures(&mut self.textures);
@@ -152,20 +247,62 @@ impl AssSubtitles {
             });
         }
         let origin = self.frame_origin;
-        let aligns = if lift && origin.is_text() {
+        let text_frame = origin.is_text();
+        // A look the viewer asked to apply to authored scripts too (`Mine`) paints like a text frame.
+        let styled = text_frame || look.ass == AssMode::Mine;
+        let placement = if text_frame { Placement::of(look) } else { Placement::DEFAULT };
+        let aligns = if (lift || placement != Placement::DEFAULT) && text_frame {
             aligns_for(&mut self.aligns, frame.serial, || ass::published_aligns(frame.serial))
         } else {
             UNKNOWN_ALIGNS
         };
         self.spans.clear();
         self.spans.extend(frame.rects.iter().map(|r| (r.y, r.height)));
-        lift_dys(origin, lift, band, &self.spans, aligns, &mut self.dys);
-        let ink = plx_appkit::player_hud::subtitle_ink(model);
+        place_dys(origin, lift, band, &self.spans, aligns, placement, &mut self.dys);
+        let level = if look.blend && styled { self.follower.level(self.now, self.scene) } else { 1.0 };
+        let ink = paint::compose_ink(base_ink, look, styled, level);
+        let k = if text_frame { self.viewport.width as f32 / SCR_W } else { 1.0 };
+        if styled && look.has_back() {
+            if self.bands_serial != frame.serial {
+                self.bands = paint::line_bands(&frame.rects, ((4.0 * k).round() as i32).max(1));
+                self.bands_serial = frame.serial;
+            }
+            let [r, g, b] = [(look.back_color >> 16) & 0xFF, (look.back_color >> 8) & 0xFF, look.back_color & 0xFF].map(|c| c as f32 / 255.0);
+            let fill = [r, g, b, f32::from(look.back_opacity) / 100.0];
+            for bx in paint::boxes(&self.bands, look, k) {
+                let dy = self.dys.get(bx.region).copied().unwrap_or(0.0);
+                let radius = bx.radius * map.s;
+                Painter::root().rrect(
+                    map.rect((self.viewport.x as f32) + bx.x, (self.viewport.y as f32) + bx.y + dy, bx.w, bx.h),
+                    radius,
+                    radius,
+                    fill,
+                );
+            }
+        }
+        if styled && paint::wants_soft_shadow(look) {
+            for tap in paint::soft_taps(look.edge_w, k) {
+                for (i, (texture, rect)) in self.textures.iter().zip(&frame.rects).enumerate() {
+                    let dy = self.dys[i];
+                    Painter::root().tex(
+                        texture.id,
+                        map.rect(
+                            (self.viewport.x + rect.x) as f32 + tap.dx,
+                            (self.viewport.y + rect.y) as f32 + dy + tap.dy,
+                            rect.width as f32,
+                            rect.height as f32,
+                        ),
+                        0.0,
+                        [0.0, 0.0, 0.0, tap.alpha],
+                    );
+                }
+            }
+        }
         for (i, (texture, rect)) in self.textures.iter().zip(&frame.rects).enumerate() {
             let dy = self.dys[i];
             Painter::root().tex(
                 texture.id,
-                Rect::new(
+                map.rect(
                     (self.viewport.x + rect.x) as f32,
                     (self.viewport.y + rect.y) as f32 + dy,
                     rect.width as f32,
@@ -177,6 +314,12 @@ impl AssSubtitles {
         }
     }
 
+    /// Is the Blend follower still easing toward its level? The preview keeps repainting until it is
+    /// not (the player's fingerprint reads the same fact).
+    pub fn easing(&self) -> bool {
+        !self.follower.settled()
+    }
+
     pub fn error(&self) -> Option<&'static str> {
         self.frame.as_ref().and_then(|f| f.error).map(plx_media::player::ass::Fault::message)
     }
@@ -186,6 +329,9 @@ impl AssSubtitles {
         self.uploaded = 0;
         self.frame = None;
         self.aligns = None;
+        self.bands.clear();
+        self.bands_serial = 0;
+        self.follower.reset();
         self.source = 0;
         ass::clear();
     }
@@ -224,6 +370,7 @@ fn frame_geometry(
 ///   (a block whose lines are separate regions) joins it.
 ///
 /// The moved group is clamped once so its top stays on the screen.
+#[cfg(test)]
 fn lift_dys(
     origin: ass::Origin,
     lift: bool,
@@ -232,10 +379,26 @@ fn lift_dys(
     aligns: ass::AlignSet,
     dys: &mut Vec<f32>,
 ) {
+    place_dys(origin, lift, band, regions, aligns, Placement::DEFAULT, dys)
+}
+
+/// [`lift_dys`] for the viewer's [`Placement`]: the same moving group (the bottom cues), moved by
+/// the HUD's lift and the look's nudge when it hangs from the bottom, or taken to the top margin
+/// when it hangs from the top (`paint::rise` is the arithmetic). The default placement with the HUD
+/// down moves nothing, exactly as before; the group stays inside the screen and its safe margin.
+fn place_dys(
+    origin: ass::Origin,
+    lift: bool,
+    band: HudBand,
+    regions: &[(i32, i32)],
+    aligns: ass::AlignSet,
+    placement: Placement,
+    dys: &mut Vec<f32>,
+) {
     dys.clear();
     dys.resize(regions.len(), 0.0);
     let ass::Origin::Text(style) = origin else { return };
-    if !lift || !aligns.bottom {
+    if !aligns.bottom || (!lift && placement == Placement::DEFAULT) {
         return;
     }
     let pitch = text_style::CAPTION_LINE_PITCH * style.scale();
@@ -271,9 +434,10 @@ fn lift_dys(
         dys.fill(-1.0);
     }
     let Some(top) = moving_top(regions, dys) else { return };
-    let lift = band.lift.min(top.max(0) as f32);
+    let bottom = regions.iter().zip(dys.iter()).filter(|(_, d)| **d != 0.0).map(|(r, _)| r.0 + r.1).max().unwrap_or(top);
+    let up = paint::rise(top as f32, bottom as f32, if lift { band.lift } else { 0.0 }, placement);
     for dy in dys.iter_mut().filter(|d| **d != 0.0) {
-        *dy = -lift;
+        *dy = -up;
     }
 }
 
@@ -373,7 +537,7 @@ mod tests {
     }
 
     fn style(size: SubtitleSize, position: SubtitlePosition) -> TextStyle {
-        TextStyle { size, position }
+        TextStyle::picks(size, position)
     }
 
     /// A one-line region whose bottom edge sits on the style's bottom anchor, `extra` px below

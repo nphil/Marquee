@@ -36,6 +36,10 @@ pub mod collections;
 /// Agent-backed subtitle search & download. `docs/pms-api.md` §8 is the verified contract; the
 /// bundled OpenAPI spec is wrong about this endpoint and must not be read as authority for it.
 pub mod subtitles;
+/// Bazarr's HTTP API (Settings > Integrations > Bazarr, the player's "Wrong subtitles?"): find the
+/// playing item, search the providers, download a pick. A third-party service the viewer runs, so
+/// it is reached by the address they typed, with the key they typed, and nothing else.
+pub mod bazarr;
 /// The PMS server-sent-event notification feed: the SSE parser, the lenient `playing` models and
 /// the one-connection client. `docs/pms-api.md` §9; the data layer decides when to connect.
 pub mod notify;

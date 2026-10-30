@@ -29,6 +29,8 @@ fn base_root_inputs() -> RootInputs {
         auto_sign_in: false, trailer_autoplay: true, resolution: UiResolution::Auto, resolution_offered: true,
         language: plx_platform::i18n::Preference::System,
         under_posters: plx_plex::plex::session::UnderPosters::DEFAULT, plaintext: Vec::new(),
+        subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
+        bazarr: plx_plex::plex::session::BazarrLink::default(),
     }
 }
 
@@ -73,6 +75,12 @@ fn every_settings_row_fits_its_column_in_every_language() {
             overflowing_root(&format!("{tag} resolution={resolution:?}"),
                 &RootInputs { resolution, ..base_root_inputs() }, &mut out);
         }
+        for preset in plx_plex::plex::session::LookPreset::PICKER {
+            overflowing_root(&format!("{tag} subtitle preset={preset:?}"),
+                &RootInputs { subtitle_preset: preset, ..base_root_inputs() }, &mut out);
+        }
+        overflowing_root(&format!("{tag} bazarr set"), &RootInputs { bazarr: plx_plex::plex::session::BazarrLink {
+            url: "https://bazarr.nateshome.net:6767".into(), api_key: "k".into() }, ..base_root_inputs() }, &mut out);
         for &library_count in &[0i64, 1, 88] {
             overflowing_root(&format!("{tag} library_count={library_count}"),
                 &RootInputs { library_count, ..base_root_inputs() }, &mut out);

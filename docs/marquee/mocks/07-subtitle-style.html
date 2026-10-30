@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Subtitle style</title>
+<link rel="stylesheet" href="marquee.css">
+<link rel="stylesheet" href="subs.css">
+</head>
+<body data-default="main">
+<div class="canvas"></div>
+
+<nav class="glass crumb" aria-label="Back to Settings">
+  <span class="nav"><span class="hint" data-hint="key-back" data-name="Back"></span>Settings</span>
+</nav>
+<h1 class="phead">Subtitles</h1>
+
+<!-- The live preview: the real renderer draws this over a sample frame (here CSS stands in for it). Marked data-behind so the
+     text checks, which are for interface words, skip the picture; the picture's own contrast is judged by the preset (section 5 of design). -->
+<figure class="pv" data-behind="1" data-v="main presets edges position">
+  <img class="frame" src="art/video-tears.jpg" alt="">
+  <span class="tag"><i data-ic="eye" class="ic"></i>Sample 1 of 5 · Accents</span>
+  <div class="cue bot e-soft" style="--sz:36;--wt:600;--col:rgba(238,236,246,.9);--off:100"><span class="ln">Café au lait, naïve façade,</span><span class="ln">Zoë’s smörgåsbord costs €5½.</span></div>
+</figure>
+<figure class="pv" data-behind="1" data-v="night">
+  <img class="frame" src="art/hero-sintel.jpg" alt="">
+  <span class="tag"><i data-ic="moon" class="ic"></i>Sample 1 of 5 · Accents · Night</span>
+  <div class="cue bot e-soft" style="--sz:36;--wt:600;--col:rgba(206,203,218,.86);--off:100"><span class="ln">Café au lait, naïve façade,</span><span class="ln">Zoë’s smörgåsbord costs €5½.</span></div>
+</figure>
+<figure class="pv" data-behind="1" data-v="cjk">
+  <img class="frame" src="art/video-tears.jpg" alt="">
+  <span class="tag"><i data-ic="eye" class="ic"></i>Sample 2 of 5 · Japanese, Korean, Chinese</span>
+  <div class="cue bot box" style="--sz:36;--wt:700;--col:#fff;--bo:.75;--rad:0;--off:100"><span class="ln">今日はいい天気ですね。</span><span class="ln">오늘 날씨가 정말 좋네요 · 你好吗？</span></div>
+</figure>
+<figure class="pv" data-behind="1" data-v="rtl">
+  <img class="frame" src="art/video-tears.jpg" alt="">
+  <span class="tag"><i data-ic="eye" class="ic"></i>Sample 3 of 5 · Arabic and Hebrew</span>
+  <div class="cue bot e-outline" style="--sz:54;--wt:700;--col:#fff;--ew:2;--off:100"><span class="ln" dir="rtl">مرحبا بالعالم، كيف حالك؟</span><span class="ln" dir="rtl">שלום עולם, מה שלומך?</span></div>
+</figure>
+<figure class="pv" data-behind="1" data-v="symbols">
+  <img class="frame" src="art/video-tears.jpg" alt="">
+  <span class="tag"><i data-ic="eye" class="ic"></i>Sample 4 of 5 · Notes, symbols, emoji</span>
+  <div class="cue bot e-drop legible" style="--sz:36;--wt:700;--col:#fff;--ew:2;--off:100"><span class="ln">♪ Hit the road, Jack ♪</span><span class="ln">It’s 50° ★★★★☆ — 😀 🔥 © ½</span></div>
+</figure>
+<figure class="pv" data-behind="1" data-v="reveal">
+  <img class="frame" src="art/video-tears.jpg" alt="">
+  <span class="tag"><i data-ic="eye" class="ic"></i>Sample 5 of 5 · Italics</span>
+  <div class="cue bot e-soft" style="--sz:36;--wt:600;--col:rgba(238,236,246,.92);--off:100"><span class="ln"><span class="w"><i>He</i></span> <span class="w"><i>whispers:</i></span> <span class="w">“Don’t</span> <span class="w off">go</span> <span class="w off">out</span> <span class="w off">there.”</span></span><span class="ln w off">— <b>Bold</b> and <i>italic</i> and plain</span></div>
+</figure>
+
+<!-- what the selected preset is, and where it comes from -->
+<section class="glass about" data-v="main night presets">
+  <div class="hd">Blend with video<span class="chip rec"><i data-ic="sparkles" class="ic"></i>Recommended</span></div>
+  <p>Soft, slightly translucent text with a diffuse shadow. It eases toward the scene’s brightness and stays below HDR peak, so it is easy to read and never glares.</p>
+  <p class="ref">Modelled on Apple TV’s default subtitles and Infuse’s softened HDR white.</p>
+</section>
+<section class="glass about" data-v="cjk edges">
+  <div class="hd">Classic</div>
+  <p>White text on a black box, square corners: the look of broadcast closed captions.</p>
+  <p class="ref">Modelled on Apple’s Classic style and the CEA-708 default.</p>
+</section>
+<section class="glass about" data-v="rtl position">
+  <div class="hd">Outline</div>
+  <p>White text with a thick black outline, no box. The most readable choice over bright or busy pictures.</p>
+  <p class="ref">Modelled on Apple’s Outline Text style and VLC.</p>
+</section>
+<section class="glass about" data-v="symbols">
+  <div class="hd">Netflix</div>
+  <p>White text with a hard drop shadow and no box.</p>
+  <p class="ref">Modelled on Netflix’s Drop shadow edge.</p>
+</section>
+<section class="glass about" data-v="reveal">
+  <div class="hd">Blend with video</div>
+  <p>Reveal as spoken shows each word as it is said, estimated from the cue’s timing. Karaoke timing in a file is used exactly.</p>
+  <p class="ref">Estimated, not aligned to the audio.</p>
+</section>
+
+<!-- the settings list: one row is one decision. Left and Right change a value; OK opens a list -->
+<main class="glass pane" data-v="main night">
+  <div class="rows" id="rowsA"></div><div class="sbar"><i></i></div>
+</main>
+<main class="glass pane" data-v="cjk edges">
+  <div class="rows" id="rowsB"></div><div class="sbar"><i style="top:34%"></i></div>
+</main>
+<main class="glass pane" data-v="rtl position symbols reveal">
+  <div class="rows" id="rowsC"></div><div class="sbar"><i style="top:60%"></i></div>
+</main>
+
+<!-- the preset list: focusing a preset previews it on the left; OK applies it -->
+<div class="overlay sheetp" data-v="presets" role="listbox" aria-label="Preset">
+  <div class="head"><span>Preset</span><span class="hint" data-hint="key-up key-down" data-name="Preview"></span></div>
+  <div class="opt f" role="option" aria-checked="true"><i data-ic="check" class="mark"></i><span class="grow"><span class="nm">Blend with video<i data-ic="sparkles" class="ic rec-ic"></i></span><div class="d">Soft, translucent, follows the scene</div></span></div>
+  <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Apple TV<div class="d">White with a soft shadow</div></span></div>
+  <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Classic<div class="d">White on a black box</div></span></div>
+  <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Netflix<div class="d">White with a drop shadow</div></span></div>
+  <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Outline<div class="d">White, thick black outline</div></span></div>
+  <div class="opt" role="option" data-t200="hide"><i data-ic="check" class="mark none"></i><span class="grow">Large print<div class="d">Bigger, bolder, outlined</div></span></div>
+  <div class="opt" role="option" data-t200="hide"><i data-ic="check" class="mark none"></i><span class="grow">High contrast<div class="d">Yellow with a black outline</div></span></div>
+  <div class="opt" role="option" data-t200="hide"><i data-ic="check" class="mark none"></i><span class="grow">Marquee<div class="d">Inter Bold, white, thin outline</div></span></div>
+</div>
+
+<script src="icons.js"></script>
+<script src="icons-subs.js"></script>
+<script>
+/* a row is a title, an optional description, and one value widget */
+const ic = (n) => `<i data-ic="${n}" class="ic"></i>`;
+const step = (v) => `<span class="step">${ic('chevron-left')}<b>${v}</b>${ic('chevron-right')}</span>`;
+const slider = (pct, txt) => `<div class="slider"><div class="track"><div class="fill" style="width:${pct}%"></div></div><i class="thumb" style="left:${pct}%"></i></div><span class="val num">${txt}</span>`;
+const sw = (cols, on) => `<span class="sw">${cols.map((c, i) => `<i style="--c:${c}" class="${i === on ? 'on' : ''}"></i>`).join('')}</span>`;
+const toggle = (on) => `<div class="toggle" aria-checked="${on}"></div>`;
+const row = (t, w, o = {}) => `<div class="row${o.f ? ' f' : ''}${o.off ? ' off' : ''}"${o.t200 ? ` data-t200="${o.t200}"` : ''}><div class="text"><div class="t">${t}</div>${o.d ? `<div class="d">${o.d}</div>` : ''}</div>${w}</div>`;
+const grp = (t, o = '') => `<div class="group"${o ? ` data-t200="${o}"` : ''}>${t}</div>`;
+const val = (v, chev = true) => `<div class="v">${v}${chev ? ic('chevron-right') : ''}</div>`;
+const whites = ['#FFFFFF', '#E8E4F0', '#FFE680', '#7FE3F0', '#9EE493', '#FFA3C4'];
+
+document.getElementById('rowsA').innerHTML = [
+  grp('Look'),
+  row('Preset', val('Blend with video')),
+  row('Sample text', step('Accents')),
+  row('Sample scene', step('Daylight'), { t200: 'hide' }),
+  grp('Text'),
+  row('Font', step('Default')),
+  row('Size', slider(36, '100%'), { f: true }),
+  row('Colour', sw(whites, 1), { t200: 'hide' }),
+  row('Opacity', slider(88, '90%'), { t200: 'hide' }),
+  row('Bold', toggle(true), { t200: 'hide' }),
+].join('');
+
+document.getElementById('rowsB').innerHTML = [
+  grp('Edge'),
+  row('Edge style', step('Soft shadow')),
+  row('Edge width', slider(40, '2 px'), { f: true }),
+  grp('Background'),
+  row('Background', step('Box')),
+  row('Opacity', slider(75, '75%')),
+  row('Rounded corners', slider(0, 'Square')),
+  row('Padding', slider(30, '6 px'), { t200: 'hide' }),
+  row('Colour', sw(['#000000', '#1A1626', '#2B2740', '#3A1F1F'], 0), { t200: 'hide' }),
+].join('');
+
+document.getElementById('rowsC').innerHTML = [
+  grp('Position'),
+  row('Position', step('Bottom')),
+  row('Edge distance', slider(20, '100 px'), { f: true }),
+  row('Line spacing', slider(40, '100%'), { t200: 'hide' }),
+  grp('Behaviour'),
+  row('Blend with video', toggle(true), { d: 'Eases to the scene’s brightness, below HDR peak', t200: 'hide' }),
+  row('Reveal as spoken', step('Off')),
+  row('Styled subtitles', step('Keep the file’s look'), { t200: 'hide' }),
+  row('Reset to preset', `<div class="v">${ic('undo-2')}</div>`, { t200: 'hide' }),
+].join('');
+</script>
+<script src="mock.js"></script>
+</body>
+</html>

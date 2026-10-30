@@ -468,12 +468,12 @@ fn a_real_push_seats_the_new_page_fresh_and_a_pop_restores_the_row_that_opened_i
     );
 
     // Mounting the surface already seats row 0 (its own `Enter::Fresh`); three real DOWNs
-    // move focus — and the engine's remembered cursor for `(id, GroupId(0))` — to row 3.
-    for i in 1..=3u32 {
+    // move focus — and the engine's remembered cursor for `(id, GroupId(0))` — to row 4.
+    for i in 1..=4u32 {
         frame(&mut d, &mut rig, 16 * i, vec![key(Key::Down, tick(16 * i))]);
     }
     let legal_row = d.focus().expect("a row is focused after a real DOWN");
-    assert_eq!(legal_row.elem, root_key(RootId::Legal), "the third DOWN is Legal notices in the signed-out fixture");
+    assert_eq!(legal_row.elem, root_key(RootId::Legal), "the fourth DOWN is Legal notices in the signed-out fixture");
 
     frame(&mut d, &mut rig, 64, vec![key(Key::Ok, tick(64))]);
     assert!(
@@ -690,10 +690,10 @@ fn audio_subtitles_pushed_from_the_root_seats_its_first_row_when_rows_land() {
     plx_plex::plex::session::publish_profile_for_test(Some(user.clone()), 72);
     let (request, snapshot) = PreferenceRequest::fixture_for_test(user, 72, AudioPreferences::default());
     let (mut d, mut rig, id) = opened();
-    // Audio & Subtitles is the signed-in root's fourth row (Favorite libraries, Under posters,
-    // Video & playback, Audio & subtitles): walk DOWN three times.
+    // Audio & Subtitles is the signed-in root's fifth row (Favorite libraries, Under posters,
+    // Video & playback, Subtitles, Audio & subtitles): walk DOWN four times.
     let mut ms = 32;
-    for _ in 0..3 {
+    for _ in 0..4 {
         frame(&mut d, &mut rig, ms, vec![key(Key::Down, tick(ms))]);
         ms += 16;
     }

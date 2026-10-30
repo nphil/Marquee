@@ -1,0 +1,267 @@
+{
+  "subtitles.title": {
+    "value": "Subtitles",
+    "description": "Settings > Subtitles page. Page title and the Settings root row for the subtitle look."
+  },
+  "subtitles.detail": {
+    "value": "How subtitles look.",
+    "description": "Settings > Subtitles page. Detail line under the Subtitles row on the Settings root. One short sentence."
+  },
+  "subtitles.about_blend": {
+    "value": "Soft, slightly translucent text with a diffuse shadow. It eases toward the scene's brightness and stays below HDR peak.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Blend with video preset is the look. Two short sentences."
+  },
+  "subtitles.about_apple_tv": {
+    "value": "White text with a soft shadow, modelled on Apple TV's default look.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Apple TV preset is the look. Apple TV is a brand name."
+  },
+  "subtitles.about_classic": {
+    "value": "White text on a black box, square corners: the look of broadcast closed captions.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Classic preset is the look."
+  },
+  "subtitles.about_netflix": {
+    "value": "White text with a hard drop shadow and no box.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Netflix preset is the look. Netflix is a brand name."
+  },
+  "subtitles.about_outline": {
+    "value": "White text with a thick black outline, no box. The most readable choice over bright or busy pictures.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Outline preset is the look."
+  },
+  "subtitles.about_large_print": {
+    "value": "Bigger, bolder text with an outline, for reading from far away.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Large print preset is the look."
+  },
+  "subtitles.about_high_contrast": {
+    "value": "Yellow text with a black outline on a dark box, for the most contrast.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the High contrast preset is the look."
+  },
+  "subtitles.about_marquee": {
+    "value": "Inter Bold, white, with a thin outline: Marquee's own look.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the Marquee preset is the look. Inter is a typeface name; Marquee is the app name."
+  },
+  "subtitles.about_custom": {
+    "value": "Your own mix of settings. Pick a preset to start over.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the look matches no preset."
+  },
+  "subtitles.group_look": {
+    "value": "Look",
+    "description": "Settings > Subtitles page. Section heading on the Settings > Subtitles page. The preset and the sample shown."
+  },
+  "subtitles.group_text": {
+    "value": "Text",
+    "description": "Settings > Subtitles page. Section heading on the Settings > Subtitles page. Font, size, colour, opacity, weight."
+  },
+  "subtitles.group_edge": {
+    "value": "Edge",
+    "description": "Settings > Subtitles page. Section heading on the Settings > Subtitles page. Outline or shadow around the letters."
+  },
+  "subtitles.group_background": {
+    "value": "Background",
+    "description": "Settings > Subtitles page. Section heading on the Settings > Subtitles page. The box behind the words."
+  },
+  "subtitles.group_position": {
+    "value": "Position",
+    "description": "Settings > Subtitles page. Section heading on the Settings > Subtitles page. Where the caption sits and how its lines are spaced."
+  },
+  "subtitles.group_behavior": {
+    "value": "Behavior",
+    "description": "Settings > Subtitles page. Section heading on the Settings > Subtitles page. How captions behave: Blend with video, Reveal as spoken, authored styling, reset."
+  },
+  "subtitles.row_preset": {
+    "value": "Preset",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. The whole look in one pick."
+  },
+  "subtitles.row_sample": {
+    "value": "Sample text",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Which sample text the preview shows."
+  },
+  "subtitles.row_scene": {
+    "value": "Sample scene",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Which picture the preview sits over."
+  },
+  "subtitles.row_font": {
+    "value": "Font",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. The typeface."
+  },
+  "subtitles.row_size": {
+    "value": "Size",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Letter size in percent."
+  },
+  "subtitles.row_color": {
+    "value": "Color",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Colour of the letters, or of the box (under Background)."
+  },
+  "subtitles.row_opacity": {
+    "value": "Opacity",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. How opaque the letters or the box are, in percent."
+  },
+  "subtitles.row_bold": {
+    "value": "Bold",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Heavier weight on or off. The value is On or Off."
+  },
+  "subtitles.row_edge": {
+    "value": "Edge style",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Outline or shadow style."
+  },
+  "subtitles.row_edge_width": {
+    "value": "Edge width",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Outline or shadow strength in pixels."
+  },
+  "subtitles.row_back": {
+    "value": "Background",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Box behind the words: none, line or window."
+  },
+  "subtitles.row_radius": {
+    "value": "Rounded corners",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Corner radius of the box."
+  },
+  "subtitles.row_padding": {
+    "value": "Padding",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Air between the words and the box edge."
+  },
+  "subtitles.row_anchor": {
+    "value": "Position",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Whether the caption hangs from the bottom or the top of the screen."
+  },
+  "subtitles.row_nudge": {
+    "value": "Edge distance",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. How far the caption sits from the screen edge, in pixels."
+  },
+  "subtitles.row_line_spacing": {
+    "value": "Line spacing",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Space between the lines of a caption, in percent."
+  },
+  "subtitles.row_blend": {
+    "value": "Blend with video",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Switch: the caption's brightness follows the scene. Same name as the player's Style page."
+  },
+  "subtitles.row_reveal": {
+    "value": "Reveal as spoken",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Show each word or line as it is spoken. Same name as the player's Style page."
+  },
+  "subtitles.row_styled": {
+    "value": "File styling",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. What happens to subtitle files that bring their own styling."
+  },
+  "subtitles.row_reset": {
+    "value": "Reset to preset",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Action: return to the preset the look is named after."
+  },
+  "subtitles.blend_detail": {
+    "value": "Follows the scene's brightness",
+    "description": "Settings > Subtitles page. Line under the Blend with video row."
+  },
+  "subtitles.reset_detail": {
+    "value": "Back to the preset's own settings",
+    "description": "Settings > Subtitles page. Line under the Reset to preset row."
+  },
+  "subtitles.value_auto": {
+    "value": "Automatic",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. Size or colour follows the player's own Size or Color pick."
+  },
+  "subtitles.value_square": {
+    "value": "Square",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. Rounded corners at zero."
+  },
+  "subtitles.color_white": {
+    "value": "White",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A text colour."
+  },
+  "subtitles.color_soft_white": {
+    "value": "Soft white",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A text colour: slightly dimmed white."
+  },
+  "subtitles.color_yellow": {
+    "value": "Yellow",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A text colour."
+  },
+  "subtitles.color_cyan": {
+    "value": "Cyan",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A text colour."
+  },
+  "subtitles.color_green": {
+    "value": "Green",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A text colour."
+  },
+  "subtitles.color_pink": {
+    "value": "Pink",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A text colour."
+  },
+  "subtitles.color_black": {
+    "value": "Black",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A box colour."
+  },
+  "subtitles.color_plum": {
+    "value": "Plum",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A box colour: dark purple."
+  },
+  "subtitles.color_slate": {
+    "value": "Slate",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A box colour: dark blue-grey."
+  },
+  "subtitles.color_brown": {
+    "value": "Brown",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A box colour."
+  },
+  "subtitles.anchor_bottom": {
+    "value": "Bottom",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. The caption hangs from the bottom of the screen."
+  },
+  "subtitles.anchor_top": {
+    "value": "Top",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. The caption hangs from the top of the screen."
+  },
+  "subtitles.styled_keep": {
+    "value": "Keep",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A subtitle file's own fonts, colours and sizes are drawn as its author set them."
+  },
+  "subtitles.styled_mine": {
+    "value": "My look",
+    "description": "Settings > Subtitles page. Value shown on the right of a row on the Settings > Subtitles page. A subtitle file's own fonts, colours and sizes are replaced by the viewer's look."
+  },
+  "subtitles.sample_accents": {
+    "value": "Accents",
+    "description": "Settings > Subtitles page. Sample text name on the Settings > Subtitles page: what the sample caption shows. Latin accents."
+  },
+  "subtitles.sample_cjk": {
+    "value": "CJK",
+    "description": "Settings > Subtitles page. Sample text name: Chinese, Japanese and Korean text. CJK is the usual abbreviation; keep it if the language uses it."
+  },
+  "subtitles.sample_rtl": {
+    "value": "Arabic, Hebrew",
+    "description": "Settings > Subtitles page. Sample text name on the Settings > Subtitles page: what the sample caption shows. Right-to-left scripts."
+  },
+  "subtitles.sample_symbols": {
+    "value": "Symbols, emoji",
+    "description": "Settings > Subtitles page. Sample text name on the Settings > Subtitles page: what the sample caption shows. Musical notes, symbols and emoji."
+  },
+  "subtitles.sample_italics": {
+    "value": "Italics",
+    "description": "Settings > Subtitles page. Sample text name on the Settings > Subtitles page: what the sample caption shows. Italic, bold and plain text in one caption."
+  },
+  "subtitles.sample_styled": {
+    "value": "Styled file",
+    "description": "Settings > Subtitles page. Sample text name on the Settings > Subtitles page: what the sample caption shows. A subtitle file that carries its own fonts and colours (used to show the Styled subtitles row)."
+  },
+  "subtitles.scene_day": {
+    "value": "Daylight",
+    "description": "Settings > Subtitles page. Sample scene name on the Settings > Subtitles page: the picture behind the preview. A bright daytime picture."
+  },
+  "subtitles.scene_night": {
+    "value": "Night",
+    "description": "Settings > Subtitles page. Sample scene name on the Settings > Subtitles page: the picture behind the preview. A dark picture."
+  },
+  "subtitles.scene_snow": {
+    "value": "Snow",
+    "description": "Settings > Subtitles page. Sample scene name on the Settings > Subtitles page: the picture behind the preview. A very bright, nearly white picture."
+  },
+  "subtitles.sample_tag": {
+    "value": "Sample {number} of {total} · {name}",
+    "description": "Settings > Subtitles page. Label in the corner of the preview picture. {number} is the sample's place, {total} how many there are, {name} the sample's name.",
+    "args": {
+      "name": "str",
+      "number": "i64",
+      "total": "i64"
+    }
+  }
+}

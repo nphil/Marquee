@@ -97,7 +97,7 @@ impl Origin {
     fn renderer_settings(self) -> Option<(f64, bool)> {
         match self {
             Origin::Authored => None,
-            Origin::Text(style) => Some((super::text_style::line_spacing(style.scale()), true)),
+            Origin::Text(style) => Some((style.line_spacing(), true)),
         }
     }
 }
@@ -200,6 +200,9 @@ struct Key {
     height: i32,
     storage_width: i32,
     storage_height: i32,
+    /// The viewer's look laid over an authored script (`AssMode::Mine`), `None` for everything else.
+    /// A change of it is a new frame, and the worker re-applies it to the held renderer.
+    mine: Option<super::text_style::TextStyle>,
 }
 
 pub struct Runtime {
@@ -246,6 +249,21 @@ pub fn request(
     storage_width: i32,
     storage_height: i32,
 ) -> Option<Arc<Frame>> {
+    request_styled(source, now_ms, width, height, storage_width, storage_height, None)
+}
+
+/// [`request`] for an authored script the viewer asked to draw in their own look (`mine`): libass
+/// replaces the script's fonts, sizes, colours and edges with `text_ass::style_override(mine)` on
+/// every event that is not explicitly placed. `None` draws the script as authored.
+pub fn request_styled(
+    source: Arc<Source>,
+    now_ms: i64,
+    width: i32,
+    height: i32,
+    storage_width: i32,
+    storage_height: i32,
+    mine: Option<super::text_style::TextStyle>,
+) -> Option<Arc<Frame>> {
     if source.id == 0 {
         clear();
         return None;
@@ -270,6 +288,7 @@ pub fn request(
         } else {
             height
         },
+        mine,
     };
     let started = *runtime()
         .started
@@ -534,6 +553,8 @@ struct Engine {
     aligns_index: Option<aligns::ScriptAligns>,
     frame: Option<Arc<Frame>>,
     error: Option<Fault>,
+    /// The override the held renderer wears; a fresh renderer wears none.
+    mine: Option<super::text_style::TextStyle>,
 }
 
 impl Engine {
@@ -573,6 +594,25 @@ impl Engine {
             }
         }
         self.native = Some(native);
+        self.mine = None;
+        Ok(())
+    }
+
+    /// Bring the held renderer's style override to `want`: the viewer's look over an authored script,
+    /// or the script's own styles. A renderer that has just been opened wears none.
+    fn wear(&mut self, want: Option<super::text_style::TextStyle>) -> Result<(), Fault> {
+        if self.mine == want {
+            return Ok(());
+        }
+        let Some(native) = self.native.as_mut() else { return Ok(()) };
+        let applied = match want {
+            Some(style) => native.set_style_override(Some(&super::text_ass::style_override(&style))),
+            None => native.set_style_override(None),
+        };
+        if !applied {
+            return Err(Fault::InitFailed);
+        }
+        self.mine = want;
         Ok(())
     }
 
@@ -732,6 +772,13 @@ impl Engine {
             }
         }
         if self.error.is_none() {
+            if let Err(error) = self.wear(key.mine) {
+                self.error = Some(error);
+                self.native = None;
+                plx_base::eventlog::log(&format!("subtitle: ASS refused: {error:?}"));
+            }
+        }
+        if self.error.is_none() {
             if let Err(error) = self.slide(&request.source, request.now_ms) {
                 self.error = Some(error);
                 self.native = None;
@@ -851,10 +898,23 @@ pub struct NativeStats {
     tracks: u32,
 }
 
+/// `PlxAssStyleOverride` in `include/ass.h`.
+#[repr(C)]
+struct NativeStyleOverride {
+    font_name: *const c_char,
+    font_size: f64,
+    outline: f64,
+    shadow: f64,
+    primary_colour: u32,
+    outline_colour: u32,
+    back_colour: u32,
+    bold: i32,
+}
+
 /// The facade ABI this file is written against (`PLX_ASS_ABI_VERSION` in `include/ass.h`); a
-/// library reporting any other number is not loaded. ABI 4 added only the UI text surface
-/// (`plx_ass_text_*`, bound by `plx_gfx::rtl`); every function this file calls is unchanged.
-const NATIVE_ABI: u32 = 4;
+/// library reporting any other number is not loaded. ABI 4 added the UI text surface
+/// (`plx_ass_text_*`, bound by `plx_gfx::rtl`); ABI 5 added `plx_ass_set_style_override`.
+const NATIVE_ABI: u32 = 5;
 
 /// libass's glyph-count and bitmap-MiB cache bounds for every renderer.
 const CACHE_GLYPHS: i32 = 1000;
@@ -874,6 +934,7 @@ plx_base::dynlib! {
         fn plx_ass_set_features(ctx: *mut c_void, wrap_unicode: i32) -> i32;
         fn plx_ass_set_cache_limits(ctx: *mut c_void, glyph_max: i32, bitmap_mib: i32) -> i32;
         fn plx_ass_set_line_spacing(ctx: *mut c_void, spacing: f64) -> i32;
+        fn plx_ass_set_style_override(ctx: *mut c_void, style: *const NativeStyleOverride) -> i32;
         fn plx_ass_stats(ctx: *const c_void, out: *mut NativeStats) -> i32;
         fn plx_ass_render(ctx: *mut c_void, now_ms: i64, width: i32, height: i32, storage_width: i32, storage_height: i32, frame: *mut NativeFrame) -> i32;
     }
@@ -989,6 +1050,28 @@ impl Native {
     /// Break lines by the Unicode rules (libunibreak) in the loaded track and every later one.
     fn set_wrap_unicode(&mut self, on: bool) -> bool {
         unsafe { plx_ass_set_features(self.0, i32::from(on)) >= 0 }
+    }
+
+    /// Wear `style` over every event that is not explicitly placed, or the script's own styles
+    /// (`None`). The font name is copied by the native side before this returns.
+    fn set_style_override(&mut self, style: Option<&super::text_ass::StyleOverride>) -> bool {
+        match style {
+            None => unsafe { plx_ass_set_style_override(self.0, std::ptr::null()) >= 0 },
+            Some(style) => {
+                let Ok(name) = CString::new(style.font_name) else { return false };
+                let native = NativeStyleOverride {
+                    font_name: name.as_ptr(),
+                    font_size: style.font_size,
+                    outline: style.outline,
+                    shadow: style.shadow,
+                    primary_colour: style.primary_colour,
+                    outline_colour: style.outline_colour,
+                    back_colour: style.back_colour,
+                    bold: i32::from(style.bold),
+                };
+                unsafe { plx_ass_set_style_override(self.0, &native) >= 0 }
+            }
+        }
     }
 
     /// Extra pixels between lines at the render size; negative tightens.

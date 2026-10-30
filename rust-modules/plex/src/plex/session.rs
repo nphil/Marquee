@@ -54,11 +54,19 @@ use super::origin::Origin;
 use super::probe::Location;
 mod playback_options;
 pub use playback_options::InstantDpadSeeking;
+mod bazarr_link;
+pub use bazarr_link::{BazarrChange, BazarrLink, UrlProblem};
+mod bazarr_import;
+pub use bazarr_import::{import_once as import_bazarr_link_file, IMPORT_FILE as BAZARR_IMPORT_FILE};
+mod subtitle_look;
+pub use subtitle_look::{
+    AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, COLORS, SIZE_STEPS,
+};
 
 pub use prefs::{InstantDpadSeekingPref, HoldHintTaughtPref, effective, own_prefs, persist_profile_pref, put_own, stored_effective, tenure, AudioEnhancementsPref,
     DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsPref,
     ProfilePrefsRecord, ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipIntervalPref,
-    SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};
+    SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};
 use prefs::ProfileMemory;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -616,6 +624,12 @@ pub struct Session {
     /// Soft-parsed like every list in this struct: an entry costs itself, never the credentials.
     #[serde(default, deserialize_with = "de_profile_cache")]
     pub profiles: Vec<ProfileCreds>,
+    /// **Where the viewer's Bazarr runs and the key it answers to** (Settings > Integrations).
+    /// Typed on the television. It is a credential: it sits in the PROTECTED half of the canonical
+    /// record beside `account_token`, and [`BazarrLink`]'s `Debug` never prints the key. Omitted
+    /// while empty so a session that never set it serializes exactly as before.
+    #[serde(default, skip_serializing_if = "BazarrLink::is_empty")]
+    pub bazarr: BazarrLink,
     /// Every preference key but `language` (`ui_resolution`, `hold_hint_taught`, `profile_prefs`, the per-profile home of playback
     /// and display settings, and those settings' frozen top-level keys every profile
     /// falls back to (`trailer_autoplay` among them), `auto_sign_in`,
@@ -642,6 +656,8 @@ struct CanonicalSessionAuth {
     user: UserRef,
     home_users: Vec<HomeUserRef>,
     sources: Vec<SourceRef>,
+    #[serde(default, skip_serializing_if = "BazarrLink::is_empty")]
+    bazarr: BazarrLink,
     /// Unknown top-level fields may contain credentials introduced by a newer client.  Protect
     /// them by default instead of guessing that an unfamiliar value is a harmless preference.
     extensions: OpaqueExtensions,
@@ -701,6 +717,7 @@ pub fn split_canonical(
         user: session.user.clone(),
         home_users: session.home_users.clone(),
         sources: session.sources.clone(),
+        bazarr: session.bazarr.clone(),
         extensions: session.extensions.clone(),
     })
     .map_err(|_| ())?;
@@ -774,6 +791,7 @@ pub fn join_canonical(
         user: auth.user,
         home_users: auth.home_users,
         sources: auth.sources,
+        bazarr: auth.bazarr,
         home_pins,
         recent_searches,
         language: preferences.language,
@@ -826,7 +844,7 @@ fn parse_profiles(entries: Vec<Value>) -> Vec<ProfileCreds> {
 /// Public-only edits preserve the original protected bytes, including v1 opaque extensions.
 fn protected_fields(session: &Session) -> Result<Value, serde_json::Error> {
     serde_json::to_value((&session.account_token, &session.server, &session.user,
-        &session.home_users, &session.sources, &session.profiles, &session.extensions))
+        &session.home_users, &session.sources, &session.profiles, &session.extensions, &session.bazarr.url, &session.bazarr.api_key))
 }
 fn protected_fields_equal(left: &Session, right: &Session) -> bool {
     matches!((protected_fields(left), protected_fields(right)), (Ok(left), Ok(right)) if left == right)
@@ -2452,6 +2470,19 @@ impl Session {
         next
     }
 
+    /// Record where Bazarr runs and its key (Settings > Integrations > Bazarr), leaving every
+    /// unrelated session field intact. An empty link forgets both.
+    pub fn with_bazarr(&self, link: BazarrLink) -> Self {
+        let mut next = self.clone();
+        next.bazarr = link;
+        next
+    }
+
+    /// The Bazarr address and key the viewer typed; empty until they did.
+    pub fn bazarr(&self) -> &BazarrLink {
+        &self.bazarr
+    }
+
     /// The install-wide hero trailer autoplay key: the FALLBACK every profile reads until it picks
     /// its own (`prefs::stored_effective::<TrailerAutoplayPref>` is what a profile sees). No pick
     /// writes it; session creation sets it on.
@@ -2556,6 +2587,10 @@ impl Session {
 
     pub fn subtitle_position(&self) -> SubtitlePosition {
         self.prefs.subtitle_position
+    }
+
+    pub fn subtitle_look(&self) -> SubtitleLook {
+        self.prefs.subtitle_look
     }
 
     pub fn next_episode_mode(&self) -> NextEpisodeMode {

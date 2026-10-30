@@ -7,7 +7,7 @@
 //! mirror the maths `player_hud::caption_geometry`/`caption_layout` use, kept with hard-coded
 //! constants so a tie test in appkit can pin that the two cannot drift apart.
 
-use plx_plex::plex::session::{SubtitlePosition, SubtitleSize};
+use plx_plex::plex::session::{AssMode, Reveal, SubEdge, SubFont, SubtitleLook, SubtitlePosition, SubtitleSize};
 
 /// The logical canvas a text-origin subtitle frame is rendered into (`PlayResX/Y` of the header).
 /// `plx_base::surface::LOGICAL_*` is the one definition of the canvas; they are whole numbers.
@@ -157,9 +157,48 @@ pub fn bottom_anchor_y(position: SubtitlePosition) -> f32 {
     SCR_H - bottom_margin_v(position) as f32
 }
 
-/// The `Fontsize` of the synthesized styles at `scale`: today's em times the Inter win ratio.
+/// The `Fontsize` of the synthesized styles at `scale` for the default face: today's em times the
+/// Inter win ratio.
 pub fn font_size(scale: f32) -> f64 {
-    CAPTION_FACE as f64 * scale as f64 * INTER_BOLD_WIN_EM
+    font_size_for(SubFont::Default, scale)
+}
+
+/// How libass is told to find and size one family.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontInfo {
+    /// The `Fontname` of the regular weight.
+    pub regular: &'static str,
+    /// The `Fontname` of the bold weight.
+    pub bold: &'static str,
+    /// Whether the bold weight is picked by the style's `Bold` flag (a family with a regular and a
+    /// bold face) or by its name (the Default face's Bold answers to "PlxSubs" at `Bold` 0).
+    pub bold_by_flag: bool,
+    /// `(usWinAscent + usWinDescent) / unitsPerEm` of the family's faces: libass sizes a face by its
+    /// win metrics, so a `Fontsize` of `em * win_em` draws that em. `tests::win_ratios` reads the
+    /// shipped files and fails if one stops matching.
+    pub win_em: f64,
+}
+
+/// Noto Serif's win ratio, (usWinAscent 1069 + usWinDescent 389) / unitsPerEm 1000
+/// (`pkg/fonts/subs/families.json`; `tests::the_family_win_ratios_are_the_shipped_files`).
+pub const SERIF_WIN_EM: f64 = 1.458;
+/// Noto Sans Mono's win ratio, (1229 + 389) / 1000.
+pub const MONO_WIN_EM: f64 = 1.618;
+/// Atkinson Hyperlegible's win ratio, (950 + 290) / 1000.
+pub const LEGIBLE_WIN_EM: f64 = 1.24;
+
+pub fn font_info(font: SubFont) -> FontInfo {
+    match font {
+        SubFont::Default => FontInfo { regular: "Inter", bold: super::text_ass::STYLE_FONT, bold_by_flag: false, win_em: INTER_BOLD_WIN_EM },
+        SubFont::Serif => FontInfo { regular: "PlxSerif", bold: "PlxSerif", bold_by_flag: true, win_em: SERIF_WIN_EM },
+        SubFont::Mono => FontInfo { regular: "PlxMono", bold: "PlxMono", bold_by_flag: true, win_em: MONO_WIN_EM },
+        SubFont::Legible => FontInfo { regular: "PlxLegible", bold: "PlxLegible", bold_by_flag: true, win_em: LEGIBLE_WIN_EM },
+    }
+}
+
+/// The `Fontsize` that draws today's em at `scale` in `font`.
+pub fn font_size_for(font: SubFont, scale: f32) -> f64 {
+    CAPTION_FACE as f64 * scale as f64 * font_info(font).win_em
 }
 
 /// The renderer-wide line spacing (`ass_set_line_spacing`, frame pixels) that turns libass's
@@ -168,39 +207,179 @@ pub fn line_spacing(scale: f32) -> f64 {
     CAPTION_LINE_PITCH as f64 * scale as f64 - font_size(scale)
 }
 
-/// The two viewer picks the synthesized header is a function of.
+/// [`line_spacing`] for a font and a line-pitch percentage (100 is the usual pitch).
+pub fn line_spacing_for(font: SubFont, scale: f32, line_pct: u8) -> f64 {
+    CAPTION_LINE_PITCH as f64 * scale as f64 * f64::from(line_pct) / 100.0 - font_size_for(font, scale)
+}
+
+/// The part of the viewer's [`SubtitleLook`] that changes what libass draws or how a cue's events
+/// read: a change of any of these is a RESTYLE (a new header, a replaced track), and nothing else
+/// is. Colour, opacity, the box, the soft shadow, the anchor and nudge and the Blend tone are
+/// applied when the frame is painted, so they take effect on the next frame with no restyle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub font: SubFont,
+    pub bold: bool,
+    /// Exact size in percent, 0 to follow the Size ladder.
+    pub size_pct: u16,
+    pub edge: SubEdge,
+    pub edge_w: u8,
+    pub line_pct: u8,
+    pub reveal: Reveal,
+    pub ass: AssMode,
+}
+
+impl Layout {
+    pub fn of(look: &SubtitleLook) -> Self {
+        Self {
+            font: look.font,
+            bold: look.bold,
+            size_pct: look.size_pct,
+            edge: look.edge,
+            edge_w: look.edge_w,
+            line_pct: look.line_pct,
+            reveal: look.reveal,
+            ass: look.ass,
+        }
+    }
+}
+
+impl Default for Layout {
+    /// The look every build before the Subtitles page drew.
+    fn default() -> Self {
+        Layout::of(&SubtitleLook::default())
+    }
+}
+
+/// What the synthesized header is a function of: the viewer's size and position picks and the
+/// layout half of the look.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextStyle {
     pub size: SubtitleSize,
     pub position: SubtitlePosition,
+    pub layout: Layout,
 }
 
 impl Default for TextStyle {
     fn default() -> Self {
-        Self { size: SubtitleSize::Medium, position: SubtitlePosition::Low }
+        Self::picks(SubtitleSize::Medium, SubtitlePosition::Low)
     }
 }
 
 impl TextStyle {
-    /// The picks as the preferences hold them now.
+    /// Two ladder picks with the default layout: the look before the Subtitles page.
+    pub const fn picks(size: SubtitleSize, position: SubtitlePosition) -> Self {
+        Self {
+            size,
+            position,
+            layout: Layout {
+                font: SubFont::Default,
+                bold: true,
+                size_pct: 0,
+                edge: SubEdge::Outline,
+                edge_w: 2,
+                line_pct: 100,
+                reveal: Reveal::Off,
+                ass: AssMode::Keep,
+            },
+        }
+    }
+
+    /// The picks and the look as the preferences hold them now.
     pub fn current() -> Self {
-        Self { size: crate::route::subtitle_size(), position: crate::route::subtitle_position() }
+        Self::of(crate::route::subtitle_size(), crate::route::subtitle_position(), &crate::route::subtitle_look())
     }
 
+    /// The style of two ladder picks and a look.
+    pub fn of(size: SubtitleSize, position: SubtitlePosition, look: &SubtitleLook) -> Self {
+        Self { size, position, layout: Layout::of(look) }
+    }
+
+    /// The face-size multiplier: the exact size when the look has one, else the Size ladder's.
     pub fn scale(&self) -> f32 {
-        size_scale(self.size)
+        if self.layout.size_pct != 0 {
+            f32::from(self.layout.size_pct) / 100.0
+        } else {
+            size_scale(self.size)
+        }
     }
 
-    /// A number that differs for every distinct pair of picks, so a stored copy is stale exactly
-    /// when the header it was built for no longer matches.
+    /// The `Fontsize` of this style's header.
+    pub fn font_size(&self) -> f64 {
+        font_size_for(self.layout.font, self.scale())
+    }
+
+    /// The renderer-wide line spacing of this style (see [`line_spacing_for`]).
+    pub fn line_spacing(&self) -> f64 {
+        line_spacing_for(self.layout.font, self.scale(), self.layout.line_pct)
+    }
+
+    /// A number that differs for every distinct style, so a stored copy is stale exactly when the
+    /// header it was built for no longer matches. A 32-bit FNV-1a over every field.
     pub fn generation(&self) -> u32 {
-        self.size.index() as u32 * SubtitlePosition::LADDER.len() as u32 + self.position.index() as u32
+        let l = &self.layout;
+        let mut h: u32 = 0x811c_9dc5;
+        let mut mix = |v: u32| {
+            for b in v.to_le_bytes() {
+                h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+            }
+        };
+        mix(self.size.index() as u32);
+        mix(self.position.index() as u32);
+        mix(l.font.index() as u32);
+        mix(u32::from(l.bold));
+        mix(u32::from(l.size_pct));
+        mix(l.edge.index() as u32);
+        mix(u32::from(l.edge_w));
+        mix(u32::from(l.line_pct));
+        mix(l.reveal.index() as u32);
+        mix(l.ass.index() as u32);
+        h
     }
 }
 
 /// The generation of the picks as the preferences hold them now (see [`TextStyle::generation`]).
 pub fn generation() -> u32 {
     TextStyle::current().generation()
+}
+
+/// The edge half of a synthesized `Style:` line, from the look's edge style and strength. Colours
+/// are ASS `&HAABBGGRR` as a number (alpha 0 is opaque). Only the edges libass can draw are here:
+/// the soft depth shadow of [`SubEdge::Soft`] is painted behind the letters with the frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeFields {
+    pub outline: f64,
+    pub shadow: f64,
+    pub outline_colour: u32,
+    pub back_colour: u32,
+}
+
+/// `edge` at strength `w` (pixels at the 1080 canvas).
+pub fn edge_fields(edge: SubEdge, w: u8) -> EdgeFields {
+    let w = f64::from(w.clamp(1, 8));
+    // today's outline: black at 85 %, fully transparent shadow
+    const BLACK_85: u32 = 0x2600_0000;
+    const NO_BACK: u32 = 0xFF00_0000;
+    match edge {
+        SubEdge::None => EdgeFields { outline: 0.0, shadow: 0.0, outline_colour: BLACK_85, back_colour: NO_BACK },
+        SubEdge::Outline => EdgeFields { outline: w, shadow: 0.0, outline_colour: BLACK_85, back_colour: NO_BACK },
+        SubEdge::Drop => EdgeFields { outline: 0.0, shadow: w, outline_colour: BLACK_85, back_colour: 0x4000_0000 },
+        SubEdge::Raised => EdgeFields { outline: 1.0, shadow: 1.5, outline_colour: 0x60FF_FFFF, back_colour: 0x2000_0000 },
+        SubEdge::Depressed => EdgeFields { outline: 1.0, shadow: 1.5, outline_colour: 0x2000_0000, back_colour: 0x70FF_FFFF },
+        SubEdge::Soft => EdgeFields { outline: 1.0, shadow: 0.0, outline_colour: 0x8000_0000, back_colour: NO_BACK },
+    }
+}
+
+impl Layout {
+    /// This layout's edge half.
+    pub fn edge_fields(&self) -> EdgeFields {
+        edge_fields(self.edge, self.edge_w)
+    }
+}
+
+/// `&H26000000`: an ASS colour as the header writes it.
+pub fn ass_colour(c: u32) -> String {
+    format!("&H{c:08X}")
 }
 
 /// What `player_hud::caption_geometry` computes today: the viewer's scale, the y the caption
@@ -429,10 +608,92 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for size in SubtitleSize::LADDER {
             for position in SubtitlePosition::LADDER {
-                assert!(seen.insert(TextStyle { size, position }.generation()), "{size:?} {position:?}");
+                assert!(seen.insert(TextStyle::picks(size, position).generation()), "{size:?} {position:?}");
             }
         }
         assert_eq!(seen.len(), 15);
-        assert_eq!(TextStyle::default().generation(), TextStyle { size: SubtitleSize::Medium, position: SubtitlePosition::Low }.generation());
+        assert_eq!(TextStyle::default().generation(), TextStyle::picks(SubtitleSize::Medium, SubtitlePosition::Low).generation());
+    }
+
+    /// Every layout field is a restyle; a painted-only field is not part of the generation at all.
+    #[test]
+    fn generation_follows_the_layout_and_ignores_what_is_only_painted() {
+        use plx_plex::plex::session::{LookPreset, SubBack};
+        let base = SubtitleLook::default();
+        let style = |look: &SubtitleLook| TextStyle::of(SubtitleSize::Medium, SubtitlePosition::Low, look);
+        let g = style(&base).generation();
+        assert_eq!(g, TextStyle::default().generation());
+        for changed in [
+            SubtitleLook { font: SubFont::Serif, ..base },
+            SubtitleLook { bold: false, ..base },
+            SubtitleLook { size_pct: 130, ..base },
+            SubtitleLook { edge: SubEdge::Drop, ..base },
+            SubtitleLook { edge_w: 4, ..base },
+            SubtitleLook { line_pct: 120, ..base },
+            SubtitleLook { reveal: Reveal::Word, ..base },
+            SubtitleLook { ass: AssMode::Mine, ..base },
+        ] {
+            assert_ne!(style(&changed).generation(), g, "{changed:?}");
+        }
+        for painted in [
+            SubtitleLook { color: Some(0xFFE680), ..base },
+            SubtitleLook { opacity: 50, ..base },
+            SubtitleLook { back: SubBack::Window, back_opacity: 90, back_radius: 20, back_pad: 20, ..base },
+            SubtitleLook { nudge: 120, ..base },
+            SubtitleLook { blend: true, ..base },
+            SubtitleLook { preset: LookPreset::Custom, ..base },
+        ] {
+            assert_eq!(style(&painted).generation(), g, "{painted:?} must not restyle");
+        }
+    }
+
+    /// The look's size beats the ladder's, a zero follows it, and the pitch follows the line setting.
+    #[test]
+    fn the_exact_size_and_the_line_pitch_come_from_the_look() {
+        let look = SubtitleLook { size_pct: 150, line_pct: 120, ..SubtitleLook::default() };
+        let style = TextStyle::of(SubtitleSize::Small, SubtitlePosition::Low, &look);
+        assert_eq!(style.scale(), 1.5);
+        assert_eq!(TextStyle::of(SubtitleSize::Small, SubtitlePosition::Low, &SubtitleLook::default()).scale(), 0.78);
+        assert!((style.font_size() - font_size(1.5)).abs() < 1e-9, "the default face's size is today's");
+        assert!((style.line_spacing() - (48.0 * 1.5 * 1.2 - font_size(1.5))).abs() < 1e-9);
+        assert!((TextStyle::default().line_spacing() - line_spacing(1.0)).abs() < 1e-9, "100 % is today's pitch");
+    }
+
+    #[test]
+    fn every_edge_has_fields_and_the_default_is_todays_outline() {
+        let today = edge_fields(SubEdge::Outline, 2);
+        assert_eq!((today.outline, today.shadow, today.outline_colour, today.back_colour), (2.0, 0.0, 0x2600_0000, 0xFF00_0000));
+        assert_eq!(ass_colour(today.outline_colour), "&H26000000");
+        for edge in SubEdge::ALL {
+            let f = edge_fields(*edge, 3);
+            assert!(f.outline >= 0.0 && f.shadow >= 0.0, "{edge:?}");
+        }
+        assert_eq!(edge_fields(SubEdge::None, 3).outline, 0.0);
+        assert_eq!(edge_fields(SubEdge::Drop, 3).shadow, 3.0);
+        assert_eq!(edge_fields(SubEdge::Outline, 99).outline, 8.0, "strength is clamped");
+    }
+
+    /// The constants above are measured from the shipped files: libass sizes a face by its win
+    /// metrics, so a wrong ratio would draw a family at the wrong size.
+    #[test]
+    fn the_family_win_ratios_are_the_shipped_files() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pkg/fonts/subs");
+        for (file, ratio) in [
+            ("PlxSerif-Regular.ttf", SERIF_WIN_EM),
+            ("PlxSerif-Bold.ttf", SERIF_WIN_EM),
+            ("PlxMono-Regular.ttf", MONO_WIN_EM),
+            ("PlxMono-Bold.ttf", MONO_WIN_EM),
+            ("PlxLegible-Regular.ttf", LEGIBLE_WIN_EM),
+            ("PlxLegible-Bold.ttf", LEGIBLE_WIN_EM),
+        ] {
+            let font = std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+            let (upem, ascent, descent) = win_metrics(&font);
+            let measured = (ascent + descent) as f64 / upem as f64;
+            assert!((measured - ratio).abs() < 1e-9, "{file}: {measured} != {ratio}");
+        }
+        for font in [SubFont::Default, SubFont::Serif, SubFont::Mono, SubFont::Legible] {
+            // an em of 36 px at Medium draws the same in every family
+            assert!((font_size_for(font, 1.0) / font_info(font).win_em - 36.0).abs() < 1e-9);
+        }
     }
 }

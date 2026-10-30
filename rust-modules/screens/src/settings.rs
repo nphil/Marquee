@@ -309,6 +309,11 @@ impl RouteSurface {
                     MachineId::Instance(self.id),
                     Delivery::Screen(ScreenEvent::Enter(e)),
                 )),
+                // the television's keyboard is the outer dispatcher's to raise, for this surface
+                Fx::Deliver(_, Delivery::Keyboard { up }) => fx.push(Fx::Deliver(
+                    MachineId::Instance(self.id),
+                    Delivery::Keyboard { up },
+                )),
                 Fx::App(a) => fx.push(Fx::App(a)),
                 Fx::Log(l) => fx.push(Fx::Log(l)),
                 Fx::Press(arm) => fx.push(Fx::Press(arm)),
@@ -461,6 +466,8 @@ fn mount_page(
         SettingsPage::Language => Box::new(LanguagePage::new(entry)),
         SettingsPage::UnderPosters => Box::new(under_posters::UnderPostersPage::new(entry)),
         SettingsPage::UnderPostersDetails => Box::new(under_posters::DetailsPage::new(entry)),
+        SettingsPage::Subtitles => Box::new(subtitles::SubtitlesPage::new(entry)),
+        SettingsPage::Bazarr => Box::new(bazarr::BazarrPage::new(entry)),
         SettingsPage::Contribute => Box::new(super::legal::DocumentPage::contribute(entry)),
         SettingsPage::Playback => Box::new(super::preferences::PreferencesPage::new(entry, super::preferences::Kind::Playback)),
         SettingsPage::AudioSubtitles => Box::new(super::preferences::PreferencesPage::new(entry, super::preferences::Kind::AudioSubtitles)),
@@ -965,6 +972,8 @@ enum RootId {
     Favourites,
     UnderPosters,
     Playback,
+    Subtitles,
+    Bazarr,
     AudioSubtitles,
     Language,
     AutoSignIn,
@@ -995,6 +1004,8 @@ impl FormId for RootId {
             RootId::About => 9,
             RootId::Resolution => 10,
             RootId::UnderPosters => 11,
+            RootId::Subtitles => 12,
+            RootId::Bazarr => 13,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1047,6 +1058,10 @@ struct RootState {
     /// What shows under a poster, as the Under posters row summarises it. Written to the canon only
     /// when it is not the default, so every default root's digest is unchanged.
     under_posters: plx_plex::plex::session::UnderPosters,
+    /// The subtitle preset and Bazarr's host (or its absence), as their rows summarise them. Written to
+    /// the canon only when they are not the defaults, so every default root's digest is unchanged.
+    subtitle_preset: plx_plex::plex::session::LookPreset,
+    bazarr_host: String,
     /// Each unencrypted-connection switch, in row order. Written to the canon only when there is
     /// one, so every other root's digest is unchanged.
     plaintext: Vec<bool>,
@@ -1057,6 +1072,12 @@ impl LogicalState for RootState {
         w.u32(self.sel.0).bool(self.auto_sign_in).bool(self.trailer_autoplay).str(self.language.tag());
         if self.under_posters != plx_plex::plex::session::UnderPosters::DEFAULT {
             w.u8(self.under_posters.pack());
+        }
+        if self.subtitle_preset != plx_plex::plex::session::LookPreset::Marquee {
+            w.u8(self.subtitle_preset.index() as u8);
+        }
+        if !self.bazarr_host.is_empty() {
+            w.str(&self.bazarr_host);
         }
         if !self.plaintext.is_empty() {
             w.u32(self.plaintext.len() as u32);
@@ -1111,6 +1132,9 @@ struct RootInputs {
     /// What shows under a poster (the stored setting, read at the build), which the Under posters
     /// row summarises the way Language shows its name.
     under_posters: plx_plex::plex::session::UnderPosters,
+    /// The subtitle look's preset and the Bazarr link, which their rows summarise.
+    subtitle_preset: plx_plex::plex::session::LookPreset,
+    bazarr: plx_plex::plex::session::BazarrLink,
     /// Unencrypted-connection switches, in row order — empty when signed out or when nobody has
     /// an answered/offered plaintext question.
     plaintext: Vec<PlaintextRowInput>,
@@ -1154,6 +1178,15 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Action::Door,
             Row::new(plx_platform::i18n::msg::settings_playback_title())
                 .detail(plx_platform::i18n::msg::settings_playback_detail())
+                .chevron(true),
+        )
+        .item(
+            RootId::Subtitles,
+            RowKind::Nav(SettingsPage::Subtitles),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::subtitles_title())
+                .detail(plx_platform::i18n::msg::subtitles_detail())
+                .value(subtitles::summary(inputs.subtitle_preset))
                 .chevron(true),
         )
         .item_if(
@@ -1208,6 +1241,17 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
                 .value(super::preferences::resolution_label(inputs.resolution))
                 .chevron(true),
         );
+    let integrations = FormSection::new(plx_platform::i18n::msg::bazarr_section())
+        .visible(signed_in)
+        .item(
+            RootId::Bazarr,
+            RowKind::Nav(SettingsPage::Bazarr),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::bazarr_title())
+                .detail(plx_platform::i18n::msg::bazarr_root_detail())
+                .value(bazarr::summary(&inputs.bazarr))
+                .chevron(true),
+        );
     let has_plaintext = signed_in && !inputs.plaintext.is_empty();
     let mut plaintext = FormSection::new(plx_platform::i18n::msg::settings_plaintext_section()).visible(has_plaintext);
     if has_plaintext {
@@ -1254,6 +1298,7 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
         .section(libraries)
         .section(playback)
         .section(system)
+        .section(integrations)
         .section(plaintext)
         .section(privacy)
         .section(about)
@@ -1277,6 +1322,8 @@ impl RootPage {
                 trailer_autoplay: true,
                 language: plx_platform::i18n::Preference::System,
                 under_posters: plx_plex::plex::session::UnderPosters::DEFAULT,
+                subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
+                bazarr_host: String::new(),
                 plaintext: Vec::new(),
             },
         };
@@ -1305,11 +1352,15 @@ impl RootPage {
         self.state.trailer_autoplay = trailer_autoplay;
         self.state.language = plx_platform::i18n::saved_preference();
         self.state.under_posters = plx_media::route::under_posters();
+        self.state.subtitle_preset = plx_media::route::subtitle_look().preset;
+        let bazarr = sess.bazarr().clone();
+        self.state.bazarr_host = bazarr.host().map(str::to_string).filter(|_| bazarr.is_complete()).unwrap_or_default();
         let plaintext = if signed_in { self.plaintext_inputs() } else { Vec::new() };
         let form = root_form(&RootInputs {
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
             auto_sign_in, trailer_autoplay, resolution, resolution_offered, language: self.state.language,
             under_posters: self.state.under_posters, plaintext,
+            subtitle_preset: self.state.subtitle_preset, bazarr,
         });
         let keep = self.form.selected_id().cloned();
         self.form.table.compact = false;
@@ -1627,6 +1678,10 @@ impl Screen<InnerHost> for RootPage {
 
 #[path = "settings_under_posters.rs"]
 mod under_posters;
+#[path = "settings_subtitles.rs"]
+mod subtitles;
+#[path = "settings_bazarr.rs"]
+mod bazarr;
 pub use under_posters::caption_policy_of;
 
 #[cfg(test)]

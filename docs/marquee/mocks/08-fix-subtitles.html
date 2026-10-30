@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Wrong subtitles</title>
+<link rel="stylesheet" href="marquee.css">
+<link rel="stylesheet" href="subs.css">
+<style>
+  body { background: #000; }
+  .transport { z-index: 2; left: var(--lu-edge-x); right: var(--lu-edge-x); bottom: var(--lu-edge-y); padding: 28px 36px; display: flex; flex-direction: column; gap: 18px; }
+  .t-top { display: flex; align-items: center; gap: 20px; }
+  .t-top h1 { margin: 0; font-size: var(--f-title); font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+  .t-top .grow { flex: 1; }
+  .t-top .cluster { display: flex; gap: 12px; }
+  .t-bar { display: flex; align-items: center; gap: 24px; }
+  .t-bar .time { font-size: var(--f-label); font-weight: 500; color: var(--lu-ink-2); min-width: calc(76px * var(--ts)); }
+  .t-bar .time.r { text-align: right; }
+  .t-bar .scrub { position: relative; flex: 1; height: 56px; display: flex; align-items: center; }
+  .scrub .track { flex: 1; height: 10px; }
+  .scrub .track .fill { background: var(--lu-ink); }
+  .scrub .thumb { position: absolute; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: var(--lu-ink); box-shadow: var(--control-raised), 0 2px 6px rgba(0,0,0,.35); }
+  .head .seg > span { min-width: 150px; }
+</style>
+</head>
+<body data-default="menu" class="video">
+<img class="picture" src="art/video-tears.jpg" alt="">
+<div class="dim" style="background:rgba(0,0,0,.35);z-index:1"></div>
+<div class="toast glass above" data-v="done" role="status" style="z-index:8"><div class="lead"><i data-ic="circle-check" class="ic" style="color:var(--lu-positive)"></i></div><div class="t">Subtitle added: English</div></div>
+
+<div class="glass transport" role="group" aria-label="Playback">
+  <div class="t-top">
+    <h1>Tears of Steel</h1>
+    <span class="chip" aria-label="Plays the original file"><i data-ic="monitor-play" class="ic"></i>Direct</span>
+    <span class="grow"></span>
+    <div class="cluster">
+      <span class="btn icon" role="button" aria-label="Subtitles" style="background:var(--selected-wash)"><i data-ic="captions" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Audio"><i data-ic="audio-lines" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Chapters"><i data-ic="list-video" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="Info"><i data-ic="info" class="ic"></i></span>
+      <span class="btn icon" role="button" aria-label="More"><i data-ic="ellipsis" class="ic"></i></span>
+    </div>
+  </div>
+  <div class="t-bar">
+    <span class="btn icon primary" role="button" aria-label="Pause"><i data-ic="pause" class="ic"></i></span>
+    <span class="time num">7:26</span>
+    <div class="scrub"><div class="track"><div class="fill" style="width:61%"></div></div><i class="thumb" style="left:61%"></i></div>
+    <span class="time r num">−4:48</span>
+  </div>
+</div>
+
+<div class="dim hide" data-v="confirm" style="z-index:5"></div>
+
+<!-- 1. the Subtitles sheet, with the way in at the foot -->
+<div class="overlay fsheet" data-v="menu" role="dialog" aria-label="Subtitles">
+  <div class="head"><div class="seg" role="tablist"><span role="tab"><i data-ic="audio-lines" class="ic"></i>Audio</span><span role="tab" aria-selected="true" class="f"><i data-ic="captions" class="ic"></i>Subtitles</span></div></div>
+  <div class="menu" style="padding:0" role="listbox" aria-label="Subtitles">
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Off</span></div>
+    <div class="opt" role="option" aria-checked="true"><i data-ic="check" class="mark"></i><span class="grow">English</span><span class="v">SubRip</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Other languages</span><span class="v num">12<i data-ic="chevron-right" class="ic"></i></span></div>
+    <div class="sep"></div>
+    <div class="opt f" role="option"><i data-ix="replace" class="ic"></i><span class="grow">Wrong subtitles?</span><span class="v"><i data-ic="chevron-right" class="ic"></i></span></div>
+    <div class="opt" role="option"><i data-ic="a-large-small" class="ic"></i><span class="grow">Style</span><span class="v">Blend with video<i data-ic="chevron-right" class="ic"></i></span></div>
+  </div>
+</div>
+
+<!-- 2. the root: what is on screen, what can be done about it. An external file can be removed; an embedded track cannot, and says so. -->
+<div class="overlay fsheet" data-v="root-external" role="dialog" aria-label="Wrong subtitles">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Wrong subtitles?</span></div>
+  <p class="note">Now showing: English, SubRip, an external file next to the video.</p>
+  <div class="menu" style="padding:0" role="listbox">
+    <div class="opt f" role="option"><i data-ix="trash-2" class="ic"></i><span class="grow">Remove this subtitle<div class="d">Deletes the file from Plex, then looks for another</div></span><span class="v"><i data-ic="chevron-right" class="ic"></i></span></div>
+    <div class="opt" role="option"><i data-ic="search" class="ic"></i><span class="grow">Find another with Bazarr<div class="d">bazarr.nateshome.net</div></span><span class="v"><i data-ic="chevron-right" class="ic"></i></span></div>
+  </div>
+</div>
+<div class="overlay fsheet" data-v="root-embedded" role="dialog" aria-label="Wrong subtitles">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Wrong subtitles?</span></div>
+  <p class="note">Now showing: English, SubRip, inside the video file. It cannot be removed, but a better one can be added.</p>
+  <div class="menu" style="padding:0" role="listbox">
+    <div class="opt off" role="option" aria-disabled="true"><i data-ix="trash-2" class="ic"></i><span class="grow">Remove this subtitle<div class="d">Not possible: it is part of the file</div></span></div>
+    <div class="opt f" role="option"><i data-ic="search" class="ic"></i><span class="grow">Find another with Bazarr<div class="d">bazarr.nateshome.net</div></span><span class="v"><i data-ic="chevron-right" class="ic"></i></span></div>
+  </div>
+</div>
+<div class="overlay fsheet" data-v="root-setup" role="dialog" aria-label="Wrong subtitles">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Wrong subtitles?</span></div>
+  <p class="note">Now showing: English, SubRip, an external file next to the video.</p>
+  <div class="menu" style="padding:0" role="listbox">
+    <div class="opt f" role="option"><i data-ix="trash-2" class="ic"></i><span class="grow">Remove this subtitle<div class="d">Deletes the file from Plex</div></span><span class="v"><i data-ic="chevron-right" class="ic"></i></span></div>
+    <div class="opt off" role="option" aria-disabled="true"><i data-ix="plug" class="ic"></i><span class="grow">Bazarr is not set up<div class="d">Settings, Integrations, Bazarr</div></span></div>
+  </div>
+</div>
+
+<!-- 3. confirm: opaque scrim, the opener still lit above it; Cancel is the default -->
+<div class="overlay fsheet above" data-v="confirm" role="alertdialog" aria-label="Remove this subtitle" style="width: 720px; bottom: auto; top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%); z-index: 8; gap: 16px; padding: 32px 36px 28px">
+  <div class="state" style="padding: 0"><i data-ix="file-x" class="big"></i><h2>Remove this subtitle?</h2>
+    <p>English (external) will be deleted from Plex for “Tears of Steel”. The video file is not changed.</p></div>
+  <div class="btns" style="justify-content: center"><span class="btn f" role="button">Cancel</span><span class="btn danger" role="button"><i data-ix="trash-2" class="ic"></i>Remove</span></div>
+</div>
+
+<!-- 4. states of the search -->
+<div class="overlay fsheet" data-v="searching" role="dialog" aria-label="Bazarr">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Bazarr · English</span></div>
+  <div class="state"><div class="spin"></div><h2>Searching providers</h2><p>Bazarr asks each subtitle provider for Tears of Steel (2012). This can take half a minute.</p></div>
+</div>
+<div class="overlay fsheet" data-v="results" role="dialog" aria-label="Bazarr results" style="bottom: 250px">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Bazarr · English</span><span class="v" style="font-size:var(--f-label);color:var(--lu-ink-2);font-weight:500">5 results</span></div>
+  <div class="menu" style="padding:0" role="listbox">
+    <div class="opt f" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Tears.of.Steel.2012.1080p.BluRay.x264<div class="d">OpenSubtitles.com · English</div></span><span class="score"><span class="bar"><i style="width:98%"></i></span>98%</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Tears.of.Steel.2012.720p.WEB-DL<div class="d">Podnapisi · English</div></span><span class="tags"><span class="tag-s"><i data-ix="ear" class="ic"></i>HI</span></span><span class="score"><span class="bar"><i style="width:91%"></i></span>91%</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Tears of Steel (2012)<div class="d">Subf2m · English</div></span><span class="score"><span class="bar"><i style="width:84%"></i></span>84%</span></div>
+    <div class="opt" role="option"><i data-ic="check" class="mark none"></i><span class="grow">Tears.Of.Steel.DVDRip.XviD<div class="d">Podnapisi · English</div></span><span class="score"><span class="bar"><i style="width:62%"></i></span>62%</span></div>
+    <div class="opt" role="option" data-t200="hide"><i data-ic="check" class="mark none"></i><span class="grow">tears_of_steel_hd<div class="d">Gestdown · English</div></span><span class="tags"><span class="tag-s">Forced</span></span><span class="score"><span class="bar"><i style="width:40%"></i></span>40%</span></div>
+  </div>
+</div>
+<div class="overlay fsheet" data-v="noresults" role="dialog" aria-label="Bazarr">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Bazarr · English</span></div>
+  <div class="state"><i data-ic="search" class="big"></i><h2>Nothing found</h2><p>No provider has an English subtitle for this video. Try another language.</p></div>
+  <div class="menu" style="padding:0" role="listbox"><div class="opt f" role="option"><i data-ic="languages" class="ic"></i><span class="grow">Language</span><span class="v">English<i data-ic="chevron-right" class="ic"></i></span></div></div>
+</div>
+<div class="overlay fsheet" data-v="error" role="dialog" aria-label="Bazarr">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Bazarr</span></div>
+  <div class="state"><i data-ix="wifi-off" class="big"></i><h2>Can’t reach Bazarr</h2><p>bazarr.nateshome.net did not answer. Check the address and that this TV can reach it.</p></div>
+  <div class="menu" style="padding:0" role="listbox"><div class="opt f" role="option"><i data-ic="refresh-cw" class="ic"></i><span class="grow">Try again</span></div></div>
+</div>
+<div class="overlay fsheet" data-v="downloading" role="dialog" aria-label="Bazarr">
+  <div class="head"><i data-ic="chevron-left" class="ic"></i><span class="grow">Bazarr · English</span></div>
+  <div class="state"><div class="spin"></div><h2>Adding the subtitle</h2><p>Downloading from OpenSubtitles.com, then telling Plex about it.</p></div>
+</div>
+
+<script src="icons.js"></script>
+<script src="icons-subs.js"></script>
+<script src="mock.js"></script>
+</body>
+</html>

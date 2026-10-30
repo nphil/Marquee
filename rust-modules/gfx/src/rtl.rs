@@ -45,7 +45,7 @@ struct NativeRun {
 }
 
 /// The facade ABI this file is written against (`PLX_ASS_ABI_VERSION`); any other is not used.
-const NATIVE_ABI: u32 = 4;
+const NATIVE_ABI: u32 = 5;
 /// `plx_ass_text_bidi`'s own bound, mirrored so an over-long line is refused here without a call.
 const BIDI_MAX_CHARS: usize = 16_384;
 

@@ -38,7 +38,7 @@
 use super::{
     InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
     PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
-    SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
+    SubtitleLook, SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -104,6 +104,12 @@ pub struct Preferences {
     /// the default for the same reason as [`Preferences::subtitle_size`].
     #[serde(default, deserialize_with = "de_soft_subtitle_position", skip_serializing_if = "is_default_subtitle_position")]
     pub subtitle_position: SubtitlePosition,
+    /// **Everything about how a subtitle looks beyond the three quick picks** — see
+    /// [`SubtitleLook`]. A frozen fallback like [`Preferences::subtitle_tone`]. Absence is the look
+    /// every build before the Subtitles page drew. Skipped at the default for the same reason as
+    /// [`Preferences::subtitle_size`].
+    #[serde(default, deserialize_with = "de_soft_subtitle_look", skip_serializing_if = "is_default_subtitle_look")]
+    pub subtitle_look: SubtitleLook,
     /// **How bright the player's overlay and captions are while the picture is HDR** — see
     /// [`HdrOverlayBrightness`]. A frozen fallback like [`Preferences::subtitle_tone`]. Absence is
     /// ThreeQuarters (the default dim). Skipped at the default for the same reason as [`Preferences::subtitle_size`].
@@ -518,6 +524,8 @@ setting!(SubtitleSizePref: SubtitleSize = subtitle_size, "subtitle_size", Profil
     account false, live true, settings Some(SettingsWrite::Optimistic), parse Soft);
 setting!(SubtitlePositionPref: SubtitlePosition = subtitle_position, "subtitle_position", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Optimistic), parse Soft);
+setting!(SubtitleLookPref: SubtitleLook = subtitle_look, "subtitle_look", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Optimistic), parse Soft);
 setting!(HdrOverlayBrightnessPref: HdrOverlayBrightness = hdr_overlay_brightness, "hdr_overlay_brightness",
     Profile fallback LegacyInstallKey, account false, live true, settings Some(SettingsWrite::Optimistic), parse Soft);
 // Tone and enhancements have no Settings row: the player panel is their only writer.
@@ -620,6 +628,7 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<SubtitleTonePref>(),
     Descriptor::of::<SubtitleSizePref>(),
     Descriptor::of::<SubtitlePositionPref>(),
+    Descriptor::of::<SubtitleLookPref>(),
     Descriptor::of::<HdrOverlayBrightnessPref>(),
     Descriptor::of::<NextEpisodeModePref>(),
     Descriptor::of::<SkipIntervalPref>(),
@@ -1278,6 +1287,23 @@ where
 /// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
 fn is_default_subtitle_position(position: &SubtitlePosition) -> bool {
     *position == SubtitlePosition::default()
+}
+
+/// The subtitle look is a preference too: [`SubtitleLook`]'s own parse already costs a bad field
+/// only that field, so this only has to survive a value that is not JSON-shaped at all.
+fn de_soft_subtitle_look<'de, D>(d: D) -> Result<SubtitleLook, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(SubtitleLook::default());
+    };
+    Ok(serde_json::from_value::<SubtitleLook>(v).unwrap_or_default())
+}
+
+/// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
+fn is_default_subtitle_look(look: &SubtitleLook) -> bool {
+    *look == SubtitleLook::default()
 }
 
 /// The HDR overlay brightness is a preference too: a spelling this build does not know degrades to the default (75%).

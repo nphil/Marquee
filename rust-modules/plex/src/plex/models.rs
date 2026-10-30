@@ -418,6 +418,10 @@ pub struct Metadata {
     pub grandparent_thumb: String,
     #[serde(rename = "Media", default)]
     pub media: Vec<Media>,
+    /// The item's external ids (`imdb://tt0123456`, `tmdb://603`, `tvdb://81189`), as the agent
+    /// recorded them. A subtitle provider is asked by these, never by the Plex-internal `guid`.
+    #[serde(rename = "Guid", default, deserialize_with = "de_vec")]
+    pub guids: Vec<GuidRef>,
     #[serde(rename = "Genre", default)]
     pub genre: Vec<Tag>,
     #[serde(rename = "Country", default)]
@@ -877,6 +881,22 @@ pub struct Stream {
     /// because the search answers it; no client path acts on it yet.
     #[serde(rename = "canAutoSync", default, deserialize_with = "de_bool")]
     pub can_auto_sync: bool,
+}
+
+/// One external id of an item: `{"id":"imdb://tt0123456"}`. [`de_str`], like every string a share
+/// might send null.
+#[derive(Deserialize, Default, Clone, PartialEq, Eq, Debug)]
+pub struct GuidRef {
+    #[serde(default, deserialize_with = "de_str")]
+    pub id: String,
+}
+
+impl GuidRef {
+    /// The id after `scheme://` when this is that scheme's, e.g. `"tt0123456"` for `"imdb"`.
+    pub fn of(&self, scheme: &str) -> Option<&str> {
+        let rest = self.id.strip_prefix(scheme)?.strip_prefix("://")?;
+        (!rest.is_empty()).then_some(rest)
+    }
 }
 
 /// A tag row — `Genre[]`, `Country[]`, `Role[]`, `Director[]`, `Writer[]`. The three PEOPLE

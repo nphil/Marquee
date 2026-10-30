@@ -51,6 +51,11 @@ static void ass_set_frame_size(ASS_Renderer *r, int w, int h) {}
 #define ASS_FEATURE_WRAP_UNICODE 3
 static int ass_track_set_feature(ASS_Track *t, int f, int e) { return 0; }
 static void ass_set_line_spacing(ASS_Renderer *r, double s) {}
+typedef struct { char *Name, *FontName; double FontSize; uint32_t PrimaryColour, SecondaryColour, OutlineColour, BackColour; int Bold; double ScaleX, ScaleY, Outline, Shadow; int BorderStyle, Alignment; } ASS_Style;
+#define ASS_OVERRIDE_DEFAULT 0
+#define ASS_OVERRIDE_BIT_STYLE 1
+static void ass_set_selective_style_override_enabled(ASS_Renderer *r, int bits) {}
+static void ass_set_selective_style_override(ASS_Renderer *r, ASS_Style *style) {}
 static size_t plxi_library_fonts(ASS_Library *l) { return 0; }
 static void ass_set_storage_size(ASS_Renderer *r, int w, int h) {}
 '''

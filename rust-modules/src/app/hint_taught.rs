@@ -25,7 +25,11 @@ pub(crate) fn seed(taught: HoldHintTaught) {
 pub(crate) struct HintTaught;
 
 impl HintTaught {
+    /// Made once, as the frame loop starts, so it is also the one start-up hook the loop has: it takes a
+    /// Bazarr address and key left as a file by whoever provisioned this set (`session::bazarr_import`),
+    /// once, and removes the file. `run` itself is at its line budget (`ci/check-deps.sh`, fnlen).
     pub(crate) fn new() -> Self {
+        plx_plex::plex::session::import_bazarr_link_file();
         Self
     }
 

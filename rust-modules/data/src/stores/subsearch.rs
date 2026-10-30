@@ -64,6 +64,15 @@ impl SubSearchStore {
         changed
     }
 
+    /// State Bazarr's address and key, as the host reads them off the account session, before a
+    /// command or a pump. The store holds them for the one kind of request that needs them and shows
+    /// a screen only the host name (`SubSearchView::bazarr_host`). `true` when they changed.
+    pub fn set_link(&mut self, link: &plx_plex::plex::session::BazarrLink) -> bool {
+        let changed = self.state.set_link(link);
+        if changed { self.bump(); }
+        changed
+    }
+
     /// Take the jobs the pump has emitted since the last take, in order. The caller OWES each one
     /// to a runner: a job dropped here is a request whose claim is never released.
     #[must_use]

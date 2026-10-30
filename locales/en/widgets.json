@@ -1120,5 +1120,221 @@
   "widgets.failure.change_quality": {
     "value": "Change quality",
     "description": "Failed-playback button: opens the quality ladder; picking a rung retries at it."
+  },
+  "widgets.tracks.style_preset": {
+    "value": "Preset",
+    "description": "Row label on the player's subtitle Style page and title of its picker page. Names the whole caption look (Blend with video, Apple TV, Classic...)."
+  },
+  "widgets.tracks.style_font": {
+    "value": "Font",
+    "description": "Row label on the player's subtitle Style page and title of its picker page. The caption's typeface."
+  },
+  "widgets.tracks.style_edge": {
+    "value": "Edge",
+    "description": "Row label on the player's subtitle Style page and title of its picker page. The caption's edge: outline, shadow, raised."
+  },
+  "widgets.tracks.style_background": {
+    "value": "Background",
+    "description": "Row label on the player's subtitle Style page and title of its picker page. The box or window behind the caption."
+  },
+  "widgets.tracks.style_reveal": {
+    "value": "Reveal",
+    "description": "Row label on the player's subtitle Style page and title of its picker page. Shows each word or line as it is spoken."
+  },
+  "widgets.tracks.style_blend": {
+    "value": "Blend with video",
+    "description": "Row label on the player's subtitle Style page and title of its picker page. The caption's brightness follows the scene and stays below HDR peak."
+  },
+  "widgets.tracks.look_preset_blend": {
+    "value": "Blend with video",
+    "description": "A caption preset on the player's Style > Preset page. Soft, translucent text that follows the scene's brightness (modelled on Apple TV and Infuse)."
+  },
+  "widgets.tracks.look_preset_apple_tv": {
+    "value": "Apple TV",
+    "description": "A caption preset on the player's Style > Preset page. A brand name; keep it."
+  },
+  "widgets.tracks.look_preset_classic": {
+    "value": "Classic",
+    "description": "A caption preset on the player's Style > Preset page. White text on a black box, like broadcast captions."
+  },
+  "widgets.tracks.look_preset_netflix": {
+    "value": "Netflix",
+    "description": "A caption preset on the player's Style > Preset page. A brand name; keep it."
+  },
+  "widgets.tracks.look_preset_outline": {
+    "value": "Outline",
+    "description": "A caption preset on the player's Style > Preset page. White text with a thick black outline."
+  },
+  "widgets.tracks.look_preset_large_print": {
+    "value": "Large print",
+    "description": "A caption preset on the player's Style > Preset page. Bigger, bolder, outlined text."
+  },
+  "widgets.tracks.look_preset_high_contrast": {
+    "value": "High contrast",
+    "description": "A caption preset on the player's Style > Preset page. Yellow text with a black outline."
+  },
+  "widgets.tracks.look_preset_marquee": {
+    "value": "Marquee",
+    "description": "A caption preset on the player's Style > Preset page. The app's own look; keep the name."
+  },
+  "widgets.tracks.look_preset_custom": {
+    "value": "Custom",
+    "description": "A caption preset on the player's Style > Preset page. Shown when a hand edit has left no preset."
+  },
+  "widgets.tracks.look_font_default": {
+    "value": "Default",
+    "description": "A caption typeface on the player's Style > Font page. The app's own face."
+  },
+  "widgets.tracks.look_font_serif": {
+    "value": "Serif",
+    "description": "A caption typeface on the player's Style > Font page. A serif face; the word is used as it is."
+  },
+  "widgets.tracks.look_font_mono": {
+    "value": "Monospace",
+    "description": "A caption typeface on the player's Style > Font page. A fixed-width face."
+  },
+  "widgets.tracks.look_font_legible": {
+    "value": "Easy to read",
+    "description": "A caption typeface on the player's Style > Font page. A face designed to be easy to read."
+  },
+  "widgets.tracks.look_edge_none": {
+    "value": "None",
+    "description": "A caption edge style on the player's Style > Edge page. No outline or shadow."
+  },
+  "widgets.tracks.look_edge_outline": {
+    "value": "Outline",
+    "description": "A caption edge style on the player's Style > Edge page. A black line around each letter."
+  },
+  "widgets.tracks.look_edge_drop": {
+    "value": "Drop shadow",
+    "description": "A caption edge style on the player's Style > Edge page. A hard shadow offset down and right."
+  },
+  "widgets.tracks.look_edge_raised": {
+    "value": "Raised",
+    "description": "A caption edge style on the player's Style > Edge page. Letters that look raised from the picture."
+  },
+  "widgets.tracks.look_edge_depressed": {
+    "value": "Depressed",
+    "description": "A caption edge style on the player's Style > Edge page. Letters that look pressed into the picture."
+  },
+  "widgets.tracks.look_edge_soft": {
+    "value": "Soft shadow",
+    "description": "A caption edge style on the player's Style > Edge page. A soft, diffuse shadow."
+  },
+  "widgets.tracks.look_back_off": {
+    "value": "None",
+    "description": "A caption background style on the player's Style > Background page. No box behind the text."
+  },
+  "widgets.tracks.look_back_line": {
+    "value": "Line box",
+    "description": "A caption background style on the player's Style > Background page. A box behind each line."
+  },
+  "widgets.tracks.look_back_window": {
+    "value": "Window",
+    "description": "A caption background style on the player's Style > Background page. One window behind all the lines."
+  },
+  "widgets.tracks.look_reveal_off": {
+    "value": "Off",
+    "description": "A reveal-as-spoken setting on the player's Style > Reveal page. The whole line shows at once."
+  },
+  "widgets.tracks.look_reveal_word": {
+    "value": "Word by word",
+    "description": "A reveal-as-spoken setting on the player's Style > Reveal page. Each word appears as it is spoken (estimated from the cue's timing)."
+  },
+  "widgets.tracks.look_reveal_line": {
+    "value": "Line by line",
+    "description": "A reveal-as-spoken setting on the player's Style > Reveal page. Each line appears as it is spoken."
+  },
+  "widgets.tracks.look_on": {
+    "value": "On",
+    "description": "The on value of a switch on the player's Style pages (Blend with video)."
+  },
+  "widgets.tracks.look_off": {
+    "value": "Off",
+    "description": "The off value of a switch on the player's Style pages (Blend with video)."
+  },
+  "widgets.tracks.fix": {
+    "value": "Wrong subtitles?",
+    "description": "Root row and page title in the player's subtitle menu: the way out when the subtitles do not match the video."
+  },
+  "widgets.tracks.fix_remove": {
+    "value": "Remove this subtitle",
+    "description": "Wrong subtitles page of the player's subtitle menu. Row that deletes the external subtitle file on screen from the server."
+  },
+  "widgets.tracks.fix_remove_sure": {
+    "value": "Press OK again to remove",
+    "description": "Wrong subtitles page of the player's subtitle menu. The remove row after the first OK: asks for a second one."
+  },
+  "widgets.tracks.fix_remove_note": {
+    "value": "It is deleted from the server and can't be undone.",
+    "description": "Wrong subtitles page of the player's subtitle menu. Line under the armed remove row."
+  },
+  "widgets.tracks.fix_remove_embedded": {
+    "value": "Part of the video file, so it can't be removed",
+    "description": "Wrong subtitles page of the player's subtitle menu. Reason line when the subtitle on screen is inside the video file."
+  },
+  "widgets.tracks.fix_remove_none": {
+    "value": "No subtitle is showing",
+    "description": "Wrong subtitles page of the player's subtitle menu. Reason line when no subtitle is showing."
+  },
+  "widgets.tracks.fix_removing": {
+    "value": "Removing…",
+    "description": "Wrong subtitles page of the player's subtitle menu. Progress line while the server deletes the file."
+  },
+  "widgets.tracks.fix_removed": {
+    "value": "Removed from the server.",
+    "description": "Wrong subtitles page of the player's subtitle menu. Confirmation line after the server deleted the file."
+  },
+  "widgets.tracks.fix_refused": {
+    "value": "The server would not remove it.",
+    "description": "Wrong subtitles page of the player's subtitle menu. Line when the server refused to delete the file."
+  },
+  "widgets.tracks.fix_failed": {
+    "value": "Couldn't reach the server.",
+    "description": "Wrong subtitles page of the player's subtitle menu. Line when the server could not be reached to delete the file."
+  },
+  "widgets.tracks.fix_bazarr": {
+    "value": "Find another with Bazarr",
+    "description": "Wrong subtitles page of the player's subtitle menu. Row that searches the viewer's Bazarr for another subtitle. Bazarr is a product name."
+  },
+  "widgets.tracks.fix_bazarr_unset": {
+    "value": "Set up Bazarr in Settings, Integrations",
+    "description": "Wrong subtitles page of the player's subtitle menu. Line under the Bazarr row when Bazarr is not set up."
+  },
+  "widgets.tracks.bazarr_title": {
+    "value": "Bazarr",
+    "description": "Bazarr search page of the player's subtitle menu. Page title; a product name, keep it."
+  },
+  "widgets.tracks.bazarr_searching": {
+    "value": "Asking Bazarr's providers. This can take a minute.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown while Bazarr asks its subtitle providers."
+  },
+  "widgets.tracks.bazarr_none": {
+    "value": "Bazarr found nothing in this language.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when Bazarr answered with no subtitles in the chosen language."
+  },
+  "widgets.tracks.bazarr_not_set": {
+    "value": "Bazarr is not set up.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when no Bazarr address and key are stored."
+  },
+  "widgets.tracks.bazarr_unreachable": {
+    "value": "Can't reach Bazarr.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when nothing answered at Bazarr's address."
+  },
+  "widgets.tracks.bazarr_bad_key": {
+    "value": "Bazarr refused the API key.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when Bazarr answered that the API key is wrong."
+  },
+  "widgets.tracks.bazarr_not_bazarr": {
+    "value": "That address does not answer like Bazarr.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when the address answers, but not like Bazarr."
+  },
+  "widgets.tracks.bazarr_not_in": {
+    "value": "Bazarr doesn't have this title.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when Bazarr does not hold this movie or episode."
+  },
+  "widgets.tracks.bazarr_refused": {
+    "value": "Bazarr couldn't search. Check its providers.",
+    "description": "Bazarr search page of the player's subtitle menu. Shown when Bazarr itself failed to search (a provider or path fault)."
   }
 }

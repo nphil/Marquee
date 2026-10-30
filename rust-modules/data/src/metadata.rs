@@ -2868,6 +2868,22 @@ fn append_playing_sub(state: &mut MetadataState, sid: plx_plex::plex::ServerId, 
     true
 }
 
+/// MAIN THREAD: drop subtitle stream `stream_id` from the playing item's list, after the server deleted
+/// it. Only on the same `(sid, rk)`; `false` when the item has moved on or the list never held it.
+fn remove_playing_sub(state: &mut MetadataState, sid: plx_plex::plex::ServerId, rk: &str, stream_id: i64) -> bool {
+    let Some(pt) = state.playing.as_mut() else { return false };
+    if !plx_plex::plex::same_item((pt.sid, &pt.rk), (sid, rk)) {
+        return false;
+    }
+    let before = pt.subs.len();
+    pt.subs.retain(|s| s.id != stream_id);
+    let gone = pt.subs.len() != before;
+    if gone {
+        plx_base::eventlog::log(&format!("playing item: rk={rk} lost subtitle stream {stream_id}"));
+    }
+    gone
+}
+
 /// MAIN THREAD: install a fetched playing-item store.
 fn install_playing(state: &mut MetadataState, pt: Option<PlayingItem>) {
     state.skipped.clear(); // a different leaf's markers, so a fresh slate
@@ -4128,6 +4144,7 @@ pub fn run(state: &mut MetadataState, adapter: &std::sync::Arc<MetadataAdapter>,
             true
         }
         MetadataCmd::AppendPlayingSub { sid, rk, stream } => append_playing_sub(state, sid, &rk, stream),
+        MetadataCmd::RemovePlayingSub { sid, rk, stream_id } => remove_playing_sub(state, sid, &rk, stream_id),
         MetadataCmd::MarkSkipped(m) => {
             mark_skipped(state, m);
             true

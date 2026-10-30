@@ -22,8 +22,9 @@ typedef struct {
 /* ABI 3: plx_ass_set_features, plx_ass_set_cache_limits, plx_ass_set_line_spacing,
  * plx_ass_replace_track and plx_ass_stats join the 2 surface. plx_ass_load now scans the fonts
  * (ass_set_fonts) only on a context's first load.
- * ABI 4: the UI text surface, plx_ass_text_* (src/ass_text.c). */
-#define PLX_ASS_ABI_VERSION 4
+ * ABI 4: the UI text surface, plx_ass_text_* (src/ass_text.c).
+ * ABI 5: plx_ass_set_style_override. */
+#define PLX_ASS_ABI_VERSION 5
 
 typedef struct {
     uint32_t library_fonts; /* fonts the library holds: added through plx_ass_add_font or extracted */
@@ -52,6 +53,27 @@ int plx_ass_set_cache_limits(PlxAss *ctx, int glyph_max, int bitmap_mib);
 /* Extra pixels between lines at the render size; negative tightens. -1 if not finite or beyond
  * +-1000. The next render redraws in full. */
 int plx_ass_set_line_spacing(PlxAss *ctx, double spacing);
+
+/* The viewer's look laid over an authored script ("use my look"): the style libass applies, in
+ * place of the script's own, to every event that is not explicitly placed (\pos, \move, \an,
+ * \clip and the like keep the script's; so does its timing, karaoke included). Colours are ASS
+ * `&HAABBGGRR` as numbers. Sizes are in libass's override units, a script of PlayResY 288: the
+ * caller scales a 1080-canvas size by 288/1080, and libass scales it back to the track's own. */
+typedef struct {
+    const char *font_name;
+    double font_size;
+    double outline;
+    double shadow;
+    uint32_t primary_colour;
+    uint32_t outline_colour;
+    uint32_t back_colour;
+    int bold;
+} PlxAssStyleOverride;
+
+/* Apply `style` (NULL: restore the script's own styles) to the loaded and every later track on this
+ * renderer. -1 for a null font name, a size or width that is not finite or beyond +-1000, or an
+ * unusable context. The next render redraws in full. */
+int plx_ass_set_style_override(PlxAss *ctx, const PlxAssStyleOverride *style);
 int plx_ass_stats(const PlxAss *ctx, PlxAssStats *out);
 int plx_ass_chunk(PlxAss *ctx, const uint8_t *data, size_t len,
                   int64_t start_ms, int64_t duration_ms);

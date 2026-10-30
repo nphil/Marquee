@@ -19,6 +19,7 @@
 //! `sidecar::decode` converts a sidecar file with [`script_from_srt`] / [`script_from_vtt`].
 
 use super::text_style::{self, TextStyle};
+use plx_plex::plex::session::Reveal;
 
 /// The family every synthesized style names. The shipped Inter Bold answers to it (plan §3.2); a
 /// libass without that alias would fall back to the default family, "Inter", and pick Inter Regular.
@@ -566,11 +567,22 @@ fn number(x: f64) -> String {
 
 /// The synthesized header of a text-origin script for the viewer's picks (plan §2.2): PlayRes
 /// 1920x1080, `WrapStyle 1`, one style per numpad alignment, ending after the `[Events]` format
-/// line so events can be appended.
+/// line so events can be appended. The font, weight, size, edge and line pitch of the viewer's look
+/// are in the `Style:` lines; everything the player paints with the frame (colour, opacity, the
+/// box, the soft shadow, the nudge) is not.
 pub fn header(style: &TextStyle) -> String {
     let scale = style.scale();
-    let fs = number(text_style::font_size(scale));
+    let fs = number(style.font_size());
     let margin = text_style::side_margin(scale);
+    let face = text_style::font_info(style.layout.font);
+    let (fontname, bold) = match (style.layout.bold, face.bold_by_flag) {
+        (true, true) => (face.bold, -1),
+        (true, false) => (face.bold, 0),
+        (false, _) => (face.regular, 0),
+    };
+    let edge = style.layout.edge_fields();
+    let (outline, shadow) = (number(edge.outline), number(edge.shadow));
+    let (outline_colour, back_colour) = (text_style::ass_colour(edge.outline_colour), text_style::ass_colour(edge.back_colour));
     let mut h = String::from(
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 1\n\
          ScaledBorderAndShadow: yes\nYCbCr Matrix: None\n\n[V4+ Styles]\n\
@@ -580,13 +592,52 @@ pub fn header(style: &TextStyle) -> String {
     );
     for (align, margin_v) in style_margins(style) {
         h.push_str(&format!(
-            "Style: {name},{STYLE_FONT},{fs},&H00FFFFFF,&H00FFFFFF,&H26000000,&HFF000000,\
-             0,0,0,0,100,100,0,0,1,2,0,{align},{margin},{margin},{margin_v},-1\n",
+            "Style: {name},{fontname},{fs},&H00FFFFFF,&H00FFFFFF,{outline_colour},{back_colour},\
+             {bold},0,0,0,100,100,0,0,1,{outline},{shadow},{align},{margin},{margin},{margin_v},-1\n",
             name = style_name(align),
         ));
     }
     h.push_str("\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
     h
+}
+
+/// The viewer's look as the style libass lays over an authored script ("use my look"): the header's
+/// own font, weight, size and edge for the same picks, white letters (the look's colour and opacity
+/// are painted over the frame, as they are for a text subtitle), the edge's colours.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StyleOverride {
+    pub font_name: &'static str,
+    pub font_size: f64,
+    pub outline: f64,
+    pub shadow: f64,
+    pub primary_colour: u32,
+    pub outline_colour: u32,
+    pub back_colour: u32,
+    pub bold: bool,
+}
+
+/// libass takes an override style as if for a script of `PlayResY` 288 and rescales it to the
+/// script's own; the sizes here are for the 1080 canvas the header is written for.
+const OVERRIDE_RES: f64 = 288.0 / 1080.0;
+
+pub fn style_override(style: &TextStyle) -> StyleOverride {
+    let face = text_style::font_info(style.layout.font);
+    let (font_name, bold) = match (style.layout.bold, face.bold_by_flag) {
+        (true, true) => (face.bold, true),
+        (true, false) => (face.bold, false),
+        (false, _) => (face.regular, false),
+    };
+    let edge = style.layout.edge_fields();
+    StyleOverride {
+        font_name,
+        font_size: style.font_size() * OVERRIDE_RES,
+        outline: edge.outline * OVERRIDE_RES,
+        shadow: edge.shadow * OVERRIDE_RES,
+        primary_colour: 0x00FF_FFFF,
+        outline_colour: edge.outline_colour,
+        back_colour: edge.back_colour,
+        bold,
+    }
 }
 
 // ---- newest wins ------------------------------------------------------------------------------
@@ -747,7 +798,11 @@ impl TextScript {
     /// The complete script for the viewer's picks.
     pub fn assemble(&self, style: &TextStyle) -> String {
         let mut script = header(style);
-        script.push_str(&self.events);
+        if style.layout.reveal == Reveal::Off {
+            script.push_str(&self.events);
+        } else {
+            script.push_str(&super::reveal::reveal_events(&self.events, super::reveal::Params::of(&style.layout)));
+        }
         script
     }
 }

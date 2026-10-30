@@ -527,7 +527,7 @@ pub(crate) fn libswitch_armed() -> bool {
 pub(crate) fn searchosc_armed() -> bool {
     plx_base::devtrig::flag("searchosc")
 }
-/// `/tmp/plxnative-settings=<root|home|privacy|legal|playback|picker-quality|…>`.
+/// `/tmp/plxnative-settings=<root|home|privacy|legal|playback|subtitles|bazarr|picker-quality|…>`.
 pub(crate) fn settings_boot_value() -> Option<String> {
     plx_base::devtrig::read("settings")
 }
@@ -1237,6 +1237,8 @@ fn settings_boot_arm(app: &mut App, fr: &mut Frame) {
                 "language" => plx_screens::family::SettingsPage::Language,
                 "contribute" => plx_screens::family::SettingsPage::Contribute,
                 "playback" => plx_screens::family::SettingsPage::Playback,
+                "subtitles" => plx_screens::family::SettingsPage::Subtitles,
+                "bazarr" => plx_screens::family::SettingsPage::Bazarr,
                 // root → Playback → the Quality picker (`SettingsPage::boot_trail`), so BACK works.
                 "picker-quality" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::Quality),
                 "picker-next-episode" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::NextEpisode),

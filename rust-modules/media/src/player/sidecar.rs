@@ -83,13 +83,16 @@ struct Content {
 
 /// What a converted file needs to be restyled: the script is the synthesized header followed by
 /// the converted `Dialogue:` lines, so the events are the bytes past `header_len` and are not kept
-/// twice.
+/// twice. The exception is "Reveal as spoken": its tags are written into those lines, so the plain
+/// lines are kept beside them (`plain`) for the restyle that turns it off or changes it.
 struct TextHold {
     header_len: usize,
     /// The picks (`TextStyle::generation`) the held header was synthesized for.
     style_generation: u32,
     /// Cues that survived conversion.
     cues: usize,
+    /// The `Dialogue:` lines before any reveal tags, held only while the script carries them.
+    plain: Option<Arc<str>>,
     /// A worker is already building the script for newer picks (one at a time; a later pick that
     /// lands meanwhile is taken up by the next call once this one has published).
     restyling: bool,
@@ -351,15 +354,27 @@ fn ass_source_styled(burned: bool, style: TextStyle) -> Option<Arc<super::ass::S
 fn start_restyle(content: &mut Content, style: TextStyle) {
     let Some(hold) = content.text.as_mut().filter(|hold| !hold.restyling) else { return };
     let super::ass::Content::Script { bytes, .. } = &content.source.content else { return };
-    let (id, base_generation, header_len, bytes) = (content.source.id, hold.style_generation, hold.header_len, bytes.clone());
+    let (id, base_generation, header_len, bytes, plain) =
+        (content.source.id, hold.style_generation, hold.header_len, bytes.clone(), hold.plain.clone());
     hold.restyling = true;
     let started = plx_base::task::spawn_small("sidecar restyle", move || {
         let header = text_ass::header(&style);
-        let script = joined(header.as_bytes(), &bytes[header_len..]);
+        let held: &str = match &plain {
+            Some(plain) => plain,
+            None => std::str::from_utf8(&bytes[header_len..]).unwrap_or(""),
+        };
+        let revealing = style.layout.reveal != plx_plex::plex::session::Reveal::Off;
+        let script = if revealing {
+            let events = super::reveal::reveal_events(held, super::reveal::Params::of(&style.layout));
+            joined(header.as_bytes(), events.as_bytes())
+        } else {
+            joined(header.as_bytes(), held.as_bytes())
+        };
+        let plain = revealing.then(|| plain.clone().unwrap_or_else(|| Arc::from(held)));
         drop(bytes);
         let mut st = state();
         if let Some((_, content)) = st.loaded.as_mut() {
-            publish_restyle(content, id, base_generation, style, header.len(), script);
+            publish_restyle(content, id, base_generation, style, header.len(), script, plain);
         }
         SETTLED.notify_all();
         drop(st);
@@ -374,14 +389,22 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
 
 /// Publish a script built for `style` if `content` is still the file it was built from. The
 /// fonts are the ones the content holds now, so a restyle never undoes a font publication.
-fn publish_restyle(content: &mut Content, id: u64, base_generation: u32, style: TextStyle, header_len: usize, script: Arc<[u8]>) {
+fn publish_restyle(
+    content: &mut Content,
+    id: u64,
+    base_generation: u32,
+    style: TextStyle,
+    header_len: usize,
+    script: Arc<[u8]>,
+    plain: Option<Arc<str>>,
+) {
     let (revision, origin, fonts) = match (&content.source.content, content.text.as_mut()) {
         (super::ass::Content::Script { fonts, .. }, Some(hold)) if content.source.id == id => {
             hold.restyling = false;
             if hold.style_generation != base_generation {
                 return;
             }
-            (hold.header_len, hold.style_generation) = (header_len, style.generation());
+            (hold.header_len, hold.style_generation, hold.plain) = (header_len, style.generation(), plain);
             (content.source.revision.wrapping_add(1), super::ass::Origin::Text(style), fonts.clone())
         }
         _ => return,
@@ -451,7 +474,14 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
     }
     let style = TextStyle::current();
     let header = text_ass::header(&style);
-    let script = joined(header.as_bytes(), converted.events.as_bytes());
+    let revealing = style.layout.reveal != plx_plex::plex::session::Reveal::Off;
+    let script = if revealing {
+        let events = super::reveal::reveal_events(&converted.events, super::reveal::Params::of(&style.layout));
+        joined(header.as_bytes(), events.as_bytes())
+    } else {
+        joined(header.as_bytes(), converted.events.as_bytes())
+    };
+    let plain = revealing.then(|| Arc::<str>::from(converted.events.as_str()));
     drop(converted.events);
     Ok(Content {
         source: Arc::new(super::ass::Source {
@@ -459,7 +489,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
             content: super::ass::Content::Script { bytes: script, fonts: Arc::from([]) },
         }),
         font_generation: None,
-        text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, restyling: false }),
+        text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, plain, restyling: false }),
     })
 }
 
@@ -836,10 +866,7 @@ mod tests {
 
     /// Another pair of picks than `current`, in both size and position.
     fn other_picks(current: TextStyle) -> TextStyle {
-        TextStyle {
-            size: if current.size == SubtitleSize::Large { SubtitleSize::Small } else { SubtitleSize::Large },
-            position: if current.position == SubtitlePosition::High { SubtitlePosition::Low } else { SubtitlePosition::High },
-        }
+        TextStyle::picks(if current.size == SubtitleSize::Large { SubtitleSize::Small } else { SubtitleSize::Large }, if current.position == SubtitlePosition::High { SubtitlePosition::Low } else { SubtitlePosition::High })
     }
 
     /// The source for `picks`, once the worker that builds a restyled script has published it.

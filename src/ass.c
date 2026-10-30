@@ -200,6 +200,48 @@ int plx_ass_set_line_spacing(PlxAss *ctx, double spacing)
     return 0;
 }
 
+/* An ASS colour number `&HAABBGGRR` (alpha 0 opaque) as ASS_Style holds it: 0xRRGGBBAA. */
+static uint32_t style_colour(uint32_t c)
+{
+    return ((c & 0xFFu) << 24) | (((c >> 8) & 0xFFu) << 16) | (((c >> 16) & 0xFFu) << 8) | (c >> 24);
+}
+
+int plx_ass_set_style_override(PlxAss *ctx, const PlxAssStyleOverride *style)
+{
+    if (!ctx || !ctx->renderer) return -1;
+    if (!style) {
+        ass_set_selective_style_override_enabled(ctx->renderer, ASS_OVERRIDE_DEFAULT);
+        ctx->cache_valid = 0;
+        return 0;
+    }
+    if (!style->font_name || !isfinite(style->font_size) || !isfinite(style->outline) ||
+        !isfinite(style->shadow) || fabs(style->font_size) > MAX_LINE_SPACING ||
+        fabs(style->outline) > MAX_LINE_SPACING || fabs(style->shadow) > MAX_LINE_SPACING) {
+        return -1;
+    }
+    ASS_Style user;
+    memset(&user, 0, sizeof user);
+    user.Name = "PlxMine";
+    user.FontName = (char *)style->font_name; /* libass copies it */
+    user.FontSize = style->font_size;
+    user.PrimaryColour = style_colour(style->primary_colour);
+    user.SecondaryColour = style_colour(style->primary_colour);
+    user.OutlineColour = style_colour(style->outline_colour);
+    user.BackColour = style_colour(style->back_colour);
+    user.Bold = style->bold ? -1 : 0;
+    user.ScaleX = 1.0;
+    user.ScaleY = 1.0;
+    user.BorderStyle = 1;
+    user.Outline = style->outline;
+    user.Shadow = style->shadow;
+    user.Alignment = 2;
+    ass_set_selective_style_override(ctx->renderer, &user);
+    ass_set_selective_style_override_enabled(ctx->renderer, ASS_OVERRIDE_BIT_STYLE);
+    /* libass compares images, not settings: redraw the next frame in full. */
+    ctx->cache_valid = 0;
+    return 0;
+}
+
 int plx_ass_stats(const PlxAss *ctx, PlxAssStats *out)
 {
     if (!ctx || !out) return -1;

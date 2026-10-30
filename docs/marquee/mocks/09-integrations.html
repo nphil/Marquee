@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Marquee · Integrations</title>
+<link rel="stylesheet" href="marquee.css">
+<link rel="stylesheet" href="subs.css">
+<style>
+  .rail { left: var(--lu-edge-x); top: 150px; width: 448px; bottom: var(--lu-edge-y); padding: 20px 16px; overflow: hidden; }
+  .rail-entry { position: relative; display: grid; grid-template-columns: 56px 1fr; column-gap: 20px; align-items: center; min-height: 88px; padding: 0 16px 0 20px; border-radius: var(--lu-radius-row); border: 1px solid transparent; }
+  .rail-entry + .rail-entry { margin-top: 4px; }
+  .rail-entry .tile { position: relative; width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--tile-ink-wash); }
+  .rail-entry .tile .ic { width: 30px; height: 30px; }
+  .rail-entry .name { font-size: var(--f-body); font-weight: 600; line-height: 1.15; letter-spacing: -.005em; }
+  .rail-entry .line { font-size: var(--f-cap); font-weight: 500; color: var(--lu-ink-2); line-height: 1.2; margin-top: 3px; }
+  .rail-entry[aria-current] { background: var(--raise-fill); border-color: var(--lu-edge-raised); box-shadow: var(--highlight-raised), var(--shadow-pressed); }
+  .rail-entry[aria-current] .tile { background: var(--lu-accent); color: var(--lu-accent-ink); }
+  [data-text="200"] .rail-entry .line { display: none; }
+  [data-text="200"] .rail { width: 520px; top: 210px; }
+  [data-text="200"] .ipage { left: 640px; top: 210px; padding: 28px 40px 20px; }
+</style>
+</head>
+<body data-default="disconnected">
+<div class="canvas"></div>
+
+<nav class="glass crumb" aria-label="Back to Home">
+  <span class="nav"><span class="hint" data-hint="key-back" data-name="Back"></span>Home</span>
+</nav>
+
+<nav class="glass rail" aria-label="Settings sections">
+  <div class="rail-entry"><div class="tile"><i data-ic="clapperboard" class="ic"></i></div><div><div class="name">Video &amp; playback</div><div class="line">Original</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="captions" class="ic"></i></div><div><div class="name">Subtitles</div><div class="line">Blend with video</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="layers" class="ic"></i></div><div><div class="name">Libraries</div><div class="line">3 favorites</div></div></div>
+  <div class="rail-entry" aria-current="page"><div class="tile"><i data-ix="plug" class="ic"></i></div><div><div class="name">Integrations</div><div class="line" data-v="disconnected entry testing">Bazarr not set up</div><div class="line" data-v="connected">Bazarr connected</div><div class="line" data-v="unreachable badkey">Bazarr not reachable</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="languages" class="ic"></i></div><div><div class="name">Language</div><div class="line">English</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="user" class="ic"></i></div><div><div class="name">Account</div><div class="line">Nitin</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="shield" class="ic"></i></div><div><div class="name">Privacy &amp; data</div><div class="line">Reports off</div></div></div>
+  <div class="rail-entry"><div class="tile"><i data-ic="info" class="ic"></i></div><div><div class="name">About</div><div class="line">Marquee 0.1</div></div></div>
+</nav>
+
+<main class="glass ipage" aria-label="Bazarr">
+  <h1>Bazarr</h1>
+  <div class="rows">
+    <div class="row" data-v="disconnected testing unreachable badkey entry"><div class="text"><div class="t">Address</div><div class="d">Where Bazarr runs, with https:// or http://</div></div><div class="v">https://bazarr.nateshome.net<i data-ic="chevron-right" class="ic"></i></div></div>
+    <div class="row" data-v="connected"><div class="text"><div class="t">Address</div><div class="d">Where Bazarr runs, with https:// or http://</div></div><div class="v">https://bazarr.nateshome.net<i data-ic="chevron-right" class="ic"></i></div></div>
+    <div class="row f" data-v="entry"><div class="text"><div class="t">API key</div><div class="d">Settings, General, Security in Bazarr</div></div><div class="v">Typing…</div></div>
+    <div class="row" data-v="disconnected unreachable badkey testing"><div class="text"><div class="t">API key</div><div class="d">Settings, General, Security in Bazarr</div></div><div class="v">Not set<i data-ic="chevron-right" class="ic"></i></div></div>
+    <div class="row" data-v="connected"><div class="text"><div class="t">API key</div><div class="d">Settings, General, Security in Bazarr</div></div><div class="v secret">••••••••<i data-ic="chevron-right" class="ic"></i></div></div>
+    <div class="row f" data-v="disconnected"><div class="text"><div class="t">Test connection</div></div><div class="v"><i data-ic="refresh-cw" class="ic"></i></div></div>
+    <div class="row" data-v="connected unreachable badkey testing"><div class="text"><div class="t">Test connection</div></div><div class="v"><i data-ic="refresh-cw" class="ic"></i></div></div>
+    <div class="row" data-v="connected" data-t200="hide"><div class="text"><div class="t">Forget this key</div><div class="d">Removes the address and key from this TV</div></div><div class="v"><i data-ix="trash-2" class="ic"></i></div></div>
+  </div>
+  <div class="status" data-v="disconnected entry"><i data-ix="unlink" class="ic"></i><div><div class="st">Not set up</div><div class="sd">Add the address and API key, then test. The key stays on this TV, sealed like the Plex sign-in.</div></div></div>
+  <div class="status" data-v="testing"><div class="spin" style="width:40px;height:40px;border-width:5px"></div><div><div class="st">Checking…</div><div class="sd">Asking Bazarr for its version.</div></div></div>
+  <div class="status ok" data-v="connected"><i data-ix="badge-check" class="ic"></i><div><div class="st">Connected · Bazarr 1.5.1</div><div class="sd">Sonarr 4.0 and Radarr 5.3 are linked. “Wrong subtitles?” in the player now offers Bazarr.</div></div></div>
+  <div class="status bad" data-v="unreachable"><i data-ix="wifi-off" class="ic"></i><div><div class="st">Can’t reach Bazarr</div><div class="sd">No answer from that address. Check it and that this TV is on the same network.</div></div></div>
+  <div class="status warn" data-v="badkey"><i data-ic="triangle-alert" class="ic"></i><div><div class="st">Bazarr refused the key</div><div class="sd">The address answers, but the API key is wrong. Copy it again from Bazarr.</div></div></div>
+</main>
+
+<!-- on-screen keyboard for the address and the key: typed on the TV, never read out -->
+<div class="overlay kbd" data-v="entry" role="dialog" aria-label="API key">
+  <div class="field"><span class="lbl">API key</span><span class="secret">a3f9••••••••••••</span></div>
+  <div class="keys">
+    <span class="k">1</span><span class="k">2</span><span class="k">3</span><span class="k">4</span><span class="k">5</span><span class="k">6</span><span class="k">7</span><span class="k">8</span><span class="k">9</span><span class="k">0</span><span class="k w2"><i data-ic="arrow-left" class="ic"></i></span>
+    <span class="k">q</span><span class="k">w</span><span class="k">e</span><span class="k">r</span><span class="k">t</span><span class="k">y</span><span class="k">u</span><span class="k">i</span><span class="k">o</span><span class="k">p</span><span class="k w2">abc</span>
+    <span class="k">a</span><span class="k">s</span><span class="k">d</span><span class="k f">f</span><span class="k">g</span><span class="k">h</span><span class="k">j</span><span class="k">k</span><span class="k">l</span><span class="k w3">Done</span>
+    <span class="k">z</span><span class="k">x</span><span class="k">c</span><span class="k">v</span><span class="k">b</span><span class="k">n</span><span class="k">m</span><span class="k w6">Show</span>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="icons-subs.js"></script>
+<script>
+/* behind the on-screen keyboard the page is context, not interface: the checks skip it */
+if (new URLSearchParams(location.search).get('v') === 'entry') document.querySelectorAll('.rail, .ipage').forEach((e) => e.setAttribute('data-behind', '1'));
+</script>
+<script src="mock.js"></script>
+</body>
+</html>

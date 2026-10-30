@@ -820,6 +820,15 @@ impl Client {
             .map_or(-1, |r| r.status)
     }
 
+    /// DELETE (no body) — returns the HTTP status, or `-1` when the request never completed, on
+    /// the same terms as [`Client::put`]. Used by exactly one caller: removing an external
+    /// subtitle stream (`subtitles::delete_stream`).
+    #[track_caller]
+    pub(super) fn delete(&self, path_no_token: &str) -> i32 {
+        self.send(path_no_token, Method::Delete, &[])
+            .map_or(-1, |r| r.status)
+    }
+
     /// POST whose body carries nothing to read — /:/timeline (spec verb; params ride the query
     /// string) — reporting whether it reached the server and came back accepted.
     ///

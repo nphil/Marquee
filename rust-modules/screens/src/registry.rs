@@ -100,12 +100,26 @@ pub enum PreferenceCmd {
     /// The Interface resolution picked in its picker: install-wide, applied at the next launch. The
     /// app writes it through the session; `reply` learns whether the write was durable.
     UiResolution { mode: plx_plex::plex::session::UiResolution, reply: std::sync::mpsc::Sender<bool> },
+    /// Settings > Integrations > Bazarr: one edit of the stored address or key. The app writes it
+    /// through the session's ticketed update; `reply` learns whether it is durable. The key rides
+    /// in the command and is never printed.
+    BazarrLink { change: plx_plex::plex::session::BazarrChange, reply: std::sync::mpsc::Sender<bool> },
+    /// Read the stored link as the page may know it: the address and whether a key is set. The key
+    /// itself never leaves the app. A screen reads no registry, so the page asks and is answered.
+    BazarrRead { reply: std::sync::mpsc::Sender<(String, bool)> },
+    /// Ask the stored Bazarr who it is: the app reads the stored address and key itself (a screen
+    /// never holds them) and answers with Bazarr's status or why it could not.
+    BazarrTest { reply: std::sync::mpsc::Sender<Result<plx_plex::plex::bazarr::Status, plx_plex::plex::bazarr::BazarrError>> },
 }
 
 /// Whether an item has a context menu to open (`item_menu::has_actions`): the one predicate the
 /// app declines a menu with and the card screens' hold hint is gated by. The screens reach it
 /// here, never by naming the sibling `item_menu`.
 pub use crate::item_menu::has_actions as item_has_menu;
+
+/// The player's subtitle texture cache, which Settings > Subtitles draws its live preview with: the
+/// real renderer, not a lookalike. Reached here rather than by naming the sibling `player`.
+pub use crate::player::ass_subtitles::{AssSubtitles, Mapping};
 /// The item menu's action vocabulary, for a screen that builds one (the Detail disc's press).
 pub use crate::item_menu::Action as ItemMenuAction;
 /// Re-exported so a screen's test host names its init through the registry.

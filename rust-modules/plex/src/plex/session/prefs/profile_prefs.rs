@@ -35,11 +35,11 @@
 use super::{
     Fallback, Parse, ProfileKeyed, ProfileRecords, Preferences, Row, Scope, Setting, SettingsWrite,
     InstantDpadSeekingPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipIntervalPref,
-    SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
+    SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
 };
 use crate::plex::session::{
-    InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitlePosition,
-    SubtitleSize, SubtitleTone, UnderPosters,
+    InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitleLook,
+    SubtitlePosition, SubtitleSize, SubtitleTone, UnderPosters,
 };
 use crate::plex::AudioEnhancements;
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,8 @@ pub struct ProfilePrefs {
     pub subtitle_size: Option<SubtitleSize>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub subtitle_position: Option<SubtitlePosition>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub subtitle_look: Option<SubtitleLook>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub hdr_overlay_brightness: Option<HdrOverlayBrightness>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
@@ -153,6 +155,7 @@ profile_setting!(
     SubtitleTonePref = subtitle_tone,
     SubtitleSizePref = subtitle_size,
     SubtitlePositionPref = subtitle_position,
+    SubtitleLookPref = subtitle_look,
     HdrOverlayBrightnessPref = hdr_overlay_brightness,
     NextEpisodeModePref = next_episode_mode,
     SkipIntervalPref = skip_interval,

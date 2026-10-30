@@ -230,6 +230,10 @@ pub enum MetadataCmd {
     /// leaf — and lands only on the same `(sid, rk)`. A stream that is the SAME subtitle as one
     /// already listed (`Stream::same_subtitle`, under a new id) replaces it rather than joining it.
     AppendPlayingSub { sid: ServerId, rk: String, stream: crate::metadata::Stream },
+    /// The server deleted an external subtitle of the PLAYING item (the player's Wrong subtitles
+    /// page): drop its row from the item's subtitle list. Touches nothing else, and lands only on the
+    /// same `(sid, rk)`; a stream the list does not hold is a no-op.
+    RemovePlayingSub { sid: ServerId, rk: String, stream_id: i64 },
     MarkSkipped(crate::metadata::Marker),
     RetirePlaying,
     RetirePlayingItem,

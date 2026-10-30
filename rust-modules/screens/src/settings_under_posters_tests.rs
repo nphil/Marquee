@@ -402,6 +402,8 @@ fn text_fit_inputs() -> RootInputs {
         auto_sign_in: false, trailer_autoplay: true, resolution: UiResolution::Auto, resolution_offered: false,
         language: plx_platform::i18n::Preference::System,
         under_posters: plx_plex::plex::session::UnderPosters::DEFAULT, plaintext: Vec::new(),
+        subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
+        bazarr: plx_plex::plex::session::BazarrLink::default(),
     }
 }
 

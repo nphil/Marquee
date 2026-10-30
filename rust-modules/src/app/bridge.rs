@@ -1339,6 +1339,7 @@ impl Bridge {
     /// pump's, which is where the registry's answer is read), so it emits no job; the drain stays
     /// so that a command which one day does is started in the call that ran it.
     pub(crate) fn subsearch_run(&mut self, cmd: plx_data::subsearch::SubSearchCmd) -> bool {
+        self.subsearch_state_link();
         let changed = self.stores.subtitle_search_run(cmd);
         self.start_store_jobs_of(StoreId::SubtitleSearch);
         changed
@@ -1349,9 +1350,19 @@ impl Bridge {
     /// costs a registry walk only while that panel is open.
     pub(crate) fn subsearch_pump(&mut self) -> bool {
         super::adapters::stores::refill_client_keys(&mut self.client_keys);
+        self.subsearch_state_link();
         let changed = self.stores.subtitle_search_pump(&self.client_keys);
         self.start_store_jobs_of(StoreId::SubtitleSearch);
         changed
+    }
+
+    /// Tell the subtitle search where Bazarr runs, as the account session holds it. The session is a
+    /// cached read of memory, and the store compares before it copies, so this costs two string
+    /// compares a frame while the panel is open. The key reaches the store and, inside a Bazarr
+    /// request, the worker; no screen can read it.
+    fn subsearch_state_link(&mut self) {
+        let session = plx_plex::plex::session::peek();
+        self.stores.subtitle_search_link(session.bazarr());
     }
 
     /// The bare store, for a seam that is handed a `&mut MetadataStore` instead of the Bridge

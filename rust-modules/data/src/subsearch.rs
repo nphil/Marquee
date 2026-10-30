@@ -35,7 +35,9 @@
 //! a server holds arrives as [`ClientKeys`], filled by the host right before the pump.
 use plx_machine::job::{Job, Port};
 use plx_machine::machine::{Addr, MachineId, RequestId};
-use plx_plex::plex::subtitles::{SubtitleAddOutcome, SubtitleSearchOutcome};
+use plx_plex::plex::bazarr::{self, Bazarr, BazarrError, Candidate, CurlTransport, ItemFacts, Target, Transport};
+use plx_plex::plex::session::BazarrLink;
+use plx_plex::plex::subtitles::{SubtitleAddOutcome, SubtitleRemoveOutcome, SubtitleSearchOutcome};
 use plx_plex::plex::{Client, ClientKey, ClientKeys, ServerId, SubtitleSearch};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
@@ -82,8 +84,8 @@ pub enum SearchStatus {
     Failed,
 }
 
-/// Why a search failed. The page draws each differently: only `Transport` offers a retry, because
-/// a 403 retried is a 403.
+/// Why a search failed. The page draws each differently: only a failure to REACH the source
+/// ([`SearchFailure::retryable`]) offers a retry, because a 403 retried is a 403.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchFailure {
     Transport,
@@ -91,6 +93,25 @@ pub enum SearchFailure {
     Missing,
     /// No 2-letter code exists for the language, so nothing was sent (module doc).
     BadLanguage,
+    /// Bazarr: its address and key are not both set.
+    NotSet,
+    /// Bazarr: it did not answer (no route, a refused connection, a timeout).
+    Unreachable,
+    /// Bazarr: it answered `401`. The address is right and the key is not.
+    BadKey,
+    /// Bazarr: the address answers, but not like Bazarr.
+    NotBazarr,
+    /// Bazarr: it does not hold this title, or none of its files is this one.
+    NotInBazarr,
+    /// Bazarr: its own refusal (a provider fault, a path mapping).
+    Refused,
+}
+
+impl SearchFailure {
+    /// Is another try worth offering? Only when the source could not be reached.
+    pub fn retryable(self) -> bool {
+        matches!(self, SearchFailure::Transport | SearchFailure::Unreachable)
+    }
 }
 
 /// The stream an accepted download created, once a re-read has shown it.
@@ -128,18 +149,58 @@ impl DownloadPhase {
     }
 }
 
+/// Where a search asks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SubSource {
+    /// The server's own subtitle agents.
+    #[default]
+    Plex,
+    /// The viewer's Bazarr (`plx_plex::plex::bazarr`).
+    Bazarr,
+}
+
+/// The removal of the item's external subtitle: the first half of "Wrong subtitles?".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemovePhase {
+    None,
+    /// The DELETE is owed or out. `key` is the stream's own delivery path.
+    Sending { stream: i64, key: String },
+    /// The server no longer lists the stream: it deleted it, or did not know it.
+    Removed { stream: i64 },
+    /// The server refused: not the viewer's to change, or not a file it can delete.
+    Refused { stream: i64 },
+    /// The server never answered.
+    Failed { stream: i64 },
+}
+
+impl RemovePhase {
+    /// The DELETE is out: no second one, and no new search, until it settles.
+    pub fn busy(&self) -> bool {
+        matches!(self, RemovePhase::Sending { .. })
+    }
+}
+
 /// Every mutation of the subtitle-search model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SubSearchCmd {
-    /// Open (or keep) the search for one item. Idempotent for the same item and language, so the
-    /// menu re-opening shows the answer already paid for instead of searching again.
+    /// Open (or keep) the server-agent search for one item. Idempotent for the same item and
+    /// language, so the menu re-opening shows the answer already paid for instead of searching again.
     Open { sid: ServerId, rk: String, lang: String },
-    /// Search again in another language. Refused while a download is busy.
+    /// Hold one item for the "Wrong subtitles?" page: its removal is tracked here, and nothing is
+    /// asked of any source until a search page opens.
+    Fix { sid: ServerId, rk: String },
+    /// Open (or keep) the Bazarr search for one item, the same way [`SubSearchCmd::Open`] does for
+    /// the server's agents.
+    OpenBazarr { sid: ServerId, rk: String, lang: String },
+    /// Search again in another language, asking the same source. Refused while a download is busy.
     SetLanguage(String),
     /// Install hit `hit` of the result set published under generation `gen`. Refused when that set
     /// has been replaced — its keys are dead (module doc).
     Download { gen: u32, hit: usize },
-    /// Search again after a TRANSPORT failure. Nothing else retries.
+    /// Delete the external subtitle `stream` (delivered at `key`) from the open item on the server.
+    Remove { stream: i64, key: String },
+    /// Search again after a failure to REACH the source ([`SearchFailure::retryable`]). Nothing
+    /// else retries.
     Retry,
     /// The play ended: drop the model. A download the server already accepted still lands on the
     /// server; only our tracking of it ends.
@@ -150,25 +211,42 @@ pub enum SubSearchCmd {
 struct Open {
     sid: ServerId,
     rk: String,
-    /// The folded 2-letter code; empty only when the fold failed.
+    source: SubSource,
+    /// The folded 2-letter code; empty when the fold failed or no search was asked yet.
     lang: String,
     status: SearchStatus,
     failure: Option<SearchFailure>,
     hits: Vec<SubHit>,
+    /// Bazarr's candidates, parallel to `hits` when the source is Bazarr: its download needs the
+    /// whole candidate, not the key a hit shows.
+    candidates: Vec<Candidate>,
+    /// Where Bazarr holds the item, once a search resolved it.
+    target: Option<Target>,
     download: DownloadPhase,
+    removal: RemovePhase,
 }
 
 impl Open {
-    fn new(sid: ServerId, rk: String, lang: &str) -> Self {
-        let mut open = Open { sid, rk, lang: String::new(), status: SearchStatus::Searching,
-            failure: None, hits: Vec::new(), download: DownloadPhase::None };
-        open.search_for(lang);
+    /// An item held for the Fix page: nothing searched.
+    fn idle(sid: ServerId, rk: String) -> Self {
+        Open { sid, rk, source: SubSource::Plex, lang: String::new(), status: SearchStatus::Idle,
+            failure: None, hits: Vec::new(), candidates: Vec::new(), target: None,
+            download: DownloadPhase::None, removal: RemovePhase::None }
+    }
+
+    fn new(sid: ServerId, rk: String, lang: &str, source: SubSource) -> Self {
+        let mut open = Open::idle(sid, rk);
+        open.search_for(lang, source);
         open
     }
 
-    /// Start (or refuse) a search for `lang` on this item.
-    fn search_for(&mut self, lang: &str) {
+    /// Start (or refuse) a search for `lang` on this item, asking `source`. The removal is the
+    /// item's, not the search's: it stays.
+    fn search_for(&mut self, lang: &str, source: SubSource) {
+        self.source = source;
         self.hits.clear();
+        self.candidates.clear();
+        self.target = None;
         self.download = DownloadPhase::None;
         match fold_language(lang) {
             Some(code) => {
@@ -213,6 +291,7 @@ pub fn default_language<S: AsRef<str>>(pref: Option<&str>, yours: impl IntoItera
 pub struct SubSearchView<'a> {
     open: Option<&'a Open>,
     gen: u32,
+    bazarr_host: &'a str,
 }
 
 impl<'a> SubSearchView<'a> {
@@ -222,25 +301,33 @@ impl<'a> SubSearchView<'a> {
     /// The folded 2-letter code being searched; empty when nothing is open or the fold failed.
     pub fn lang(self) -> &'a str { self.open.map_or("", |o| &o.lang) }
     pub fn download(self) -> Option<&'a DownloadPhase> { self.open.map(|o| &o.download) }
+    pub fn removal(self) -> Option<&'a RemovePhase> { self.open.map(|o| &o.removal) }
+    pub fn source(self) -> SubSource { self.open.map_or(SubSource::Plex, |o| o.source) }
     pub fn item(self) -> Option<(ServerId, &'a str)> { self.open.map(|o| (o.sid, o.rk.as_str())) }
     /// The generation a [`SubSearchCmd::Download`] must quote.
     pub fn gen(self) -> u32 { self.gen }
+    /// The host of the Bazarr the viewer has set up ("bazarr.nateshome.net"), or "" when its address
+    /// and key are not both set. The ONLY part of the link a screen can read.
+    pub fn bazarr_host(self) -> &'a str { self.bazarr_host }
 
     /// Nothing open — what a host that offers no subtitle search hands a screen.
-    pub const IDLE: SubSearchView<'static> = SubSearchView { open: None, gen: 0 };
+    pub const IDLE: SubSearchView<'static> = SubSearchView { open: None, gen: 0, bazarr_host: "" };
 
     /// An owned, comparable copy of the model AS IT CONCERNS `(sid, rk)`: the model holds one item
     /// (the last one searched), and a search that belongs to a different item — the previous
     /// episode's — must read as nothing open, never as this item's results.
     pub fn snapshot_for(self, sid: ServerId, rk: &str) -> SubSearchSnapshot {
         let mine = self.open.filter(|o| plx_plex::plex::same_item((o.sid, &o.rk), (sid, rk)));
-        match mine {
+        let mut snapshot = match mine {
             None => SubSearchSnapshot::idle(self.gen),
             Some(o) => SubSearchSnapshot {
                 status: o.status, failure: o.failure, hits: o.hits.clone(), lang: o.lang.clone(),
-                download: o.download.clone(), gen: self.gen,
+                download: o.download.clone(), gen: self.gen, source: o.source,
+                removal: o.removal.clone(), bazarr_host: String::new(),
             },
-        }
+        };
+        snapshot.bazarr_host = self.bazarr_host.to_string();
+        snapshot
     }
 }
 
@@ -254,12 +341,18 @@ pub struct SubSearchSnapshot {
     pub lang: String,
     pub download: DownloadPhase,
     pub gen: u32,
+    /// Which source `hits` came from: a page for one source shows nothing of the other's.
+    pub source: SubSource,
+    pub removal: RemovePhase,
+    /// See [`SubSearchView::bazarr_host`].
+    pub bazarr_host: String,
 }
 
 impl SubSearchSnapshot {
     pub fn idle(gen: u32) -> Self {
         SubSearchSnapshot { status: SearchStatus::Idle, failure: None, hits: Vec::new(),
-            lang: String::new(), download: DownloadPhase::None, gen }
+            lang: String::new(), download: DownloadPhase::None, gen, source: SubSource::Plex,
+            removal: RemovePhase::None, bazarr_host: String::new() }
     }
 }
 
@@ -268,6 +361,10 @@ pub struct SubSearchState {
     open: Option<Open>,
     generation: u32,
     retry_cd: u32,
+    /// Bazarr's address and key as the host last read them from the account session. Handed to a
+    /// Bazarr job, never shown and never logged; `host` is all a screen reads.
+    link: BazarrLink,
+    host: String,
     /// The requests the pump has emitted and its owner has not taken yet
     /// (`SubSearchStore::take_jobs`).
     pub(crate) jobs: Vec<crate::stores::StoreJob>,
@@ -275,7 +372,18 @@ pub struct SubSearchState {
 
 impl SubSearchState {
     pub fn view(&self) -> SubSearchView<'_> {
-        SubSearchView { open: self.open.as_ref(), gen: self.generation }
+        SubSearchView { open: self.open.as_ref(), gen: self.generation, bazarr_host: &self.host }
+    }
+
+    /// The host reads the link off the account session and states it here before a command or a
+    /// pump. `true` when it changed (a viewer who has just set Bazarr up).
+    pub fn set_link(&mut self, link: &BazarrLink) -> bool {
+        if *link == self.link {
+            return false;
+        }
+        self.link = link.clone();
+        self.host = if link.is_complete() { link.host().unwrap_or_default().to_string() } else { String::new() };
+        true
     }
 
     pub fn generation(&self) -> u32 { self.generation }
@@ -290,38 +398,46 @@ impl SubSearchState {
 
     pub fn run(&mut self, adapter: &SubSearchAdapter, cmd: SubSearchCmd) -> bool {
         match cmd {
-            SubSearchCmd::Open { sid, rk, lang } => {
-                if let Some(open) = self.open.as_ref()
-                    .filter(|o| plx_plex::plex::same_item((o.sid, &o.rk), (sid, &rk))) {
-                    // the same item: keep the answer unless the language really changed
-                    if fold_language(&lang).unwrap_or_default() == open.lang { return false; }
-                    return self.run(adapter, SubSearchCmd::SetLanguage(lang));
+            SubSearchCmd::Open { sid, rk, lang } => self.open_search(adapter, sid, rk, &lang, SubSource::Plex),
+            SubSearchCmd::OpenBazarr { sid, rk, lang } => self.open_search(adapter, sid, rk, &lang, SubSource::Bazarr),
+            SubSearchCmd::Fix { sid, rk } => {
+                if self.open.as_ref().is_some_and(|o| plx_plex::plex::same_item((o.sid, &o.rk), (sid, &rk))) {
+                    return false;
                 }
                 self.supersede(adapter);
-                self.open = Some(Open::new(sid, rk, &lang));
+                self.open = Some(Open::idle(sid, rk));
                 true
             }
             SubSearchCmd::SetLanguage(lang) => {
                 let Some(open) = self.open.as_ref() else { return false };
-                if open.download.busy() { return false; }
+                if open.download.busy() || open.removal.busy() { return false; }
                 if fold_language(&lang).is_some_and(|code| code == open.lang) { return false; }
+                let source = open.source;
                 self.supersede(adapter);
-                self.open.as_mut().unwrap().search_for(&lang);
+                self.open.as_mut().unwrap().search_for(&lang, source);
+                self.gate_source();
                 true
             }
             SubSearchCmd::Download { gen, hit } => {
                 let Some(open) = self.open.as_mut() else { return false };
                 if gen != self.generation || open.status != SearchStatus::Ready
-                    || hit >= open.hits.len() || open.download.busy() {
+                    || hit >= open.hits.len() || open.download.busy() || open.removal.busy() {
                     return false;
                 }
                 open.download = DownloadPhase::Sending { hit };
                 self.retry_cd = 0;
                 true
             }
+            SubSearchCmd::Remove { stream, key } => {
+                let Some(open) = self.open.as_mut() else { return false };
+                if open.removal.busy() || open.download.busy() { return false; }
+                open.removal = RemovePhase::Sending { stream, key };
+                self.retry_cd = 0;
+                true
+            }
             SubSearchCmd::Retry => {
                 let Some(open) = self.open.as_mut() else { return false };
-                if open.failure != Some(SearchFailure::Transport) { return false; }
+                if !open.failure.is_some_and(SearchFailure::retryable) { return false; }
                 open.status = SearchStatus::Searching;
                 open.failure = None;
                 self.retry_cd = 0;
@@ -330,6 +446,42 @@ impl SubSearchState {
             SubSearchCmd::Close | SubSearchCmd::Reset => {
                 self.supersede(adapter);
                 self.open.take().is_some()
+            }
+        }
+    }
+
+    /// Open (or keep) the search of `source` on one item. The same item and source keep their answer
+    /// unless the language really changed — or Bazarr has been set up since it failed for want of it.
+    /// A removal in flight holds every other change back: its answer is the item's.
+    fn open_search(&mut self, adapter: &SubSearchAdapter, sid: ServerId, rk: String, lang: &str, source: SubSource) -> bool {
+        if self.open.as_ref().is_some_and(|o| o.removal.busy()) { return false; }
+        let link_ready = self.link.is_complete();
+        if let Some(open) = self.open.as_ref()
+            .filter(|o| plx_plex::plex::same_item((o.sid, &o.rk), (sid, &rk))) {
+            let same_search = open.source == source && open.status != SearchStatus::Idle;
+            let set_up_since = open.failure == Some(SearchFailure::NotSet) && link_ready;
+            if same_search && !set_up_since {
+                if fold_language(lang).unwrap_or_default() == open.lang { return false; }
+                return self.run(adapter, SubSearchCmd::SetLanguage(lang.to_string()));
+            }
+            self.supersede(adapter);
+            self.open.as_mut().unwrap().search_for(lang, source);
+            self.gate_source();
+            return true;
+        }
+        self.supersede(adapter);
+        self.open = Some(Open::new(sid, rk, lang, source));
+        self.gate_source();
+        true
+    }
+
+    /// A Bazarr search with no Bazarr set up has nothing to ask: it fails at once, and says why.
+    fn gate_source(&mut self) {
+        let ready = self.link.is_complete();
+        if let Some(open) = self.open.as_mut() {
+            if open.source == SubSource::Bazarr && open.status == SearchStatus::Searching && !ready {
+                open.status = SearchStatus::Failed;
+                open.failure = Some(SearchFailure::NotSet);
             }
         }
     }
@@ -358,11 +510,23 @@ impl SubSearchState {
 
     fn work(&self) -> Option<Work> {
         let open = self.open.as_ref()?;
+        if let RemovePhase::Sending { stream, key } = &open.removal {
+            return Some(Work::Remove { stream: *stream, key: key.clone() });
+        }
         if open.status == SearchStatus::Searching {
-            return Some(Work::Search { lang: open.lang.clone() });
+            return Some(match open.source {
+                SubSource::Plex => Work::Search { lang: open.lang.clone() },
+                SubSource::Bazarr => Work::BazarrSearch { lang: open.lang.clone() },
+            });
         }
         match &open.download {
-            DownloadPhase::Sending { hit } => Some(Work::Download { key: open.hits[*hit].key.clone() }),
+            DownloadPhase::Sending { hit } => Some(match open.source {
+                SubSource::Plex => Work::Download { key: open.hits[*hit].key.clone() },
+                SubSource::Bazarr => Work::BazarrDownload {
+                    target: open.target?,
+                    candidate: open.candidates.get(*hit)?.clone(),
+                },
+            }),
             DownloadPhase::Waiting { .. } => Some(Work::Refresh),
             _ => None,
         }
@@ -382,9 +546,11 @@ impl SubSearchState {
             return;
         };
         let generation = self.generation;
+        // the link travels with the one kind of request that needs it, and no other
+        let link = matches!(work, Work::BazarrSearch { .. } | Work::BazarrDownload { .. }).then(|| self.link.clone());
         adapter.fetch.claim(generation);
         self.jobs.push(crate::stores::StoreJob::SubtitleSearch(
-            Job { addr: subsearch_addr(generation), req: SubSearchReq { sid, key, rk, work } },
+            Job { addr: subsearch_addr(generation), req: SubSearchReq { sid, key, rk, work, link } },
             SubSearchPort::of(adapter),
         ));
     }
@@ -393,7 +559,7 @@ impl SubSearchState {
         let Some(open) = self.open.as_mut() else { return false };
         match landing {
             Landing::Search(result) => {
-                if open.status != SearchStatus::Searching { return false; }
+                if open.status != SearchStatus::Searching || open.source != SubSource::Plex { return false; }
                 match result {
                     Ok(hits) => {
                         open.hits = hits;
@@ -441,6 +607,36 @@ impl SubSearchState {
                 };
                 true
             }
+            Landing::Bazarr(result) => {
+                if open.status != SearchStatus::Searching || open.source != SubSource::Bazarr { return false; }
+                match result {
+                    Ok((target, candidates)) => {
+                        open.hits = candidates.iter().enumerate().map(|(i, c)| hit_of_candidate(i, c)).collect();
+                        open.candidates = candidates;
+                        open.target = Some(target);
+                        open.status = SearchStatus::Ready;
+                        open.failure = None;
+                    }
+                    Err(failure) => {
+                        open.hits.clear();
+                        open.candidates.clear();
+                        open.target = None;
+                        open.status = SearchStatus::Failed;
+                        open.failure = Some(failure);
+                    }
+                }
+                true
+            }
+            Landing::Removed(result) => {
+                let RemovePhase::Sending { stream, .. } = &open.removal else { return false };
+                let stream = *stream;
+                open.removal = match result {
+                    Ok(()) => RemovePhase::Removed { stream },
+                    Err(true) => RemovePhase::Refused { stream },
+                    Err(false) => RemovePhase::Failed { stream },
+                };
+                true
+            }
         }
     }
 
@@ -479,12 +675,17 @@ pub fn identify(rows: &[StreamRow], before: &[i64], picked_title: &str) -> Optio
         language_code: row.language_code.clone() })
 }
 
-/// What one request asks the server for.
+/// What one request asks for. The Bazarr kinds carry what the answer to the search resolved: where
+/// Bazarr holds the item, and the whole candidate to download.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Work {
     Search { lang: String },
     Download { key: String },
     Refresh,
+    BazarrSearch { lang: String },
+    BazarrDownload { target: Target, candidate: Candidate },
+    /// Delete one external subtitle stream from the item on the server.
+    Remove { stream: i64, key: String },
 }
 
 impl Work {
@@ -492,8 +693,10 @@ impl Work {
     fn failure(&self) -> Landing {
         match self {
             Work::Search { .. } => Landing::Search(Err(SearchFailure::Transport)),
-            Work::Download { .. } => Landing::Download(Err(false)),
+            Work::Download { .. } | Work::BazarrDownload { .. } => Landing::Download(Err(false)),
             Work::Refresh => Landing::Streams(None),
+            Work::BazarrSearch { .. } => Landing::Bazarr(Err(SearchFailure::Unreachable)),
+            Work::Remove { .. } => Landing::Removed(Err(false)),
         }
     }
 }
@@ -501,12 +704,14 @@ impl Work {
 /// The one request a [`StoreJob::SubtitleSearch`](crate::stores::StoreJob::SubtitleSearch)
 /// carries: everything the worker needs, captured by the step. `key` is the client the step decided
 /// on; a runner starts the request only if the registry still holds that client at the launch.
+/// `link` is Bazarr's address and key, present on a Bazarr request only; its `Debug` is redacted.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubSearchReq {
     sid: ServerId,
     key: ClientKey,
     rk: String,
     work: Work,
+    link: Option<BazarrLink>,
 }
 
 impl SubSearchReq {
@@ -566,9 +771,9 @@ fn subsearch_addr(generation: u32) -> Addr {
 /// to `port`. The answer is posted OUTSIDE the guard, so a request that panics lands as a FAILURE
 /// of its kind and never as "the agent found nothing".
 pub fn finish_subsearch_job(port: &SubSearchPort, addr: Addr, client: &'static Client, req: SubSearchReq) {
-    let SubSearchReq { rk, work, .. } = req;
+    let SubSearchReq { rk, work, link, .. } = req;
     let fallback = work.failure();
-    let what = catch_unwind(AssertUnwindSafe(|| run_job(client, &rk, work))).unwrap_or(fallback);
+    let what = catch_unwind(AssertUnwindSafe(|| run_job(client, &rk, work, link.as_ref()))).unwrap_or(fallback);
     port.done(addr, SubSearchAnswer(what));
 }
 
@@ -579,10 +784,14 @@ pub enum Landing {
     Download(Result<Vec<i64>, bool>),
     /// One re-read of the item's subtitle streams; `None` = the read failed (counts as a miss).
     Streams(Option<Vec<StreamRow>>),
+    /// Bazarr's answer: where it holds the item and what its providers offer.
+    Bazarr(Result<(Target, Vec<Candidate>), SearchFailure>),
+    /// The removal's answer: `Ok` = the server no longer lists the stream, `Err(refused)`.
+    Removed(Result<(), bool>),
 }
 
 /// WORKER THREAD.
-fn run_job(client: &'static Client, rk: &str, work: Work) -> Landing {
+fn run_job(client: &'static Client, rk: &str, work: Work, link: Option<&BazarrLink>) -> Landing {
     match work {
         Work::Search { lang } => {
             let query = SubtitleSearch { language: lang, hearing_impaired: false, forced: false };
@@ -606,6 +815,97 @@ fn run_job(client: &'static Client, rk: &str, work: Work) -> Landing {
             })
         }
         Work::Refresh => Landing::Streams(subtitle_rows(client, rk)),
+        Work::BazarrSearch { lang } => Landing::Bazarr(match link {
+            None => Err(SearchFailure::NotSet),
+            Some(link) => bazarr_search(client, rk, link, &lang),
+        }),
+        Work::BazarrDownload { target, candidate } => Landing::Download(match link {
+            None => Err(false),
+            Some(link) => {
+                let http = CurlTransport;
+                bazarr_download_with(
+                    &Bazarr::new(link, &http),
+                    target,
+                    &candidate,
+                    || subtitle_rows(client, rk).map(|rows| rows.iter().map(|r| r.id).collect()),
+                    || {
+                        let _ = client.refresh_item(rk);
+                    },
+                )
+            }
+        }),
+        Work::Remove { stream, key } => Landing::Removed(match client.delete_stream(stream, &key) {
+            // a stream the server does not know is already gone, which is what was asked
+            SubtitleRemoveOutcome::Ok | SubtitleRemoveOutcome::Missing => Ok(()),
+            SubtitleRemoveOutcome::Denied | SubtitleRemoveOutcome::BadId => Err(true),
+            SubtitleRemoveOutcome::Transport => Err(false),
+        }),
+    }
+}
+
+/// A Bazarr fault as the page words it.
+fn failure_of(error: BazarrError) -> SearchFailure {
+    match error {
+        BazarrError::NotSet => SearchFailure::NotSet,
+        BazarrError::Unreachable | BazarrError::TimedOut => SearchFailure::Unreachable,
+        BazarrError::BadKey => SearchFailure::BadKey,
+        BazarrError::NotBazarr => SearchFailure::NotBazarr,
+        BazarrError::NotInBazarr => SearchFailure::NotInBazarr,
+        BazarrError::Refused => SearchFailure::Refused,
+    }
+}
+
+/// WORKER THREAD: read the item from the server, find it in Bazarr and ask the providers.
+fn bazarr_search(client: &Client, rk: &str, link: &BazarrLink, lang: &str) -> Result<(Target, Vec<Candidate>), SearchFailure> {
+    let item = client.metadata(rk).ok_or(SearchFailure::Transport)?;
+    // a track or a clip is not a title Bazarr manages
+    let facts = ItemFacts::from_metadata(&item).ok_or(SearchFailure::NotInBazarr)?;
+    let http = CurlTransport;
+    bazarr_search_with(&Bazarr::new(link, &http), &facts, lang)
+}
+
+/// The search half of a Bazarr request: find the item, ask the providers, keep the language asked
+/// for, best score first. The sort is STABLE, so Bazarr's own order survives among equal scores.
+fn bazarr_search_with<T: Transport>(bazarr: &Bazarr<'_, T>, facts: &ItemFacts, lang: &str)
+    -> Result<(Target, Vec<Candidate>), SearchFailure> {
+    let target = bazarr.resolve(facts).map_err(failure_of)?;
+    let found = bazarr.search(target).map_err(failure_of)?;
+    let mut candidates = bazarr::in_language(found, lang);
+    candidates.sort_by(|a, b| b.score.cmp(&a.score));
+    Ok((target, candidates))
+}
+
+/// The download half. `before` reads the item's subtitle stream ids (without it a new stream could
+/// never be told from an old one); `refresh` asks the server to re-read the item, which is how the
+/// file Bazarr writes beside the video becomes a stream. Its answer changes nothing here: the poll
+/// that follows finds the stream, and a server that scans by itself finds it too. `Err(denied)`:
+/// Bazarr refused the key.
+fn bazarr_download_with<T: Transport>(
+    bazarr: &Bazarr<'_, T>,
+    target: Target,
+    candidate: &Candidate,
+    before: impl FnOnce() -> Option<Vec<i64>>,
+    refresh: impl FnOnce(),
+) -> Result<Vec<i64>, bool> {
+    let before = before().ok_or(false)?;
+    bazarr.download(target, candidate).map_err(|e| e == BazarrError::BadKey)?;
+    refresh();
+    Ok(before)
+}
+
+/// One Bazarr candidate as a row of the results page. The key is only a label (a Bazarr download
+/// is addressed by the candidate itself), and the score is Bazarr's own, 0 to 100.
+fn hit_of_candidate(index: usize, c: &Candidate) -> SubHit {
+    SubHit {
+        key: format!("bazarr:{index}"),
+        title: c.release.clone(),
+        provider: c.provider.clone(),
+        language: plx_plex::plex::languages::label(&c.language).to_string(),
+        language_code: c.language.clone(),
+        codec: String::new(),
+        score: c.score,
+        hearing_impaired: c.hearing_impaired,
+        forced: c.forced,
     }
 }
 

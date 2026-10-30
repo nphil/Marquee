@@ -52,6 +52,9 @@ mod foreground_flight_tests;
 mod resume_tests;
 mod shared;
 pub mod sidecar;
+pub mod blend; // "Blend with video": the caption's brightness follows the scene, eased (pure)
+pub mod paint; // what the player paints with a text caption besides libass's pixels: ink, shadow, box, placement (pure)
+pub mod reveal; // "Reveal as spoken": a cue shown a word or a line at a time, timed by estimate (pure)
 pub mod sub_charset; // legacy-encoding text subtitles (GBK, Big5, Shift_JIS, ...) read as UTF-8; decided once per track
 pub mod subside; // the side subtitle reader's thread and state (dev trigger `plxnative-subside`)
 #[cfg(feature = "hostsim")]

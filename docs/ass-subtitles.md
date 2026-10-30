@@ -65,6 +65,23 @@ are uncovered because Noto Sans ships them in Regular only: Yi (`ii`), Avestan (
 traditional Mongolian (`mn`, whose Cyrillic form is Inter's). U+2060 is not carried by any face:
 libass skips the default-ignorables (U+200B-200F, U+2060-206F) before it looks a glyph up.
 
+The Font row of the subtitle look (`SubFont`: Default, Serif, Mono, Legible) names one of three more
+families, "PlxSerif", "PlxMono" and "PlxLegible" (Noto Serif, Noto Sans Mono, Atkinson Hyperlegible, one
+Regular and one Bold face each, `fonts/subs/families.json`, cut by `tools/cut-sub-families.py`). The
+style's Bold flag picks the weight. They cover Latin, Greek and Cyrillic only and answer to no other
+name; a glyph one lacks falls to the default family "Inter", which reaches every script face, the CJK
+default and `NotoEmoji-Fallback.ttf` (the emoji Inter lacks, aliased to "PlxSubs" and "Inter" like a
+Noto face and added last), so no family draws a box where Default would draw a glyph. `text_style`
+sizes each family from its measured win-metric ratio (a test reads the shipped files), so a family
+draws at the same em as Default.
+
+The synthesized header (`text_ass::header`) now takes the look's font, weight, size, line spacing and
+hard edge (outline, drop, raised, depressed). Colour, opacity, the soft shadow, the box or window, the
+Blend tone and the anchor are painted over libass's bitmaps (`player::paint`), so changing them
+re-renders nothing. Reveal as spoken rewrites the cue events with per-word alpha fades
+(`player::reveal`); karaoke in a file is left as authored. Design and sources:
+`docs/marquee/design-subtitles.md`.
+
 The demuxer copies ASS headers, complete timed packets and font attachments out of FFmpeg.
 The source store removes trailing zero terminators from headers and packets. A zero byte
 inside a header makes the track invalid. The raw byte limits apply before trimming.

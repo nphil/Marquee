@@ -1633,7 +1633,7 @@ mod tests {
                 let rect=stop.rect.intersect(stop.clip);
                 vec![bridge::pointer_input(rect.x+rect.w/2.0,rect.y+rect.h/2.0,tick)]
             } else if f>0 && f<4 {
-                bridge::script_key(if f==1 {Key::Down} else {Key::Right},tick)
+                bridge::script_key(if f<=2 {Key::Down} else {Key::Right},tick)
             } else { Vec::new() };
             let pointer=input.iter().any(|e|matches!(e.kind,InputKind::Pointer{..}));
             rec.tick(tick.ms,0.016);

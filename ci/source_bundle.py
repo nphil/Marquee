@@ -73,7 +73,7 @@ def allowed(name):
     if p.parts[0] == 'pkg':
         return (name[4:] in PKG_FILES or
                 (len(p.parts) == 4 and p.parts[1:3] == ('fonts', 'subs') and
-                 (p.suffix == '.ttf' or p.name == 'manifest.json')) or
+                 (p.suffix == '.ttf' or p.name in {'manifest.json', 'families.json'})) or
                 (len(p.parts) == 4 and p.parts[1] == 'resources' and p.name == 'appinfo.json') or
                 name in {'pkg/dev/icon.png', 'pkg/dev/largeIcon.png',
                          'pkg/nightly/icon.png', 'pkg/nightly/largeIcon.png'})

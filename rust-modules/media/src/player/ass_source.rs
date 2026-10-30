@@ -80,14 +80,24 @@ struct TextTrack {
     next_readorder: u32,
     /// `TextStyle::generation()` of the picks the track's header was synthesized for.
     style_generation: u32,
+    /// How [`TextTrack::view`] words each cue: "Reveal as spoken" is a property of the published
+    /// events, not of the raw cues, so a change of it is a restyle that re-derives the view.
+    reveal: super::reveal::Params,
 }
 
 impl TextTrack {
-    fn new(dialect: TextDialect, style_generation: u32) -> Self {
-        Self { dialect, raw: BTreeMap::new(), next_readorder: 0, style_generation }
+    fn new(dialect: TextDialect, style: &TextStyle) -> Self {
+        Self {
+            dialect,
+            raw: BTreeMap::new(),
+            next_readorder: 0,
+            style_generation: style.generation(),
+            reveal: super::reveal::Params::of(&style.layout),
+        }
     }
 
     /// The newest-wins view of the raw cues, in start order. A cue clipped to nothing is not in it.
+    /// With "Reveal as spoken" on, each cue's text is timed word by word over its CLIPPED span.
     fn view(&self) -> Arc<[Event]> {
         let cues: Vec<ClipCue> = self
             .raw
@@ -100,6 +110,7 @@ impl TextTrack {
             })
             .collect();
         let clipped = text_ass::clip_newest_wins(&cues);
+        let reveal = self.reveal;
         self.raw
             .values()
             .zip(clipped)
@@ -107,7 +118,11 @@ impl TextTrack {
                 span.map(|(start, end)| Event {
                     start_ms: start,
                     duration_ms: end - start,
-                    payload: cue.payload.clone(),
+                    payload: if reveal.mode == plx_plex::plex::session::Reveal::Off {
+                        cue.payload.clone()
+                    } else {
+                        super::reveal::reveal_packet(&cue.payload, end - start, reveal).into()
+                    },
                 })
             })
             .collect()
@@ -212,15 +227,17 @@ impl Store {
         if let (Some(text), Some(source)) = (self.text.get_mut(&track), self.tracks.get_mut(&track)) {
             if text.style_generation != style.generation() {
                 text.style_generation = style.generation();
-                if let Content::Embedded { events, fonts, .. } = &source.content {
+                text.reveal = super::reveal::Params::of(&style.layout);
+                if let Content::Embedded { fonts, .. } = &source.content {
+                    let fonts = fonts.clone();
                     *source = Arc::new(Source {
                         id: source.id,
                         revision: source.revision.wrapping_add(1),
                         origin: Origin::Text(style),
                         content: Content::Embedded {
                             header: text_ass::header(&style).into_bytes().into(),
-                            events: events.clone(),
-                            fonts: fonts.clone(),
+                            events: text.view(),
+                            fonts,
                         },
                     });
                 }
@@ -316,9 +333,10 @@ impl Store {
                     // too: the old value beside a new header would restyle once more for nothing.
                     let mut text = match previous_text.remove(&track) {
                         Some(held) if held.dialect == dialect => held,
-                        _ => TextTrack::new(dialect, style.generation()),
+                        _ => TextTrack::new(dialect, &style),
                     };
                     text.style_generation = style.generation();
+                    text.reveal = super::reveal::Params::of(&style.layout);
                     let events = text.view();
                     self.text.insert(track, text);
                     (Origin::Text(style), text_ass::header(&style).into_bytes(), events)
@@ -1520,8 +1538,8 @@ mod tests {
     #[test]
     fn a_restyle_bumps_the_revision_once_and_keeps_the_events_and_the_identity() {
         use plx_plex::plex::session::{SubtitlePosition, SubtitleSize};
-        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low };
-        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::Low };
+        let small = TextStyle::picks(SubtitleSize::Small, SubtitlePosition::Low);
+        let large = TextStyle::picks(SubtitleSize::Large, SubtitlePosition::Low);
         let mut s = Store::default();
         let g = s.begin_styled("f", vec![(0, TrackHeader::Text(TextDialect::Srt))], vec![], small);
         s.push_text(g, 0, 1000, 2000, "cue", 0);
@@ -1550,8 +1568,8 @@ mod tests {
     #[test]
     fn a_reopen_after_a_pick_change_builds_the_header_for_the_new_picks_without_a_second_bump() {
         use plx_plex::plex::session::{SubtitlePosition, SubtitleSize};
-        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low };
-        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::High };
+        let small = TextStyle::picks(SubtitleSize::Small, SubtitlePosition::Low);
+        let large = TextStyle::picks(SubtitleSize::Large, SubtitlePosition::High);
         let mut s = Store::default();
         let g = s.begin_styled("f", vec![(0, TrackHeader::Text(TextDialect::Srt))], vec![], small);
         s.push_text(g, 0, 1000, 2000, "cue", 0);
@@ -1567,8 +1585,8 @@ mod tests {
     #[test]
     fn a_text_track_is_restyled_only_when_it_is_asked_for() {
         use plx_plex::plex::session::{SubtitlePosition, SubtitleSize};
-        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low };
-        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::Low };
+        let small = TextStyle::picks(SubtitleSize::Small, SubtitlePosition::Low);
+        let large = TextStyle::picks(SubtitleSize::Large, SubtitlePosition::Low);
         let mut s = Store::default();
         s.begin_styled(
             "f",

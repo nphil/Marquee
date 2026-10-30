@@ -574,6 +574,8 @@ pub(crate) fn commit_track(
             plx_media::route::commit_forced_only_and_sidecar(ps, render_ordinal, stream_id, &lang, changed);
         }
         TrackCommit::SubtitleTone(tone) => plx_media::player::set_subtitle_tone(tone),
+        // a preset or one hand edit of the whole look: live first, persisted after, like size and position
+        TrackCommit::SubtitleLook(look) => plx_media::route::select_subtitle_look(look, None),
         // live first, persisted after, nothing republished on completion (`route::select_subtitle_size`)
         TrackCommit::SubtitleSize(size) => plx_media::route::select_subtitle_size(size, None),
         TrackCommit::SubtitlePosition(position) => plx_media::route::select_subtitle_position(position, None),

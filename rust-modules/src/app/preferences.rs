@@ -4,7 +4,7 @@
 use plx_media::route::{choose, Choice, How};
 use plx_plex::plex::account::{PreferenceError, PreferenceRequest};
 use plx_plex::plex::session::{InstantDpadSeekingPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref,
-    SkipIntervalPref, SubtitlePositionPref, SubtitleSizePref, TrailerAutoplayPref, UnderPostersPref};
+    SkipIntervalPref, SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, TrailerAutoplayPref, UnderPostersPref};
 use plx_screens::registry::{AccountPreferenceReply, PreferenceCmd};
 use std::sync::mpsc::Sender;
 
@@ -23,6 +23,7 @@ fn choose_setting(choice: Choice, reply: Sender<bool>) {
         Choice::SubtitleSize(v) => choose::<SubtitleSizePref>(v, How::settings::<SubtitleSizePref>(reply)),
         Choice::SubtitlePosition(v) => choose::<SubtitlePositionPref>(v, How::settings::<SubtitlePositionPref>(reply)),
         Choice::HdrOverlayBrightness(v) => choose::<HdrOverlayBrightnessPref>(v, How::settings::<HdrOverlayBrightnessPref>(reply)),
+        Choice::SubtitleLook(v) => choose::<SubtitleLookPref>(v, How::settings::<SubtitleLookPref>(reply)),
     }
 }
 
@@ -56,6 +57,34 @@ pub(super) fn execute(command: PreferenceCmd) {
         PreferenceCmd::UiResolution { mode, reply } => {
             let _ = plx_base::storage_worker::submit_retained(move || {
                 let _ = reply.send(plx_plex::plex::session::set_ui_resolution(mode));
+                plx_machine::idle::invalidate();
+            });
+        }
+        PreferenceCmd::BazarrLink { change, reply } => {
+            // The ticketed update refuses an edit queued for an account that has since signed out.
+            plx_plex::plex::session::queue_update_settled(
+                move |current| Some(current.with_bazarr(change.applied(current.bazarr()))),
+                move |durable| {
+                    let _ = reply.send(durable);
+                    plx_machine::idle::invalidate();
+                },
+            );
+        }
+        PreferenceCmd::BazarrRead { reply } => {
+            let session = plx_plex::plex::session::peek();
+            let link = session.bazarr();
+            let _ = reply.send((link.url.clone(), !link.api_key.is_empty()));
+            plx_machine::idle::invalidate();
+        }
+        PreferenceCmd::BazarrTest { reply } => {
+            // The key is read here, on the app's side of the effect, and goes no further than the
+            // request header.
+            let link = plx_plex::plex::session::peek().bazarr().clone();
+            // A refused spawn drops the reply sender: the page reads its disconnected receipt as
+            // "could not ask".
+            let _ = plx_base::task::spawn_small("bazarr-test", move || {
+                let answer = plx_plex::plex::bazarr::Bazarr::new(&link, &plx_plex::plex::bazarr::CurlTransport).status();
+                let _ = reply.send(answer);
                 plx_machine::idle::invalidate();
             });
         }

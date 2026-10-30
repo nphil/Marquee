@@ -784,6 +784,7 @@ impl<H: DirectoryLike> Screen<H> for OnboardScreen {
             entry: self.entry,
             uncommitted: false,
             has_band: !labels.is_empty(),
+            adjusts: false,
             keys: Some(&self.form),
         };
         Part::<H>::draw(&mut table, f, lf);

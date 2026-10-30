@@ -154,6 +154,9 @@ pub struct TablePart<'a> {
     /// A band sits beside the table this frame: LEFT is the geometric move into it (rule 5)
     /// rather than BACK (rule 9), and DOWN off the last row finds it (rule 2).
     pub has_band: bool,
+    /// The rows hold values that LEFT and RIGHT change (a settings page of steppers): LEFT is the
+    /// screen's to answer, as RIGHT is, instead of BACK. BACK itself still leaves.
+    pub adjusts: bool,
     /// A form-backed table's row-key map. Present: a row's focus element IS its [`RowKey`] number
     /// (a reorder moves no key) and every hook and pointer stop translates key <-> row index.
     /// Absent: the element is the row index, as for every table not yet on a `FormTable`.
@@ -210,6 +213,8 @@ where
             // unless an edit is at stake (rule 9); RIGHT is the screen's to answer (rule 8).
             g.edge[2] = if self.has_band {
                 EdgeRule::Geometric
+            } else if self.adjusts {
+                EdgeRule::Screen
             } else if self.uncommitted {
                 EdgeRule::Stop
             } else {
@@ -485,6 +490,7 @@ impl<'a> TableScreen<'a> {
                 entry,
                 uncommitted: false,
                 has_band: false,
+                adjusts: false,
                 keys: None,
             },
             band: None,
@@ -495,6 +501,12 @@ impl<'a> TableScreen<'a> {
     /// [`TablePart::keys`]).
     pub fn keyed(mut self, keys: &'a dyn RowKeys) -> Self {
         self.table.keys = Some(keys);
+        self
+    }
+
+    /// The rows hold values LEFT and RIGHT change (see [`TablePart::adjusts`]).
+    pub fn adjusting(mut self) -> Self {
+        self.table.adjusts = true;
         self
     }
 
@@ -865,11 +877,11 @@ mod tests {
         let frame = RouteLayout::screen().sectioned_table();
         let keyed = TablePart {
             table: &form.table, frame, group: G, entry: E,
-            uncommitted: false, has_band: false, keys: Some(&form),
+            uncommitted: false, has_band: false, adjusts: false, keys: Some(&form),
         };
         let plain = TablePart {
             table: &form.table, frame, group: G, entry: E,
-            uncommitted: false, has_band: false, keys: None,
+            uncommitted: false, has_band: false, adjusts: false, keys: None,
         };
         let fk = |elem: u32| FocusKey { entry: E, elem };
         type H = FixtureHost;
@@ -928,6 +940,19 @@ mod tests {
         let mut groups = Vec::new();
         Focusable::<FixtureHost>::groups(&dirty.table, &cx, &mut groups);
         assert_eq!(groups[0].edge[2], EdgeRule::Stop, "an edit at stake makes LEFT a wall");
+    }
+
+    /// A page of steppers answers LEFT itself, as it answers RIGHT; BACK is the key that leaves.
+    #[test]
+    fn an_adjusting_table_leaves_left_to_the_screen() {
+        let (m, v) = (FixtureMeasure, FixtureView::default());
+        let cx = cx(&m, &v);
+        let mut t = table(3);
+        let ts = TableScreen::new(Header::new(RouteLayout::screen(), Some("Settings"), "Subtitles", "copy"), &mut t, G, E).adjusting();
+        let mut groups = Vec::new();
+        Focusable::<FixtureHost>::groups(&ts.table, &cx, &mut groups);
+        assert_eq!(groups[0].edge[2], EdgeRule::Screen);
+        assert_eq!(groups[0].edge[3], EdgeRule::Screen);
     }
 
     /// Spec §7.1: geometry IS `place` — a row's placement is the rect `TableView` draws it at,

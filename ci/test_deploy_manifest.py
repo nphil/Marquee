@@ -71,14 +71,16 @@ class DeployManifest(unittest.TestCase):
         self.assertEqual(
             sorted(subs),
             sorted([*(f"pkg/fonts/subs/{p.name}" for p in (ROOT / "pkg/fonts/subs").glob("*.ttf")),
-                    "pkg/fonts/subs/manifest.json"]))
+                    "pkg/fonts/subs/manifest.json", "pkg/fonts/subs/families.json"]))
         flat = set(make_print("print-app-files")) | set(make_print("print-deploy-files"))
         self.assertFalse(flat & set(subs), "a flat copy would drop the directory")
         names = [pathlib.Path(f).name for f in subs]
         self.assertEqual(len(names), len(set(names)), "verify-deploy keys by basename")
         self.assertFalse(set(names) & {pathlib.Path(f).name for f in flat})
         manifest = __import__("json").loads((ROOT / "pkg/fonts/subs/manifest.json").read_text())
-        self.assertEqual(sorted(f["file"] for f in manifest["faces"]), sorted(n for n in names if n.endswith(".ttf")))
+        families = __import__("json").loads((ROOT / "pkg/fonts/subs/families.json").read_text())
+        listed = [f["file"] for f in manifest["faces"]] + [f["file"] for f in families["families"] + families["fallbacks"]]
+        self.assertEqual(sorted(listed), sorted(n for n in names if n.endswith(".ttf")))
         makefile = (ROOT / "Makefile").read_text()
         for recipe, needle in (("ipk", "cp $(SUBS_FONT_FILES) $(STAGE)/$(SUBS_FONT_DIR)/"),
                                ("deploy", "$(SCP) $(SUBS_FONT_FILES) tv:$(APPDIR)/$(SUBS_FONT_DIR)/"),

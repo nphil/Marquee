@@ -697,6 +697,8 @@ fn inputs_for(signed_in: bool) -> RootInputs {
         signed_in, multi_user: true, library_count: 3, auto_sign_in: false, trailer_autoplay: true, resolution: UiResolution::Auto, resolution_offered: true,
         language: plx_platform::i18n::Preference::System,
         under_posters: plx_plex::plex::session::UnderPosters::DEFAULT, plaintext: Vec::new(),
+        subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
+        bazarr: plx_plex::plex::session::BazarrLink::default(),
     }
 }
 

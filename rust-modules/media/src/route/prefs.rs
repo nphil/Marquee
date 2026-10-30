@@ -38,7 +38,7 @@ use super::plan::{supported_quality, Quality, QUALITY_LADDER};
 use plx_plex::plex::session::{
     InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
-    ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitlePosition,
+    ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitleLook, SubtitleLookPref, SubtitlePosition,
     SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TrailerAutoplayPref, UnderPosters,
     UnderPostersPref,
 };
@@ -282,6 +282,51 @@ live_cell!(
 );
 
 // ---- the rows -------------------------------------------------------------------------------
+/// The live subtitle look: one process-global value like a [`LiveCell`], but a struct too wide for
+/// the one byte a [`Packed`] holds, so it sits behind a lock that is held for a copy and never
+/// across a call. Readers are the player's draw (once a frame) and the Settings preview.
+pub struct LookCell {
+    v: Mutex<SubtitleLook>,
+    /// Names the global in the test-lock panic.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
+    name: &'static str,
+    #[cfg(any(test, feature = "test-support"))]
+    publishes: std::sync::atomic::AtomicU32,
+}
+
+impl LookCell {
+    pub const fn new(name: &'static str) -> Self {
+        LookCell {
+            v: Mutex::new(SubtitleLook::DEFAULT),
+            name,
+            #[cfg(any(test, feature = "test-support"))]
+            publishes: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    pub fn get(&self) -> SubtitleLook {
+        *self.v.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Publish `v`; the only writer, with the same test-lock assertion as [`LiveCell::set`].
+    pub fn set(&self, v: SubtitleLook) {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.publishes.fetch_add(1, Relaxed);
+            plx_base::testlock::assert_held(self.name);
+        }
+        *self.v.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn publishes(&self) -> u32 {
+        self.publishes.load(Relaxed)
+    }
+}
+
+/// The subtitle look the seated profile picked (Settings > Subtitles, the player's Style presets).
+pub static SUBTITLE_LOOK: LookCell = LookCell::new("subtitle look preference");
+
 
 /// A live per-profile [`Setting`]: what the media layer adds to the persisted row.
 pub trait LiveSetting: ProfileSetting {
@@ -328,6 +373,7 @@ live_setting!(DeckPressPref, DECK_PRESS, "deck press");
 live_setting!(UnderPostersPref, UNDER_POSTERS, "under posters");
 live_setting!(SubtitleSizePref, SUBTITLE_SIZE, "subtitle size");
 live_setting!(SubtitlePositionPref, SUBTITLE_POSITION, "subtitle position");
+live_setting!(SubtitleLookPref, SUBTITLE_LOOK, "subtitle look");
 live_setting!(HdrOverlayBrightnessPref, HDR_OVERLAY_BRIGHTNESS, "HDR overlay brightness");
 live_setting!(SubtitleTonePref, crate::player::SUBTITLE_TONE, "subtitle tone");
 live_setting!(AudioEnhancementsPref, crate::player::AUDIO_ENHANCEMENTS, "audio enhancements");
@@ -380,6 +426,7 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<SubtitleTonePref>(),
     LiveRow::of::<SubtitleSizePref>(),
     LiveRow::of::<SubtitlePositionPref>(),
+    LiveRow::of::<SubtitleLookPref>(),
     LiveRow::of::<HdrOverlayBrightnessPref>(),
     LiveRow::of::<NextEpisodeModePref>(),
     LiveRow::of::<SkipIntervalPref>(),
@@ -773,6 +820,7 @@ choices! {
     TrailerAutoplay => TrailerAutoplayPref,
     SubtitleSize => SubtitleSizePref,
     SubtitlePosition => SubtitlePositionPref,
+    SubtitleLook => SubtitleLookPref,
     HdrOverlayBrightness => HdrOverlayBrightnessPref,
 }
 
@@ -920,6 +968,27 @@ pub fn restore_subtitle_position(position: SubtitlePosition) { restore_live::<Su
 /// [`select_subtitle_size`] for the caption's vertical placement.
 pub fn select_subtitle_position(position: SubtitlePosition, reply: Option<Sender<bool>>) {
     choose::<SubtitlePositionPref>(position, How::Optimistic(reply));
+}
+
+/// The subtitle look beyond the three quick picks, for the seated profile. Safe from any thread.
+pub fn subtitle_look() -> SubtitleLook { SubtitleLookPref::live() }
+pub fn restore_subtitle_look(look: SubtitleLook) { restore_live::<SubtitleLookPref>(look) }
+/// [`select_subtitle_size`] for the whole look: a preset, or one row of the Subtitles page.
+pub fn select_subtitle_look(look: SubtitleLook, reply: Option<Sender<bool>>) {
+    choose::<SubtitleLookPref>(look, How::Optimistic(reply));
+}
+
+/// A rung picked on the player's Style pages (Size, Position or Color) wins over the exact value the
+/// Subtitles page set for the same thing: `clear` resets that one field of the live look, and the
+/// look is written, with its preset label turned to `Custom`, only when something changed.
+pub fn clear_look_override(clear: impl FnOnce(&mut SubtitleLook)) {
+    let now = subtitle_look();
+    let mut next = now;
+    clear(&mut next);
+    if next != now {
+        next.preset = plx_plex::plex::session::LookPreset::Custom;
+        select_subtitle_look(next.clamped(), None);
+    }
 }
 
 pub fn hdr_overlay_brightness() -> HdrOverlayBrightness { HdrOverlayBrightnessPref::live() }

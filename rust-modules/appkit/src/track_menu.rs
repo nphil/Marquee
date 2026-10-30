@@ -102,7 +102,7 @@
 use plx_data::metadata;
 use plx_data::metadata::sub_layout::{self, LangId, OtherLang, RowBadge, RowTarget, SubHeader, SubModel, SubRow, SubTrack};
 use plx_data::metadata::track_label;
-use plx_plex::plex::session::{SubtitlePosition, SubtitleSize, SubtitleTone};
+use plx_plex::plex::session::{LookPreset, Reveal, SubBack, SubEdge, SubFont, SubtitleLook, SubtitlePosition, SubtitleSize, SubtitleTone};
 use plx_ui::frame::Budget;
 use plx_ui::geom::IndexElem;
 use plx_machine::machine::{Canon, Cx, EntryId, FocusKey, GroupId, Host, Measure};
@@ -177,6 +177,12 @@ pub enum TrackRow {
     SearchHit(usize),
     /// A language on the search's language page: the index into [`search_languages`].
     LangChoice(usize),
+    /// The "Wrong subtitles?" drill-in on the Subtitles root ([`TrackPage::Fix`]), after Search.
+    OpenFix,
+    /// The Fix page's remove row: armed by a first OK, performed by a second.
+    FixRemove,
+    /// The Fix page's drill-in to the Bazarr search ([`TrackPage::BazarrSearch`]).
+    FixBazarr,
 }
 
 impl From<RowTarget> for TrackRow {
@@ -199,10 +205,22 @@ pub enum StyleField {
     Size,
     Position,
     Color,
+    /// The preset: a complete look (`LookPreset`), the last rung `Custom` being what a hand edit leaves.
+    Preset,
+    Font,
+    Edge,
+    Background,
+    /// Reveal as spoken: Off, word by word, line by line.
+    Reveal,
+    /// Blend with video: the caption's tone follows the scene.
+    Blend,
 }
 
 impl StyleField {
-    pub const ALL: [StyleField; 3] = [StyleField::Size, StyleField::Position, StyleField::Color];
+    pub const ALL: [StyleField; 9] = [
+        StyleField::Size, StyleField::Position, StyleField::Color, StyleField::Preset, StyleField::Font,
+        StyleField::Edge, StyleField::Background, StyleField::Reveal, StyleField::Blend,
+    ];
 
     fn ordinal(self) -> u32 {
         self as u32
@@ -214,6 +232,12 @@ impl StyleField {
             Self::Size => msg::widgets_tracks_style_size(),
             Self::Position => msg::widgets_tracks_style_position(),
             Self::Color => msg::widgets_tracks_color(),
+            Self::Preset => msg::widgets_tracks_style_preset(),
+            Self::Font => msg::widgets_tracks_style_font(),
+            Self::Edge => msg::widgets_tracks_style_edge(),
+            Self::Background => msg::widgets_tracks_style_background(),
+            Self::Reveal => msg::widgets_tracks_style_reveal(),
+            Self::Blend => msg::widgets_tracks_style_blend(),
         }
     }
 
@@ -223,6 +247,12 @@ impl StyleField {
             Self::Size => SubtitleSize::LADDER.len(),
             Self::Position => SubtitlePosition::LADDER.len(),
             Self::Color => SubtitleTone::LADDER.len(),
+            Self::Preset => LookPreset::PICKER.len() + 1,
+            Self::Font => SubFont::ALL.len(),
+            Self::Edge => SubEdge::ALL.len(),
+            Self::Background => SubBack::ALL.len(),
+            Self::Reveal => Reveal::ALL.len(),
+            Self::Blend => 2,
         }
     }
 
@@ -232,6 +262,12 @@ impl StyleField {
             Self::Size => subtitle_size_label(SubtitleSize::from_index(i as u8)),
             Self::Position => subtitle_position_label(SubtitlePosition::from_index(i as u8)),
             Self::Color => tone_label(SubtitleTone::from_index(i as u8)),
+            Self::Preset => preset_label(LookPreset::PICKER.get(i).copied().unwrap_or(LookPreset::Custom)),
+            Self::Font => font_label(SubFont::ALL[i]),
+            Self::Edge => edge_label(SubEdge::ALL[i]),
+            Self::Background => back_label(SubBack::ALL[i]),
+            Self::Reveal => reveal_label(Reveal::ALL[i]),
+            Self::Blend => on_off_label(i == 1),
         }
     }
 }
@@ -254,6 +290,10 @@ pub enum TrackPage {
     Search,
     /// The language list the search can use ([`search_languages`]), the current one checked.
     SearchLanguage,
+    /// "Wrong subtitles?": remove the external subtitle on the server, or look for another one.
+    Fix,
+    /// The same page as [`Self::Search`], asking the viewer's Bazarr instead of the server's agents.
+    BazarrSearch,
 }
 
 impl TrackPage {
@@ -269,6 +309,8 @@ impl TrackPage {
             }
             Self::Search => plx_platform::i18n::msg::widgets_tracks_search_open().to_string(),
             Self::SearchLanguage => plx_platform::i18n::msg::widgets_tracks_search_language().to_string(),
+            Self::Fix => plx_platform::i18n::msg::widgets_tracks_fix().to_string(),
+            Self::BazarrSearch => plx_platform::i18n::msg::widgets_tracks_bazarr_title().to_string(),
         }
     }
 
@@ -281,6 +323,8 @@ impl TrackPage {
             Self::Language(stream) => 0x2000_0000 | (stream as u32 & 0x00FF_FFFF),
             Self::Search => 0x30,
             Self::SearchLanguage => 0x31,
+            Self::Fix => 0x32,
+            Self::BazarrSearch => 0x33,
         }
     }
 }
@@ -313,6 +357,9 @@ impl FormId for TrackRow {
             TrackRow::SearchRetry => 0x000B_0001,
             TrackRow::SearchHit(i) => 0x000C_0000 + (i as u32).min(0xFFFF),
             TrackRow::LangChoice(i) => 0x000D_0000 + (i as u32).min(0xFFFF),
+            TrackRow::OpenFix => 0x000E_0000,
+            TrackRow::FixRemove => 0x000F_0000,
+            TrackRow::FixBazarr => 0x000F_0001,
         })
     }
 }
@@ -336,7 +383,7 @@ type EnhState = (
 /// every page and never flips under a viewer who pushes one. A server-length list (audio dubs,
 /// subtitle tracks) may be taller and scrolls inside the panel. Classic's room above its row is
 /// 710, which this stays under, so classic always opens upward.
-const NEED_H: f32 = 600.0;
+const NEED_H: f32 = 700.0;
 
 /// **A tab root's natural panel**, placed beside `anchor` — the layout of `table` as the panel would
 /// hug it. Each tab hugs its own rows (shared menu rule); the edge the opener's segment ends at is
@@ -475,6 +522,9 @@ pub struct TrackMenuState {
     size: SubtitleSize,
     /// The caption position the Position rows read out and check.
     position: SubtitlePosition,
+    /// The whole caption look the Preset, Font, Edge, Background, Reveal and Blend rows read out and
+    /// check, seeded from the route on open (the same rule as `tone`).
+    look: SubtitleLook,
     /// The pages pushed above the Subtitles root, outermost first (empty = the root). Each entry
     /// carries the opener and scroll of the page beneath it.
     pages: PageStack<TrackPage, TrackRow>,
@@ -552,6 +602,14 @@ pub struct TrackMenuState {
     /// without the item in hand. A copy, refreshed wherever the subs list is re-read, so a
     /// subtitle that lands (or is replaced) while the page is up marks its hit at once.
     item_sidecars: Vec<metadata::Stream>,
+    /// The external subtitle on screen, if one is: what "Remove this subtitle" would delete.
+    active_external: Option<metadata::Stream>,
+    /// A subtitle is on screen at all (an embedded track cannot be removed, and the page says so).
+    active_any: bool,
+    /// The Fix page's remove row has been pressed once and waits for the second press.
+    fix_armed: bool,
+    /// A removal was asked of the server by this panel: the screen turns the subtitle off when it lands.
+    removal_watching: bool,
     /// The opener's rect, handed in when the menu opened ([`Self::with_anchor`]) and never read
     /// from anywhere again: a stand-in taking the HUD row, or a language change, cannot move an
     /// open panel.
@@ -616,6 +674,9 @@ pub enum TrackCommit {
     /// loop that performs it (`player::set_subtitle_tone` saves through the one write door, `route::choose`),
     /// like the two above.
     SubtitleTone(SubtitleTone),
+    /// A whole caption look: a preset, or one of Font, Edge, Background, Reveal and Blend changed
+    /// (`route::select_subtitle_look`). Takes effect on the next drawn frame.
+    SubtitleLook(SubtitleLook),
     /// The caption's size, picked on the Style > Size page: the loop publishes it live and
     /// persists it (`route::select_subtitle_size`).
     SubtitleSize(SubtitleSize),
@@ -701,6 +762,7 @@ impl TrackMenuState {
             tone: plx_media::player::subtitle_tone(),
             size: plx_media::route::subtitle_size(),
             position: plx_media::route::subtitle_position(),
+            look: plx_media::route::subtitle_look(),
             pages: PageStack::new(),
             renderer: SubRenderer::Text,
             sub_sig: None,
@@ -717,6 +779,10 @@ impl TrackMenuState {
             search: offer_search.then(|| plx_data::subsearch::SubSearchSnapshot::idle(0)),
             search_watching: false,
             item_sidecars: Vec::new(),
+            active_external: None,
+            active_any: false,
+            fix_armed: false,
+            removal_watching: false,
             anchor: crate::player_hud::classic::frame_geometry().row,
             side: std::cell::Cell::new(plx_ui::popover::Side::Above),
         };
@@ -940,6 +1006,9 @@ impl TrackMenuState {
     fn read_item_sidecars(&mut self, meta: metadata::MetadataView<'_>) {
         self.item_sidecars =
             tracks(meta).map(|t| t.subs.iter().filter(|s| s.external).cloned().collect()).unwrap_or_default();
+        let shown = tracks(meta).and_then(|t| usize::try_from(self.active_sub).ok().and_then(|i| t.subs.get(i)));
+        self.active_any = shown.is_some();
+        self.active_external = shown.filter(|s| s.external && !s.key.is_empty()).cloned();
     }
 
     /// The Subtitles tab's half of the live poll `Self::update` runs every tick, mirroring the
@@ -1026,7 +1095,7 @@ impl TrackMenuState {
             TrackPage::Style | TrackPage::Picker(_) => true,
             // its listing is the search's, not the item's: the download's own stream landing must
             // not pop the page the viewer is watching it on
-            TrackPage::Search | TrackPage::SearchLanguage => self.search.is_some(),
+            TrackPage::Search | TrackPage::SearchLanguage | TrackPage::Fix | TrackPage::BazarrSearch => self.search.is_some(),
         })
     }
 
@@ -1254,6 +1323,7 @@ impl TrackMenuState {
             TrackRow::Sub(i) => self.commit_sub(i as c_int, meta),
             TrackRow::SearchHit(i) => self.search_download(i),
             TrackRow::SearchRetry => TrackOk::Search(plx_data::subsearch::SubSearchCmd::Retry),
+            TrackRow::FixRemove => self.fix_remove(),
             TrackRow::LangChoice(i) => self.pick_search_language(i),
             _ => TrackOk::Inert,
         }
@@ -1398,6 +1468,20 @@ impl TrackMenuState {
                 self.tone = tone;
                 TrackCommit::SubtitleTone(tone)
             }
+            StyleField::Preset => {
+                // the last rung, Custom, is a label for what a hand edit leaves, not a choice
+                let Some(preset) = LookPreset::PICKER.get(rung).copied() else { return TrackOk::Inert };
+                if self.look.preset == preset {
+                    return TrackOk::Inert;
+                }
+                self.look = preset.applied(&self.look);
+                TrackCommit::SubtitleLook(self.look)
+            }
+            StyleField::Font => return self.pick_look(|l| l.font = SubFont::ALL[rung.min(SubFont::ALL.len() - 1)]),
+            StyleField::Edge => return self.pick_look(|l| l.edge = SubEdge::ALL[rung.min(SubEdge::ALL.len() - 1)]),
+            StyleField::Background => return self.pick_look(|l| l.back = SubBack::ALL[rung.min(SubBack::ALL.len() - 1)]),
+            StyleField::Reveal => return self.pick_look(|l| l.reveal = Reveal::ALL[rung.min(Reveal::ALL.len() - 1)]),
+            StyleField::Blend => return self.pick_look(|l| l.blend = rung == 1),
         };
         if let Some(page) = self.pages.top() {
             let form = self.page_form(page);
@@ -1409,11 +1493,33 @@ impl TrackMenuState {
     /// The rung of `field` the panel currently reads out and checks.
     fn current_rung(&self, field: StyleField) -> usize {
         let rung = match field {
-            StyleField::Size => self.size.index(),
-            StyleField::Position => self.position.index(),
-            StyleField::Color => self.tone.index(),
+            StyleField::Size => self.size.index() as usize,
+            StyleField::Position => self.position.index() as usize,
+            StyleField::Color => self.tone.index() as usize,
+            StyleField::Preset => LookPreset::PICKER.iter().position(|p| *p == self.look.preset).unwrap_or(LookPreset::PICKER.len()),
+            StyleField::Font => self.look.font.index(),
+            StyleField::Edge => self.look.edge.index(),
+            StyleField::Background => self.look.back.index(),
+            StyleField::Reveal => self.look.reveal.index(),
+            StyleField::Blend => usize::from(self.look.blend),
         };
         rung as usize
+    }
+
+    /// One hand edit of the look: the preset label turns to Custom, the change is committed live, the
+    /// page staying so a run of picks is felt at once. A pick that changes nothing is inert.
+    fn pick_look(&mut self, change: impl FnOnce(&mut SubtitleLook)) -> TrackOk {
+        let next = self.look.edited(change);
+        let unchanged = SubtitleLook { preset: self.look.preset, ..next } == self.look;
+        if unchanged {
+            return TrackOk::Inert;
+        }
+        self.look = next;
+        if let Some(page) = self.pages.top() {
+            let form = self.page_form(page);
+            self.form.refresh(form);
+        }
+        TrackOk::Commit { commit: TrackCommit::SubtitleLook(next), keep_open: true }
     }
 
     /// The form of a pushed page, from the panel's own read-outs.
@@ -1423,8 +1529,10 @@ impl TrackMenuState {
             TrackPage::Picker(field) => self.picker_form(field),
             TrackPage::OtherLanguages => self.other_form(),
             TrackPage::Language(stream) => self.language_form(stream),
-            TrackPage::Search => self.search_form(),
+            TrackPage::Search => self.search_form(plx_data::subsearch::SubSource::Plex),
+            TrackPage::BazarrSearch => self.search_form(plx_data::subsearch::SubSource::Bazarr),
             TrackPage::SearchLanguage => self.search_language_form(),
+            TrackPage::Fix => self.fix_form(),
         }
     }
 
@@ -1467,11 +1575,16 @@ impl TrackMenuState {
     /// results. With nothing to list the results section carries ONE line saying why — searching,
     /// none found, or the failure — so the empty answer and the fault never read alike, and no
     /// failure is ever drawn as an alarm (`ui/src/CLAUDE.md`: failure read-outs are never red).
-    fn search_form(&self) -> TrackForm {
-        use plx_data::subsearch::{DownloadPhase, SearchFailure, SearchStatus};
+    fn search_form(&self, want: plx_data::subsearch::SubSource) -> TrackForm {
+        use plx_data::subsearch::{DownloadPhase, SearchStatus, SubSource};
         use plx_platform::i18n::msg;
         let Some(s) = self.search.as_ref() else { return Form::new() };
-        let busy = s.download.busy();
+        // the model answers for one source at a time: until it has switched to the one this page is
+        // for, the page reads "searching" and lists nothing of the other's
+        let ours = s.source == want;
+        let (hits, status, failure): (&[plx_data::subsearch::SubHit], _, _) =
+            if ours { (s.hits.as_slice(), s.status, s.failure) } else { (&[], SearchStatus::Searching, None) };
+        let busy = ours && s.download.busy();
         let lang = if s.lang.is_empty() { String::new() } else { plx_plex::plex::languages::label(&s.lang).to_string() };
         // a language change mid-download is refused by the store, so the row is inert meanwhile
         let mut top = FormSection::new("")
@@ -1482,12 +1595,13 @@ impl TrackMenuState {
                 Row::new(msg::widgets_tracks_search_language()).value(lang),
             )
             .disabled(busy);
-        if s.failure == Some(SearchFailure::Transport) {
+        if failure.is_some_and(plx_data::subsearch::SearchFailure::retryable) {
             top = top.item(TrackRow::SearchRetry, RowKind::Button, (), Row::new(msg::widgets_tracks_search_retry()));
         }
         let mut results = FormSection::new(msg::widgets_tracks_search_results());
-        for (i, h) in s.hits.iter().enumerate() {
-            let state = match &s.download {
+        for (i, h) in hits.iter().enumerate() {
+            let download = if ours { &s.download } else { &DownloadPhase::None };
+            let state = match download {
                 DownloadPhase::Sending { hit } | DownloadPhase::Waiting { hit, .. } if *hit == i => {
                     Some(msg::widgets_tracks_search_adding())
                 }
@@ -1513,27 +1627,101 @@ impl TrackMenuState {
             }
             if let Some(state) = state {
                 row = row.value(state);
+            } else if want == SubSource::Bazarr {
+                // Bazarr's own score of how well the file fits this video
+                row = row.value(format!("{}%", h.score));
             }
             results = results.item(TrackRow::SearchHit(i), RowKind::Button, (), row).disabled(busy);
         }
-        let status = match (s.status, s.failure) {
-            (SearchStatus::Idle | SearchStatus::Searching, _) => Some(msg::widgets_tracks_search_searching()),
-            (SearchStatus::Ready, _) if s.hits.is_empty() => Some(msg::widgets_tracks_search_none()),
-            (SearchStatus::Failed, Some(SearchFailure::Denied)) => Some(msg::widgets_tracks_search_denied()),
-            (SearchStatus::Failed, Some(SearchFailure::Missing)) => Some(msg::widgets_tracks_search_missing()),
-            (SearchStatus::Failed, Some(SearchFailure::BadLanguage)) => {
-                Some(msg::widgets_tracks_search_bad_language())
-            }
-            (SearchStatus::Failed, _) => Some(msg::widgets_tracks_search_failed()),
-            _ => None,
-        };
+        let status = if want == SubSource::Bazarr { bazarr_status(status, failure, hits.is_empty()) } else { plex_status(status, failure, hits.is_empty()) };
         if let Some(status) = status {
             results = results.note(status);
         }
-        if matches!(s.download, DownloadPhase::Failed { .. }) {
+        if ours && matches!(s.download, DownloadPhase::Failed { .. }) {
             results = results.note(msg::widgets_tracks_search_add_failed_note());
         }
         Form::new().section(top).section(results)
+    }
+
+    /// The Fix page: remove the external subtitle on screen (a first OK arms the row, a second
+    /// removes), or look for another one with Bazarr. Every state is a word: nothing to remove, an
+    /// embedded track that cannot be, the removal under way, done, refused, or not delivered.
+    fn fix_form(&self) -> TrackForm {
+        use plx_data::subsearch::RemovePhase;
+        use plx_platform::i18n::msg;
+        let Some(s) = self.search.as_ref() else { return Form::new() };
+        let removing = s.removal.busy();
+        let (label, detail, can_remove) = match (&self.active_external, self.active_any) {
+            _ if removing => (msg::widgets_tracks_fix_remove(), msg::widgets_tracks_fix_removing().to_string(), false),
+            (Some(_), _) if self.fix_armed => (msg::widgets_tracks_fix_remove_sure(), msg::widgets_tracks_fix_remove_note().to_string(), true),
+            (Some(sub), _) => {
+                let name = [sub.title.as_str(), sub.lang.as_str(), sub.codec.as_str()].into_iter().find(|t| !t.is_empty());
+                (msg::widgets_tracks_fix_remove(), name.unwrap_or_default().to_string(), true)
+            }
+            (None, true) => (msg::widgets_tracks_fix_remove(), msg::widgets_tracks_fix_remove_embedded().to_string(), false),
+            (None, false) => (msg::widgets_tracks_fix_remove(), msg::widgets_tracks_fix_remove_none().to_string(), false),
+        };
+        let host = s.bazarr_host.as_str();
+        let mut sec = FormSection::new("")
+            .item(TrackRow::FixRemove, RowKind::Button, (), Row::new(label).detail(detail))
+            .disabled(!can_remove)
+            .item(
+                TrackRow::FixBazarr,
+                RowKind::Nav(TrackPage::BazarrSearch),
+                (),
+                Row::new(msg::widgets_tracks_fix_bazarr())
+                    .detail(if host.is_empty() { msg::widgets_tracks_fix_bazarr_unset().to_string() } else { host.to_string() }),
+            )
+            .disabled(host.is_empty() || removing);
+        match &s.removal {
+            RemovePhase::Removed { .. } if self.active_external.is_none() => sec = sec.note(msg::widgets_tracks_fix_removed()),
+            RemovePhase::Refused { .. } => sec = sec.note(msg::widgets_tracks_fix_refused()),
+            RemovePhase::Failed { .. } => sec = sec.note(msg::widgets_tracks_fix_failed()),
+            _ => {}
+        }
+        Form::new().section(sec)
+    }
+
+    /// OK on "Remove this subtitle": the first press arms the row (its words change to ask), the
+    /// second asks the server to delete the file. Inert with nothing deletable on screen.
+    fn fix_remove(&mut self) -> TrackOk {
+        let Some(sub) = self.active_external.as_ref() else { return TrackOk::Inert };
+        if self.search.as_ref().is_none_or(|s| s.removal.busy()) {
+            return TrackOk::Inert;
+        }
+        if !self.fix_armed {
+            self.fix_armed = true;
+            self.refresh_top_page();
+            return TrackOk::Inert;
+        }
+        self.fix_armed = false;
+        self.removal_watching = true;
+        let cmd = plx_data::subsearch::SubSearchCmd::Remove { stream: sub.id, key: sub.key.clone() };
+        self.refresh_top_page();
+        TrackOk::Search(cmd)
+    }
+
+    /// Rebuild the page on top in place, focus kept by id.
+    fn refresh_top_page(&mut self) {
+        if let Some(page) = self.pages.top() {
+            let form = self.page_form(page);
+            self.form.refresh(form);
+        }
+    }
+
+    /// **After a removal landed**, once, by the panel that asked for it: the commit that turns the
+    /// subtitle off (the file is gone, so the renderer must stop reading it), and the stream the
+    /// screen drops from the playing item's list. `None` until a removal this panel asked for has
+    /// landed.
+    pub fn take_removal_commit(&mut self, meta: metadata::MetadataView<'_>) -> Option<(i64, TrackCommit)> {
+        let plx_data::subsearch::RemovePhase::Removed { stream } = self.search.as_ref()?.removal else { return None };
+        if !std::mem::take(&mut self.removal_watching) {
+            return None;
+        }
+        match self.commit_sub(-1, meta) {
+            TrackOk::Commit { commit, .. } => Some((stream, commit)),
+            _ => None,
+        }
     }
 
     /// The language page: every language the search can use, the one being searched checked.
@@ -1618,7 +1806,7 @@ impl TrackMenuState {
             self.search_watching = true;
         }
         self.search = Some(search);
-        if let Some(page @ (TrackPage::Search | TrackPage::SearchLanguage)) = self.pages.top() {
+        if let Some(page @ (TrackPage::Search | TrackPage::BazarrSearch | TrackPage::SearchLanguage | TrackPage::Fix)) = self.pages.top() {
             let form = self.page_form(page);
             let fallback = self.page_initial(page);
             self.form.refresh_with(form, None, fallback.as_ref());
@@ -1628,7 +1816,26 @@ impl TrackMenuState {
     /// Is the viewer on the Search pages? The screen opens the search only then, so merely opening
     /// the menu never puts a query to the server's subtitle agent.
     pub fn wants_search(&self) -> bool {
-        self.pages.iter().any(|saved| matches!(saved.page, TrackPage::Search | TrackPage::SearchLanguage))
+        self.wants_source().is_some()
+    }
+
+    /// Which source's search pages the viewer is on: the server's agents ([`TrackPage::Search`]) or
+    /// Bazarr ([`TrackPage::BazarrSearch`]). The language page belongs to the search page beneath it.
+    pub fn wants_source(&self) -> Option<plx_data::subsearch::SubSource> {
+        self.pages
+            .iter()
+            .filter_map(|saved| match saved.page {
+                TrackPage::Search => Some(plx_data::subsearch::SubSource::Plex),
+                TrackPage::BazarrSearch => Some(plx_data::subsearch::SubSource::Bazarr),
+                _ => None,
+            })
+            .last()
+    }
+
+    /// Is the viewer on the Fix page? The screen holds the item in the search model then, so a
+    /// removal has somewhere to be tracked, and asks nobody anything.
+    pub fn wants_fix(&self) -> bool {
+        self.pages.iter().any(|saved| saved.page == TrackPage::Fix)
     }
 
     /// **The auto-select**, once, by the panel that watched the download in flight: the subtitle as the playing item should list
@@ -1702,10 +1909,24 @@ impl TrackMenuState {
                 (),
                 field_row(StyleField::Color),
             );
+        // The look: a preset first, then what a hand edit can change. They draw only with the
+        // application's own text renderer, but a preset also sets the colour, which is live under every one.
+        let look = [StyleField::Preset, StyleField::Font, StyleField::Edge, StyleField::Background, StyleField::Reveal]
+            .into_iter()
+            .fold(FormSection::new(""), |sec, field| {
+                sec.item(TrackRow::OpenField(field), RowKind::Nav(TrackPage::Picker(field)), (), field_row(field))
+                    .disabled(!reaches)
+            })
+            .item(
+                TrackRow::OpenField(StyleField::Blend),
+                RowKind::Nav(TrackPage::Picker(StyleField::Blend)),
+                (),
+                field_row(StyleField::Blend),
+            );
         if let Some(note) = self.renderer.note() {
             sec = sec.note(note);
         }
-        Form::new().section(sec)
+        Form::new().section(sec).section(look)
     }
 
     /// A picker page: one choice per rung of `field`'s ladder, the current one checked.
@@ -1735,11 +1956,12 @@ impl TrackMenuState {
                 let t = tracks.iter().find(|t| active == Some(t.i)).or(tracks.first())?;
                 Some(TrackRow::Sub(t.i))
             }
-            TrackPage::Search => Some(if self.search_hits().is_empty() {
+            TrackPage::Search | TrackPage::BazarrSearch => Some(if self.search_hits().is_empty() {
                 TrackRow::SearchLang
             } else {
                 TrackRow::SearchHit(0)
             }),
+            TrackPage::Fix => Some(if self.active_external.is_some() { TrackRow::FixRemove } else { TrackRow::FixBazarr }),
             TrackPage::SearchLanguage => {
                 let lang = self.search.as_ref().map_or("", |s| s.lang.as_str());
                 Some(TrackRow::LangChoice(search_languages().iter().position(|l| l.code == lang).unwrap_or(0)))
@@ -2009,6 +2231,12 @@ impl TrackMenuState {
                 RowKind::Nav(TrackPage::Search),
                 (),
                 Row::new(plx_platform::i18n::msg::widgets_tracks_search_open()),
+            ));
+            form = form.section(FormSection::new("").item(
+                TrackRow::OpenFix,
+                RowKind::Nav(TrackPage::Fix),
+                (),
+                Row::new(plx_platform::i18n::msg::widgets_tracks_fix()),
             ));
         }
         (form, model)
@@ -2377,6 +2605,108 @@ fn tone_label(tone: SubtitleTone) -> &'static str {
         SubtitleTone::Grey => plx_platform::i18n::msg::widgets_tracks_tone_grey(),
         SubtitleTone::DarkGrey => plx_platform::i18n::msg::widgets_tracks_tone_dark_grey(),
         SubtitleTone::Charcoal => plx_platform::i18n::msg::widgets_tracks_tone_charcoal(),
+    }
+}
+
+/// The localized name of a preset: the one place the Style page reads it.
+pub fn preset_label(preset: LookPreset) -> &'static str {
+    use plx_platform::i18n::msg;
+    match preset {
+        LookPreset::Blend => msg::widgets_tracks_look_preset_blend(),
+        LookPreset::AppleTv => msg::widgets_tracks_look_preset_apple_tv(),
+        LookPreset::Classic => msg::widgets_tracks_look_preset_classic(),
+        LookPreset::Netflix => msg::widgets_tracks_look_preset_netflix(),
+        LookPreset::Outline => msg::widgets_tracks_look_preset_outline(),
+        LookPreset::LargePrint => msg::widgets_tracks_look_preset_large_print(),
+        LookPreset::HighContrast => msg::widgets_tracks_look_preset_high_contrast(),
+        LookPreset::Marquee => msg::widgets_tracks_look_preset_marquee(),
+        LookPreset::Custom => msg::widgets_tracks_look_preset_custom(),
+    }
+}
+
+pub fn font_label(font: SubFont) -> &'static str {
+    use plx_platform::i18n::msg;
+    match font {
+        SubFont::Default => msg::widgets_tracks_look_font_default(),
+        SubFont::Serif => msg::widgets_tracks_look_font_serif(),
+        SubFont::Mono => msg::widgets_tracks_look_font_mono(),
+        SubFont::Legible => msg::widgets_tracks_look_font_legible(),
+    }
+}
+
+pub fn edge_label(edge: SubEdge) -> &'static str {
+    use plx_platform::i18n::msg;
+    match edge {
+        SubEdge::None => msg::widgets_tracks_look_edge_none(),
+        SubEdge::Outline => msg::widgets_tracks_look_edge_outline(),
+        SubEdge::Drop => msg::widgets_tracks_look_edge_drop(),
+        SubEdge::Raised => msg::widgets_tracks_look_edge_raised(),
+        SubEdge::Depressed => msg::widgets_tracks_look_edge_depressed(),
+        SubEdge::Soft => msg::widgets_tracks_look_edge_soft(),
+    }
+}
+
+pub fn back_label(back: SubBack) -> &'static str {
+    use plx_platform::i18n::msg;
+    match back {
+        SubBack::Off => msg::widgets_tracks_look_back_off(),
+        SubBack::Line => msg::widgets_tracks_look_back_line(),
+        SubBack::Window => msg::widgets_tracks_look_back_window(),
+    }
+}
+
+pub fn reveal_label(reveal: Reveal) -> &'static str {
+    use plx_platform::i18n::msg;
+    match reveal {
+        Reveal::Off => msg::widgets_tracks_look_reveal_off(),
+        Reveal::Word => msg::widgets_tracks_look_reveal_word(),
+        Reveal::Line => msg::widgets_tracks_look_reveal_line(),
+    }
+}
+
+pub fn on_off_label(on: bool) -> &'static str {
+    use plx_platform::i18n::msg;
+    if on { msg::widgets_tracks_look_on() } else { msg::widgets_tracks_look_off() }
+}
+
+/// The line under a Plex-agent search that has no rows to list: searching, none, or why not.
+fn plex_status(
+    status: plx_data::subsearch::SearchStatus,
+    failure: Option<plx_data::subsearch::SearchFailure>,
+    no_hits: bool,
+) -> Option<&'static str> {
+    use plx_data::subsearch::{SearchFailure, SearchStatus};
+    use plx_platform::i18n::msg;
+    match (status, failure) {
+        (SearchStatus::Idle | SearchStatus::Searching, _) => Some(msg::widgets_tracks_search_searching()),
+        (SearchStatus::Ready, _) if no_hits => Some(msg::widgets_tracks_search_none()),
+        (SearchStatus::Failed, Some(SearchFailure::Denied)) => Some(msg::widgets_tracks_search_denied()),
+        (SearchStatus::Failed, Some(SearchFailure::Missing)) => Some(msg::widgets_tracks_search_missing()),
+        (SearchStatus::Failed, Some(SearchFailure::BadLanguage)) => Some(msg::widgets_tracks_search_bad_language()),
+        (SearchStatus::Failed, _) => Some(msg::widgets_tracks_search_failed()),
+        _ => None,
+    }
+}
+
+/// [`plex_status`] for Bazarr: each of its faults has its own words, none of them an alarm.
+fn bazarr_status(
+    status: plx_data::subsearch::SearchStatus,
+    failure: Option<plx_data::subsearch::SearchFailure>,
+    no_hits: bool,
+) -> Option<&'static str> {
+    use plx_data::subsearch::{SearchFailure, SearchStatus};
+    use plx_platform::i18n::msg;
+    match (status, failure) {
+        (SearchStatus::Idle | SearchStatus::Searching, _) => Some(msg::widgets_tracks_bazarr_searching()),
+        (SearchStatus::Ready, _) if no_hits => Some(msg::widgets_tracks_bazarr_none()),
+        (SearchStatus::Failed, Some(SearchFailure::NotSet)) => Some(msg::widgets_tracks_bazarr_not_set()),
+        (SearchStatus::Failed, Some(SearchFailure::Unreachable | SearchFailure::Transport)) => Some(msg::widgets_tracks_bazarr_unreachable()),
+        (SearchStatus::Failed, Some(SearchFailure::BadKey)) => Some(msg::widgets_tracks_bazarr_bad_key()),
+        (SearchStatus::Failed, Some(SearchFailure::NotBazarr)) => Some(msg::widgets_tracks_bazarr_not_bazarr()),
+        (SearchStatus::Failed, Some(SearchFailure::NotInBazarr)) => Some(msg::widgets_tracks_bazarr_not_in()),
+        (SearchStatus::Failed, Some(SearchFailure::BadLanguage)) => Some(msg::widgets_tracks_search_bad_language()),
+        (SearchStatus::Failed, _) => Some(msg::widgets_tracks_bazarr_refused()),
+        _ => None,
     }
 }
 
@@ -5495,6 +5825,7 @@ mod focus_tests {
             tone: SubtitleTone::White,
             size: SubtitleSize::Medium,
             position: SubtitlePosition::Low,
+            look: SubtitleLook::default(),
             pages: PageStack::new(),
             renderer: SubRenderer::Text,
             sub_sig: None,
@@ -5511,6 +5842,10 @@ mod focus_tests {
             search: None,
             search_watching: false,
             item_sidecars: Vec::new(),
+            active_external: None,
+            active_any: false,
+            fix_armed: false,
+            removal_watching: false,
             anchor: crate::player_hud::classic::frame_geometry().row,
             side: std::cell::Cell::new(plx_ui::popover::Side::Above),
         }
@@ -7015,7 +7350,7 @@ mod motion_tests {
     }
 
     fn snap(status: SearchStatus, failure: Option<SearchFailure>, hits: Vec<SubHit>, download: DownloadPhase) -> SubSearchSnapshot {
-        SubSearchSnapshot { status, failure, hits, lang: "nl".into(), download, gen: 7 }
+        SubSearchSnapshot { status, failure, hits, lang: "nl".into(), download, gen: 7, ..SubSearchSnapshot::idle(7) }
     }
 
     /// A Subtitles-tab menu with one English track, offered a search in state `s`, on the Search page.
@@ -7055,7 +7390,8 @@ mod motion_tests {
         menu.set_search(SubSearchSnapshot::idle(3));
         assert!(!menu.ids().contains(&TrackRow::OpenSearch), "a late publish never adds the offer");
         let menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], true);
-        assert_eq!(menu.ids().last(), Some(&TrackRow::OpenSearch), "the offered root ends with the row");
+        assert_eq!(menu.ids().last(), Some(&TrackRow::OpenFix), "the offered root ends with Wrong subtitles?");
+        assert_eq!(&menu.ids()[menu.ids().len() - 2..], [TrackRow::OpenSearch, TrackRow::OpenFix], "after the search row");
     }
 
     /// Entering the page is what makes the screen open the search — never merely opening the menu.
@@ -7135,7 +7471,7 @@ mod motion_tests {
     fn the_search_keys_are_distinct_from_every_other_row() {
         let mut ids = vec![TrackRow::SubOff, TrackRow::Timing, TrackRow::Style, TrackRow::Boost,
             TrackRow::Loudness, TrackRow::OpenOther, TrackRow::OpenSearch, TrackRow::SearchLang,
-            TrackRow::SearchRetry];
+            TrackRow::SearchRetry, TrackRow::OpenFix, TrackRow::FixRemove, TrackRow::FixBazarr];
         ids.extend((0..300).flat_map(|i| [TrackRow::Sub(i), TrackRow::Audio(i), TrackRow::SearchHit(i),
             TrackRow::LangChoice(i)]));
         let keys: Vec<u32> = ids.iter().map(|i| i.key().0).collect();
@@ -7143,6 +7479,53 @@ mod motion_tests {
             assert!(*a < BAND_BASE);
             assert!(!keys[n + 1..].contains(a), "duplicate key {a:#x}");
         }
+    }
+
+    /// "Wrong subtitles?": the remove row is armed by a first OK, performed by a second, and only ever
+    /// for an external subtitle on screen; the Bazarr row opens the Bazarr search page.
+    #[test]
+    fn wrong_subtitles_removes_only_an_external_subtitle_after_a_second_ok() {
+        use plx_data::subsearch::{RemovePhase, SubSearchCmd, SubSearchSnapshot};
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let store = store_with(vec![metadata::Stream { id: 7, index: 0, lang: "English".into(),
+            lang_code: "eng".into(), codec: "srt".into(), key: "/library/streams/7".into(), external: true,
+            ..Default::default() }]);
+        let mut menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], true);
+        menu.active_sub = 0;
+        menu.read_item_sidecars(store.view());
+        menu.set_search(SubSearchSnapshot { bazarr_host: "bazarr.example.net".into(), ..SubSearchSnapshot::idle(1) });
+        menu.focus_key(TrackRow::OpenFix.key().0);
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated, "a Nav row pushes its page");
+        assert_eq!(menu.page_path(), [TrackPage::Fix]);
+        assert!(menu.wants_fix() && menu.wants_source().is_none());
+
+        menu.focus_key(TrackRow::FixRemove.key().0);
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Inert, "the first OK only arms the row");
+        assert!(menu.fix_armed);
+        let remove = TrackOk::Search(SubSearchCmd::Remove { stream: 7, key: "/library/streams/7".into() });
+        assert_eq!(menu.on_ok(store.view()), remove, "the second OK asks the server to delete it");
+        assert!(!menu.fix_armed && menu.removal_watching);
+
+        // the server answered: the subtitle is turned off once, and the page says it is gone
+        menu.set_search(SubSearchSnapshot { removal: RemovePhase::Removed { stream: 7 }, bazarr_host: "bazarr.example.net".into(), ..SubSearchSnapshot::idle(1) });
+        let (gone, commit) = menu.take_removal_commit(store.view()).expect("the removal lands once");
+        assert_eq!(gone, 7);
+        assert!(matches!(commit, TrackCommit::Subtitle { stream_id: 0, .. }), "{commit:?}");
+        assert!(menu.take_removal_commit(store.view()).is_none(), "once");
+
+        // an embedded track is never offered for removal
+        let embedded = store_with(vec![metadata::Stream { id: 1, index: 0, lang: "English".into(),
+            lang_code: "eng".into(), codec: "srt".into(), ..Default::default() }]);
+        let mut menu = TrackMenuState::new_with(&ps, embedded.view(), 1, vec!["eng".into()], true);
+        menu.active_sub = 0;
+        menu.read_item_sidecars(embedded.view());
+        menu.set_search(SubSearchSnapshot::idle(1));
+        assert!(menu.active_external.is_none() && menu.active_any);
+        menu.focus_key(TrackRow::OpenFix.key().0);
+        menu.on_ok(embedded.view());
+        menu.focus_key(TrackRow::FixRemove.key().0);
+        assert_eq!(menu.on_ok(embedded.view()), TrackOk::Inert);
+        assert!(!menu.fix_armed, "an embedded track is not armed");
     }
 
     /// The auto-select hands the installed stream over ONCE — the snapshot is republished every
@@ -7354,7 +7737,7 @@ mod classic_placement_tests {
             [
                 ("audio root (3 dubs)", [1824.0, 764.0, 468.0, 356.0]),
                 ("subtitles root (3 dubs)", [1824.0, 764.0, 447.0, 488.0]),
-                ("style page (3 dubs)", [1824.0, 764.0, 440.0, 296.0]),
+                ("style page (3 dubs)", [1824.0, 764.0, 470.0, 680.0]),
             ],
         );
     }
@@ -7416,7 +7799,7 @@ mod classic_placement_tests {
     #[test]
     fn the_panel_does_not_move_off_its_anchor_while_it_is_open() {
         let _g = plx_base::testlock::serial();
-        let (mut menu, store) = menu_at(Rect::new(1500.0, 300.0, 324.0, 64.0), 1);
+        let (mut menu, store) = menu_at(Rect::new(1500.0, 200.0, 324.0, 64.0), 1);
         let first = menu.panel_rect(&ShippedMeasure);
         let side = menu.side.get();
         assert_eq!(side, plx_ui::popover::Side::Below, "the opener is high: the panel hangs under it");

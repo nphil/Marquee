@@ -1,0 +1,114 @@
+{
+  "bazarr.section": {
+    "value": "Integrations",
+    "description": "Settings > Integrations > Bazarr page. Section heading on the Settings root above the Bazarr row."
+  },
+  "bazarr.title": {
+    "value": "Bazarr",
+    "description": "Settings > Integrations > Bazarr page. Row label on the Settings root and page title. Bazarr is a product name; keep it."
+  },
+  "bazarr.root_detail": {
+    "value": "Find other subtitles.",
+    "description": "Settings > Integrations > Bazarr page. Detail line under the Bazarr row on the Settings root. One short sentence."
+  },
+  "bazarr.copy": {
+    "value": "Bazarr finds subtitles from many providers. Add its address and API key and the player's “Wrong subtitles?” can use it.",
+    "description": "Settings > Integrations > Bazarr page. Narrative copy beside the Bazarr page. Two short sentences. Bazarr is a product name."
+  },
+  "bazarr.address": {
+    "value": "Address",
+    "description": "Settings > Integrations > Bazarr page. Row label: where Bazarr runs (its web address)."
+  },
+  "bazarr.address_detail": {
+    "value": "https:// or http://",
+    "description": "Settings > Integrations > Bazarr page. Line under the Address row: how the address starts. Keep https:// and http:// as they are."
+  },
+  "bazarr.key": {
+    "value": "API key",
+    "description": "Settings > Integrations > Bazarr page. Row label: Bazarr's API key."
+  },
+  "bazarr.key_detail": {
+    "value": "Settings, General, Security",
+    "description": "Settings > Integrations > Bazarr page. Line under the API key row: where to find the key in Bazarr's own menus."
+  },
+  "bazarr.test": {
+    "value": "Test connection",
+    "description": "Settings > Integrations > Bazarr page. Action row: ask Bazarr whether the address and key work."
+  },
+  "bazarr.forget": {
+    "value": "Forget this key",
+    "description": "Settings > Integrations > Bazarr page. Action row: remove the stored address and key."
+  },
+  "bazarr.forget_detail": {
+    "value": "Removes address and key",
+    "description": "Settings > Integrations > Bazarr page. Line under the Forget row."
+  },
+  "bazarr.forget_sure": {
+    "value": "Press OK again",
+    "description": "Settings > Integrations > Bazarr page. Value of the Forget row after the first OK: asks for a second one."
+  },
+  "bazarr.not_set": {
+    "value": "Not set",
+    "description": "Settings > Integrations > Bazarr page. Value of the Address or API key row before one is typed."
+  },
+  "bazarr.summary_unset": {
+    "value": "Not set up",
+    "description": "Settings > Integrations > Bazarr page. Value of the Bazarr row on the Settings root when no address and key are set."
+  },
+  "bazarr.status_unset": {
+    "value": "Not set up. Add the address and API key, then test. The key stays on this TV, sealed like the Plex sign-in.",
+    "description": "Settings > Integrations > Bazarr page. Status line: Bazarr is not set up yet."
+  },
+  "bazarr.status_untested": {
+    "value": "Not tested yet. Choose Test connection to check the address and key.",
+    "description": "Settings > Integrations > Bazarr page. Status line: address and key are set but not tried yet."
+  },
+  "bazarr.status_testing": {
+    "value": "Checking… Asking Bazarr for its version.",
+    "description": "Settings > Integrations > Bazarr page. Status line while Bazarr is being asked."
+  },
+  "bazarr.status_connected": {
+    "value": "Connected · Bazarr {version}. “Wrong subtitles?” in the player now offers Bazarr.",
+    "description": "Settings > Integrations > Bazarr page. Status line when Bazarr answered. {version} is Bazarr's version number.",
+    "args": {
+      "version": "str"
+    }
+  },
+  "bazarr.status_linked": {
+    "value": "Connected · Bazarr {version}. Sonarr {sonarr} and Radarr {radarr} are linked. “Wrong subtitles?” in the player now offers Bazarr.",
+    "description": "Settings > Integrations > Bazarr page. Status line when Bazarr answered and reports Sonarr and Radarr. The three are version numbers.",
+    "args": {
+      "radarr": "str",
+      "sonarr": "str",
+      "version": "str"
+    }
+  },
+  "bazarr.status_unreachable": {
+    "value": "Can't reach Bazarr. No answer from that address. Check it and that this TV is on the same network.",
+    "description": "Settings > Integrations > Bazarr page. Status line when nothing answered at the address."
+  },
+  "bazarr.status_bad_key": {
+    "value": "Bazarr refused the key. The address answers, but the API key is wrong. Copy it again from Bazarr.",
+    "description": "Settings > Integrations > Bazarr page. Status line when Bazarr answered that the API key is wrong."
+  },
+  "bazarr.status_not_bazarr": {
+    "value": "That is not Bazarr. The address answers, but not like Bazarr. Check the address.",
+    "description": "Settings > Integrations > Bazarr page. Status line when the address answers, but not like Bazarr."
+  },
+  "bazarr.problem_scheme": {
+    "value": "The address must start with https:// or http://.",
+    "description": "Settings > Integrations > Bazarr page. Status line when the typed address does not start with http:// or https://."
+  },
+  "bazarr.problem_host": {
+    "value": "That is not a valid address.",
+    "description": "Settings > Integrations > Bazarr page. Status line when the typed address is not a valid web address."
+  },
+  "bazarr.problem_plaintext": {
+    "value": "Plain http:// is only for addresses on your home network. Use https:// for any other.",
+    "description": "Settings > Integrations > Bazarr page. Status line when a plain http:// address points outside the home network."
+  },
+  "bazarr.problem_key": {
+    "value": "That is not a valid API key.",
+    "description": "Settings > Integrations > Bazarr page. Status line when the typed API key cannot be used."
+  }
+}

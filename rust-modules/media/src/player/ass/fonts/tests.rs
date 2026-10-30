@@ -95,16 +95,33 @@ fn read_sub(face: &serde_json::Value) -> Vec<u8> {
     std::fs::read(dir().join(SUBS_DIR).join(face["file"].as_str().unwrap())).unwrap()
 }
 
-/// Inter first, Inter Bold second, then the Noto faces in manifest order: libass breaks ties among
-/// members of a family by the order they were added.
+/// The families manifest: the Font row's faces, then the fallbacks.
+fn families_manifest() -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(dir().join(SUBS_DIR).join("families.json")).unwrap()).unwrap()
+}
+
+fn family_files() -> Vec<String> {
+    let m = families_manifest();
+    ["families", "fallbacks"]
+        .iter()
+        .flat_map(|k| m[*k].as_array().unwrap().iter().map(|f| f["file"].as_str().unwrap().to_string()))
+        .collect()
+}
+
+/// Inter first, Inter Bold second, then the Noto faces in manifest order, then the Font row's
+/// families and the emoji fallback last: libass breaks ties among members of a family by the order
+/// they were added, so nothing may precede Inter among the faces that answer to its names.
 #[test]
 fn the_bundled_faces_go_in_inter_first_then_the_manifest_order() {
     let files = bundled(dir()).unwrap();
     let names: Vec<String> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into()).collect();
     assert_eq!(&names[..2], ["appfont.ttf", "appfont-bold.ttf"]);
     let listed: Vec<String> = faces().iter().map(|f| f["file"].as_str().unwrap().to_string()).collect();
-    assert_eq!(&names[2..], &listed[..]);
+    let noto_end = 2 + listed.len();
+    assert_eq!(&names[2..noto_end], &listed[..]);
     assert!(listed.len() >= 20, "{} faces", listed.len());
+    assert_eq!(&names[noto_end..], &family_files()[..], "the families and the fallback follow");
+    assert_eq!(names.last().unwrap(), "NotoEmoji-Fallback.ttf", "the emoji fallback goes in last");
     for f in &files {
         assert!(f.is_file(), "{f:?} is not shipped");
     }
@@ -139,11 +156,43 @@ fn the_manifest_matches_the_shipped_bytes() {
         assert_eq!(hex(&sha256(&bytes)), f["sha256"].as_str().unwrap(), "{}", f["file"]);
         assert_eq!(bytes.len() as u64, f["bytes"].as_u64().unwrap(), "{}", f["file"]);
     }
+    let extra = families_manifest();
+    for f in extra["families"].as_array().unwrap().iter().chain(extra["fallbacks"].as_array().unwrap()) {
+        let bytes = read_sub(f);
+        assert_eq!(hex(&sha256(&bytes)), f["sha256"].as_str().unwrap(), "{}", f["file"]);
+        assert_eq!(bytes.len() as u64, f["bytes"].as_u64().unwrap(), "{}", f["file"]);
+    }
     let on_disk = std::fs::read_dir(dir().join(SUBS_DIR))
         .unwrap()
         .filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "ttf"))
         .count();
-    assert_eq!(on_disk, faces().len(), "a face on disk the manifest does not list, or the reverse");
+    assert_eq!(on_disk, faces().len() + family_files().len(), "a face on disk no manifest lists, or the reverse");
+}
+
+/// Each family's two faces answer to ONE name and differ by weight, so the style's `Bold` flag picks
+/// between them; the fallback answers to the default family's names, and no family face answers to
+/// "Inter" or "PlxSubs" (a family face competing for those would draw Latin text).
+#[test]
+fn each_family_is_one_name_with_two_weights_and_only_the_fallback_wears_the_default_names() {
+    let m = families_manifest();
+    let mut by_family = std::collections::BTreeMap::<String, Vec<bool>>::new();
+    for f in m["families"].as_array().unwrap() {
+        let bytes = read_sub(f);
+        let family = f["family"].as_str().unwrap().to_string();
+        let records: Vec<String> = family_records(&bytes, 1).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(records, [family.clone()], "{}: one family record", f["file"]);
+        by_family.entry(family).or_default().push(f["bold"].as_bool().unwrap());
+    }
+    assert_eq!(by_family.len(), 3, "{by_family:?}");
+    assert!(by_family.values().all(|w| w.as_slice() == [false, true]), "regular then bold: {by_family:?}");
+    let emoji = &m["fallbacks"][0];
+    let names: Vec<String> = family_records(&read_sub(emoji), 1).into_iter().map(|(_, n)| n).collect();
+    assert!(names.contains(&"PlxSubs".to_string()) && names.contains(&"Inter".to_string()), "{names:?}");
+    for f in m["families"].as_array().unwrap() {
+        let bytes = read_sub(f);
+        let names: Vec<String> = family_records(&bytes, 1).into_iter().map(|(_, n)| n).collect();
+        assert!(!names.iter().any(|n| n == "Inter" || n == "PlxSubs"), "{}: {names:?}", f["file"]);
+    }
 }
 
 /// The oldest FreeType in the fleet (webOS 3) refuses more than 65534 glyphs and a `loca` past

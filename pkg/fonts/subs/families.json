@@ -1,0 +1,127 @@
+{
+ "schema": 1,
+ "tool": "tools/cut-sub-families.py",
+ "fonttools": "4.68.0",
+ "pinned_commit": "google/fonts@6157dfaa640ca5738b4d1a7070fe389c3036d7fc",
+ "families": [
+  {
+   "file": "PlxSerif-Regular.ttf",
+   "family": "PlxSerif",
+   "bold": false,
+   "upstream_family": "Noto Serif",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)",
+   "win_em": 1.458,
+   "upem": 1000,
+   "codepoints": 1980,
+   "bytes": 310992,
+   "sha256": "8b6b86452d930438fbdb7ffdb94e9ab048e6fd4cce33e4877119f79c19242c0a",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/notoserif/NotoSerif[wdth,wght].ttf",
+    "sha256": "4d8e6761424656867019081a1a01336f3cb086982682698714054fc33f782713"
+   }
+  },
+  {
+   "file": "PlxSerif-Bold.ttf",
+   "family": "PlxSerif",
+   "bold": true,
+   "upstream_family": "Noto Serif",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)",
+   "win_em": 1.458,
+   "upem": 1000,
+   "codepoints": 1980,
+   "bytes": 312272,
+   "sha256": "4467fffe872b5b1c9e670b9f0c65de47bc5ebf07b314a14363ffb41bd996bb27",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/notoserif/NotoSerif[wdth,wght].ttf",
+    "sha256": "4d8e6761424656867019081a1a01336f3cb086982682698714054fc33f782713"
+   }
+  },
+  {
+   "file": "PlxMono-Regular.ttf",
+   "family": "PlxMono",
+   "bold": false,
+   "upstream_family": "Noto Sans Mono",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)",
+   "win_em": 1.618,
+   "upem": 1000,
+   "codepoints": 2066,
+   "bytes": 203340,
+   "sha256": "3558b482ffd73bbb1170f3196075575880135928d58b0e03b195a343032e81cc",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/notosansmono/NotoSansMono[wdth,wght].ttf",
+    "sha256": "2cb2adb378a8f574213e23df697050b83c54c27df465a2015552740b2769a081"
+   }
+  },
+  {
+   "file": "PlxMono-Bold.ttf",
+   "family": "PlxMono",
+   "bold": true,
+   "upstream_family": "Noto Sans Mono",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)",
+   "win_em": 1.618,
+   "upem": 1000,
+   "codepoints": 2066,
+   "bytes": 203288,
+   "sha256": "9559a4b8e9146ad271ee6995351fcc04e4db4bc2401be1b10e1fe7f9048e7093",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/notosansmono/NotoSansMono[wdth,wght].ttf",
+    "sha256": "2cb2adb378a8f574213e23df697050b83c54c27df465a2015552740b2769a081"
+   }
+  },
+  {
+   "file": "PlxLegible-Regular.ttf",
+   "family": "PlxLegible",
+   "bold": false,
+   "upstream_family": "Atkinson Hyperlegible",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2020 Braille Institute of America, Inc.",
+   "win_em": 1.24,
+   "upem": 1000,
+   "codepoints": 333,
+   "bytes": 33712,
+   "sha256": "cfcd8408cefc59713daa8a6c0a57e3c6cdae0913b7a99cf2be063f995e613456",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Regular.ttf",
+    "sha256": "7fb917c89019896d0b52ee84b7cbb3304c18cb90b19a62f5e32712bd23e97669"
+   }
+  },
+  {
+   "file": "PlxLegible-Bold.ttf",
+   "family": "PlxLegible",
+   "bold": true,
+   "upstream_family": "Atkinson Hyperlegible",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2020 Braille Institute of America, Inc.",
+   "win_em": 1.24,
+   "upem": 1000,
+   "codepoints": 333,
+   "bytes": 33884,
+   "sha256": "6f59fd90ad4038470dba0086bbeb4d6bf58d110de1ed3884c41d0dd364516d85",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Bold.ttf",
+    "sha256": "5a3b0c8cc8ca545155150b4512a1fa248298df121c50d6557e651e61fbdab92f"
+   }
+  }
+ ],
+ "fallbacks": [
+  {
+   "file": "NotoEmoji-Fallback.ttf",
+   "family": "Noto Emoji",
+   "role": "fallback",
+   "aliases": [
+    "PlxSubs",
+    "Inter"
+   ],
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2013-2026 Google LLC",
+   "codepoints": 1426,
+   "bytes": 779768,
+   "sha256": "82f7897c472502270cb82d87505453c908f29b42ba46617bebee8c9354bb72c3",
+   "from": "pkg/appfont-emoji.ttf"
+  }
+ ]
+}

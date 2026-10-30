@@ -22,7 +22,7 @@
 //! [`PlayerScreen::publish`] mirrors both into the atomics the draw path and the engine read, and
 //! is the only writer of either.
 
-mod ass_subtitles;
+pub(crate) mod ass_subtitles;
 mod seek_jump;
 pub mod input;
 pub mod overlay;
@@ -643,7 +643,8 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                     self.hud.nav.btn = self.slot.primary_btn();
                     Self::repair_focus(fx, GROUP_ROW);
                 }
-                self.render.ass.update(H::session(cx), tick.ms);
+                let source_hdr = H::metadata(cx).playing().is_some_and(|p| p.hdr);
+                self.render.ass.update(H::session(cx), tick.ms, source_hdr);
                 self.hud.settle(plx_media::player::loading(H::session(cx)));
                 let failed = player_hud::readout_owns_frame(self.busy);
                 if failed && !self.failure_up {

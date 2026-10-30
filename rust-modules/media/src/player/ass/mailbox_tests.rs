@@ -38,6 +38,7 @@ fn key_of(epoch: u64, revision: u64) -> Key {
         height: 180,
         storage_width: 320,
         storage_height: 180,
+        mine: None,
     }
 }
 

@@ -234,6 +234,12 @@ impl Stores {
         self.subtitle_search.run(cmd)
     }
 
+    /// State Bazarr's address and key for the subtitle search (the host reads them off the account
+    /// session). `true` when they changed.
+    pub fn subtitle_search_link(&mut self, link: &plx_plex::plex::session::BazarrLink) -> bool {
+        self.subtitle_search.set_link(link)
+    }
+
     /// Pump the subtitle-search store; `keys` is the registry's answer as of this call. It does NOT
     /// start the request it emitted: a caller that returns without [`Stores::take_jobs_of`] and
     /// handing the job to a runner has stranded the search. The one production caller is

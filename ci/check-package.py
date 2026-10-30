@@ -1637,6 +1637,20 @@ for _face in _subs_manifest["faces"]:
           f"{_face['file']} family={font_family(_path)!r} is a Noto Sans face")
 check("Noto Sans Thai" in _subs_notices and "pkg/fonts/subs" in _subs_notices,
       "THIRD-PARTY-NOTICES.md attributes the Noto Sans subtitle faces (OFL 1.1 §2)")
+# The Font row's families and the emoji fallback (tools/cut-sub-families.py, `families.json`): the same
+# rule, whole and attributed, with the family each file really carries.
+_subs_families = json.loads((SUBS_DIR / "families.json").read_text(encoding="utf-8"))
+_subs_extra = _subs_families["families"] + _subs_families["fallbacks"]
+check(len(_subs_families["families"]) == 6 and len(_subs_families["fallbacks"]) == 1,
+      "families.json names the six family faces and the emoji fallback")
+for _face in _subs_extra:
+    _path = SUBS_DIR / _face["file"]
+    check(_path.is_file() and _hashlib.sha256(_path.read_bytes()).hexdigest() == _face["sha256"],
+          f"pkg/fonts/subs/{_face['file']} is the families manifest's face (same SHA-256)")
+    check(font_family(_path) == _face["family"],
+          f"{_face['file']} family={font_family(_path)!r} is {_face['family']!r}")
+check(all(name in _subs_notices for name in ("Noto Serif", "Noto Sans Mono", "Atkinson Hyperlegible", "tools/cut-sub-families.py")),
+      "THIRD-PARTY-NOTICES.md attributes the Font row's families (OFL 1.1 §2)")
 
 print("== shipped roots bundle ==")
 # `pkg/le-roots.pem` is a TRUST ANCHOR set, so what it holds is graded by content, not by presence:
@@ -1763,10 +1777,10 @@ if data_blob is not None:
     # The subtitle faces sit in fonts/subs/ of the app directory, and every one the manifest names
     # must be there byte for byte: libass finds a script's face by family name, so a missing one is
     # tofu on the television and nothing else notices.
-    _subs_names = {f["file"] for f in _subs_manifest["faces"]} | {"manifest.json"}
+    _subs_names = {f["file"] for f in _subs_manifest["faces"]} | {f["file"] for f in _subs_extra} | {"manifest.json", "families.json"}
     check(set(_shipped_subs) == _subs_names,
-          f"payload carries fonts/subs/ manifest.json and all {len(_subs_manifest['faces'])} faces")
-    check(all(_hashlib.sha256(_shipped_subs[f["file"]]).hexdigest() == f["sha256"] for f in _subs_manifest["faces"]
+          f"payload carries fonts/subs/ manifest.json, families.json and all {len(_subs_manifest['faces'])} + {len(_subs_extra)} faces")
+    check(all(_hashlib.sha256(_shipped_subs[f["file"]]).hexdigest() == f["sha256"] for f in _subs_manifest["faces"] + _subs_extra
               if f["file"] in _shipped_subs),
           "the ipk's subtitle faces are byte-identical to pkg/fonts/subs (same SHA-256)")
     # The roots bundle is graded in the REPO above, but what a television trusts is the member of

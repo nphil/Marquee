@@ -46,6 +46,48 @@ pub enum SubtitleAddOutcome {
     Transport,
 }
 
+/// The answer to removing an external subtitle stream. Only an EXTERNAL stream (one with a `key`)
+/// can go: an embedded track is part of the file, and PMS has nothing to delete.
+pub enum SubtitleRemoveOutcome {
+    Ok,
+    Denied,
+    /// PMS does not know the stream (already removed, or an embedded track's id).
+    Missing,
+    /// The stream id was not a positive number, so nothing was sent.
+    BadId,
+    Transport,
+}
+
+/// The answer to asking PMS to re-read one item. `Ok` means the refresh was ACCEPTED: PMS rescans
+/// the item's files (the external subtitles beside them included) in the background, so the new
+/// stream appears on a later read of the item.
+pub enum ItemRefreshOutcome {
+    Ok,
+    Denied,
+    Missing,
+    /// The rating key was not a plain number, so nothing was sent.
+    BadKey,
+    Transport,
+}
+
+/// `DELETE /library/streams/{id}`: the path an external subtitle is removed at. The stream's own
+/// `key` (`/library/streams/{id}`, optionally with an extension) is the path PMS handed out, so it
+/// is used when it has the allowed shape; otherwise the bare id names it. `None` for an id that is
+/// not a positive number and has no usable key.
+fn delete_path(stream_id: i64, key: &str) -> Option<String> {
+    if candidate_key_allowed(key) {
+        return Some(key.to_string());
+    }
+    (stream_id > 0).then(|| format!("/library/streams/{stream_id}"))
+}
+
+/// `PUT /library/metadata/{rk}/refresh`: the path that makes PMS re-read one item. The key is
+/// interpolated into a path, so it must be digits only.
+fn refresh_path(rating_key: &str) -> Option<String> {
+    let ok = !rating_key.is_empty() && rating_key.len() <= 20 && rating_key.bytes().all(|b| b.is_ascii_digit());
+    ok.then(|| format!("/library/metadata/{rating_key}/refresh"))
+}
+
 /// What one PMS answer means, independent of which operation asked. Pure so the whole table is
 /// gradeable on the host without a socket.
 #[derive(Debug, PartialEq, Eq)]
@@ -163,12 +205,68 @@ impl Client {
             Verdict::Transport => SubtitleAddOutcome::Transport,
         }
     }
+
+    /// `DELETE /library/streams/{id}` — remove an EXTERNAL subtitle (a sidecar or one an agent
+    /// installed) from the item. An embedded track has no `key` and nothing to delete: callers
+    /// check [`Stream::external`](super::models::Stream) first and tell the viewer so.
+    ///
+    /// `key` is the stream's own delivery path; `stream_id` names it when the key has an
+    /// unexpected shape. A write: the caller is off the main thread and acts on the outcome.
+    pub fn delete_stream(&self, stream_id: i64, key: &str) -> SubtitleRemoveOutcome {
+        let Some(path) = delete_path(stream_id, key) else {
+            return SubtitleRemoveOutcome::BadId;
+        };
+        let status = self.delete(&path);
+        match verdict(status >= 0, status, true) {
+            Verdict::Ok => SubtitleRemoveOutcome::Ok,
+            Verdict::Denied => SubtitleRemoveOutcome::Denied,
+            Verdict::Missing => SubtitleRemoveOutcome::Missing,
+            Verdict::Transport => SubtitleRemoveOutcome::Transport,
+        }
+    }
+
+    /// `PUT /library/metadata/{rk}/refresh` — ask PMS to re-read one item, which is how a subtitle
+    /// file dropped beside the video (by Bazarr) becomes a stream. Accepted, not finished: the
+    /// caller re-reads the item until the stream shows, as it does after an agent download.
+    pub fn refresh_item(&self, rating_key: &str) -> ItemRefreshOutcome {
+        let Some(path) = refresh_path(rating_key) else {
+            return ItemRefreshOutcome::BadKey;
+        };
+        let status = self.put(&path);
+        match verdict(status >= 0, status, true) {
+            Verdict::Ok => ItemRefreshOutcome::Ok,
+            Verdict::Denied => ItemRefreshOutcome::Denied,
+            Verdict::Missing => ItemRefreshOutcome::Missing,
+            Verdict::Transport => ItemRefreshOutcome::Transport,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plex::models::Envelope;
+
+    /// An external subtitle goes at the path PMS handed out; the bare id is the fallback, and a
+    /// key or id that could name anything else is refused before it reaches the wire.
+    #[test]
+    fn a_stream_is_deleted_at_its_own_key_or_by_id() {
+        assert_eq!(delete_path(7, "/library/streams/1929523").as_deref(), Some("/library/streams/1929523"));
+        assert_eq!(delete_path(7, "/library/streams/1929523.srt").as_deref(), Some("/library/streams/1929523.srt"));
+        assert_eq!(delete_path(1929523, "").as_deref(), Some("/library/streams/1929523"));
+        assert_eq!(delete_path(5, "/library/parts/5").as_deref(), Some("/library/streams/5"), "a foreign key is ignored");
+        assert_eq!(delete_path(5, "/library/streams/../../x").as_deref(), Some("/library/streams/5"));
+        assert_eq!(delete_path(0, ""), None);
+        assert_eq!(delete_path(-3, "https://evil.example/x"), None);
+    }
+
+    #[test]
+    fn an_item_is_refreshed_by_a_numeric_key_only() {
+        assert_eq!(refresh_path("506548").as_deref(), Some("/library/metadata/506548/refresh"));
+        for bad in ["", "5/../6", "5?force=1", "abc", " 5", &"9".repeat(21)] {
+            assert_eq!(refresh_path(bad), None, "{bad:?}");
+        }
+    }
 
     /// One row as PMS actually answers it, trimmed from the live capture of 2026-10-04 and
     /// ANONYMISED (`docs/shared-servers.md`'s rule: no household's library in a public repo).

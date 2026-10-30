@@ -878,19 +878,48 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Machine<H> 
                             // idempotent for the same item, so re-sending it until the store's view
                             // catches up is harmless.
                             let ours = view.item().is_some_and(|item| plx_plex::plex::same_item(item, (sid, &rk)));
-                            if p.wants_search() && !ours {
-                                let lang = search_default_lang(ps, H::metadata(cx));
+                            // The model holds the item in the source the viewer's page is for: the
+                            // server's agents, or Bazarr. The Fix page only holds the item, so a
+                            // removal has somewhere to be tracked. Each is re-sent until the store's
+                            // view catches up, which is harmless.
+                            let open = match p.wants_source() {
+                                Some(source) if !ours || view.source() != source => {
+                                    let lang = search_default_lang(ps, H::metadata(cx));
+                                    Some(match source {
+                                        plx_data::subsearch::SubSource::Plex => {
+                                            plx_data::subsearch::SubSearchCmd::Open { sid, rk: rk.clone(), lang }
+                                        }
+                                        plx_data::subsearch::SubSource::Bazarr => {
+                                            plx_data::subsearch::SubSearchCmd::OpenBazarr { sid, rk: rk.clone(), lang }
+                                        }
+                                    })
+                                }
+                                None if p.wants_fix() && !ours => {
+                                    Some(plx_data::subsearch::SubSearchCmd::Fix { sid, rk: rk.clone() })
+                                }
+                                _ => None,
+                            };
+                            if let Some(cmd) = open {
                                 fx.push(Fx::App(AppFx::Store(
                                     plx_data::stores::StoreId::SubtitleSearch,
-                                    plx_data::stores::StoreCmd::SubtitleSearch(
-                                        plx_data::subsearch::SubSearchCmd::Open { sid, rk: rk.clone(), lang },
-                                    ),
+                                    plx_data::stores::StoreCmd::SubtitleSearch(cmd),
                                 )));
                             }
                             // the store lands, polls an install and emits its requests only while it
                             // is pumped, and this panel is what pumps it
                             fx.push(Fx::App(AppFx::StoreWork(plx_data::stores::StoreWork::SubtitleSearch)));
                             p.set_search(view.snapshot_for(sid, &rk));
+                            // the server deleted the subtitle on screen: stop drawing it and drop it
+                            // from the item's list; the menu stays open for what comes next
+                            if let Some((stream_id, commit)) = p.take_removal_commit(H::metadata(cx)) {
+                                fx.push(Fx::App(AppFx::Store(
+                                    plx_data::stores::StoreId::Metadata,
+                                    plx_data::stores::StoreCmd::Metadata(
+                                        plx_data::stores::metadata::MetadataCmd::RemovePlayingSub { sid, rk: rk.clone(), stream_id },
+                                    ),
+                                )));
+                                Self::ask(fx, PlayerReq::CommitTrack(commit));
+                            }
                             // the download landed: list it on the playing item, then select it by
                             // the same request a pick on its row makes, and close like any pick
                             if let Some((stream, commit)) = p.take_search_commit() {
