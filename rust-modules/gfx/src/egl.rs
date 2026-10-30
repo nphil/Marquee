@@ -86,6 +86,7 @@ const GL_EXTENSIONS: c_uint = 0x1F03;
 
 extern "C" {
     fn glGetString(name: c_uint) -> *const c_char;
+    fn glFinish();
 }
 
 type FnGetCurrentDisplay = unsafe extern "C" fn() -> *mut c_void;
@@ -101,6 +102,9 @@ type FnChooseConfig =
 type FnGetConfigAttrib =
     unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, *mut c_int) -> c_uint;
 type FnSurfaceAttrib = unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, c_int) -> c_uint;
+type FnMakeCurrent =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> c_uint;
+type FnDestroyEgl = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_uint;
 
 /// The SONAMEs an EGL might carry on a webOS television, in the order worth trying. Only used when
 /// `RTLD_DEFAULT` cannot see EGL, which would mean SDL loaded it privately.
@@ -321,6 +325,47 @@ pub fn probe() {
         remember_late_handles(dpy, surface);
     }
     log_gl_extensions();
+}
+
+/// Unbind the context, destroy the window's EGL surface and destroy the context, ahead of
+/// `SDL_Quit`. Call once, on the thread SDL made the context current on; a no-op where no EGL
+/// context is current (the GLX simulator).
+///
+/// LG's SDL frees the `wl_egl_window` and the `wl_surface` in `Wayland_DestroyWindow` and only
+/// terminates EGL afterwards, never calling `eglDestroySurface`. libmali presents a finished frame
+/// from its own thread through that `wl_egl_window`, so a frame whose GPU job ends after the
+/// destroy is presented through freed memory (SIGSEGV in libwayland-client, about 1 close in 6).
+/// `eglDestroySurface` of a surface that is not current waits for the frames in flight, so the
+/// presents are over before SDL frees anything.
+pub fn release_for_exit() {
+    let mut lib: Option<Handle> = None;
+    let Some(Current { dpy, ctx }) = current_with(&mut |name| resolve(name, &mut lib)) else {
+        return;
+    };
+    let (Some(get_surface), Some(make_current), Some(destroy_surface), Some(destroy_context)) = (
+        resolve("eglGetCurrentSurface", &mut lib),
+        resolve("eglMakeCurrent", &mut lib),
+        resolve("eglDestroySurface", &mut lib),
+        resolve("eglDestroyContext", &mut lib),
+    ) else {
+        plx_base::eventlog::log("egl exit: an EGL teardown entry point is missing; left to SDL");
+        return;
+    };
+    let get_surface: FnGetCurrentSurface = unsafe { std::mem::transmute(get_surface) };
+    let make_current: FnMakeCurrent = unsafe { std::mem::transmute(make_current) };
+    let destroy_surface: FnDestroyEgl = unsafe { std::mem::transmute(destroy_surface) };
+    let destroy_context: FnDestroyEgl = unsafe { std::mem::transmute(destroy_context) };
+    let surface = unsafe { get_surface(EGL_DRAW) };
+    unsafe { glFinish() };
+    let unbound = unsafe {
+        make_current(dpy, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    let surface_ok = !surface.is_null() && unsafe { destroy_surface(dpy, surface) } != 0;
+    let context_ok = unsafe { destroy_context(dpy, ctx) } != 0;
+    plx_base::eventlog::log(&format!(
+        "egl exit: unbound={unbound} surface {surface:p} destroyed={surface_ok} \
+         context {ctx:p} destroyed={context_ok}"
+    ));
 }
 
 /// The config behind the current context, and whether it can preserve a swapped buffer.

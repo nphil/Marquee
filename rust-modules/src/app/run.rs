@@ -3400,7 +3400,10 @@ pub(crate) unsafe fn shutdown(
     plx_telemetry::telemetry::session::shutdown();
     let teardown = teardown_for(native_exit);
     match teardown {
-        Teardown::Return => SDL_Quit(),
+        Teardown::Return => {
+            plx_gfx::egl::release_for_exit();
+            SDL_Quit();
+        }
         Teardown::ExitNow => {
             log("shutdown: a native worker is still inside firmware; SDL_Quit skipped, exiting without unwinding");
         }
