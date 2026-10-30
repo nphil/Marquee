@@ -8,7 +8,7 @@
   "appDescription": "Unofficial native Plex client - not affiliated with Plex",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",
-  "iconColor": "#191724",
+  "iconColor": "#fe7bab",
   "splashBackground": "splash.png",
   "nativeLifeCycleInterfaceVersion": 2,
   "handlesRelaunch": false,

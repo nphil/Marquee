@@ -2,9 +2,16 @@
 """Cut the shipped app icons from a single square logo master.
 
     python3 tools/mkicons.py assets/logo-master.png [--band=N] [--splash=assets/splash-master.png]
-    python3 tools/mkicons.py assets/logo-master.png --out-dir=pkg/dev --sizes=80,130 --badge=DEV
-    python3 tools/mkicons.py assets/logo-master.png --out-dir=pkg/nightly --sizes=80,130 \
+    python3 tools/mkicons.py assets/logo-master.png --bleed
+    python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/dev --sizes=80,130 --badge=DEV
+    python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/nightly --sizes=80,130 \
         --badge=NIGHTLY --badge-fill=#cdd3dd
+
+**`--bleed`** is for a master that is already a finished full-bleed tile (gradient and gloss
+included, glyph laid out inside the central 60 %, bottom 22 % kept clear for the badge bar): it is
+resized straight to each size with no ink fit, and `iconColor` becomes the tile's pixel (1,1), the
+one `ci/check-package.py` compares. The current master is drawn by LumaTV's
+tools/make-app-icons.py. Without it the master must be a glyph on one flat colour.
 
 Emits `pkg/icon.png` (80), `pkg/largeIcon.png` (130) and, for the webosbrew channel listing,
 `pkg/icon160.png` / `pkg/icon320.png`. With `--splash` it also emits `pkg/splash.png` at exactly
@@ -240,7 +247,7 @@ def write_splash(src: Path, out: Path, lift=None) -> None:
 #: `pkg/icon160.png` — the last of which release.yml publishes as a raw.githubusercontent URL for
 #: the webosbrew channel listing. One mistyped letter, and the artwork thousands of people see
 #: before installing carries a DEV bar.
-OPTIONS = ("--band=", "--splash=", "--splash-lift=", "--out-dir=", "--sizes=", "--badge=", "--badge-fill=", "--appinfo=")
+OPTIONS = ("--bleed", "--band=", "--splash=", "--splash-lift=", "--out-dir=", "--sizes=", "--badge=", "--badge-fill=", "--appinfo=")
 
 
 def opt(name: str, default=None):
@@ -291,23 +298,28 @@ def main() -> int:
     a = np.asarray(src).astype(int)
     bg = a[2, 2].copy()                      # the master's own corner is the panel colour
 
-    bands = row_bands(a, bg)
-    if band_arg is not None:
-        top, bot = bands[int(band_arg)]
+    bleed = "--bleed" in sys.argv
+    if bleed:
+        hexcolor = "#%02x%02x%02x" % src.resize((130, 130), Image.LANCZOS).getpixel((1, 1))
+        print(f"  master {src.size[0]}x{src.size[1]}  full-bleed tile  iconColor {hexcolor}")
     else:
-        top, bot = bands[0][0], bands[-1][1]
-    x0, _, x1, _ = ink_bbox(a[top:bot], bg)
-    ink_w, ink_h = x1 - x0, bot - top
-    cx, cy = (x0 + x1) / 2, (top + bot) / 2   # centre the TILE on the ink, not on the canvas
-    hexcolor = "#%02x%02x%02x" % tuple(bg)
-    print(f"  master {src.size[0]}x{src.size[1]}  panel {hexcolor}  bands {len(bands)}"
-          f"{'' if band_arg is None else f' (using band {band_arg})'}  "
-          f"-> ink {ink_w}x{ink_h} (aspect {ink_w / ink_h:.2f})")
-    if len(bands) > 1 and band_arg is None:
-        for i, (t, b) in enumerate(bands):
-            at130 = (b - t) / ink_h * round(130 * INK_FRACTION) * ink_h / ink_w
-            note = "   ** unreadable; consider --band **" if at130 < 8 else ""
-            print(f"    band {i}: {b - t}px of {ink_h}  -> ~{at130:.1f}px tall at 130{note}")
+        bands = row_bands(a, bg)
+        if band_arg is not None:
+            top, bot = bands[int(band_arg)]
+        else:
+            top, bot = bands[0][0], bands[-1][1]
+        x0, _, x1, _ = ink_bbox(a[top:bot], bg)
+        ink_w, ink_h = x1 - x0, bot - top
+        cx, cy = (x0 + x1) / 2, (top + bot) / 2   # centre the TILE on the ink, not on the canvas
+        hexcolor = "#%02x%02x%02x" % tuple(bg)
+        print(f"  master {src.size[0]}x{src.size[1]}  panel {hexcolor}  bands {len(bands)}"
+              f"{'' if band_arg is None else f' (using band {band_arg})'}  "
+              f"-> ink {ink_w}x{ink_h} (aspect {ink_w / ink_h:.2f})")
+        if len(bands) > 1 and band_arg is None:
+            for i, (t, b) in enumerate(bands):
+                at130 = (b - t) / ink_h * round(130 * INK_FRACTION) * ink_h / ink_w
+                note = "   ** unreadable; consider --band **" if at130 < 8 else ""
+                print(f"    band {i}: {b - t}px of {ink_h}  -> ~{at130:.1f}px tall at 130{note}")
 
     # The descriptor to keep in step, if there is one beside the output. SKIPPED WITH A LINE rather
     # than falling back to `pkg/appinfo.json`: `sync_icon_color` writes unconditionally, so a
@@ -328,6 +340,13 @@ def main() -> int:
               f"  (bar {BADGE_BAR:.0%} of the tile, cap {BADGE_CAP:.0%} of the bar)")
 
     for name, n in targets:
+        if bleed:
+            tile = src.resize((n, n), Image.LANCZOS)
+            if badge:
+                draw_badge(tile, badge, badge_fill, repo, max(1, round(n * BADGE_BAR)))
+            tile.save(out_dir / name, optimize=True)
+            print(f"  {(out_dir / name).relative_to(repo)!s:24s} {n}x{n}  full bleed")
+            continue
         target_w = n * INK_FRACTION
         scale = target_w / ink_w
         if ink_h * scale > target_w:          # a tall mark is bounded by height instead
