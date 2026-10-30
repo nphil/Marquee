@@ -1,4 +1,4 @@
-{"updated":"2026-10-30T03:36:55Z",
+{"updated":"2026-10-30T03:51:37Z",
 "ci":[
 {"id":40793427787,"at":"2026-10-29T00:20:38Z","sha":"1d603b179","title":"Playback: a new play never blocks the UI on the previous player's Unload; a hung Unload fails typed after 10 s","pr":1116,"conclusion":"failure","attempt":1,"jobs":{"which gates apply":5,"host python/shell/C gates":191,"host lint + type-checks":172,"armv7 cross-build and artifact assertions":471,"host harness tests":306,"cross-build (armv7) + artifact assertions":3},"failed":["host checks (NOT a device gate)","host unit tests (default features)","host unit tests (hostsim)"]},
 {"id":40997643390,"at":"2026-10-30T03:29:14Z","sha":"ae83f8095","title":"Exit: destroy the window's EGL surface and the context before SDL_Quit","pr":null,"conclusion":"failure","attempt":1,"jobs":{"which gates apply":4,"armv7 cross-build and artifact assertions":440,"host harness tests":284,"host python/shell/C gates":186,"host lint + type-checks":173,"cross-build (armv7) + artifact assertions":4},"failed":["host checks (NOT a device gate)","host unit tests (default features)","host unit tests (hostsim)"]}
@@ -8,6 +8,6 @@
 {"id":40997643397,"at":"2026-10-30T03:29:14Z","sha":"ae83f8095","title":"Exit: destroy the window's EGL surface and the context before SDL_Quit","pr":null,"conclusion":"success","attempt":1,"jobs":{"macOS tests against bundled FFmpeg and ASS":273,"Linux simulator build + launch":325,"Windows launcher syntax":17,"macOS simulator build + launch":445}}
 ],
 "nightly":[],
-"cancelled":{},
+"cancelled":{"2026-10-30":{"push":1,"pull_request":0}},
 "daily":[],
 "flaky":[]}
