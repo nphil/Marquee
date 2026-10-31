@@ -10,7 +10,8 @@ The versioned IPK and `marquee-latest.ipk` are staged in `/data/home/Marquee-rel
 The focused host run passed 93 checks; ARM ELF and package checks passed. On the TV, the stored
 account opened Profiles and Home, remote navigation reached Settings, native keyboard text reached
 the Bazarr address draft, and Test connection reported Bazarr 1.6.2 connected. The key remained masked.
-Instant D-pad seeking is Off for the active profile. Playback and actual media deletion were not tested.
+The movie hold-menu displayed Delete; no deletion was submitted. Instant D-pad seeking is Off for the
+active profile. Playback and actual media deletion were not tested.
 
 ## Proven local paths
 
