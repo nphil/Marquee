@@ -52,9 +52,19 @@ with a dead band, so it never flickers.
 ### Reveal as spoken
 
 Off, Word by word, Line by line. Per-word timing is estimated from the cue: syllable and character weights,
-pauses at punctuation, about 10 % of the cue left as a tail, a soft fade per word. Karaoke (`\k`) in a file
-is used exactly as authored. Exact word timing needs audio alignment on the server (for example WhisperX
-on the NAS GPU); that is a later option and is not built.
+pauses at punctuation, about 10 % of the cue left as a tail, a soft fade per word. No audio is inspected.
+Karaoke (`\k`) in an authored file is used exactly as authored.
+
+Exact word timing is not implemented. The proposed server path is offline alignment of the selected
+subtitle text against its matching audio (for example WhisperX on the NAS GPU), with transcription only
+when a usable transcript is absent. Results must identify the media version, audio stream and subtitle
+source/version; a different cut or subtitle file cannot share the same word timings. Cached word spans
+would feed the existing TV renderer against media time, including after a seek; inference stays off the TV.
+
+Bazarr finds and downloads subtitle files; the current integration has no alignment job or timing-result
+endpoint. Cue synchronization with tools such as ffsubsync fixes offsets/drift, not word-level timing.
+Translated or paraphrased subtitles cannot assume a one-to-one correspondence with spoken words;
+missing or mismatched alignment must retain estimated reveal rather than apply another track’s timings.
 
 ## Text handling
 
