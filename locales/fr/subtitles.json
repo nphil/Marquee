@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Texte blanc avec un épais contour noir, sans boîte. Le plus lisible sur des images claires ou chargées.",
   "subtitles.about_large_print": "Texte plus grand et plus gras avec contour, lisible de loin.",
   "subtitles.about_high_contrast": "Texte jaune avec contour noir sur boîte sombre, pour un contraste maximal.",
-  "subtitles.about_marquee": "Inter Bold, blanc, avec un contour fin : l’apparence propre à Marquee.",
+  "subtitles.about_marquee": "Inter Bold, blanc, avec un contour fin : l’apparence propre à @APP_NAME@.",
   "subtitles.about_custom": "Votre propre combinaison de réglages. Choisissez un préréglage pour repartir de zéro.",
   "subtitles.group_look": "Apparence",
   "subtitles.group_text": "Texte",

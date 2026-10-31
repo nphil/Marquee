@@ -32,6 +32,7 @@ mod servers;
 // type across a crate) — declared here so those methods compile onto `Client`.
 mod hubs;
 mod library;
+pub mod delete_media;
 pub mod collections;
 /// Agent-backed subtitle search & download. `docs/pms-api.md` §8 is the verified contract; the
 /// bundled OpenAPI spec is wrong about this endpoint and must not be read as authority for it.

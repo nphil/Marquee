@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Texto branco com contorno preto grosso, sem caixa. O mais legível em imagens claras ou cheias.",
   "subtitles.about_large_print": "Texto maior e mais grosso com contorno, para ler à distância.",
   "subtitles.about_high_contrast": "Texto amarelo com contorno preto numa caixa escura, para o máximo contraste.",
-  "subtitles.about_marquee": "Inter Bold, branco, com contorno fino: o aspeto próprio do Marquee.",
+  "subtitles.about_marquee": "Inter Bold, branco, com contorno fino: o aspeto próprio do @APP_NAME@.",
   "subtitles.about_custom": "A sua própria combinação de definições. Escolha uma predefinição para recomeçar.",
   "subtitles.group_look": "Aspeto",
   "subtitles.group_text": "Texto",

@@ -30,7 +30,7 @@ fn poll(page: &mut BazarrPage) -> (bool, Commands) {
 }
 
 fn type_in(page: &mut BazarrPage, text: &str) {
-    page.state.edit.as_mut().expect("a field is being typed").buf.edit(&TextEdit::Commit(text.into()));
+    page.state.edit.as_mut().expect("a field is being typed").buf.edit_literal(&TextEdit::Commit(text.into()));
 }
 
 fn page_with(url: &str, key_set: bool) -> BazarrPage {
@@ -85,6 +85,8 @@ fn an_address_that_cannot_work_says_why_and_sends_nothing() {
         assert_eq!(page.state.problem, Some(Problem::Url(problem)), "{typed}");
         assert!(status(&page).contains(words), "{typed}: {}", status(&page));
         assert!(page.state.url.is_empty());
+        assert_eq!(page.state.edit.as_ref().unwrap().buf.text(), typed);
+        assert!(!page.state.edit.as_ref().unwrap().keyboard_up);
     }
 }
 
@@ -138,11 +140,103 @@ fn a_key_that_cannot_ride_in_a_header_is_refused() {
     let _guard = plx_base::testlock::serial();
     let mut page = page_with("https://bazarr.nateshome.net", false);
     run(&mut page, |p, fx| p.begin_edit(BzId::Key, fx));
-    type_in(&mut page, "has a space");
+    type_in(&mut page, "invalid\nkey");
     let (commands, _) = run(&mut page, |p, fx| p.finish_edit(true, fx));
     assert!(commands.is_empty());
     assert_eq!(page.state.problem, Some(Problem::Key));
+    assert_eq!(page.state.edit.as_ref().unwrap().buf.text(), "invalid\nkey");
     assert!(!page.state.key_set);
+}
+
+#[test]
+fn native_text_events_keep_literal_chunks_and_invalid_drafts_can_be_reopened() {
+    use plx_machine::machine::{Edge, Source, Tick};
+    let _guard = plx_base::testlock::serial();
+    let measure = plx_ui::fixture::FixtureMeasure;
+    let cx = Cx::<InnerHost> {
+        views: plx_data::stores::browse::DirectoryView::empty_for_test(),
+        tick: Tick::default(), measure: &measure, press: Default::default(),
+        focus: Default::default(), owner: plx_machine::machine::InputOwner::Entry(EntryId(0)),
+    };
+    let mut page = page_with("", false);
+    run(&mut page, |p, fx| p.begin_edit(BzId::Address, fx));
+    for chunk in ["http://", "bad host", ":6767"] {
+        let event = ScreenEvent::Input(InputEvent { at: Tick::default(), source: Source::Sdl,
+            kind: InputKind::Text(TextEdit::Commit(chunk.into())) });
+        run(&mut page, |p, fx| { p.step(&event, &cx, fx); });
+    }
+    let key = |key, sym| ScreenEvent::Input(InputEvent { at: Tick::default(), source: Source::Sdl,
+        kind: InputKind::Key { key, sym, wcode: 0, edge: Edge::Down, at_edge: false } });
+    let (commands, keyboard) = run(&mut page, |p, fx| { p.step(&key(Key::Ok, 13), &cx, fx); });
+    assert!(commands.is_empty());
+    assert_eq!(keyboard, [false]);
+    assert_eq!(page.state.edit.as_ref().unwrap().buf.text(), "http://bad host:6767");
+    let (_, keyboard) = run(&mut page, |p, fx| { p.step(&key(Key::Ok, 13), &cx, fx); });
+    assert_eq!(keyboard, [true]);
+    run(&mut page, |p, fx| { p.step(&key(Key::Back, b'q' as u32), &cx, fx); });
+    assert!(page.state.edit.is_some(), "a printable q is not the remote Back button");
+    let (_, keyboard) = run(&mut page, |p, fx| { p.step(&key(Key::Back, 0), &cx, fx); });
+    assert_eq!(keyboard, [false]);
+    assert!(page.state.edit.is_none());
+}
+
+#[test]
+fn corrected_retained_key_clears_validation_only_when_saved() {
+    use plx_machine::machine::{Edge, Source, Tick};
+    let _guard = plx_base::testlock::serial();
+    let measure = plx_ui::fixture::FixtureMeasure;
+    let cx = Cx::<InnerHost> {
+        views: plx_data::stores::browse::DirectoryView::empty_for_test(),
+        tick: Tick::default(), measure: &measure, press: Default::default(),
+        focus: Default::default(), owner: plx_machine::machine::InputOwner::Entry(EntryId(0)),
+    };
+    let key = |key, sym| ScreenEvent::Input(InputEvent { at: Tick::default(), source: Source::Sdl,
+        kind: InputKind::Key { key, sym, wcode: 0, edge: Edge::Down, at_edge: false } });
+    for commit in [false, true] {
+        let mut page = page_with("https://bazarr.example.net", false);
+        run(&mut page, |p, fx| { p.step(&ScreenEvent::Activate(BzId::Key.key().0), &cx, fx); });
+        let text = ScreenEvent::Input(InputEvent { at: Tick::default(), source: Source::Sdl,
+            kind: InputKind::Text(TextEdit::Commit("x".repeat(129).into())) });
+        run(&mut page, |p, fx| { p.step(&text, &cx, fx); });
+        let (commands, keyboard) = run(&mut page, |p, fx| { p.step(&key(Key::Ok, 13), &cx, fx); });
+        assert!(commands.is_empty());
+        assert_eq!(keyboard, [false]);
+        assert_eq!(page.state.problem, Some(Problem::Key));
+        assert_eq!(status(&page), msg::bazarr_problem_key());
+        let (_, keyboard) = run(&mut page, |p, fx| { p.step(&key(Key::Ok, 13), &cx, fx); });
+        assert_eq!(keyboard, [true]);
+        run(&mut page, |p, fx| { p.step(&key(Key::Other, plx_ui::consts::SDLK_BACKSPACE), &cx, fx); });
+        assert_eq!(page.state.edit.as_ref().unwrap().buf.text().len(), 128);
+        assert_eq!(status(&page), msg::bazarr_problem_key());
+        let action = if commit { Key::Ok } else { Key::Back };
+        let (commands, keyboard) = run(&mut page, |p, fx| { p.step(&key(action, 0), &cx, fx); });
+        assert_eq!(keyboard, [false]);
+        assert!(page.state.edit.is_none());
+        if commit {
+            assert!(matches!(commands.as_slice(), [crate::registry::PreferenceCmd::BazarrLink {
+                change: BazarrChange::Key(key), .. }] if key == &"x".repeat(128)));
+            assert_eq!(page.state.problem, None);
+            assert_eq!(status(&page), msg::bazarr_status_untested());
+        } else {
+            assert!(commands.is_empty());
+            assert_eq!(page.state.problem, Some(Problem::Key));
+            assert_eq!(status(&page), msg::bazarr_problem_key());
+            assert!(!page.state.key_set);
+        }
+    }
+}
+
+#[test]
+fn literal_key_chunks_preserve_punctuation_and_stay_masked() {
+    let _guard = plx_base::testlock::serial();
+    let mut page = page_with("https://bazarr.example.net", false);
+    run(&mut page, |p, fx| p.begin_edit(BzId::Key, fx));
+    for part in ["ab", "!@", "\"\\", "cd"] { type_in(&mut page, part); }
+    page.rebuild();
+    assert!(!value(&page, BzId::Key).unwrap().contains("ab"));
+    let (commands, _) = run(&mut page, |p, fx| p.finish_edit(true, fx));
+    assert!(matches!(commands.as_slice(), [crate::registry::PreferenceCmd::BazarrLink {
+        change: BazarrChange::Key(key), .. }] if key == "ab!@\"\\cd"));
 }
 
 #[test]

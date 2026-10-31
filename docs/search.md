@@ -194,6 +194,9 @@ The owned path normalizes SDL and FIFO commits at ingress, before later edit key
 `adopt` (never `start`) for a panel observation. Text recording preserves commit boundaries,
 original timing/source, and the observed panel capability, and replay reuses that observation
 rather than probing its current platform.
+Settings fields use the same native keyboard path but insert commits literally rather than applying
+Search's prediction replacement. Credential-bearing text, raw keyboard bytes and printable key
+symbols are excluded from recordings and logs; a recording needing those keys is refused.
 
 **Live cutover is finished.** `AppArg::Search` mounts `screens::search::SearchScreen`
 unconditionally — there is no `AppMounter::search_owned` flag any more, no legacy ingress/lifecycle

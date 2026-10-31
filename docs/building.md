@@ -1,4 +1,4 @@
-# Building PlxNative
+# Building Marquee
 
 The build, the two installs, the device loop and the test tiers — everything a contributor needs
 that a television owner does not. The
@@ -7,6 +7,10 @@ that a television owner does not. The
 `AGENTS.md` and [`agent-reference.md`](agent-reference.md) are the deep reference behind this file —
 architecture, portability, and the non-obvious things that took a while to work out. Each major
 subsystem has a guide of its own next to the code.
+
+The display name is the `title` in `pkg/appinfo.json`. Packaging, localized messages and the
+app read that one value; debug and nightly add their own suffixes. The app ID
+`com.beb.plxnative` and storage identities stay unchanged so upgrades keep sign-ins and settings.
 
 ## Requirements
 

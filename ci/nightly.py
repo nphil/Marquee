@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import version_rule  # noqa: E402  — ci/version_rule.py, the shared "next X.Y.Z" arithmetic
 
 ROOT = Path(__file__).resolve().parent.parent
+APP_NAME = json.loads((ROOT / "pkg/appinfo.json").read_text())["title"]
 
 #: Every nightly tag this repository has ever cut carries this prefix, so it is also the filter
 #: `latest-json` and `prune` apply to `gh api`'s release list — a canary (`canary/v...`) or a
@@ -58,7 +59,7 @@ PACKAGE_ID = "com.beb.plxnative.nightly"
 MANIFEST_NAME = f"{PACKAGE_ID}.manifest.json"
 #: Homebrew Channel shows this where there is no room for the long description (and falls back to
 #: it when a package has no `fullDescriptionUrl`); the listing's limit is 80 characters.
-SHORT_DESCRIPTION = "Daily build of PlxNative from main. Untested on a TV; installs beside stable."
+SHORT_DESCRIPTION = f"Daily build of {APP_NAME} from main. Untested on a TV; installs beside stable."
 
 
 def _release_line_content() -> "str | None":
@@ -218,8 +219,8 @@ def render_notes(*, label: str, sha: str, prev_tag: "str | None", ipk: str, sha2
 
     return "\n\n".join([
         f"Automatic build of `main` at [`{short_sha}`]({commit_link}). It installs beside "
-        "PlxNative as a separate app, \"PlxNative Nightly\", with its own launcher tile and its "
-        "own sign-in — your regular PlxNative install is untouched.",
+        f"{APP_NAME} as a separate app, \"{APP_NAME} Nightly\", with its own launcher tile and its "
+        f"own sign-in — your regular {APP_NAME} install is untouched.",
 
         "**This build has not been tested on a television.** It passed the same automated checks "
         "a release does — the ARM cross-build, the packaging gates, and the firmware loader "
@@ -234,7 +235,7 @@ def render_notes(*, label: str, sha: str, prev_tag: "str | None", ipk: str, sha2
 
         "## Installing\n\n"
         "**With Homebrew Channel:** under Settings, choose Add repository and enter "
-        f"`{REPO_JSON_URL}`, then install \"PlxNative Nightly\" from the list. Later nightlies "
+        f'`{REPO_JSON_URL}`, then install "{APP_NAME} Nightly" from the list. Later nightlies '
         f"appear there as updates. The [guide]({GUIDE_URL}) has the details.\n\n"
         f"**By hand:** download `{ipk}` below and install it with "
         "[dev-manager-desktop](https://github.com/webosbrew/dev-manager-desktop) — no rooted "
@@ -373,7 +374,7 @@ def repo_index(repo: str) -> dict:
     package, pointing at the manifest and the description page staged beside it."""
     return {"packages": [{
         "id": PACKAGE_ID,
-        "title": "PlxNative Nightly",
+        "title": f"{APP_NAME} Nightly",
         "shortDescription": SHORT_DESCRIPTION,
         "fullDescriptionUrl": f"{SITE_ORIGIN}/nightly/description.html",
         # The nightly tile's own badged artwork, the one the manifest names too.
@@ -393,7 +394,7 @@ def description_html(*, label: str, sha: str, release_url: str, repo: str) -> st
     return "\n".join([
         "<p><strong>This build has not been tested on a television.</strong> It passed the same "
         "automated build and packaging checks a release does, but nobody has watched it play. "
-        "Keep the regular PlxNative installed — this one installs beside it with its own tile "
+        f"Keep the regular {esc(APP_NAME)} installed — this one installs beside it with its own tile "
         "and its own sign-in.</p>",
         f"<p>Build {esc(date)} &middot; version {esc(label)} &middot; commit "
         f'<a href="https://github.com/{esc(repo)}/commit/{esc(sha)}">{esc(short)}</a></p>',
@@ -563,7 +564,7 @@ def _selftest() -> int:
         sha256="deadbeef" * 8, repo="GLinnik21/plx-native",
         changes=["- session: one in-memory cache owned by the session module (#136)"],
     )
-    check("PlxNative Nightly" in body, "notes name the nightly tile")
+    check(f"{APP_NAME} Nightly" in body, "notes name the nightly tile")
     check("**This build has not been tested on a television.**" in body,
           "notes carry the untested-on-TV warning in bold")
     check("## Changes since 0.7.0-nightly-20260918" in body,
@@ -628,7 +629,7 @@ def _selftest() -> int:
     # Homebrew Channel repository
     label = "0.8.0-nightly-20261006"
     good_manifest = {
-        "id": PACKAGE_ID, "version": "0.8.20261006", "type": "native", "title": "PlxNative Nightly",
+        "id": PACKAGE_ID, "version": "0.8.20261006", "type": "native", "title": f"{APP_NAME} Nightly",
         "ipkUrl": "plxnative-v0.8.0-nightly-20261006.ipk",
         "ipkHash": {"sha256": "ab" * 32}, "iconUri": "https://example.invalid/i.png",
     }

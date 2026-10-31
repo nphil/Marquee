@@ -1,8 +1,8 @@
-# Help translate PlxNative
+# Help translate Marquee
 
-PlxNative's interface is available in English, Spanish, French, Italian, European Portuguese, German, Hungarian, Russian, Polish and Belarusian
+Marquee's interface is available in English, Spanish, French, Italian, European Portuguese, German, Hungarian, Russian, Polish and Belarusian
 (official Cyrillic orthography). Help improve a translation or contribute another language through a pull request
-at https://github.com/GLinnik21/plx-native.
+at https://github.com/nphil/Marquee.
 
 ## Translate a message
 
@@ -11,6 +11,9 @@ source: each scoped, stable key has a `value`, translator `description`, and opt
 `args`. The other languages contain the same keys, except the English-only ones (described
 below), with translated string or plural values.
 The compiler combines each language's files; file names organize ownership, not message identity.
+
+Use `@APP_NAME@` for the app name and `@APP_NAME_UPPER@` in all-capital headings; the build
+expands both from the package title. Keep these markers unchanged in translations.
 
 Some English entries carry `"translate": false`. They are technical read-outs meant for the
 people who debug the app — the Stats-for-nerds diagnostics panel, its playback verdict line and

@@ -194,7 +194,7 @@
   "browse.auth.insecure": "Сервер Plex найден, но HTTPS недоступен. Разрешите защищённые подключения на сервере и повторите попытку.",
   "browse.auth.no_access": "У профиля {profile} нет доступа к серверам",
   "browse.auth.no_source_access": "У профиля {profile} нет доступа к этому серверу",
-  "browse.auth.tls_untrusted": "Телевизор не доверяет сертификату безопасности сервера. Обновите PlxNative и повторите попытку.",
+  "browse.auth.tls_untrusted": "Телевизор не доверяет сертификату безопасности сервера. Обновите @APP_NAME@ и повторите попытку.",
   "browse.kind.episodes": "Серии",
   "browse.kind.collections": "Коллекции",
   "browse.kind.films": "Фильмы",

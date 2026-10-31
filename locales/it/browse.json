@@ -184,7 +184,7 @@
   "browse.auth.insecure": "Trovato il tuo server Plex, ma è impossibile connettersi in modo sicuro (HTTPS). Controlla che il server consenta connessioni sicure e riprova.",
   "browse.auth.no_access": "{profile} non ha accesso al server",
   "browse.auth.no_source_access": "{profile} non ha accesso a questo server",
-  "browse.auth.tls_untrusted": "La TV non considera attendibile il certificato di sicurezza del server. Aggiorna PlxNative e riprova.",
+  "browse.auth.tls_untrusted": "La TV non considera attendibile il certificato di sicurezza del server. Aggiorna @APP_NAME@ e riprova.",
   "browse.kind.episodes": "Episodi",
   "browse.kind.collections": "Raccolte",
   "browse.kind.films": "Film",

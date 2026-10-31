@@ -129,7 +129,7 @@ pub fn has_error(findings: &[Finding]) -> bool {
 }
 
 /// The user-facing reason for a `format` whose minor (or major) is above what this app supports.
-pub const REASON_NEWER: &str = "Made for a newer PlxNative";
+pub const REASON_NEWER: &str = "Made for a newer version of this app";
 /// The user-facing reason for a `format` whose major is below what this app supports.
 pub const REASON_OLDER: &str = "Uses an older HUD format";
 
@@ -427,7 +427,7 @@ mod freeze_tests {
         assert_eq!(f.nearest, ["block", "band", "anchor"]);
         assert!(f.is_error() && has_error(&[f]));
         assert!(!has_error(&[]));
-        assert_eq!(REASON_NEWER, "Made for a newer PlxNative");
+        assert_eq!(REASON_NEWER, "Made for a newer version of this app");
         assert_eq!(REASON_OLDER, "Uses an older HUD format");
     }
 }

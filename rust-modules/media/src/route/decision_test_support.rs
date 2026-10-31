@@ -524,6 +524,8 @@ pub(super) enum EnhMode {
     HonorNoCodecs,
     /// `generalDecisionCode 2000` — the refusal wire `tests/mock_pms.py --refuse-enhancements` sends.
     Refuse,
+    /// The enhanced audio lane is unavailable even though the overall decision is accepted.
+    Unavailable,
     /// Audio `copy` despite the params — an old or non-conforming PMS.
     Ignore,
 }
@@ -616,6 +618,7 @@ pub(super) fn enhancement_pms_parts(
                     } else if line.contains("/decision?") {
                         let body: String = match (enhanced, mode) {
                             (true, EnhMode::Refuse) => r#"{"MediaContainer":{"generalDecisionCode":2000,"transcodeDecisionCode":4020,"transcodeDecisionText":"synthetic enhancement refusal","Metadata":[]}}"#.into(),
+                            (true, EnhMode::Unavailable) => r#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode","Stream":[{"streamType":1,"codec":"hevc","decision":"copy"},{"streamType":2,"decision":"unavailable"}]}]}]}]}}"#.into(),
                             (true, EnhMode::HonorNoCodecs) => String::from_utf8(MDE_TRANSCODE_COPY.to_vec()).unwrap(),
                             (true, EnhMode::Honor(codec)) => format!(r#"{{"MediaContainer":{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":1,"codec":"hevc","decision":"copy"}},{{"streamType":2,"codec":"{codec}","decision":"transcode"}}]}}]}}]}}]}}}}"#),
                             (true, EnhMode::Ignore) | (false, _) => r#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode","Stream":[{"streamType":1,"codec":"hevc","decision":"copy"},{"streamType":2,"codec":"ac3","decision":"copy"}]}]}]}]}}"#.into(),

@@ -370,6 +370,7 @@ impl SeatWatch {
 
 /// What the bridge lends the dispatcher, and what it collects for the loop.
 pub(crate) struct Bridge {
+    pub(super) delete_media: super::delete_media::Manager,
     /// Endpoint refreshes a store step had no room to emit (`EndpointRefreshSet::emit`).
     endpoint_carry: plx_data::stores::EndpointRefreshSet,
     session_cache_generation: u64,
@@ -655,6 +656,7 @@ impl Bridge {
             store_runner,
             late_store_jobs: 0,
             client_keys: Default::default(),
+            delete_media: Default::default(),
             stores,
             mounter: AppMounter::default(),
             playback: plx_media::route::PlaybackSession::IDLE,
@@ -1140,11 +1142,11 @@ impl Bridge {
             }
             if let Some((rk, mark)) = page.focused_episode(ret.focus, meta) {
                 // the ONE entry point whose item is a leaf of the season this page has loaded
-                let versions = meta.current()
-                    .and_then(|d| d.episodes.position(&rk).and_then(|i| d.episodes.get(i)))
-                    .map(|ep| ep.versions.clone())
-                    .unwrap_or_default();
-                let mut arg = strip_menu_arg(sid, &rk, ItemMenuKind::Episode { mark, versions }, entry, ret.focus, rect);
+                let episode = meta.current()
+                    .and_then(|d| d.episodes.position(&rk).and_then(|i| d.episodes.get(i)))?;
+                let versions = episode.versions.clone();
+                let title = episode.title.clone();
+                let mut arg = strip_menu_arg(sid, &rk, ItemMenuKind::Episode { mark, versions, title }, entry, ret.focus, rect);
                 arg.watchlist = self.watchlist_face(page.watchlist_hex(), plx_data::watchlist::model::Kind::Show, true);
                 return Some(arg);
             }
@@ -1270,6 +1272,12 @@ impl Bridge {
         let outcome = self.stores.browse_discover_pump(&self.client_keys, &session);
         self.start_store_jobs_of(StoreId::Browse);
         outcome
+    }
+
+    pub(crate) fn deleted_media(&mut self, at: &plx_data::viewstate::ViewAt) {
+        self.stores.search.deleted_media(at);
+        self.stores.person.deleted_media(at);
+        self.stores.collection.deleted_media(at);
     }
 
     pub(crate) fn person_run(&mut self, cmd: plx_data::stores::person::PersonCmd) -> bool {

@@ -658,8 +658,20 @@ fn built_key(srv: ServerId, path: &str, w: c_int, h: c_int, png: bool) -> Option
 /// Supersampled simulator renders (`surface::render_scale`, 1 on a television) ask the server
 /// for the pixels they will draw; the logical box stays the caller's.
 fn transcode_request(c: &plx_plex::plex::Client, path: &str, w: c_int, h: c_int, png: bool) -> String {
+    // Index images are already JPEGs; request the BIF image endpoint directly.
+    if is_index_image(path) {
+        return c.index_image_path(path);
+    }
     let n = plx_base::surface::render_scale() as i64;
     c.image_transcode_path(path, w as i64 * n, h as i64 * n, png)
+}
+
+fn is_index_image(path: &str) -> bool {
+    let mut parts = path.split('/');
+    matches!((parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(""), Some("library"), Some("parts"), Some(id), Some("indexes"), Some("sd"), Some(ms), None)
+        if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())
+            && !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A refused key logs ONCE per process, with both ceilings and the length that missed them.
@@ -1822,7 +1834,13 @@ fn load_art<T>(
         return out;
     }
     FETCHES.fetch_add(1, Ordering::Relaxed);
-    match client.fetch_built_outcome(key_s) {
+    let source_path = key_s.split('?').next().unwrap_or(key_s);
+    let outcome = if is_index_image(source_path) {
+        client.fetch_index_image_outcome(key_s)
+    } else {
+        client.fetch_built_outcome(key_s)
+    };
+    match outcome {
         plx_plex::plex::ArtFetch::Bytes(b) if !b.is_empty() => {
             out.art = decode(&b);
             if out.art.is_some() {
@@ -2184,6 +2202,16 @@ mod tests {
     /// so these grade the string a draw actually receives, not a reimplementation of it.
     fn key_for(srv: ServerId, src: &str, w: c_int, h: c_int, png: c_int) -> String {
         built_key(srv, src, w, h, png != 0).map(|k| k.to_string()).unwrap_or_default()
+    }
+
+    #[test]
+    fn index_image_uses_the_direct_authenticated_endpoint() {
+        let (_g, sid, tok) = one_server();
+        let frame = "/library/parts/7459/indexes/sd/600000";
+        assert_eq!(key_for(sid, frame, 320, 180, 0), format!("{frame}?X-Plex-Token={tok}"));
+        assert!(!is_index_image("/library/parts/7459/indexes/sd"));
+        assert!(!is_index_image("/library/parts/7459/indexes/sd/1/extra"));
+        assert!(!is_index_image("/library/parts/7459/thumb/1"));
     }
 
     /// **Search's `Directory[]` half, and the reason this file needed no second image route.** An

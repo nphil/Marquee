@@ -1,6 +1,6 @@
 {
   "id": "com.beb.plxnative",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "vendor": "beb",
   "type": "native",
   "main": "plxnative",
@@ -8,7 +8,7 @@
   "appDescription": "Unofficial native Plex client - not affiliated with Plex",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",
-  "iconColor": "#fe7bab",
+  "iconColor": "#1a1623",
   "splashBackground": "splash.png",
   "nativeLifeCycleInterfaceVersion": 2,
   "handlesRelaunch": false,

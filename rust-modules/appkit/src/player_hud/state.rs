@@ -11,14 +11,13 @@ use plx_ui::widgets::StatusKind;
 use std::ffi::CString;
 use std::os::raw::c_int;
 
-/// The position the playbar SHOWS: a loading seek's target, else the live scrub preview, else the
-/// real playhead. One function because the draw ([`Playbar::live`]) and the clock prewarm
-/// ([`ClockWarm::queue`](super::motion::ClockWarm::queue)) must resolve the same value, or the prewarm warms the wrong string.
+/// The playbar follows a live scrub first, then a loading seek's target, then the playhead.
+/// Draw and clock prewarm use the same position.
 pub(super) fn display_pos_ns(loading: bool, seekdisp: i64, scrub: i64, livepos: i64) -> i64 {
-    if loading && seekdisp >= 0 {
-        seekdisp
-    } else if scrub >= 0 {
+    if scrub >= 0 {
         scrub
+    } else if loading && seekdisp >= 0 {
+        seekdisp
     } else {
         livepos
     }

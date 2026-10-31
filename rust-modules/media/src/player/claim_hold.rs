@@ -112,6 +112,10 @@ pub fn take(serial: u64) -> bool {
 /// Give play back after the claim settled and its tail ran (a rejection leaves the same Engine
 /// running; an accepted claim has already reloaded, the reload having kept the pause).
 pub fn release(pa: &mut super::adapter::PlayerAdapter, restore_play: bool) {
+    if restore_play && pa.engine().is_none() && crate::route::engineless_flight_outstanding() {
+        super::transport::commit_viewer_resume_for_load();
+        return;
+    }
     if restore_play && !super::resume(pa) {
         super::log("claim hold: could not give play back after the claim settled");
     }

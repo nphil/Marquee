@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Белый текст с толстой чёрной обводкой без плашки. Лучше всего читается на ярких и пёстрых кадрах.",
   "subtitles.about_large_print": "Крупный, жирный текст с обводкой для чтения издалека.",
   "subtitles.about_high_contrast": "Жёлтый текст с чёрной обводкой на тёмной плашке для максимального контраста.",
-  "subtitles.about_marquee": "Inter Bold, белый, с тонкой обводкой: собственный вид Marquee.",
+  "subtitles.about_marquee": "Inter Bold, белый, с тонкой обводкой: собственный вид @APP_NAME@.",
   "subtitles.about_custom": "Ваше собственное сочетание настроек. Выберите набор, чтобы начать заново.",
   "subtitles.group_look": "Вид",
   "subtitles.group_text": "Текст",

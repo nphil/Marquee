@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Weißer Text mit dicker schwarzer Kontur, ohne Kasten. Am besten lesbar auf hellen oder unruhigen Bildern.",
   "subtitles.about_large_print": "Größerer, fetterer Text mit Kontur, gut aus der Ferne lesbar.",
   "subtitles.about_high_contrast": "Gelber Text mit schwarzer Kontur auf dunklem Kasten, für maximalen Kontrast.",
-  "subtitles.about_marquee": "Inter Bold, weiß, mit dünner Kontur: der eigene Look von Marquee.",
+  "subtitles.about_marquee": "Inter Bold, weiß, mit dünner Kontur: der eigene Look von @APP_NAME@.",
   "subtitles.about_custom": "Deine eigene Mischung. Wähle eine Voreinstellung, um neu zu beginnen.",
   "subtitles.group_look": "Look",
   "subtitles.group_text": "Text",

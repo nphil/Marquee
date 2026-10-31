@@ -466,7 +466,7 @@ pub enum ItemMenuKind {
     /// `ep_state` that draws the still's own state line, so the tile and the menu opened on it
     /// cannot describe one episode two ways.
     /// `versions` is the episode's (two or more for the Play Version row), captured at open.
-    Episode { mark: plx_ui::widgets::PosterMark, versions: Vec<plx_data::pms::MediaVersion> },
+    Episode { mark: plx_ui::widgets::PosterMark, versions: Vec<plx_data::pms::MediaVersion>, title: String },
     /// The detail page's season tabs. `show_rk` is the show the page has loaded and `index` the
     /// tab's season number (`Season::index`): together the address of the season's episodes, which
     /// is all a season-scoped write reaches them by (`viewstate::Scope::Season`).
@@ -512,7 +512,7 @@ impl plx_machine::machine::LogicalState for ItemMenuArg {
         c.u32(u32::from(self.sid.raw())).str(&self.rk);
         match &self.kind {
             ItemMenuKind::Card { row, from_deck } => { c.u32(0).bool(*from_deck).u32(row.kind as u32); }
-            ItemMenuKind::Episode { mark, .. } => { c.u32(1).u32(*mark as u32); }
+            ItemMenuKind::Episode { mark, title, .. } => { c.u32(1).u32(*mark as u32).str(title); }
             ItemMenuKind::Season { mark, show_rk, index } => { c.u32(2).u32(*mark as u32).str(show_rk).u64(*index as u64); }
             ItemMenuKind::Catalog { state } => { c.u32(3).u32(*state as u32); }
         }

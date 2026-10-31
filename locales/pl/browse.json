@@ -194,7 +194,7 @@
   "browse.auth.insecure": "Nie można połączyć się bezpiecznie z Twoim serwerem Plex (HTTPS). Sprawdź ustawienia serwera.",
   "browse.auth.no_access": "Profil {profile} nie ma dostępu do serwerów",
   "browse.auth.no_source_access": "Profil {profile} nie ma dostępu do tego serwera",
-  "browse.auth.tls_untrusted": "Ten TV nie ufa certyfikatowi serwera. Zaktualizuj PlxNative i spróbuj ponownie.",
+  "browse.auth.tls_untrusted": "Ten TV nie ufa certyfikatowi serwera. Zaktualizuj @APP_NAME@ i spróbuj ponownie.",
   "browse.kind.episodes": "Odcinki",
   "browse.kind.collections": "Kolekcje",
   "browse.kind.films": "Filmy",

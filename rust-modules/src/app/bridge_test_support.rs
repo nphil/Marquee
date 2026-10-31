@@ -135,7 +135,7 @@ fn pump_requests(d: &mut Dispatcher<AppHost>, rig: &mut Bridge, mut item: Option
     // right after the dispatcher and before the page requests (`content::drain_item_menu_requests`).
     if let Some((pump, now)) = item.as_mut() {
         crate::app::content::drain_item_menu_requests(&mut pump.ps, &mut pump.pa, d, rig,
-            &mut crate::app::playback::LivePlaybackResources, &mut pump.menu_play_await, *now);
+            &mut crate::app::playback::LivePlaybackResources, &mut pump.menu_play_await, *now, true);
     }
     for (source, request, ret) in rig.take_library_reqs() {
         let (Some(entry), MachineId::Instance(instance)) = (asker(d, source), source) else { continue };

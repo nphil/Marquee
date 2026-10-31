@@ -1,6 +1,6 @@
 {
   "settings.playback.instant_dpad_seeking": "Salto diretto con frecce",
-  "settings.playback.instant_dpad_seeking.copy": "A controlli nascosti, Sinistra/Destra salta dell’intervallo scelto. A controlli visibili, conferma con OK. Se disattivato, mostra prima i controlli.",
+  "settings.playback.instant_dpad_seeking.copy": "Attivato: Sinistra/Destra salta subito con i controlli nascosti. Disattivato: mostra un’anteprima; OK conferma.",
   "settings.playback.instant_dpad_seeking.off": "Disattivati",
   "settings.playback.instant_dpad_seeking.on": "Attivati"
 }

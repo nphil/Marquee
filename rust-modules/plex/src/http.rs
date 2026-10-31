@@ -155,7 +155,7 @@ enum BodyPolicy {
     Api,
     Bulk,
     Probe { max: usize, timeout_s: i32, learn_pin: bool },
-    Deadline { at: std::time::Instant },
+    Deadline { at: std::time::Instant, max: Option<usize> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,9 +229,23 @@ pub fn request_until_outcome(
         path,
         method,
         headers,
-        BodyPolicy::Deadline { at: deadline },
+        BodyPolicy::Deadline { at: deadline, max: None },
         pin,
     )
+}
+
+/// A deadline-bearing request whose response body must not exceed `max_body`.
+#[track_caller]
+pub fn request_bounded_until(
+    origin: &Origin,
+    path: &str,
+    method: Method,
+    headers: &[&str],
+    max_body: usize,
+    deadline: std::time::Instant,
+    pin: Option<&ResolvePin>,
+) -> RequestOutcome {
+    request_with(origin, path, method, headers, BodyPolicy::Deadline { at: deadline, max: Some(max_body) }, pin)
 }
 
 /// A bounded discovery probe. The caller chooses 5 s for a local candidate and 10 s for a remote
@@ -547,7 +561,7 @@ fn plaintext(
             method.as_str(),
             timeout_s.saturating_mul(1000),
         ),
-        BodyPolicy::Deadline { at } => {
+        BodyPolicy::Deadline { at, .. } => {
             if std::time::Instant::now() >= at {
                 return RequestOutcome::Deadline;
             }
@@ -623,16 +637,19 @@ fn plaintext(
             // Read at most one byte past a ceiling. That one-byte lookahead distinguishes an
             // exactly-full body followed by EOF from a body that is actually too large, without
             // ever extending `body` past the cap.
-            let room = match body_policy {
-                BodyPolicy::Probe { max, .. } => max.saturating_sub(body.len()),
-                BodyPolicy::Api | BodyPolicy::Bulk | BodyPolicy::Deadline { .. } => chunk.len(),
+            let max = match body_policy {
+                BodyPolicy::Probe { max, .. } => Some(max),
+                BodyPolicy::Deadline { max, .. } => max,
+                BodyPolicy::Api | BodyPolicy::Bulk => None,
             };
-            let want = match body_policy {
-                BodyPolicy::Probe { .. } => chunk.len().min(room.saturating_add(1)),
-                BodyPolicy::Api | BodyPolicy::Bulk | BodyPolicy::Deadline { .. } => chunk.len(),
-            };
+            let room = max.map_or(chunk.len(), |max| max.saturating_sub(body.len()));
+            let want = if max.is_some() { chunk.len().min(room.saturating_add(1)) } else { chunk.len() };
             let (n, read_deadline_owner) = match body_policy {
-                BodyPolicy::Deadline { at } => {
+                BodyPolicy::Deadline { at, max } => {
+                    if max.is_some() && std::time::Instant::now() >= at {
+                        deadline_failure = Some(RequestOutcome::Deadline);
+                        break;
+                    }
                     let (effective, owner) = deadline_liveness
                         .map_or((at, DeadlineOwner::Caller), |liveness| {
                             effective_deadline(at, liveness)
@@ -670,7 +687,7 @@ fn plaintext(
             if n == 0 {
                 break;
             }
-            if matches!(body_policy, BodyPolicy::Probe { .. }) && n as usize > room {
+            if max.is_some() && n as usize > room {
                 overflowed = true;
                 break;
             }
@@ -748,7 +765,7 @@ fn tls(
     let (timeouts, max_body, caller_owns_timeout) = match body_policy {
         BodyPolicy::Api => (plx_net::net::API, None, false),
         BodyPolicy::Bulk => (plx_net::net::BULK, None, false),
-        BodyPolicy::Deadline { at } => {
+        BodyPolicy::Deadline { at, max } => {
             let now = std::time::Instant::now();
             if now >= at {
                 return RequestOutcome::Deadline;
@@ -780,7 +797,7 @@ fn tls(
                     low_speed_bps: 0,
                     low_speed_s: 0,
                 },
-                None,
+                max,
                 caller_owns_timeout,
             )
         }

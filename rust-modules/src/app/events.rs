@@ -16,6 +16,11 @@ pub(crate) fn text_inputs(text: &str, panel: bool, at: plx_machine::machine::Tic
     events
 }
 
+/// Printable key symbols can reveal text even before an IME commits it.
+pub(crate) fn printable_key(sym: u32) -> bool {
+    char::from_u32(sym).is_some_and(|ch| !ch.is_control())
+}
+
 #[inline]
 pub(crate) fn rd_u32(ev: &[u8], off: usize) -> u32 {
     u32::from_ne_bytes([ev[off], ev[off + 1], ev[off + 2], ev[off + 3]])
@@ -571,11 +576,6 @@ pub(crate) fn dispatch_remote_token(tok: &str, ps: &plx_media::route::PlaybackSe
         // original FIFO call-site history and `textinput.rs`).
         let ev = crate::textinput::encode_event(&text.replace('+', " "));
         crate::textinput::on_event(&ev);
-        log(&format!(
-            "txt: decoded {:?} pending={}",
-            crate::textinput::decode(&ev),
-            crate::textinput::pending()
-        ));
         true
     } else if let Some((sym, wcode)) = remote_token_key(tok) {
         remote_synth_key(sym, wcode);

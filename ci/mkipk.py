@@ -92,7 +92,7 @@ def stage_storage_service(repo: Path, data: Path, app: dict) -> Path:
     shutil.copyfile(executable, target / "plxnative-storage")
     (target / "plxnative-storage").chmod(0o755)
     (target / "services.json").write_text(json.dumps({
-        "id": service_id, "description": "PlxNative private storage",
+        "id": service_id, "description": "Private application storage",
         "engine": "native", "executable": "plxnative-storage",
         "services": [{"name": service_id, "commands": []}],
     }, indent=4) + "\n")
@@ -131,7 +131,7 @@ def storage_archive_errors(blob: bytes, app_id: str) -> list[str]:
                     continue
                 metadata = json.load(tf.extractfile(member))
                 if name.endswith("services.json"):
-                    if metadata != {"id": service_id, "description": "PlxNative private storage", "engine": "native", "executable": "plxnative-storage", "services": [{"name": service_id, "commands": []}]}:
+                    if metadata != {"id": service_id, "description": "Private application storage", "engine": "native", "executable": "plxnative-storage", "services": [{"name": service_id, "commands": []}]}:
                         errors.append("service identity/activation-only metadata differs")
                 else:
                     if metadata.get("id") != app_id or metadata.get("requiredPermissions") != STORAGE_PERMISSIONS:
@@ -211,21 +211,8 @@ def write_packageinfo(data: Path, app: dict) -> Path:
 def stage_resources(repo: Path, data: Path, app: dict) -> list:
     """Stage `pkg/resources/<locale>/appinfo.json` into the app dir. Returns the locales staged.
 
-    webOS reads a locale's app title and description from `resources/<locale>/appinfo.json` inside
-    the application directory, merging it over the top-level descriptor when the television's
-    language changes (LG, *App Localization*; webOS OSE, *appinfo.json*). Only `title` and
-    `appDescription` belong in one — `ci/check-package.py` gates that, because a full copy would put
-    the version and the id in a file `ci/bump-version.py` has never heard of.
-
-    THE FLAVOUR SUFFIX IS REAPPLIED HERE, and it is the whole reason this is a transform rather than
-    a copy. `flavor.appinfo_for` renames a flavoured install's tile `PlxNative debug` precisely so
-    two tiles are not a coin flip; a localized descriptor carrying the bare tracked title would
-    override that back to `PlxNative` the moment the set was switched to Korean — restoring the
-    ambiguity in exactly the locale nobody developing this app is looking at.
-
-    The suffix is read off the transform's OUTPUT rather than re-derived from `flavor.FLAVORS`,
-    so there is still only one place that decides what a flavoured title looks like. If that rule
-    ever stops being a suffix, the assertion below fails loudly instead of silently mislabelling.
+    webOS merges the localized descriptor over the top-level one. Generate its title from the
+    already-flavoured app title, so translations cannot duplicate or override the name.
     """
     src = repo / "pkg" / "resources"
     dest = data / "usr" / "palm" / "applications" / app["id"] / "resources"
@@ -235,28 +222,20 @@ def stage_resources(repo: Path, data: Path, app: dict) -> list:
         shutil.rmtree(dest)
     if not src.is_dir():
         return []
-    base_title = json.loads((repo / "pkg" / "appinfo.json").read_text())["title"]
-    if not app["title"].startswith(base_title):
-        raise SystemExit(f"flavour title {app['title']!r} is not {base_title!r} plus a suffix — "
-                         "stage_resources can no longer reapply it; see ci/flavor.py")
-    suffix = app["title"][len(base_title):]
     locales = []
     for loc_dir in sorted(p for p in src.iterdir() if p.is_dir()):
         f = loc_dir / "appinfo.json"
         if not f.is_file():
             continue
         loc = json.loads(f.read_text(encoding="utf-8"))
-        if "title" not in loc:
-            # Packaging runs BEFORE ci/check-package.py, so say what is wrong rather than dying in
-            # a KeyError traceback that names neither the file nor the rule.
-            raise SystemExit(f"{f} has no `title` — a localized appinfo.json carries exactly "
-                             "`title` and `appDescription` (ci/check-package.py gates it)")
+        if set(loc) != {"appDescription"}:
+            raise SystemExit(f"{f} must carry only the localized appDescription")
         out_dir = dest / loc_dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
         # Rewritten rather than copied, so the staged bytes are this script's output on every host:
         # `ensure_ascii=False` keeps the translations readable in the archive, UTF-8 with no BOM is
         # LG's stated requirement for non-Latin text, and the key order is the input file's.
-        body = json.dumps({**loc, "title": loc["title"] + suffix},
+        body = json.dumps({"title": app["title"], **loc},
                           ensure_ascii=False, indent=2) + "\n"
         (out_dir / "appinfo.json").write_bytes(body.encode("utf-8"))
         locales.append(loc_dir.name)

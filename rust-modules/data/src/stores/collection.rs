@@ -45,6 +45,9 @@ impl Default for CollectionStore {
 }
 
 impl CollectionStore {
+    pub fn deleted_media(&mut self, at: &crate::viewstate::ViewAt) {
+        if self.state.deleted_media(&self.adapter, at) { self.bump(); }
+    }
     /// Join the owner's view-state publish order (`Stores::view_ledger`).
     pub(crate) fn share_ledger(&mut self, ledger: &crate::viewledger::ViewLedger) {
         self.state.ledger = ledger.clone();

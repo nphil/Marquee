@@ -1,6 +1,8 @@
 > Historical distribution research below is retained as dated analysis. The current license
 > is GPL-3.0-or-later; see `../LICENSING.md` and `../THIRD-PARTY-NOTICES.md`. Earlier MIT
 > recommendations below do not describe the current tree.
+> References below to the PlxNative Homebrew catalogue and nightly service describe upstream;
+> they do not distribute Marquee. Marquee releases are at https://github.com/nphil/Marquee/releases.
 
 # Distribution: what it takes to ship this publicly
 

@@ -174,7 +174,7 @@
   "browse.auth.insecure": "Dein Plex-Server wurde gefunden, aber nicht über HTTPS erreicht. Prüfe, ob er sichere Verbindungen erlaubt, und versuche es erneut.",
   "browse.auth.no_access": "{profile} hat keinen Serverzugriff",
   "browse.auth.no_source_access": "{profile} hat keinen Zugriff auf diesen Server",
-  "browse.auth.tls_untrusted": "Dieser Fernseher vertraut dem Sicherheitszertifikat deines Servers nicht. Aktualisiere PlxNative und versuche es erneut.",
+  "browse.auth.tls_untrusted": "Dieser Fernseher vertraut dem Sicherheitszertifikat deines Servers nicht. Aktualisiere @APP_NAME@ und versuche es erneut.",
   "browse.kind.episodes": "Episoden",
   "browse.kind.collections": "Sammlungen",
   "browse.kind.films": "Filme",

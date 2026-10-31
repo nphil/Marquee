@@ -761,8 +761,8 @@ unsafe fn ingress_token(app: &mut App, fr: &mut Frame, token: &str) -> bool {
     }
     // Keys and clicks use SDL's existing synthesis while coexistence lasts. Consume those
     // before a following direct text token, rather than moving all text ahead of all keys.
-    if super::bridge::search_owns_input(&app.pages) { drain_sdl(app, fr); }
-    if super::bridge::search_owns_input(&app.pages) {
+    if super::bridge::owns_input(&app.pages) { drain_sdl(app, fr); }
+    if super::bridge::owns_input(&app.pages) {
         if let Some(text) = token.strip_prefix("txt:") {
             ingest_text(app, &text.replace('+', " "), crate::textinput::available(),
                 plx_machine::machine::Source::RemoteFifo);
@@ -770,7 +770,9 @@ unsafe fn ingress_token(app: &mut App, fr: &mut Frame, token: &str) -> bool {
         }
     }
     let accepted = dispatch_remote_token(token, &app.player.session);
-    if accepted && token_is_direct(token) { app.rec.input(super::recorder::enc_token(token)); }
+    if accepted && token_is_direct(token) && !token.starts_with("txt:") {
+        app.rec.input(super::recorder::enc_token(token));
+    }
     accepted
 }
 
@@ -800,7 +802,10 @@ pub(crate) fn pin_headless_hud(app: &mut App, now: u32, tab: Option<i32>) {
 fn ingest_text(app: &mut App, text: &str, panel: bool, source: plx_machine::machine::Source) {
     if text.is_empty() { return; }
     let at = plx_machine::machine::Tick { ms: clock::now(), dt_us: 0 };
-    app.rec.input(super::recorder::enc_text(text, panel, at, source));
+    // Only Search text is replayable; other fields may contain credentials.
+    if super::bridge::search_owns_input(&app.pages) {
+        app.rec.input(super::recorder::enc_text(text, panel, at, source));
+    }
     app.inputs.extend(text_inputs(text, panel, at, source));
     app.last_input = at.ms;
     plx_machine::idle::invalidate();
@@ -868,38 +873,7 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
     // kind — rather than in each of the ~30 arms below, where the next one added would
     // silently draw nothing.
     plx_machine::idle::invalidate();
-    if et == SDL_KEYDOWN
-        || et == SDL_KEYUP
-        || et == SDL_TEXTINPUT
-        || et == SDL_TEXTEDITING
-    {
-        // 48 bytes, not 32: a TEXTINPUT event's `text[32]` starts at +16 on the
-        // television (LG's `inputSource` shifts it), so it ENDS at exactly +48. At the
-        // old width the one event whose payload the offsets are most easily wrong
-        // about would have left a forensic trail that stopped just before the payload.
-        let mut hex = String::with_capacity(96);
-        for b in &app.ev[..48] {
-            hex.push_str(&format!("{b:02x}"));
-        }
-        let what = match et {
-            SDL_TEXTINPUT => "text",
-            // **The IME's PRE-EDIT, and the reason it is logged at all.** The panel's
-            // word prediction is a REPLACE — tapping "summer" under a typed "summ"
-            // means *delete what I was predicting on, then commit this* — and the app
-            // sees only the commit, so the field reads "summsummer" (reported from the
-            // couch 2026-08-15). Whether the delete half reaches us as `SDL_TEXTEDITING`
-            // (`text_model.delete_surrounding_text` mapped onto SDL's pre-edit) or as
-            // nothing at all decides whether the fix can be exact or has to be a
-            // heuristic — and this arm is the only way to find out, since nothing in
-            // the app has ever read this event.
-            SDL_TEXTEDITING => "edit",
-            _ => "key",
-        };
-        log(&format!(
-            "[{}] {what} type=0x{et:x} raw={hex}",
-            clock::now()
-        ));
-    }
+    // Key, preedit and text event bytes can contain credentials and are never logged.
     if (0x103..=0x106).contains(&et) {
         app.rec.input(super::recorder::enc_lifecycle(et));
     }
@@ -1063,12 +1037,11 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
             controlled_key_input(app, event);
             return;
         }
-        app.rec.input(super::recorder::enc_key(
-            sym,
-            wcode,
-            (state & 0xff) == 1,
-            state & 0x100 != 0,
-        ));
+        if !super::events::printable_key(sym) {
+            app.rec.input(super::recorder::enc_key(
+                sym, wcode, (state & 0xff) == 1, state & 0x100 != 0,
+            ));
+        }
         // **Does the TREE own this key?** (phase 5b, `app/bridge.rs`'s coexistence
         // contract.) Asked once, here, above all three edges — because the dispatcher's
         // press machine wants ALL of them: `Edge::Down` arms, `Edge::Repeat` is the
@@ -1594,20 +1567,9 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
             // already took every wheel tick on this route and returned.
         }
     } else if et == SDL_TEXTINPUT {
-        // The television's own keyboard committing text. Route-UNCONDITIONAL, and
-        // `textinput::on_event` queues unconditionally too — it does NOT check
-        // whether we asked for the panel, deliberately. This is the raw platform
-        // seam: SDL delivered a character because SDL believes text input is on, and
-        // discarding it against our own flag would silently eat REAL typing the first
-        // time the two disagree (a panel dismissed from outside the app, or any
-        // future caller that enables text events another way). Dropping input is the
-        // worse failure, so instead both leaks are closed downstream, where they can
-        // be closed completely: `textinput::start` clears the queue, so nothing typed
-        // before the field opened can arrive in it, and `MAX_PENDING` bounds a queue
-        // nobody drains. Gating here would also be a second, weaker copy of a rule
-        // that lives in one place — and it would flip a frame away from the field's
-        // own edit state, because the route changes at the fade floor.
-        if super::bridge::search_owns_input(&app.pages) {
+        // Owned pages and surfaces receive the same ordered text stream. Other routes retain the
+        // bounded legacy queue; never gate a real commit on the native panel's start latch.
+        if super::bridge::owns_input(&app.pages) {
             let text = crate::textinput::decode(&app.ev);
             ingest_text(app, &text, crate::textinput::available(), plx_machine::machine::Source::Sdl);
         } else {
@@ -4231,6 +4193,22 @@ mod lifecycle_regression_tests {
             assert_eq!(app.inputs.len(), 2,
                 "both earlier key edges must be handled before the probe (fifo={fifo})");
         }
+    }
+
+    #[test]
+    fn native_text_ingress_reaches_an_owned_settings_surface() {
+        use plx_machine::machine::{InputKind, TextEdit};
+        let _serial = plx_base::testlock::serial();
+        let mut app = app();
+        super::super::bridge::show_page(&mut app.pages,
+            AppArg::Settings(plx_screens::family::SettingsPage::Root));
+        frame(&mut app, 0);
+        let event = crate::textinput::encode_event("http://a:6767");
+        app.ev[..48].copy_from_slice(&event[..48]);
+        let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
+        unsafe { ingest_sdl_event_with_window(&mut app, &mut fr, |_| {}); }
+        assert!(app.inputs.iter().any(|event| matches!(&event.kind,
+            InputKind::Text(TextEdit::Commit(text)) if &**text == "http://a:6767")));
     }
 
     #[test]

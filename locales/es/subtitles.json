@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Texto blanco con contorno negro grueso, sin caja. Lo más legible sobre imágenes claras o recargadas.",
   "subtitles.about_large_print": "Texto más grande y grueso con contorno, para leer desde lejos.",
   "subtitles.about_high_contrast": "Texto amarillo con contorno negro sobre una caja oscura, para el máximo contraste.",
-  "subtitles.about_marquee": "Inter Bold, blanco, con contorno fino: el aspecto propio de Marquee.",
+  "subtitles.about_marquee": "Inter Bold, blanco, con contorno fino: el aspecto propio de @APP_NAME@.",
   "subtitles.about_custom": "Tu propia combinación de ajustes. Elige un preajuste para empezar de nuevo.",
   "subtitles.group_look": "Aspecto",
   "subtitles.group_text": "Texto",

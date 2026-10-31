@@ -863,9 +863,8 @@ pub(super) enum Fallback {
 }
 
 /// **Pure: did the server honour the enhanced ask?** `Retry` when it refused outright
-/// ([`refusal`]), or when the audio came back `copy` despite the params — an old or
-/// non-conforming PMS that dropped them silently, which would otherwise play the non-enhanced
-/// audio one container down while claiming the enhancement. An unreachable decision (`None`) is
+/// ([`refusal`]), or when an explicit audio decision is not `transcode`: a copy cannot apply the
+/// DSP, and an unavailable lane cannot produce a viable stream. An unreachable decision (`None`) is
 /// `Keep`: the same "no answer is not a refusal" rule every other transcode start follows, and
 /// the outcome is then graded `Unverified` by [`classify_outcome`].
 pub(super) fn enhancement_fallback(
@@ -878,7 +877,9 @@ pub(super) fn enhancement_fallback(
     let Some(mc) = mc else {
         return Fallback::Keep;
     };
-    if refusal(mc).is_some() || decision_audio(mc) == Some("copy") {
+    if refusal(mc).is_some()
+        || decision_audio(mc).is_some_and(|decision| !decision.is_empty() && decision != "transcode")
+    {
         Fallback::Retry
     } else {
         Fallback::Keep

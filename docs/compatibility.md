@@ -1,6 +1,6 @@
 # Compatibility reports
 
-Which televisions PlxNative has been seen running on, as reported by their owners. For the short
+Which televisions Marquee has been seen running on, as reported by their owners. For the short
 answer and the sets with a known problem, see [Will it work on my
 television?](../README.md#will-it-work-on-my-television); this page is the evidence behind it.
 

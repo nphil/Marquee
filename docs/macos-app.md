@@ -1,8 +1,8 @@
-# `PlxNative.app` — the app as a self-contained macOS application
+# The app as a self-contained macOS application
 
 *Written 2026-08-16, when the bundle was first built and verified.*
 
-`make macapp` (or `make macapp-zip`) produces `pkg/PlxNative.app`: the same application core the
+`make macapp` (or `make macapp-zip`) produces an app bundle named from `pkg/appinfo.json`: the same application core the
 television runs, packaged so it starts on a Mac that has none of this repo's build environment —
 no Homebrew, no SDL, no toolchain. `ci/mkmacapp.py` is the whole recipe; this note is why it looks
 the way it does and what the result is and is not.

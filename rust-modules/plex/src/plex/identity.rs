@@ -33,7 +33,7 @@
 //! once from `/dev/urandom` and persisted by [`session`](super::session).
 
 /// The product name. Unique, and not `Plex …` anything.
-pub const PRODUCT: &str = "PlxNative";
+pub const PRODUCT: &str = plx_platform::APP_NAME;
 
 /// The app version, handed in by the application: `plx_plex` cannot see `PLX_VERSION`, because a
 /// `cargo:rustc-env` reaches one crate only and the rule that derives it (`rust-modules/build.rs`)
@@ -132,13 +132,12 @@ pub const VENDOR: &str = "LG";
 /// ([`plx_base::paths::app_id`]) and they hold separate session files, so each mints its own
 /// `X-Plex-Client-Identifier` and each appears as its own authorized device. Without the suffix
 /// the account grows two entries spelled identically, and revoking "the one on the TV" is a
-/// coin flip. The shipped app's name is unchanged, which matters because it is already in every
-/// existing user's device list — a rename there would read as a new, unknown device.
+/// coin flip. The flavour suffix keeps the device list unambiguous.
 pub fn device_name() -> &'static str {
     static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     NAME.get_or_init(|| match plx_base::paths::flavour() {
-        None => "PlxNative (LG TV)".to_string(),
-        Some(f) => format!("PlxNative {f} (LG TV)"),
+        None => format!("{PRODUCT} (LG TV)"),
+        Some(f) => format!("{PRODUCT} {f} (LG TV)"),
     })
 }
 
@@ -206,17 +205,15 @@ mod tests {
         assert!(!super::VENDOR.to_ascii_lowercase().starts_with("plex"));
     }
 
-    /// The shipped app's device name must not move — it is already in every existing user's
-    /// authorized-device list, and a rename there reads as a new, unknown device. A flavoured
-    /// install must move, or the two separate sign-ins are indistinguishable in that list.
+    /// Each install's device name follows the shared display name and identifies its flavour.
     #[test]
     fn only_a_flavoured_install_renames_the_device() {
         let name = super::device_name();
         match plx_base::paths::flavour() {
-            None => assert_eq!(name, "PlxNative (LG TV)"),
+            None => assert_eq!(name, format!("{} (LG TV)", super::PRODUCT)),
             Some(f) => assert!(name.contains(f), "{name:?} does not name the {f} install"),
         }
-        assert!(name.starts_with("PlxNative"));
+        assert!(name.starts_with(super::PRODUCT));
     }
 
     /// On the host there is no `/var/run/nyx/os_info.json`, so this exercises exactly the

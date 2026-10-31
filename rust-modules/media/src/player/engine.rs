@@ -2561,6 +2561,20 @@ pub fn reload_at(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter
     reload_start_outcome(ps, pa, ticket)
 }
 
+/// Reopen a retained direct route after a failed trial and retain its exact start attempt.
+pub fn reload_at_tracked(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, target_ns: i64) -> BufferfeedStartOutcome {
+    if crate::route::url(ps).is_empty() {
+        settle_missing_route_start();
+        return BufferfeedStartOutcome::Failed;
+    }
+    let Some(ticket) = prepare_reload_transaction() else {
+        return BufferfeedStartOutcome::Failed;
+    };
+    teardown(ps, pa, true);
+    arm_seek(target_ns);
+    start_bufferfeed_for(ps, pa, ticket)
+}
+
 /// NATIVE audio-track switch (direct-play, NO transcode): select the Nth audio stream from the
 /// same MKV and reload the direct-play pipeline at the current position (route::stream_acodec
 /// was already set to the chosen track's codec, so the fresh Load configures the right audio

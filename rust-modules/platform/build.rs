@@ -24,8 +24,15 @@ fn main() {
     println!("cargo:rerun-if-changed=build_support/catalog.rs");
     println!("cargo:rerun-if-changed=../build_support/install_identities.rs");
     println!("cargo:rerun-if-changed=../../locales");
+    let appinfo = Path::new("../../pkg/appinfo.json");
+    println!("cargo:rerun-if-changed={}", appinfo.display());
+    let metadata: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(appinfo).expect("read appinfo.json"))
+        .expect("parse appinfo.json");
+    let name = metadata["title"].as_str().filter(|s| !s.is_empty() && !s.chars().any(|c| matches!(c, '\0' | '\n' | '\r' | '{' | '}')))
+        .expect("appinfo title must be nonempty and contain no NUL, newline or braces");
+    println!("cargo:rustc-env=PLX_DISPLAY_NAME={name}");
     if let Err(mut errors) =
-        catalog::build(Path::new("../../locales"), &PathBuf::from(std::env::var_os("OUT_DIR").unwrap()))
+        catalog::build(Path::new("../../locales"), &PathBuf::from(std::env::var_os("OUT_DIR").unwrap()), name)
     {
         errors.sort();
         for e in &errors {

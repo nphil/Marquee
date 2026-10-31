@@ -469,13 +469,13 @@ mod tests {
     }
 
     #[test]
-    fn seek_jump_off_keeps_the_reveal_first_behavior() {
+    fn seek_jump_off_opens_a_preview_without_seeking() {
         let _g = plx_base::testlock::serial();
         let _playback = PlaybackFixture::new();
         plx_media::route::restore_instant_dpad_seeking(InstantDpadSeeking::Off);
         let mut page = PlayerScreen::new(EntryId(9));
         assert!(key(&mut page, consts::SDLK_RIGHT, Edge::Down, 1_000).is_empty());
-        assert!(page.scrub.reveal);
+        assert!(!page.scrub.reveal && page.scrub.ns > 40_000_000_000);
         assert!(page.hud.until > 1_000);
     }
 

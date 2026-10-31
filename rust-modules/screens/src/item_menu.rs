@@ -48,6 +48,7 @@ pub mod hold;
 pub mod watchlist;
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::convert::Infallible;
 use std::os::raw::c_int;
 
@@ -69,6 +70,7 @@ use plx_ui::screen::{
 };
 use plx_ui::table::{Row, MENU_MAX_W, MENU_MIN_W};
 use plx_ui::widgets::PosterMark;
+use plx_ui::decision_alert::{Answers, Choice, DecisionAlert};
 use plx_ui::{theme, Rect};
 
 /// What the highlighted row does on OK. Every variant carries the identity it needs, captured when
@@ -122,6 +124,8 @@ pub enum Action {
     /// Play this leaf's version `media`, resuming as Play does. The id, never a position: the app
     /// resolves it against the item it fetches (`plx_plex::plex::Metadata::media_version`).
     PlayVersion { rk: String, media: plx_plex::plex::MediaId },
+    /// Permanently delete the named item from its Plex server.
+    DeleteMedia(String),
 }
 
 impl Action {
@@ -160,6 +164,7 @@ impl Action {
             | Action::RemoveFromDeck(rk)
             | Action::GoToCatalog(rk)
             | Action::WatchlistRemove(rk)
+            | Action::DeleteMedia(rk)
             | Action::ChooseVersion(rk) => rk,
             Action::PlayVersion { rk, .. } => rk,
             Action::PlayTrailer { rk, .. } => rk,
@@ -184,6 +189,7 @@ impl Action {
             Action::WatchlistAdd { .. } => 11,
             Action::ChooseVersion(_) => 12,
             Action::PlayVersion { .. } => 13,
+            Action::DeleteMedia(_) => 14,
         };
         c.u32(tag).str(self.rk());
         if let Action::WatchlistAdd { hex } = self {
@@ -222,7 +228,7 @@ const EDGE_X: f32 = plx_ui::consts::MARGIN_X;
 
 pub const SHAPE: &str =
     "ItemMenu{arg:ItemMenuArg,acts:[Option<Action{tag:u32,rk:str,season:u32,part:str,vcodec:str,acodec:str,title:str,hex:str(WatchlistAdd only),media:u64(PlayVersion only)}>],sel:i32,\
-     table:TableViewMotion}";
+     pending_delete:Option<str>,alert_open:u32,alert_choice:u32,alert_scroll:u32,table:TableViewMotion}";
 
 /// Is `m` an item the menu has anything to offer? A leaf or a show/season — i.e. everything the
 /// home shelves carry. Kept as a predicate so the caller can decline to present an empty panel.
@@ -253,6 +259,7 @@ pub enum ItemRow {
     WatchlistAdd,
     /// Play Version… (a leaf with two or more versions).
     PlayVersion,
+    DeleteMedia,
     /// One version on the Play Version page, by its position in the list captured at open.
     Version(u16),
 }
@@ -280,6 +287,7 @@ impl FormId for ItemRow {
             ItemRow::WatchlistRemove => 10,
             ItemRow::WatchlistAdd => 11,
             ItemRow::PlayVersion => 12,
+            ItemRow::DeleteMedia => 13,
             ItemRow::Version(n) => VERSION_KEY_BASE + u32::from(*n),
         })
     }
@@ -448,7 +456,15 @@ fn build_card(
         // face adds Add / Remove, last, with the one other destructive row.
         sec = watchlist::push_face(sec, face);
     }
+    if matches!(m.kind, 0 | 1 | 3) && !m.rk.is_empty() {
+        sec = delete_row(sec, &m.rk);
+    }
     Form::new().section(sec)
+}
+
+fn delete_row(sec: FormSection<ItemRow, Action, Infallible>, rk: &str) -> FormSection<ItemRow, Action, Infallible> {
+    sec.item(ItemRow::DeleteMedia, RowKind::Button, Action::DeleteMedia(rk.to_owned()),
+        Row::new("Delete").licon(Icon::Close).destructive(true))
 }
 
 /// The state group every menu ends with: the watch-state row (or ROWS), then (for a leaf) Play from
@@ -552,7 +568,8 @@ fn state_rows(
 /// reachable and a part-watched one gets the pair, exactly as a shelf card does.
 fn build_episode(rk: &str, mark: PosterMark, versions: &[MediaVersion], face: Option<&watchlist::Face>) -> ItemForm {
     let sec = state_rows(FormSection::new(""), rk, mark, true, versions.len() >= 2, None, "");
-    Form::new().section(watchlist::push_face(sec, face))
+    let sec = watchlist::push_face(sec, face);
+    Form::new().section(if rk.is_empty() { sec } else { delete_row(sec, rk) })
 }
 
 /// The Watchlist grid's hold menu (plan §1.9): [`self::hold::rows_for`] bound to
@@ -646,6 +663,10 @@ pub fn fallback_anchor() -> Rect {
     )
 }
 
+const ALERT_GROUP: GroupId = GroupId(1);
+const ALERT_CANCEL: u32 = 10000;
+const ALERT_DELETE: u32 = 10001;
+
 pub struct ItemMenuScreen {
     entry: EntryId,
     arg: ItemMenuArg,
@@ -662,6 +683,9 @@ pub struct ItemMenuScreen {
     /// The Watchlist subject captured when the menu opened; `None` omits the membership row
     /// (plex.tv unreachable, or the item has no catalog guid). See [`watchlist::Face`].
     face: Option<watchlist::Face>,
+    alert: DecisionAlert,
+    alert_frames: Cell<Option<(Rect, Rect)>>,
+    pending_delete: Option<String>,
 }
 
 /// Play Trailer only when the already-loaded Detail is this movie/show and already has a trailer.
@@ -690,6 +714,9 @@ impl ItemMenuScreen {
             repeat: RepeatGate::IDLE,
             built: false,
             face: None,
+            alert: DecisionAlert::new(),
+            alert_frames: Cell::new(None),
+            pending_delete: None,
         }
     }
 
@@ -714,7 +741,7 @@ impl ItemMenuScreen {
                 let remove = self.arg.catalog.as_ref().map(|c| c.guid.as_str());
                 build_card(row, *from_deck, plx_media::route::deck_press(), trailer.as_ref(), remove, self.face.as_ref())
             }
-            ItemMenuKind::Episode { mark, versions } => build_episode(&self.arg.rk, *mark, versions, self.face.as_ref()),
+            ItemMenuKind::Episode { mark, versions, .. } => build_episode(&self.arg.rk, *mark, versions, self.face.as_ref()),
             ItemMenuKind::Season { mark, .. } => build_season(&self.arg.rk, *mark, self.face.as_ref()),
             ItemMenuKind::Catalog { state } => {
                 let guid = self.arg.catalog.as_ref().map_or("", |c| c.guid.as_str());
@@ -767,6 +794,46 @@ impl ItemMenuScreen {
             self.show_versions(rk);
             return;
         }
+        if let Some(Action::DeleteMedia(rk)) = &act {
+            if !rk.is_empty() {
+                let (name, scope) = match &self.arg.kind {
+                    ItemMenuKind::Card { row, .. } => (row.title.as_str(), match row.kind {
+                        0 => "This movie and its media files will be permanently deleted from the server.",
+                        1 => "This show, all its seasons and episodes, and their media files will be permanently deleted from the server.",
+                        _ => "This episode and its media files will be permanently deleted from the server.",
+                    }),
+                    ItemMenuKind::Episode { title, .. } => (title.as_str(), "This episode and its media files will be permanently deleted from the server."),
+                    _ => return,
+                };
+                let name = if name.trim().is_empty() { "Untitled item" } else { name };
+                self.alert.open_card(c"Delete media?", vec![Cow::Owned(name.to_owned()), Cow::Borrowed(scope)], Answers::Two);
+                self.pending_delete = Some(rk.clone());
+                if let Some(i) = self.form.index_of_key(RowKey(elem)) { self.form.table.sel = i as i32; }
+                let to = fx.from();
+                crate::plaintext_question::enter_group(fx, to, ALERT_GROUP);
+            }
+            return;
+        }
+        self.dispatch(act, fx);
+    }
+
+    fn answer_delete<H: AppLike>(&mut self, confirm: bool, fx: &mut Effects<'_, H>) {
+        if !self.alert.is_open() { return; }
+        self.alert.dismiss();
+        let pending = self.pending_delete.take();
+        if confirm {
+            self.dispatch(pending.map(Action::DeleteMedia), fx);
+        } else {
+            let to = fx.from();
+            fx.push(Fx::Deliver(to, plx_machine::machine::Delivery::Screen(ScreenEvent::Enter(
+                plx_ui::screen::Enter::Fresh { focus: plx_ui::screen::FocusTarget::Elem(FocusKey {
+                    entry: self.entry, elem: ItemRow::DeleteMedia.key().0,
+                }) },
+            ))));
+        }
+    }
+
+    fn dispatch<H: AppLike>(&mut self, act: Option<Action>, fx: &mut Effects<'_, H>) {
         // Every arm of the dispatch turns an rk into a blocking fetch, a scrobble or a play; an
         // empty one would fetch nothing and land on a blank page. `build` already refuses to offer
         // such a row — this is the belt to that braces, since the rows are data-driven off hub
@@ -832,6 +899,46 @@ impl ItemMenuScreen {
 impl<H: AppLike + crate::registry::MetadataLike> Machine<H> for ItemMenuScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        if self.alert.visible() {
+            match ev {
+                ScreenEvent::Tick(tick) => self.alert.update(tick.dt()),
+                ScreenEvent::FocusMoved { to, .. } if self.alert.is_open() => {
+                    if to.elem == ALERT_CANCEL || to.elem == ALERT_DELETE {
+                        self.alert.set_choice(if to.elem == ALERT_DELETE { Choice::Destructive } else { Choice::Cancel });
+                    }
+                    return Handled::Yes;
+                }
+                ScreenEvent::Activate(_) => return Handled::Yes,
+                ScreenEvent::PressCommit(_) => {
+                    if self.alert.is_open() {
+                        match cx.focus.current.map(|k| k.elem) {
+                            Some(ALERT_CANCEL) => self.answer_delete(false, fx),
+                            Some(ALERT_DELETE) => self.answer_delete(true, fx),
+                            _ => {}
+                        }
+                    }
+                    return Handled::Yes;
+                }
+                ScreenEvent::Input(input) => {
+                    if let InputKind::Key { key, edge, .. } = input.kind {
+                        if self.alert.is_open() && key == Key::Back && edge == Edge::Down {
+                            self.answer_delete(false, fx);
+                            return Handled::Yes;
+                        }
+                        if self.alert.is_open() && matches!(key, Key::Up | Key::Down) && edge != Edge::Up {
+                            self.alert.scroll_by(cx.measure, if key == Key::Up { -1 } else { 1 });
+                            return Handled::Yes;
+                        }
+                        if !self.alert.is_open() || matches!(key, Key::Back | Key::Up | Key::Down) {
+                            return Handled::Yes;
+                        }
+                    } else if !self.alert.is_open() {
+                        return Handled::Yes;
+                    }
+                }
+                _ => {}
+            }
+        }
         match ev {
             ScreenEvent::Mount => {
                 self.build_rows(H::metadata(cx));
@@ -892,6 +999,12 @@ impl<H: AppLike + crate::registry::MetadataLike> Machine<H> for ItemMenuScreen {
 
 impl<H: AppLike> Focusable<H> for ItemMenuScreen {
     fn groups(&self, cx: &Cx<'_, H>, out: &mut Vec<GroupSpec>) {
+        if self.alert.is_open() {
+            let (cancel, delete) = self.alert_frames.get().unwrap_or((Rect::FULL, Rect::FULL));
+            out.push(GroupSpec { id: ALERT_GROUP, kind: GroupKind::Row { wrap: false }, seat: Seat::First,
+                reachable: AxisMask::BOTH, edge: [EdgeRule::Stop; 4], extent: cancel.union(delete), len: 2, elem: ElemKind::Control });
+            return;
+        }
         out.push(GroupSpec {
             id: GroupId(0),
             kind: GroupKind::Column,
@@ -904,9 +1017,19 @@ impl<H: AppLike> Focusable<H> for ItemMenuScreen {
         });
     }
     fn group_of(&self, elem: &u32, _: &Cx<'_, H>) -> Option<GroupId> {
+        if self.alert.is_open() {
+            return matches!(*elem, ALERT_CANCEL | ALERT_DELETE).then_some(ALERT_GROUP);
+        }
         self.form.index_of_key(RowKey(*elem)).map(|_| GroupId(0))
     }
     fn neighbour(&self, key: FocusKey<u32>, dir: Dir, _: &Cx<'_, H>) -> Step<u32> {
+        if self.alert.is_open() {
+            return match (key.elem, dir) {
+                (ALERT_CANCEL, Dir::Right) => Step::Move(FocusKey { entry: self.entry, elem: ALERT_DELETE }),
+                (ALERT_DELETE, Dir::Left) => Step::Move(FocusKey { entry: self.entry, elem: ALERT_CANCEL }),
+                _ => Step::Edge,
+            };
+        }
         let delta = match dir {
             Dir::Up => -1,
             Dir::Down => 1,
@@ -921,6 +1044,12 @@ impl<H: AppLike> Focusable<H> for ItemMenuScreen {
         }
     }
     fn place(&self, elem: &u32, cx: &Cx<'_, H>, _: At) -> Option<Placed> {
+        if self.alert.is_open() {
+            if !matches!(*elem, ALERT_CANCEL | ALERT_DELETE) { return None; }
+            let (cancel, delete) = self.alert_frames.get().unwrap_or((Rect::FULL, Rect::FULL));
+            let rect = if *elem == ALERT_DELETE { delete } else { cancel };
+            return Some(Placed { rect, rest_rect: rect, clip: Rect::FULL, index: Some((*elem == ALERT_DELETE) as u32) });
+        }
         <Self as Focusable<H>>::group_of(self, elem, cx)?;
         let index = self.form.index_of_key(RowKey(*elem))?;
         let rect = self.form.table.row_frame(self.frame(cx.measure), index as i32)?;
@@ -932,6 +1061,10 @@ impl<H: AppLike> Focusable<H> for ItemMenuScreen {
         })
     }
     fn reconcile(&self, want: FocusKey<u32>, cx: &Cx<'_, H>) -> FocusKey<u32> {
+        if self.alert.is_open() {
+            return FocusKey { entry: self.entry, elem: if matches!(want.elem, ALERT_CANCEL | ALERT_DELETE) { want.elem }
+                else if self.alert.choice() == Choice::Destructive { ALERT_DELETE } else { ALERT_CANCEL } };
+        }
         if <Self as Focusable<H>>::group_of(self, &want.elem, cx).is_some() {
             want
         } else {
@@ -941,7 +1074,8 @@ impl<H: AppLike> Focusable<H> for ItemMenuScreen {
             }
         }
     }
-    fn seat(&self, _: GroupId, _: Placed, _: &Cx<'_, H>) -> FocusKey<u32> {
+    fn seat(&self, group: GroupId, _: Placed, _: &Cx<'_, H>) -> FocusKey<u32> {
+        if group == ALERT_GROUP { return FocusKey { entry: self.entry, elem: ALERT_CANCEL }; }
         FocusKey {
             entry: self.entry,
             elem: self.form.selected_key().map_or_else(|| self.opening(), |k| k.0),
@@ -1005,6 +1139,18 @@ impl<H: AppLike + crate::registry::MetadataLike> Screen<H> for ItemMenuScreen {
                 );
             }
         }
+        if self.alert.visible() {
+            self.alert.draw_scrim();
+            self.alert.draw(plx_platform::i18n::msg::settings_cancel_c(), plx_platform::i18n::msg::settings_delete_c(), f.measure);
+            let frames = self.alert.frames(f.measure);
+            self.alert_frames.set(Some(frames));
+            if self.alert.is_open() && self.alert.settled() {
+                for (elem, rect) in [(ALERT_CANCEL, frames.0), (ALERT_DELETE, frames.1)] {
+                    f.stop(plx_ui::Painter::root(), Stop { key: FocusKey { entry: self.entry, elem }, rect,
+                        rest_rect: rect, clip: Rect::FULL, hover: Hover::Focus, activate: Activate::Press });
+                }
+            }
+        }
     }
     fn render(&self) -> RenderStrategy {
         RenderStrategy::Page
@@ -1020,6 +1166,9 @@ impl LogicalState for ItemMenuScreen {
             c.option(self.form.binding_at(i).map(|b| &b.action), |c, a| a.write(c));
         }
         c.u32(self.form.table.sel as u32);
+        c.option(self.pending_delete.as_ref(), |c, rk| { c.str(rk); });
+        c.u32(self.alert.is_open() as u32).u32((self.alert.choice() == Choice::Destructive) as u32);
+        c.u32(self.alert.scroll_target_bits());
         self.form.table.write_motion(c);
     }
     fn probe(&self, out: &mut String) {
@@ -1151,11 +1300,11 @@ mod tests {
         let on = build_deck(&item(3, PosterMark::None), true, DeckPress::Details);
         assert_eq!(
             labels(&on),
-            ["Play", "Go to Episode", "—", "Mark as Watched", "Play from Start", "Remove from Deck"]
+            ["Play", "Go to Episode", "—", "Mark as Watched", "Play from Start", "Remove from Deck", "Delete"]
         );
         assert_eq!(
             on.ids(),
-            [ItemRow::Play, ItemRow::GoToItem, ItemRow::MarkWatched, ItemRow::PlayFromStart, ItemRow::RemoveFromDeck]
+            [ItemRow::Play, ItemRow::GoToItem, ItemRow::MarkWatched, ItemRow::PlayFromStart, ItemRow::RemoveFromDeck, ItemRow::DeleteMedia]
         );
         assert!(!on.offers(ItemRow::GoToShow), "OK on the card already opens that page");
         assert_eq!(on.action(ItemRow::GoToItem), Action::GoToItem("42".into()));
@@ -1168,7 +1317,7 @@ mod tests {
 
         // a movie: no navigation group at all, so no separator — not at the top, not under Play
         let movie = build_deck(&item(0, PosterMark::None), true, DeckPress::Details);
-        assert_eq!(labels(&movie), ["Play", "Mark as Watched", "Play from Start", "Remove from Deck"]);
+        assert_eq!(labels(&movie), ["Play", "Mark as Watched", "Play from Start", "Remove from Deck", "Delete"]);
         assert!(!movie.offers(ItemRow::GoToItem) && !movie.offers(ItemRow::GoToShow));
         assert!(!labels(&movie).iter().any(|l| l == "—"), "{:?}", labels(&movie));
 
@@ -1177,7 +1326,7 @@ mod tests {
         let mut orphan = item(3, PosterMark::None);
         orphan.show_rk.clear();
         let orphan = build_deck(&orphan, true, DeckPress::Details);
-        assert_eq!(labels(&orphan), ["Play", "Mark as Watched", "Play from Start", "Remove from Deck"]);
+        assert_eq!(labels(&orphan), ["Play", "Mark as Watched", "Play from Start", "Remove from Deck", "Delete"]);
 
         // an item with a resume point says so, in the hero pill's word
         let resuming = build_deck(&item(0, PosterMark::InProgress), true, DeckPress::Details);
@@ -1244,7 +1393,7 @@ mod tests {
             let off = build_deck(&ep, false, mode);
             assert_eq!(
                 labels(&off),
-                ["Go to Episode", "Go to Show", "—", "Mark as Watched", "Play from Start"],
+                ["Go to Episode", "Go to Show", "—", "Mark as Watched", "Play from Start", "Delete"],
                 "{mode:?}"
             );
         }
@@ -1284,13 +1433,13 @@ mod tests {
                 "Go to Show",
                 "—",
                 "Mark as Watched",
-                "Play from Start"
+                "Play from Start", "Delete"
             ]
         );
         // the separator is not a row: every BOUND row acts, and there are four of them
         assert_eq!(
             menu.ids(),
-            [ItemRow::GoToItem, ItemRow::GoToShow, ItemRow::MarkWatched, ItemRow::PlayFromStart]
+            [ItemRow::GoToItem, ItemRow::GoToShow, ItemRow::MarkWatched, ItemRow::PlayFromStart, ItemRow::DeleteMedia]
         );
         // "Go to Show" targets the SHOW rk + the episode's season, not the episode
         match menu.action(ItemRow::GoToShow) {
@@ -1304,7 +1453,7 @@ mod tests {
         let menu = build(&item(0, PosterMark::Watched), false); // movie, viewCount >= 1
         assert_eq!(
             labels(&menu),
-            ["Go to Movie", "—", "Mark as Unwatched", "Play from Start"]
+            ["Go to Movie", "—", "Mark as Unwatched", "Play from Start", "Delete"]
         );
         assert_eq!(
             menu.action(ItemRow::MarkUnwatched).watch_write(),
@@ -1330,7 +1479,7 @@ mod tests {
         let menu = build(&item(1, PosterMark::InProgress), false);
         assert_eq!(
             labels(&menu),
-            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched"]
+            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched", "Delete"]
         );
         assert_eq!(
             menu.action(ItemRow::MarkWatched).watch_write(),
@@ -1344,10 +1493,10 @@ mod tests {
         // a show whose every leaf is seen is DONE, and offering to mark it watched again was the
         // old row set's other wrong answer (it read `!unwatched`, which cannot tell the two apart)
         let menu = build(&item(1, PosterMark::Watched), false);
-        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Unwatched"]);
+        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Unwatched", "Delete"]);
         // …and one nobody has opened offers only the way forward
         let menu = build(&item(1, PosterMark::None), false);
-        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Watched"]);
+        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Watched", "Delete"]);
     }
 
     #[test]
@@ -1359,7 +1508,7 @@ mod tests {
         let menu = build(&m, false);
         assert_eq!(
             labels(&menu),
-            ["Go to Episode", "—", "Mark as Watched", "Play from Start"]
+            ["Go to Episode", "—", "Mark as Watched", "Play from Start", "Delete"]
         );
         assert!(!menu.offers(ItemRow::GoToShow));
         // and a SEASON with no parent has no navigation at all — so no leading separator either,
@@ -1388,7 +1537,7 @@ mod tests {
                 "Go to Show",
                 "—",
                 "Mark as Watched",
-                "Play from Start"
+                "Play from Start", "Delete"
             ]
         );
         assert!(
@@ -1405,11 +1554,11 @@ mod tests {
                 "—",
                 "Mark as Watched",
                 "Play from Start",
-                "Remove from Deck"
+                "Remove from Deck", "Delete"
             ],
             "…and on the deck it is the LAST row, after the watched toggle"
         );
-        assert_eq!(on_deck.ids().last(), Some(&ItemRow::RemoveFromDeck), "it is the last row");
+        assert_eq!(on_deck.ids().last(), Some(&ItemRow::DeleteMedia));
         match on_deck.action(ItemRow::RemoveFromDeck) {
             Action::RemoveFromDeck(rk) => {
                 assert_eq!(rk, "42", "…carrying the card's own ratingKey")
@@ -1427,17 +1576,17 @@ mod tests {
     #[test]
     fn the_filmstrip_menu_is_the_state_group_alone() {
         let menu = build_episode("42", PosterMark::None);
-        assert_eq!(labels(&menu), ["Mark as Watched", "Play from Start"]);
-        assert_eq!(menu.ids().len(), 2, "no separator, so every row acts");
+        assert_eq!(labels(&menu), ["Mark as Watched", "Play from Start", "Delete"]);
+        assert_eq!(menu.ids().len(), 3, "no separator, so every row acts");
         // the shelf menu's episode rows END with exactly these two, in this order
         let shelf = build(&item(3, PosterMark::None), false);
         let shelf_labels = labels(&shelf);
-        assert_eq!(labels(&menu), shelf_labels[shelf_labels.len() - 2..]);
+        assert_eq!(labels(&menu), shelf_labels[shelf_labels.len() - 3..]);
 
         // a watched episode gets the way back instead, carrying its OWN rk (the menu captured its
         // target when it was presented — nothing here may resolve through a live focus index)
         let menu = build_episode("77", PosterMark::Watched);
-        assert_eq!(labels(&menu), ["Mark as Unwatched", "Play from Start"]);
+        assert_eq!(labels(&menu), ["Mark as Unwatched", "Play from Start", "Delete"]);
         match menu.action(ItemRow::MarkUnwatched) {
             Action::MarkUnwatched(rk) => assert_eq!(rk, "77"),
             _ => panic!("the unwatched row must commit MarkUnwatched"),
@@ -1488,15 +1637,15 @@ mod tests {
         };
         assert_eq!(
             tail(PosterMark::None),
-            ["Mark as Watched", "Play from Start"]
+            ["Mark as Watched", "Play from Start", "Delete"]
         );
         assert_eq!(
             tail(PosterMark::InProgress),
-            ["Mark as Watched", "Mark as Unwatched", "Play from Start"]
+            ["Mark as Watched", "Mark as Unwatched", "Play from Start", "Delete"]
         );
         assert_eq!(
             tail(PosterMark::Watched),
-            ["Mark as Unwatched", "Play from Start"]
+            ["Mark as Unwatched", "Play from Start", "Delete"]
         );
 
         // …and the detail page's filmstrip, off the same builder, so the two cannot drift
@@ -1505,15 +1654,15 @@ mod tests {
         };
         assert_eq!(
             strip(PosterMark::None),
-            ["Mark as Watched", "Play from Start"]
+            ["Mark as Watched", "Play from Start", "Delete"]
         );
         assert_eq!(
             strip(PosterMark::InProgress),
-            ["Mark as Watched", "Mark as Unwatched", "Play from Start"]
+            ["Mark as Watched", "Mark as Unwatched", "Play from Start", "Delete"]
         );
         assert_eq!(
             strip(PosterMark::Watched),
-            ["Mark as Unwatched", "Play from Start"]
+            ["Mark as Unwatched", "Play from Start", "Delete"]
         );
     }
 
@@ -1549,7 +1698,7 @@ mod tests {
         };
         assert_eq!(
             set(&movie("")),
-            ["Go to Movie", "—", "Mark as Watched", "Play from Start"],
+            ["Go to Movie", "—", "Mark as Watched", "Play from Start", "Delete"],
             "never started: only the way forward"
         );
         assert_eq!(
@@ -1559,13 +1708,13 @@ mod tests {
                 "—",
                 "Mark as Watched",
                 "Mark as Unwatched",
-                "Play from Start"
+                "Play from Start", "Delete"
             ],
             "part-watched: both ends are reachable and both are true"
         );
         assert_eq!(
             set(&movie(r#","viewCount":2"#)),
-            ["Go to Movie", "—", "Mark as Unwatched", "Play from Start"],
+            ["Go to Movie", "—", "Mark as Unwatched", "Play from Start", "Delete"],
             "finished: only the way back"
         );
 
@@ -1574,17 +1723,17 @@ mod tests {
             |extra: &str| format!(r#"{{"ratingKey":"14","type":"show","leafCount":10{extra}}}"#);
         assert_eq!(
             set(&show("")),
-            ["Go to Show", "—", "Mark as Watched"],
+            ["Go to Show", "—", "Mark as Watched", "Delete"],
             "no leaf viewed"
         );
         assert_eq!(
             set(&show(r#","viewedLeafCount":3"#)),
-            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched"],
+            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched", "Delete"],
             "3 of 10: neither watched nor unwatched, so BOTH verbs — the case `viewCount > 0` misses"
         );
         assert_eq!(
             set(&show(r#","viewedLeafCount":10"#)),
-            ["Go to Show", "—", "Mark as Unwatched"],
+            ["Go to Show", "—", "Mark as Unwatched", "Delete"],
             "all 10"
         );
 
@@ -1682,7 +1831,8 @@ mod tests {
         assert_eq!(step(GoToItem, Dir::Down), Some(key(GoToShow)));
         assert_eq!(step(GoToShow, Dir::Down), Some(key(MarkWatched))); // the separator is skipped
         assert_eq!(step(MarkWatched, Dir::Down), Some(key(PlayFromStart)));
-        assert_eq!(step(PlayFromStart, Dir::Down), None); // stops at the end
+        assert_eq!(step(PlayFromStart, Dir::Down), Some(key(DeleteMedia)));
+        assert_eq!(step(DeleteMedia, Dir::Down), None);
         assert_eq!(step(MarkWatched, Dir::Up), Some(key(GoToShow))); // skipped back over the separator
         assert_eq!(step(GoToShow, Dir::Up), Some(key(GoToItem)));
         assert_eq!(step(GoToItem, Dir::Up), None); // stops at the start
@@ -1751,6 +1901,7 @@ mod tests {
                 kind: ItemMenuKind::Episode {
                     mark: PosterMark::None,
                     versions: Vec::new(),
+                    title: "Episode".into(),
                 },
                 host: EntryId(1),
                 focus: None,
@@ -2131,7 +2282,7 @@ mod tests {
         let menu = build(&item(0, PosterMark::None), false);
         assert_eq!(
             labels(&menu),
-            ["Go to Movie", "—", "Mark as Watched", "Play from Start"]
+            ["Go to Movie", "—", "Mark as Watched", "Play from Start", "Delete"]
         );
         assert!(!menu.offers(ItemRow::PlayTrailer));
     }
@@ -2387,7 +2538,7 @@ mod tests {
         for row in [ItemRow::GoToItem, ItemRow::MarkWatched, ItemRow::PlayFromStart] {
             assert!(ids.contains(&row), "the card's {row:?} row is there: {ids:?}");
         }
-        assert_eq!(ids.last(), Some(&ItemRow::WatchlistRemove), "Remove is last");
+        assert_eq!(ids.last(), Some(&ItemRow::DeleteMedia));
         assert_eq!(menu.action(ItemRow::WatchlistRemove), Action::WatchlistRemove("plex://movie/abc".into()));
         assert!(menu.is_destructive(ItemRow::WatchlistRemove));
         let plain = built(super::build_with(&movie, false, DeckPress::Play, None));
@@ -2426,5 +2577,139 @@ mod tests {
             }
         }
         plx_ui::table::assert_no_fit_failures(&out);
+    }
+    #[test]
+    fn delete_is_only_offered_for_addressable_media() {
+        for kind in [0, 1, 3] {
+            let menu = build(&item(kind, PosterMark::None), false);
+            assert!(menu.offers(ItemRow::DeleteMedia));
+            assert!(menu.is_destructive(ItemRow::DeleteMedia));
+            assert_eq!(menu.action(ItemRow::DeleteMedia), Action::DeleteMedia("42".into()));
+        }
+        assert!(!build(&item(2, PosterMark::None), false).offers(ItemRow::DeleteMedia));
+        assert!(!build_episode("", PosterMark::None).offers(ItemRow::DeleteMedia));
+        assert!(build_episode("77", PosterMark::None).offers(ItemRow::DeleteMedia));
+        assert!(!build_season("77", PosterMark::None).offers(ItemRow::DeleteMedia));
+    }
+
+    #[test]
+    fn deletion_requires_one_explicit_confirmation_and_restores_focus_on_cancel() {
+        let mut movie = item(0, PosterMark::None);
+        movie.title = "Example movie".into();
+        let mut screen = ItemMenuScreen::new(EntryId(7), card_arg(&movie, false));
+        screen.build_rows(test_store().view());
+        let delete = ItemRow::DeleteMedia.key().0;
+        let mut out = Vec::new();
+        let mut present = plx_machine::present::Present::new();
+        {
+            let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+            screen.activate::<HostFixture>(delete, &mut fx);
+        }
+        assert!(!out.iter().any(|e| matches!(e.fx, Fx::App(AppFx::ItemMenu(_)))));
+        assert_eq!(screen.alert.choice(), Choice::Cancel);
+        assert_eq!(screen.alert.body_for_test()[0], "Example movie");
+        assert!(screen.alert.body_for_test()[1].contains("permanently deleted"));
+        with_cx(|cx| {
+            let key = FocusKey { entry: EntryId(7), elem: delete };
+            assert_eq!(<ItemMenuScreen as Focusable<HostFixture>>::reconcile(&screen, key, cx).elem, ALERT_CANCEL);
+            assert!(matches!(<ItemMenuScreen as Focusable<HostFixture>>::neighbour(&screen, FocusKey { entry: EntryId(7), elem: ALERT_CANCEL }, Dir::Right, cx), Step::Move(k) if k.elem == ALERT_DELETE));
+        });
+        out.clear();
+        {
+            let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+            screen.answer_delete::<HostFixture>(false, &mut fx);
+            screen.answer_delete::<HostFixture>(true, &mut fx);
+        }
+        assert!(!out.iter().any(|e| matches!(e.fx, Fx::App(AppFx::ItemMenu(_)))));
+        assert!(out.iter().any(|e| matches!(&e.fx, Fx::Deliver(_, plx_machine::machine::Delivery::Screen(ScreenEvent::Enter(plx_ui::screen::Enter::Fresh { focus: plx_ui::screen::FocusTarget::Elem(key) }))) if key.elem == delete)));
+        assert_eq!(screen.form.selected_key(), Some(ItemRow::DeleteMedia.key()));
+        out.clear();
+        {
+            let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+            screen.activate::<HostFixture>(delete, &mut fx);
+            screen.answer_delete::<HostFixture>(true, &mut fx);
+            screen.answer_delete::<HostFixture>(true, &mut fx);
+        }
+        let requests: Vec<_> = out.iter().filter_map(|e| match &e.fx { Fx::App(AppFx::ItemMenu(r)) => Some(r), _ => None }).collect();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].act, Action::DeleteMedia("42".into()));
+        assert_eq!(requests[0].sid, movie.sid);
+    }
+
+    #[test]
+    fn show_and_episode_confirmations_name_the_full_scope() {
+        for (kind, scope) in [(1, "all its seasons and episodes"), (3, "This episode")] {
+            let mut row = item(kind, PosterMark::None);
+            row.title = "Named title".into();
+            let mut screen = ItemMenuScreen::new(EntryId(7), card_arg(&row, false));
+            screen.build_rows(test_store().view());
+            let mut out = Vec::new();
+            let mut present = plx_machine::present::Present::new();
+            let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+            screen.activate::<HostFixture>(ItemRow::DeleteMedia.key().0, &mut fx);
+            assert_eq!(screen.alert.body_for_test()[0], "Named title");
+            assert!(screen.alert.body_for_test()[1].contains(scope));
+            assert!(screen.alert.body_for_test()[1].contains("permanently deleted"));
+        }
+    }
+    #[test]
+    fn repeated_commits_and_back_cannot_confirm_a_stale_choice() {
+        let mut screen = ItemMenuScreen::new(EntryId(7), card_arg(&item(0, PosterMark::None), false));
+        screen.build_rows(test_store().view());
+        let mut out = Vec::new();
+        let mut present = plx_machine::present::Present::new();
+        let measure = FixtureMeasure;
+        let make_cx = |elem| Cx::<HostFixture> {
+            views: (), tick: Tick::default(), measure: &measure,
+            focus: FocusRead { current: Some(FocusKey { entry: EntryId(7), elem }), ..Default::default() },
+            press: PressRead::default(), owner: InputOwner::Entry(EntryId(7)),
+        };
+        let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+        screen.activate::<HostFixture>(ItemRow::DeleteMedia.key().0, &mut fx);
+        let commit = ScreenEvent::PressCommit(plx_machine::machine::PressId(1));
+        let _ = <ItemMenuScreen as Machine<HostFixture>>::step(&mut screen, &commit, &make_cx(ItemRow::DeleteMedia.key().0), &mut fx);
+        let back = ScreenEvent::Input(InputEvent { at: Tick::default(), source: Source::Sdl,
+            kind: InputKind::Key { key: Key::Back, sym: 0, wcode: 0, edge: Edge::Down, at_edge: false } });
+        let _ = <ItemMenuScreen as Machine<HostFixture>>::step(&mut screen, &back, &make_cx(ALERT_DELETE), &mut fx);
+        let _ = <ItemMenuScreen as Machine<HostFixture>>::step(&mut screen, &commit, &make_cx(ALERT_DELETE), &mut fx);
+        assert!(!out.iter().any(|e| matches!(e.fx, Fx::App(AppFx::ItemMenu(_)))));
+    }
+
+    #[test]
+    fn filmstrip_confirmation_uses_the_captured_episode_title() {
+        let mut arg = card_arg(&item(3, PosterMark::None), false);
+        arg.rk = "episode-77".into();
+        arg.kind = ItemMenuKind::Episode { title: "The episode".into(), mark: PosterMark::None, versions: Vec::new() };
+        let mut screen = ItemMenuScreen::new(EntryId(7), arg);
+        screen.build_rows(test_store().view());
+        let mut out = Vec::new();
+        let mut present = plx_machine::present::Present::new();
+        let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+        screen.activate::<HostFixture>(ItemRow::DeleteMedia.key().0, &mut fx);
+        assert_eq!(screen.alert.body_for_test()[0], "The episode");
+        assert!(screen.alert.body_for_test()[1].contains("This episode"));
+        screen.answer_delete::<HostFixture>(true, &mut fx);
+        assert!(out.iter().any(|e| matches!(&e.fx, Fx::App(AppFx::ItemMenu(req)) if req.act == Action::DeleteMedia("episode-77".into()))));
+    }
+    #[test]
+    fn long_delete_disclosure_scrolls_without_selecting_delete() {
+        let mut movie = item(0, PosterMark::None);
+        movie.title = "A very long title ".repeat(200);
+        let mut screen = ItemMenuScreen::new(EntryId(7), card_arg(&movie, false));
+        screen.build_rows(test_store().view());
+        let mut out = Vec::new();
+        let mut present = plx_machine::present::Present::new();
+        let mut fx = Effects::new(&mut out, plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+        screen.activate::<HostFixture>(ItemRow::DeleteMedia.key().0, &mut fx);
+        let input = |key| ScreenEvent::Input(InputEvent { at: Tick::default(), source: Source::Sdl,
+            kind: InputKind::Key { key, sym: 0, wcode: 0, edge: Edge::Down, at_edge: false } });
+        with_cx(|cx| {
+            assert_eq!(<ItemMenuScreen as Machine<HostFixture>>::step(&mut screen, &input(Key::Down), cx, &mut fx), Handled::Yes);
+            assert!(f32::from_bits(screen.alert.scroll_target_bits()) > 0.0);
+            assert_eq!(screen.alert.choice(), Choice::Cancel);
+            assert_eq!(<ItemMenuScreen as Machine<HostFixture>>::step(&mut screen, &input(Key::Up), cx, &mut fx), Handled::Yes);
+            assert_eq!(f32::from_bits(screen.alert.scroll_target_bits()), 0.0);
+        });
+        assert!(!out.iter().any(|e| matches!(e.fx, Fx::App(AppFx::ItemMenu(_)))));
     }
 }

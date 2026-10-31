@@ -342,16 +342,8 @@ pub(crate) fn drain() -> Vec<String> {
     PENDING.take()
 }
 
-/// How many commits are waiting for [`drain`]. Diagnostic only — nothing in production drains or
-/// counts for a decision — but it is what makes the `txt:` remote token observable in the event log
-/// on a route whose text goes nowhere.
-pub(crate) fn pending() -> usize {
-    PENDING.with(|pending| pending.borrow().len())
-}
 
-/// What [`on_event`] would read out of these bytes, at THIS platform's offset. Exposed so a
-/// caller can log the decode without duplicating the choice of offset — which is the one thing in
-/// this file that must never be written down twice.
+/// Decode a committed event at this platform's SDL text offset.
 pub(crate) fn decode(ev: &[u8]) -> String {
     decode_text_at(ev, TEXT_OFF)
 }

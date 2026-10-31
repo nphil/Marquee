@@ -68,7 +68,7 @@
     "description": "Value of settings.resolution.title: the native 1920x1080 size, the same on every TV"
   },
   "settings.about.title": {
-    "value": "About PlxNative",
+    "value": "About @APP_NAME@",
     "description": "Settings, account, onboarding or privacy UI: settings.about.title"
   },
   "settings.about.section": {
@@ -180,7 +180,7 @@
     "description": "Settings, account, onboarding or privacy UI: settings.language.title"
   },
   "settings.language.detail": {
-    "value": "Choose the language used by PlxNative.",
+    "value": "Choose the language used by @APP_NAME@.",
     "description": "Settings, account, onboarding or privacy UI: settings.language.detail"
   },
   "settings.language.system": {
@@ -188,15 +188,15 @@
     "description": "Settings, account, onboarding or privacy UI: settings.language.system"
   },
   "settings.language.copy": {
-    "value": "Choose the app language for everyone on this television. Changes apply after restarting PlxNative.",
+    "value": "Choose the app language for everyone on this television. Changes apply after restarting @APP_NAME@.",
     "description": "Settings, account, onboarding or privacy UI: settings.language.copy"
   },
   "settings.language.pending": {
-    "value": "Restart PlxNative to apply this change.",
+    "value": "Restart @APP_NAME@ to apply this change.",
     "description": "Settings, account, onboarding or privacy UI: settings.language.pending"
   },
   "settings.language.restart_hint": {
-    "value": "Hold {key} to close PlxNative, then open it again.",
+    "value": "Hold {key} to close @APP_NAME@, then open it again.",
     "description": "Complete sentence under the Language page's explanation, telling people how to restart the app: holding the remote's BACK button closes it (many LG remotes have no EXIT button). {key} is the BACK button rendered as a keycap; keep exactly one occurrence. Must fit one line of the Settings narrative column at CAPTION size.",
     "args": {
       "key": "str"
@@ -231,11 +231,11 @@
     "description": "Settings, account, onboarding or privacy UI: settings.consent.product.title"
   },
   "settings.consent.crash.body": {
-    "value": "If PlxNative crashes, or signing in fails, it can send technical details that help find and fix the problem. Reports may include the signal, code addresses, thread information and device compatibility details, or which sign-in step failed and how the connection answered, plus a random crash report identifier, created when you turn this on and deleted when you turn it off or sign out, so that repeated crashes under one crash report identifier are counted once rather than once each. Whether each app session ended normally is also sent. They never include titles, Plex accounts, searches, server names or addresses, tokens, subtitle text, or the product analytics identifier.",
+    "value": "If @APP_NAME@ crashes, or signing in fails, it can send technical details that help find and fix the problem. Reports may include the signal, code addresses, thread information and device compatibility details, or which sign-in step failed and how the connection answered, plus a random crash report identifier, created when you turn this on and deleted when you turn it off or sign out, so that repeated crashes under one crash report identifier are counted once rather than once each. Whether each app session ended normally is also sent. They never include titles, Plex accounts, searches, server names or addresses, tokens, subtitle text, or the product analytics identifier.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.crash.body"
   },
   "settings.consent.product.body": {
-    "value": "PlxNative can share which screens and features are used, how smoothly they respond, and broad sign-in and playback outcomes. Reports carry a random Analytics ID, created when you turn this on and deleted when you turn it off or sign out, and can include the app version, webOS version, television model and SoC, and whether a selected server is local, remote or relayed. They never include titles, Plex accounts, searches, server names or addresses, tokens, subtitle text, or exact viewing history.",
+    "value": "@APP_NAME@ can share which screens and features are used, how smoothly they respond, and broad sign-in and playback outcomes. Reports carry a random Analytics ID, created when you turn this on and deleted when you turn it off or sign out, and can include the app version, webOS version, television model and SoC, and whether a selected server is local, remote or relayed. They never include titles, Plex accounts, searches, server names or addresses, tokens, subtitle text, or exact viewing history.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.product.body"
   },
   "settings.consent.crash.row": {
@@ -283,11 +283,11 @@
     "description": "Settings, account, onboarding or privacy UI: settings.consent.delete"
   },
   "settings.consent.delete_scope": {
-    "value": "This signs out and removes PlxNative data stored on this television. It does not delete data already sent to Plex, your Plex Media Servers, Sentry or PostHog.",
+    "value": "This signs out and removes @APP_NAME@ data stored on this television. It does not delete data already sent to Plex, your Plex Media Servers, Sentry or PostHog.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.delete_scope"
   },
   "settings.consent.settings_copy": {
-    "value": "Control optional reporting, review exactly what may be shared, and manage data stored by PlxNative on this television.",
+    "value": "Control optional reporting, review exactly what may be shared, and manage data stored by @APP_NAME@ on this television.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.settings_copy"
   },
   "settings.consent.reporting": {
@@ -311,7 +311,7 @@
     "description": "Settings, account, onboarding or privacy UI: settings.consent.preview_usage"
   },
   "settings.consent.preview_policy": {
-    "value": "The complete PlxNative privacy policy for this build.",
+    "value": "Upstream privacy notice.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.preview_policy"
   },
   "settings.consent.preview_errors_id": {
@@ -323,7 +323,7 @@
     "description": "Settings, account, onboarding or privacy UI: settings.consent.preview_analytics_id"
   },
   "settings.consent.delete_detail": {
-    "value": "Sign out and remove PlxNative data from this TV.",
+    "value": "Sign out and remove @APP_NAME@ data from this TV.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.delete_detail"
   },
   "settings.consent.errors_subtitle": {
@@ -335,7 +335,7 @@
     "description": "Settings, account, onboarding or privacy UI: settings.consent.analytics_subtitle"
   },
   "settings.consent.policy_subtitle": {
-    "value": "How PlxNative handles local data, Plex services and optional reporting.",
+    "value": "Upstream privacy notice.",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.policy_subtitle"
   },
   "settings.consent.crash_subtitle": {
@@ -371,7 +371,7 @@
     "description": "Settings, account, onboarding or privacy UI: settings.delete"
   },
   "settings.legal.privacy.title": {
-    "value": "Privacy policy",
+    "value": "Upstream privacy notice",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.privacy.title"
   },
   "settings.legal.opensource.title": {
@@ -383,7 +383,7 @@
     "description": "Settings, account, onboarding or privacy UI: settings.legal.ffmpeg.title"
   },
   "settings.legal.source.title": {
-    "value": "PlxNative source code",
+    "value": "@APP_NAME@ source code",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.source.title"
   },
   "settings.legal.trademarks.title": {
@@ -431,11 +431,11 @@
     "description": "Settings, account, onboarding or privacy UI: settings.about.subtitle"
   },
   "settings.legal.privacy.responsible": {
-    "value": "RESPONSIBLE FOR PLXNATIVE DATA",
+    "value": "UPSTREAM PRIVACY NOTICE",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.privacy.responsible"
   },
   "settings.legal.privacy.responsible_body": {
-    "value": "Gleb Linnik is responsible only for data PlxNative stores locally and for optional reports you choose to share.",
+    "value": "This notice describes the upstream project. Its contact and data controller apply to upstream, not this fork.",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.privacy.responsible_body"
   },
   "settings.legal.privacy.plex": {
@@ -527,34 +527,34 @@
     "description": "Settings, account, onboarding or privacy UI: settings.legal.privacy.contact"
   },
   "settings.legal.privacy.contact_body": {
-    "value": "Privacy questions: support@plxnative.com",
+    "value": "Upstream contact: support@plxnative.com",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.privacy.contact_body"
   },
   "settings.legal.ffmpeg.body": {
-    "value": "This software uses libraries from the FFmpeg project under the LGPLv2.1. FFmpeg is copyright (c) the FFmpeg developers; PlxNative does not own FFmpeg.\n\nThe FFmpeg libraries are unmodified and loaded dynamically, and may be replaced with an interface-compatible build. The complete corresponding FFmpeg 9.0 source, exact configure line and build script are published with every PlxNative release.",
+    "value": "This software uses libraries from the FFmpeg project under the LGPLv2.1. FFmpeg is copyright (c) the FFmpeg developers; @APP_NAME@ does not own FFmpeg.\n\nThe FFmpeg libraries are unmodified and loaded dynamically, and may be replaced with an interface-compatible build. The complete corresponding FFmpeg 9.0 source, exact configure line and build script are published with every @APP_NAME@ release.",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.ffmpeg.body"
   },
   "settings.legal.trademarks.body": {
-    "value": "Plex, the Plex logo and Plex Media Server are trademarks of Plex, Inc.\n\nLG and webOS are trademarks of LG Electronics Inc.\n\nPlxNative is an independent, unofficial application. It is not produced by, endorsed by, or affiliated with Plex, Inc. or LG Electronics Inc.",
+    "value": "Plex, the Plex logo and Plex Media Server are trademarks of Plex, Inc.\n\nLG and webOS are trademarks of LG Electronics Inc.\n\n@APP_NAME@ is an independent, unofficial application. It is not produced by, endorsed by, or affiliated with Plex, Inc. or LG Electronics Inc.",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.trademarks.body"
   },
   "settings.legal.contact.body": {
-    "value": "Privacy questions may be sent to support@plxnative.com.\n\nSecurity vulnerabilities may be reported privately through GitHub Security Advisories for GLinnik21/plx-native. Please do not include Plex tokens, server addresses or personal media information in a report.",
+    "value": "@APP_NAME@ support: github.com/nphil/@APP_NAME@/issues. Do not include tokens, server addresses or personal media data in public reports. Report security vulnerabilities privately through GitHub Security Advisories.",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.contact.body"
   },
   "settings.legal.opensource.body": {
-    "value": "PlxNative is open-source software licensed under GPL-3.0-or-later. Copyright (c) 2026 Gleb Linnik and contributors. You may modify and redistribute it under these terms. There is no warranty, to the extent permitted by law.\n\nThird-party components retain their own licences. The package includes THIRD-PARTY-NOTICES.md and licence texts for the Rust runtime and crates, FFmpeg, Sentry Native, libunwind, NanoSVG, fonts and icons. Platform libraries have separate terms.",
+    "value": "@APP_NAME@ is open-source software licensed under GPL-3.0-or-later. Copyright (c) 2026 Gleb Linnik and contributors. You may modify and redistribute it under these terms. There is no warranty, to the extent permitted by law.\n\nThird-party components retain their own licences. The package includes THIRD-PARTY-NOTICES.md and licence texts for the Rust runtime and crates, FFmpeg, Sentry Native, libunwind, NanoSVG, fonts and icons. Platform libraries have separate terms.",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.opensource.body"
   },
   "settings.legal.source.body": {
-    "value": "Source for build {build}:\n\nhttps://github.com/GLinnik21/plx-native/tree/{build}\n\nLocal migration candidates may contain unpublished changes. Their matching source snapshot is provided with the candidate evidence. A published binary must be accompanied by its version-specific complete source bundle and build instructions; a moving branch is not the corresponding-source record. See LICENSING.md in the package.",
+    "value": "Source for build {build}:\n\nhttps://github.com/nphil/Marquee/tree/{build}\n\nLocal migration candidates may contain unpublished changes. Their matching source snapshot is provided with the candidate evidence. A published binary must be accompanied by its version-specific complete source bundle and build instructions; a moving branch is not the corresponding-source record. See LICENSING.md in the package.",
     "description": "Settings, account, onboarding or privacy UI: settings.legal.source.body",
     "args": {
       "build": "str"
     }
   },
   "settings.about.body": {
-    "value": "Version {version}\nBuild {build}\n\nDeveloped by Gleb Linnik\n© 2026 Gleb Linnik\n\nOpen source under GPL-3.0-or-later\ngithub.com/GLinnik21/plx-native\n\nPlxNative is an independent, unofficial application. It is not produced by, endorsed by, or affiliated with Plex, Inc. or LG Electronics Inc.",
+    "value": "Version {version}\nBuild {build}\n\nDeveloped by Gleb Linnik\n© 2026 Gleb Linnik\n\nOpen source under GPL-3.0-or-later\ngithub.com/nphil/Marquee\n\n@APP_NAME@ is an independent, unofficial application. It is not produced by, endorsed by, or affiliated with Plex, Inc. or LG Electronics Inc.",
     "description": "Settings, account, onboarding or privacy UI: settings.about.body",
     "args": {
       "build": "str",
@@ -770,7 +770,7 @@
     "description": "Settings, consent or sign-in UI: settings.audio.forced_subtitles"
   },
   "settings.playback.force_body": {
-    "value": "Bypasses playback compatibility checks and always uses original quality. Playback may have no sound, display incorrectly, freeze, or crash the app. PlxNative will not automatically switch to compatible playback and may not recover gracefully.\n\nEnable this only if you understand these risks and know how to restart the app and return Direct Play to Auto.",
+    "value": "Bypasses playback compatibility checks and always uses original quality. Playback may have no sound, display incorrectly, freeze, or crash the app. @APP_NAME@ will not automatically switch to compatible playback and may not recover gracefully.\n\nEnable this only if you understand these risks and know how to restart the app and return Direct Play to Auto.",
     "description": "Settings, consent or sign-in UI: settings.playback.force_body"
   },
   "settings.playback.force_note": {
@@ -1069,7 +1069,7 @@
   },
   "settings.legal.privacy.plaintext_body": {
     "description": "In-app privacy disclosure, aligned with PRIVACY.md.",
-    "value": "For a server you were asked about, PlxNative also keeps whether you allowed an unencrypted connection on your home network, for the Plex account that answered. Only the answer is stored. The permission itself is never stored and ends when a fresh check no longer reaches the same server address, at sign-in or sign-out, at a profile switch unless the new profile reaches that server at the same address, or when the app returns from the background."
+    "value": "For a server you were asked about, @APP_NAME@ also keeps whether you allowed an unencrypted connection on your home network, for the Plex account that answered. Only the answer is stored. The permission itself is never stored and ends when a fresh check no longer reaches the same server address, at sign-in or sign-out, at a profile switch unless the new profile reaches that server at the same address, or when the app returns from the background."
   },
   "settings.legal.privacy.signin_body": {
     "description": "In-app privacy disclosure, aligned with PRIVACY.md.",

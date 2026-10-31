@@ -26,8 +26,8 @@ use plx_base::eventlog::log;
 /// which a 32-bit ARM TV declaring `requiredMemory: 160` in `pkg/appinfo.json` cannot honour and
 /// would abort trying to (see the module doc on why the `catch_unwind` cannot save us there).
 ///
-/// Every image the app fetches is a `/photo/:/transcode?width=W&height=H&minSize=1` request whose
-/// W×H **we** choose, so the legitimate ceiling is knowable rather than guessed:
+/// Most images are resized through `/photo/:/transcode`. Part-index stills are fetched directly;
+/// both are subject to this same decoder limit. For transcoded art the requested box is known:
 ///
 /// | call site | box requested |
 /// |---|---|

@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Biały tekst z grubym czarnym obrysem, bez ramki. Najlepiej czytelny na jasnych lub zatłoczonych obrazach.",
   "subtitles.about_large_print": "Większy, pogrubiony tekst z obrysem, czytelny z daleka.",
   "subtitles.about_high_contrast": "Żółty tekst z czarnym obrysem na ciemnej ramce, dla maksymalnego kontrastu.",
-  "subtitles.about_marquee": "Inter Bold, biały, z cienkim obrysem: własny wygląd Marquee.",
+  "subtitles.about_marquee": "Inter Bold, biały, z cienkim obrysem: własny wygląd @APP_NAME@.",
   "subtitles.about_custom": "Twoja własna kombinacja ustawień. Wybierz zestaw, aby zacząć od nowa.",
   "subtitles.group_look": "Wygląd",
   "subtitles.group_text": "Tekst",

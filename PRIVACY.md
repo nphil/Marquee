@@ -1,3 +1,7 @@
+> **Upstream notice:** This historical policy describes PlxNative. Its contact and data controller
+> apply to the upstream project, not to Marquee. For Marquee support, see
+> [Marquee issues](https://github.com/nphil/Marquee/issues).
+
 # PlxNative Privacy Policy
 
 Applies to PlxNative 0.6.0. Last updated 4 September 2026.

@@ -43,6 +43,8 @@ fn library_art_has_a_durable_disk_key() {
 /// through an LRU whose 8192 slots exist to keep posters.
 #[test]
 fn a_scrub_preview_frame_never_reaches_the_disk() {
+    let direct = "/library/parts/7459/indexes/sd/600000?X-Plex-Token=t";
+    assert!(classify("server-a", direct).is_none());
     let frame = "/photo/:/transcode?width=320&height=180&minSize=1&url=%2Flibrary%2Fparts%2F7459%2Findexes%2Fsd%2F600000&X-Plex-Token=t";
     assert!(classify("server-a", frame).is_none());
     let lower = "/photo/:/transcode?width=320&height=180&minSize=1&url=%2flibrary%2fparts%2f7459%2findexes%2fsd%2f0&X-Plex-Token=t";

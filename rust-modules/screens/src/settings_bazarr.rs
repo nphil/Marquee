@@ -60,6 +60,7 @@ enum Probe {
 struct Edit {
     field: BzId,
     buf: TextBuffer,
+    keyboard_up: bool,
 }
 
 /// The longest run of dots a masked draft shows: the row has a fixed width.
@@ -269,7 +270,7 @@ impl BazarrPage {
         // a key is typed afresh: the stored one is not shown, and is not read here
         let text = if field == BzId::Address { self.state.url.clone() } else { String::new() };
         let len = text.len();
-        self.state.edit = Some(Edit { field, buf: TextBuffer::new(text, len) });
+        self.state.edit = Some(Edit { field, buf: TextBuffer::new(text, len), keyboard_up: true });
         self.state.problem = None;
         self.state.armed = false;
         Self::keyboard(true, fx);
@@ -279,18 +280,25 @@ impl BazarrPage {
 
     /// Finish typing: settle the draft and send it, or say why it cannot be.
     fn finish_edit(&mut self, commit: bool, fx: &mut Effects<'_, InnerHost>) {
-        let Some(edit) = self.state.edit.take() else { return };
-        Self::keyboard(false, fx);
+        let Some(mut edit) = self.state.edit.take() else { return };
+        if edit.keyboard_up { Self::keyboard(false, fx); }
+        edit.keyboard_up = false;
         if commit && !edit.buf.text().trim().is_empty() {
-            match edit.field {
-                BzId::Address => match BazarrLink::normalize_url(edit.buf.text()) {
-                    Ok(url) => self.send(BazarrChange::Url(url), fx),
-                    Err(problem) => self.state.problem = Some(Problem::Url(problem)),
-                },
-                _ => match BazarrLink::normalize_key(edit.buf.text()) {
-                    Some(key) => self.send(BazarrChange::Key(key), fx),
-                    None => self.state.problem = Some(Problem::Key),
-                },
+            let result = match edit.field {
+                BzId::Address => BazarrLink::normalize_url(edit.buf.text())
+                    .map(BazarrChange::Url).map_err(Problem::Url),
+                _ => BazarrLink::normalize_key(edit.buf.text())
+                    .map(BazarrChange::Key).ok_or(Problem::Key),
+            };
+            match result {
+                Ok(change) => {
+                    self.state.problem = None;
+                    self.send(change, fx);
+                }
+                Err(problem) => {
+                    self.state.problem = Some(problem);
+                    self.state.edit = Some(edit);
+                }
             }
         }
         self.rebuild();
@@ -415,22 +423,28 @@ impl Machine<InnerHost> for BazarrPage {
                 Handled::Yes
             }
             ScreenEvent::Activate(key) => {
-                if self.state.edit.is_none() {
+                if let Some(edit) = self.state.edit.as_mut() {
+                    if !edit.keyboard_up {
+                        edit.keyboard_up = true;
+                        Self::keyboard(true, fx);
+                    }
+                } else {
                     self.activate(*key, fx);
                 }
                 Handled::Yes
             }
             ScreenEvent::Input(InputEvent { kind: InputKind::SystemKeyboard(up), .. }) => {
-                // the television's keyboard went down (its own Done): that commits what was typed
+                // A system dismissal is also used on app background: it is not acceptance.
                 if !*up && self.state.edit.is_some() {
-                    self.finish_edit(true, fx);
+                    self.finish_edit(false, fx);
                 }
                 Handled::Yes
             }
             ScreenEvent::Input(InputEvent { kind: InputKind::Text(edit), .. }) if self.state.edit.is_some() => {
                 if let Some(typing) = self.state.edit.as_mut() {
-                    typing.buf.edit(edit);
+                    typing.buf.edit_literal(edit);
                 }
+                self.state.problem = None;
                 self.rebuild();
                 fx.invalidate(Provenance::Input);
                 Handled::Yes
@@ -438,6 +452,18 @@ impl Machine<InnerHost> for BazarrPage {
             ScreenEvent::Input(InputEvent { kind: InputKind::Key { key, sym, edge, .. }, .. })
                 if self.state.edit.is_some() && *edge != plx_machine::machine::Edge::Up =>
             {
+                if !self.state.edit.as_ref().unwrap().keyboard_up {
+                    if *key == Key::Back {
+                        self.finish_edit(false, fx);
+                    } else if *key == Key::Ok {
+                        self.state.edit.as_mut().unwrap().keyboard_up = true;
+                        Self::keyboard(true, fx);
+                    }
+                    return Handled::Yes;
+                }
+                if char::from_u32(*sym).is_some_and(|c| !c.is_control()) {
+                    return Handled::Yes;
+                }
                 let caret = match (*key, *sym) {
                     (Key::Left, _) => Some(TextEdit::Left),
                     (Key::Right, _) => Some(TextEdit::Right),

@@ -528,7 +528,11 @@ pub fn land_engineless_rollback(ps: &mut crate::route::PlaybackSession, pa: &mut
         return RollbackLanding::Waiting;
     };
     RollbackLanding::Landed(match landing.verdict {
-        crate::route::RecoveryVerdict::Install => match super::engine::reload_transcode_tracked(ps, pa, landing.offset_ns) {
+        crate::route::RecoveryVerdict::Install => match if crate::route::is_transcoding(ps) {
+            super::engine::reload_transcode_tracked(ps, pa, landing.offset_ns)
+        } else {
+            super::engine::reload_at_tracked(ps, pa, landing.offset_ns)
+        } {
             super::engine::BufferfeedStartOutcome::Launched(attempt) => ForegroundOriginalRecovery::Tracking(attempt),
             // A reload's teardown released synchronously, so nothing defers it; if one ever did, the
             // queued transaction is the same one the retry names.
@@ -948,7 +952,11 @@ fn land_recovery_flight(
         crate::route::RecoveryVerdict::Install => {
             let _ = drive_open_recovery(ps, super::recovery::RecoveryEvent::FlightLanded { lanes: landing.lanes }, "");
             let _ = settle_reload(
-                super::engine::reload_transcode(ps, pa, landing.offset_ns),
+                if crate::route::is_transcoding(ps) {
+                    super::engine::reload_transcode(ps, pa, landing.offset_ns)
+                } else {
+                    super::engine::reload_at(ps, pa, landing.offset_ns)
+                },
                 "recovery after failed source open",
             );
         }
@@ -1615,6 +1623,19 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         // viewer would have had; a refusal the machine does not handle (it is in `Failed`, or a
         // flight is outstanding) fails the Engine again, never silence.
         let run = recover_failed_open(ps, eng, load_refusal(), native_audio_fact(), "Audio Codec Not Supported");
+        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+            decode_in_app(ps, pa, offset_ns);
+        }
+        return;
+    }
+    // An accepted Load is not proof that its source will ever produce a picture.
+    // Bound only reversible trials; their retained route is the recovery path.
+    if crate::route::original_recovery_pending()
+        && SHARED.frames.load(Relaxed) == 0
+        && SHARED.native_load_elapsed(eng.native_epoch).is_some_and(|elapsed| elapsed >= Duration::from_secs(45))
+    {
+        super::log("route trial: no decoded frame within 45 seconds; restoring the previous route");
+        let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::Stalled, None, "");
         if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
             decode_in_app(ps, pa, offset_ns);
         }
@@ -3627,6 +3648,21 @@ mod flight_tests {
     /// The stops the server has been asked for the encoders this rig's rebuilds register.
     fn replacement_stops(flight: &FlightRig) -> usize {
         flight.stopped().iter().filter(|s| s.starts_with("rig-logical-abr-")).count()
+    }
+
+    #[test]
+    fn a_trial_without_a_first_frame_rolls_back_instead_of_waiting_forever() {
+        let mut rig = failed_original_trial_rig(150);
+        let epoch = engine_epoch(&mut rig).expect("trial engine");
+        SHARED.frames.store(0, Relaxed);
+        assert!(SHARED.test_backdate_native_load_issued(epoch, Duration::from_secs(46)));
+        rig.flight.hold_answers();
+        rig.frame();
+        assert!(crate::route::flight_outstanding(), "timeout must dispatch the retained route rollback");
+        assert_ne!(crate::player::state(&rig.ps), crate::player::PlaybackState::Error);
+        rig.flight.release_answers();
+        rig.frames_until("timed-out trial rollback", |_| !crate::route::flight_outstanding());
+        assert!(!crate::route::original_recovery_pending());
     }
 
     /// After the Original trial's source refused to open, the rollback rebases the restored HLS

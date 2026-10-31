@@ -29,9 +29,13 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+APP_NAME = json.loads((Path(__file__).resolve().parent.parent / "pkg/appinfo.json").read_text())["title"]
 
 #: Every candidate tag carries this prefix — the filter `plan` lists existing candidates with, and
 #: the reason a candidate is never mistaken for a release (`v…`) or a nightly (`nightly/v…`).
@@ -136,11 +140,11 @@ def render_notes(*, label: str, sha: str, base_tag: "str | None", prev_tag: "str
                             f"(https://github.com/{repo}/compare/{prev_tag}...{tag})")
 
     return "\n\n".join([
-        f"Release candidate {label} of PlxNative {version}, built from "
+        f"Release candidate {label} of {APP_NAME} {version}, built from "
         f"[`{sha[:7]}`]({commit_link}). If nothing turns up, the same source ships as {version}.",
 
-        "**It installs as PlxNative itself, not as a separate app.** It replaces the regular "
-        "PlxNative on your television, the same way an update does; PlxNative Nightly and other "
+        f"**It installs as {APP_NAME} itself, not as a separate app.** It replaces the regular "
+        f"{APP_NAME} on your television, the same way an update does; {APP_NAME} Nightly and other "
         "separate installs are left alone. It is not offered in the Homebrew Channel, and because "
         f"it carries the package version {version}, the Channel will not offer the final {version} "
         "as an update over it either: reinstall the final release by hand once it is out.",
@@ -211,7 +215,7 @@ def _selftest() -> int:
                         prev_tag="rc/v0.8.0-rc.1", ipk="plxnative-v0.8.0-rc.2.ipk",
                         sha256="deadbeef" * 8, repo="GLinnik21/plx-native",
                         changes=["- Home: something (#471)"])
-    check("replaces the regular PlxNative" in body, "notes say it replaces the stable install")
+    check(f"replaces the regular {APP_NAME}" in body, "notes say it replaces the stable install")
     check("will not offer the final 0.8.0" in body, "notes warn the final is not offered over it")
     check("/compare/v0.7.0...rc/v0.8.0-rc.2" in body, "notes compare against the last release")
     check("/compare/rc/v0.8.0-rc.1...rc/v0.8.0-rc.2" in body, "notes link the previous candidate")

@@ -1,4 +1,12 @@
 #[test]
+fn live_scrub_takes_precedence_over_a_loading_seek_target() {
+    use super::state::display_pos_ns;
+    assert_eq!(display_pos_ns(true, 20, 40, 10), 40);
+    assert_eq!(display_pos_ns(true, 20, -1, 10), 20);
+    assert_eq!(display_pos_ns(false, 20, -1, 10), 10);
+}
+
+#[test]
 fn a_hold_doubles_its_scrub_speed_every_step_up_to_the_cap() {
     use super::{scrub_speed, SCRUB_BASE, SCRUB_MAX, SCRUB_STEP_MS};
     assert_eq!(scrub_speed(0), SCRUB_BASE);

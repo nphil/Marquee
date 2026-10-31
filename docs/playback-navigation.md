@@ -5,7 +5,7 @@ in its existing PlayQueue; there is no setting for them. Movies, extras and a qu
 either neighbor omit both, which leaves the three existing discs at exactly the same positions.
 
 Settings → Video & playback has one per-profile option, **Instant D-pad seeking**, Off by
-default. Off preserves reveal → target → OK for Left/Right. On makes a fresh Left/Right press
+default. Off opens a target on the first Left/Right press and waits for OK. On makes a fresh Left/Right press
 jump immediately by the configured Skip interval when the controls are hidden. With controls
 visible, it still previews and waits for OK. Holding the D-pad in this optional
 hidden-controls path does not start a scrub.

@@ -580,8 +580,7 @@ impl Playbar {
         // between the displayed position and the PUBLISHED one, and two loads of a live atomic can
         // straddle a tick.
         let scrub = model.scrub_ns;
-        // while a seek is loading, freeze the playhead at the target (no wobble through the reopen);
-        // else follow the live scrub preview, else the real playhead.
+        // A live scrub owns the knob; otherwise freeze it at a seek target while loading.
         let livepos = model.playpos_ns;
         let dispos = display_pos_ns(model.loading, model.seek_display_ns, scrub, livepos);
         let knob = if focus == GROUP_SCRUB {

@@ -888,6 +888,26 @@ impl Default for SearchState {
 }
 
 impl SearchState {
+    pub(crate) fn deleted_media(&mut self, adapter: &SearchAdapter, at: &crate::viewstate::ViewAt) -> bool {
+        let matches = |item: &Item| matches!(item, Item::Media(m) if at.covers(m));
+        let held = self.shelves.as_ref().is_some_and(|shelves| shelves.iter().flat_map(|s| &s.items).any(matches));
+        let slot = at.sid.raw() as usize;
+        let source = self.src.get(slot);
+        let cached = source.is_some_and(|s| s.items.iter().flatten().any(matches)
+            || s.tails.iter().flat_map(|lane| lane.items()).any(matches));
+        let pending = terms(self.query()).is_some() && (source.is_none_or(|s| s.status == Status::Pending)
+            || adapter.mailbox(slot).busy());
+        if !held && !cached && !pending { return false; }
+        if held {
+            let shelves = Arc::make_mut(self.shelves.as_mut().unwrap());
+            for shelf in shelves.iter_mut() {
+                shelf.items.retain(|item| !matches!(item, Item::Media(m) if at.covers(m)));
+            }
+            shelves.retain(|shelf| !shelf.items.is_empty());
+        }
+        if let Some(source) = self.src.get_mut(at.sid.raw() as usize) { *source = Source::EMPTY; }
+        true
+    }
     /// The query as typed, verbatim — trailing space and all, because the FIELD draws this.
     pub fn query(&self) -> &str {
         self.query.as_deref().unwrap_or("")
@@ -2148,6 +2168,33 @@ pub fn land_for_test(adapter: &SearchAdapter, i: usize, gen: u32, item: Item) {
     let mut projection: Projection = [const { Vec::new() }; NKIND];
     projection[0].push(item);
     land(adapter, i, gen, Some(projection));
+}
+
+#[cfg(test)]
+mod delete_membership_tests {
+    use super::*;
+    #[test]
+    fn delete_membership_search_removes_show_and_children_without_resetting_query() {
+        let sid = ServerId::from_raw(1);
+        let other = ServerId::from_raw(2);
+        let row = |sid, rk: &str, kind, show: &str| Item::Media(PmsMovie {
+            sid, rk: rk.into(), kind, show_rk: show.into(), ..Default::default()
+        });
+        let mut state = SearchState::default();
+        state.query = Some(Arc::from("show"));
+        state.gen = 9;
+        state.shelves = Some(Arc::new(vec![Shelf { kind: Kind::Show, window: Window::default(), epoch: 0,
+            items: vec![row(sid, "10", 1, ""), row(sid, "11", 3, "10"),
+                row(other, "10", 1, ""), row(sid, "12", 1, "")] }]));
+        let at = crate::viewstate::ViewAt { sid, rk: "10".into(), scope: crate::viewstate::Scope::Show };
+        assert!(state.deleted_media(&SearchAdapter::default(), &at));
+        let rows = &state.shelves()[0].items;
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(&rows[0], Item::Media(m) if m.sid == other && m.rk == "10"));
+        assert!(matches!(&rows[1], Item::Media(m) if m.rk == "12"));
+        assert_eq!(state.query_gen(), 9);
+        assert_eq!(state.query(), "show");
+    }
 }
 
 // ---------------------------------------------------------------------------------------

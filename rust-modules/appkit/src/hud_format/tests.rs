@@ -1061,12 +1061,11 @@ mod invalid {
         };
         let newer_minor = by_label("format_1_1_is_a_newer_minor");
         assert_eq!(newer_minor.len(), 1, "the version gate answers alone");
-        assert_eq!(newer_minor[0].message, "Made for a newer PlxNative");
         assert_eq!(newer_minor[0].message, REASON_NEWER);
         assert_eq!(newer_minor[0].code, "HUD-E0402");
         assert_eq!(newer_minor[0].pointer, "/format");
         let newer_major = by_label("format_2_0_is_a_newer_major");
-        assert_eq!(newer_major[0].message, "Made for a newer PlxNative");
+        assert_eq!(newer_major[0].message, REASON_NEWER);
         assert_eq!(newer_major[0].code, "HUD-E0403");
         let older = by_label("format_0_9_is_an_older_major");
         assert_eq!(older[0].message, "Uses an older HUD format");

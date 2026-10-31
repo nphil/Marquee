@@ -26,8 +26,10 @@ pub(super) fn drain_item_menu_requests<R: super::playback::PlaybackResources>(
     resources: &mut R,
     menu_play_await: &mut Option<super::input::MenuPlayAwait>,
     now: u32,
+    replaying: bool,
 ) {
     for req in bridge.take_item_menu_reqs() {
+        if replaying && matches!(req.act, plx_screens::item_menu::Action::DeleteMedia(_)) { continue; }
         unsafe { super::input::apply_item_action(ps, pa, req, pages, bridge, resources, menu_play_await, now); }
     }
 }
@@ -504,7 +506,25 @@ pub(crate) fn content_requests(app: &mut App, fr: &Frame) {
     // neither of which a screen may name (§2.1).
     drain_item_menu_requests(&mut app.player.session, &mut app.adapters.player,
         &mut app.pages, &mut app.bridge, &mut super::playback::LivePlaybackResources,
-        &mut app.menu_play_await, fr.now);
+        &mut app.menu_play_await, fr.now, matches!(app.rec, super::recorder::Recplay::Replaying(_)));
+    if let Some(completion) = app.bridge.delete_media.poll() {
+        let sid = completion.sid;
+        if let Some((rk, kind)) = completion.deleted {
+            let scope = if kind == plx_plex::plex::delete_media::MediaKind::Show {
+                plx_data::viewstate::Scope::Show
+            } else {
+                plx_data::viewstate::Scope::Leaf
+            };
+            app.bridge.deleted_media(&plx_data::viewstate::ViewAt { sid, rk, scope });
+        }
+        use plx_data::stores::browse::BrowseCmd;
+        app.bridge.browse_run(BrowseCmd::ListingsChanged { sid, library_on_stack: false });
+        app.bridge.browse_run(BrowseCmd::HubsInvalidateServer { sid });
+        let out = app.bridge.hubs_run(plx_data::stores::hubs::HubsCmd::RefetchHubs);
+        super::bridge::execute_endpoint_outcomes(&mut app.pages, out.endpoints);
+        app.bridge.watchlist_reread();
+        app.reread.resume();
+    }
     for (source, request, ret) in app.bridge.take_content_reqs() {
         let MachineId::Instance(instance) = source else { continue };
         let Some(entry) = app.pages.nav.entry_of_instance(instance) else { continue };

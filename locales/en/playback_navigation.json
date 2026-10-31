@@ -4,7 +4,7 @@
     "description": "Playback setting title. Immediate D-pad jumps while controls are hidden; default Off."
   },
   "settings.playback.instant_dpad_seeking.copy": {
-    "value": "With controls hidden, Left/Right jumps by the skip interval. With controls visible, OK confirms. Off keeps reveal-first navigation.",
+    "value": "On: Left/Right jumps immediately when controls are hidden. Off: Left/Right previews; OK confirms.",
     "description": "Explanation of optional D-pad seeking. Dedicated rewind and fast-forward work independently."
   },
   "settings.playback.instant_dpad_seeking.off": {

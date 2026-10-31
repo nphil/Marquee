@@ -364,26 +364,23 @@ impl Client {
                 self.grant_epoch.store(next_gen(), Relaxed);
             }
             *g = token.to_owned();
+            self.token_gen.store(next_gen(), Relaxed);
         }
-        self.token_gen.store(next_gen(), Relaxed);
     }
     /// **Revoke a live token that `token` would replace**, when the caller cannot prove the two
     /// speak for one identity: the live one is blanked, so the replacement lands across a
     /// revocation edge and [`Client::grant_epoch`] moves exactly as for a profile switch. A blank
     /// slot, or the same token again, is left alone. Returns whether it revoked.
     pub(super) fn revoke_unless_same(&self, token: &str) -> bool {
-        let revoked = match self.token.write() {
+        match self.token.write() {
             Ok(mut g) if !g.is_empty() && g.as_str() != token => {
                 g.clear();
                 self.grant_epoch.store(next_gen(), Relaxed);
+                self.token_gen.store(next_gen(), Relaxed);
                 true
             }
             _ => false,
-        };
-        if revoked {
-            self.token_gen.store(next_gen(), Relaxed);
         }
-        revoked
     }
     /// The identity epoch of this server's credential — see the field. Unchanged by a live-to-live
     /// retoken; moved by every revocation and by the admission that follows one.
@@ -398,6 +395,14 @@ impl Client {
         self.token_gen.load(Relaxed)
     }
     pub fn instance_gen(&self) -> u32 { self.instance_gen }
+    /// Capture the exact credential named by a worker job, atomically with its generation.
+    pub(super) fn captured_for_key(&self, key: super::ClientKey) -> Option<Client> {
+        let token = self.token.read().ok()?;
+        if self.data_io_disabled() || self.instance_gen != key.instance
+            || self.token_gen() != key.token || token.is_empty() { return None; }
+        Some(Client::new(self.id, &self.machine_id, self.origin.clone(), &token, &self.client_id)
+            .with_resolve_pin(self.resolve_pin.clone()))
+    }
     /// Resource capability only. Revocation is irreversible for this incarnation and never
     /// changes a logical result; a controlled replay must supply that result through ingress.
     pub fn disable_data_io(&self) { self.data_io_disabled.store(true, Relaxed); }
@@ -637,6 +642,12 @@ impl Client {
         }
     }
 
+    pub(super) fn get_value_status(&self, path_no_token: &str) -> Option<(i32, Option<serde_json::Value>)> {
+        let reply = self.send_bulk(path_no_token, &[ACCEPT_JSON])?;
+        let value = if reply.ok() { serde_json::from_slice(&reply.body).ok() } else { None };
+        Some((reply.status, value))
+    }
+
     /// The deadline-bearing twin for ABR registration and optional show preferences. Parsing
     /// and endpoint-safe diagnostics are identical to the ordinary path; only transport policy
     /// differs.
@@ -744,6 +755,25 @@ impl Client {
             Some(r) if r.ok() => ArtFetch::Bytes(r.body),
             Some(r) => ArtFetch::Status(r.status),
             None => ArtFetch::NoResponse,
+        }
+    }
+
+    /// Fetch a token-bearing index image with a small response and time bound.
+    pub fn fetch_index_image_outcome(&self, path_with_token: &str) -> ArtFetch {
+        self.fetch_index_image_until(path_with_token, std::time::Instant::now() + std::time::Duration::from_secs(10))
+    }
+
+    fn fetch_index_image_until(&self, path_with_token: &str, deadline: std::time::Instant) -> ArtFetch {
+        if !self.may_send() {
+            return ArtFetch::NoResponse;
+        }
+        let owned = pms_headers(&[]);
+        let headers: Vec<&str> = owned.iter().map(String::as_str).collect();
+        match http::request_bounded_until(&self.origin, path_with_token, Method::Get, &headers,
+            4 * 1024 * 1024, deadline, self.resolve_pin.as_ref()) {
+            http::RequestOutcome::Response(r) if r.ok() => ArtFetch::Bytes(r.body),
+            http::RequestOutcome::Response(r) => ArtFetch::Status(r.status),
+            http::RequestOutcome::Deadline | http::RequestOutcome::Transport(_) => ArtFetch::NoResponse,
         }
     }
 
@@ -1009,6 +1039,49 @@ mod tests {
             token,
             "cid-42",
         )
+    }
+
+    #[cfg(feature = "devtriggers")]
+    #[test]
+    fn index_image_deadline_and_body_limit() {
+        use std::io::{Read, Write};
+        use std::time::{Duration, Instant};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = Client::new(ServerId::UNSET, "fixture", Origin::http("127.0.0.1", port as i32), "tok", "cid");
+        let path = "/library/parts/1/indexes/sd/123?X-Plex-Token=tok";
+        assert_eq!(client.fetch_index_image_until(path, Instant::now()), ArtFetch::NoResponse);
+        listener.set_nonblocking(true).unwrap();
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+
+        let server = std::thread::spawn(move || {
+            let stop = Instant::now() + Duration::from_secs(3);
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < stop => std::thread::yield_now(),
+                    Err(e) => panic!("accept: {e}"),
+                }
+            };
+            socket.set_nonblocking(false).unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            socket.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+                assert!(request.len() < 4096);
+            }
+            let request = String::from_utf8_lossy(&request);
+            assert!(request.starts_with("GET /library/parts/1/indexes/sd/123?X-Plex-Token=tok HTTP/1."));
+            let body = vec![b'x'; 4 * 1024 * 1024 + 1];
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            socket.write_all(&body).unwrap();
+        });
+        assert_eq!(client.fetch_index_image_until(path, Instant::now() + Duration::from_secs(5)), ArtFetch::NoResponse);
+        server.join().unwrap();
     }
 
     /// PR #104 review: `encode_link`/`decode_link` and `encode_ip`/`decode_ip` are the ONE

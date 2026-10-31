@@ -1,14 +1,14 @@
-# PlxNative
+# Marquee
 
 A fast, unofficial [Plex](https://www.plex.tv/) client for LG webOS televisions. Native, not a web
 page — the interface is drawn straight on the GPU at 60 fps, and video plays on the TV's own decoder.
 
-**Website: [plxnative.com](https://plxnative.com/)** · [Install guide](https://plxnative.com/install/) ·
-[Troubleshooting](https://plxnative.com/troubleshooting/)
+[Releases](https://github.com/nphil/Marquee/releases) · [Installation guide](docs/install-and-verify.md) ·
+[Troubleshooting](docs/troubleshooting.md)
 
-<a href="https://trendshift.io/repositories/244171?utm_source=repository-badge&utm_medium=badge&utm_campaign=badge-repository-244171" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/244171" alt="GLinnik21/plx-native | Trendshift" width="250" height="55"/></a>
+Marquee is based on [PlxNative](https://github.com/GLinnik21/plx-native).
 
-*In daily use on a 2019 LG set. PlxNative is an independent project and is not affiliated with Plex, Inc.
+*In daily use on a 2019 LG set. Marquee is an independent project and is not affiliated with Plex, Inc.
 or LG. The same install steps are in the repo: [installation guide](docs/install-and-verify.md).*
 
 ## Why this exists
@@ -19,7 +19,7 @@ Chromium. Patching it doesn't help — the ceiling isn't the code, it's the brow
 
 So I threw the browser away.
 
-PlxNative draws straight on the GPU and hands video to the same silicon the built-in apps use. No
+Marquee draws straight on the GPU and hands video to the same silicon the built-in apps use. No
 Chromium, no JavaScript, no web view. It just draws. Almost all of it is Rust, and I use it every
 day to watch things off my server in the next room.
 
@@ -100,9 +100,7 @@ installed through it ([how to keep them](docs/install-and-verify.md#important-de
 A rooted TV with Homebrew Channel has no expiry.
 
 If something goes wrong, check [Troubleshooting](docs/troubleshooting.md) first, then
-[tell me what happened](https://github.com/GLinnik21/plx-native/issues/new/choose) — and if you own one of the
-sets above, it working is as useful a report as it failing: post it under
-[Discussions > Compatibility](https://github.com/GLinnik21/plx-native/discussions/categories/compatibility).
+[report it](https://github.com/nphil/Marquee/issues) with the television model and webOS version.
 
 ## Installing
 
@@ -111,61 +109,21 @@ sets above, it working is as useful a report as it failing: post it under
 webOS TV, a computer on the same network, and a Plex account with access to your own or a shared
 server. **No root is required.**
 
-Set up LG Developer Mode and connect with webOS Dev Manager, then choose:
-
-- **Install PlxNative directly:** add only PlxNative to the TV; install future `.ipk` updates from
-  your computer.
-- **Install Homebrew Channel first:** get an app catalogue on the TV, then install PlxNative and
-  its updates with the remote.
-
-**Already have Homebrew Channel?** Find [PlxNative in its catalogue](https://repo.webosbrew.org/apps/com.beb.plxnative/)
-and select **Install**. Skip the computer setup.
+Download Marquee from [releases](https://github.com/nphil/Marquee/releases) and install its
+`.ipk` with webOS Dev Manager. Install future updates the same way.
 
 **Developer Mode needs periodic renewal.** If it expires and LG disables Developer Mode, apps
 installed through it are removed. Installing Homebrew Channel through Developer Mode does not
 remove that requirement. The guide explains [how to renew the session](docs/install-and-verify.md#important-developer-mode-expires).
 
-For manual `.ipk` downloads, [verify the release checksum](docs/install-and-verify.md#verifying-the-package)
-before installing. Homebrew Channel verifies catalogue downloads for you.
-
-## Nightly builds
-
-Every day `main` moves, CI cuts a nightly `.ipk` from wherever it stands. It installs beside the
-regular app as **"PlxNative Nightly"** — its own tile, its own sign-in — so trying it never touches
-the release you already trust.
-
-**With Homebrew Channel:** under Settings choose **Add repository**, enter
-`https://plxnative.com/nightly/repo.json`, then install PlxNative Nightly. Every later nightly
-appears there as an update. The [nightly builds guide](docs/nightly-builds.md) has the steps, how
-the versions work and what to do if something goes wrong.
-
-**Without it:** each build is a
-[prerelease](https://github.com/GLinnik21/plx-native/releases?q=nightly), and the newest is always
-linked from [plxnative.com/nightly/latest.json](https://plxnative.com/nightly/latest.json). Install
-it with Dev Manager; a package installed that way does not update itself.
-
-**It is not tested on a television.** It passes the same automated build and packaging checks a
-release does, but nobody has watched it play. Each nightly is deleted 30 days after it is
-published, so link to a specific `.ipk` at your own risk.
-
-## Release candidates
-
-Before a release, CI may publish a release candidate as a
-[prerelease](https://github.com/GLinnik21/plx-native/releases?q=rc) named like `PlxNative 0.8.0-rc.1`.
-It is the release build itself, so it **installs as the regular PlxNative app**, replacing the one
-you have the way an update would. It is not in the Homebrew Channel, and the Channel will not offer
-the final release over it either: reinstall the final by hand once it is out.
+[Verify the release checksum](docs/install-and-verify.md#verifying-the-package) before installing.
+The upstream Homebrew catalogue and nightly repository distribute PlxNative, not this fork.
 
 ## Privacy
 
-**Your library data never reaches me.** The app talks to your Plex server, to `plex.tv` to sign in,
-and to `discover.provider.plex.tv` for cast biographies and the Watchlist (reading it, and adding or
-removing a title when you ask, with the active profile's plex.tv token).
-
-**Crash reports and usage analytics are off until you turn them on** — two separate first-run
-questions, each answerable with Don't Share, both reversible later under Account → Settings →
-Privacy & data. No title, search term, subtitle line, server name or address can appear in any
-report. [`PRIVACY.md`](PRIVACY.md) is the whole statement, including the schemas.
+Crash reports and usage analytics are optional and can be changed in Settings. The included
+[privacy notice](PRIVACY.md) is inherited from upstream PlxNative and is not a statement of
+Marquee's data controller or support contact.
 
 ASS/SSA subtitles render natively during direct play, including styles, positioning, overlapping
 signs and dialogue, karaoke, and embedded fonts. External ASS files retain their original scripts.
@@ -187,13 +145,12 @@ If that fits, it's genuinely nice to use. If it doesn't, the official app will s
 
 Issues and pull requests are welcome, especially from anyone whose television or library differs
 from mine — [**docs/building.md**](docs/building.md) is the build and the test loop, and says what
-hardware I most need help with. Feature ideas go to [Discussions >
-Ideas](https://github.com/GLinnik21/plx-native/discussions/categories/ideas). Security issues go
+hardware I most need help with. Feature ideas go to the Marquee repository; report security issues
 through [`SECURITY.md`](SECURITY.md) rather than a public issue.
 
 ## Acknowledgements
 
-Error monitoring for PlxNative is sponsored by [Sentry](https://sentry.io/for/good/).
+Error monitoring for Marquee is sponsored by [Sentry](https://sentry.io/for/good/).
 
 <a href="https://sentry.io/for/good/">
   <picture>

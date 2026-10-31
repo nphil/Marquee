@@ -107,7 +107,7 @@ pub fn emit(version: Since) -> Value {
     root.insert(
         "title".to_owned(),
         Value::String(format!(
-            "PlxNative HUD package, format {}.{}",
+            "HUD package, format {}.{}",
             version.0, version.1
         )),
     );

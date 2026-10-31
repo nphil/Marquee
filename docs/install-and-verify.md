@@ -1,12 +1,9 @@
-# Install Plex on LG webOS TV with PlxNative
+# Install Plex on LG webOS TV with Marquee
 
-PlxNative is an unofficial, open-source Plex app for LG webOS TVs. It is not yet available in the LG Content Store, but you can install it on a regular LG webOS TV using LG's Developer Mode and a computer. **No root is required.** If something goes wrong, see [troubleshooting](troubleshooting.md).
+Marquee is an unofficial, open-source Plex app for LG webOS TVs. It is not yet available in the LG Content Store, but you can install it on a regular LG webOS TV using LG's Developer Mode and a computer. **No root is required.** If something goes wrong, see [troubleshooting](troubleshooting.md).
 
-## Already have Homebrew Channel?
-
-Open **Homebrew Channel** on your TV, find [**PlxNative**](https://repo.webosbrew.org/apps/com.beb.plxnative/), and select **Install**. Then [open PlxNative and sign in](#4-open-plxnative-and-sign-in).
-
-You can skip the Developer Mode and computer setup below. If your existing Homebrew Channel installation uses Developer Mode, keep renewing that session as usual.
+The upstream Homebrew catalogue distributes PlxNative, not Marquee. Install this fork from its
+[releases](https://github.com/nphil/Marquee/releases) using the steps below.
 
 ## Before you start
 
@@ -17,9 +14,9 @@ You will need:
 - a Mac, Windows PC, or Linux computer for the setup described here;
 - the TV and computer on the **same local network**.
 
-The route is **set up the TV → connect from your computer → install PlxNative**. No LG SDK or IDE is required.
+The route is **set up the TV → connect from your computer → install Marquee**. No LG SDK or IDE is required.
 
-> **Important:** Developer Mode needs periodic renewal. If it expires and LG disables Developer Mode, apps installed through it are removed. This applies to both installation options below, including Homebrew Channel installed through Developer Mode. [How to keep the apps installed](#important-developer-mode-expires).
+> **Important:** Developer Mode needs periodic renewal. If it expires and LG disables Developer Mode, apps installed through it are removed. [How to keep the apps installed](#important-developer-mode-expires).
 
 ## 1. Enable Developer Mode on the TV
 
@@ -52,55 +49,28 @@ The route is **set up the TV → connect from your computer → install PlxNativ
    Keep the Developer Mode defaults: **Username** `prisoner`, **Port** `9922`, and **Authentication** `Dev Mode`. The wizard sets these for you.
 5. Finish adding the TV. In Dev Manager, open **Apps** and check that the **Installed** tab can load the TV's apps.
 
-**Ready to continue:** Dev Manager can display the TV's installed apps. If it cannot connect, see [Connection problems](#connection-problems) before downloading PlxNative.
+**Ready to continue:** Dev Manager can display the TV's installed apps. If it cannot connect, see [Connection problems](#connection-problems) before downloading Marquee.
 
-## 3. Choose how to install PlxNative
+## 3. Install Marquee
 
-Both options install PlxNative; neither unlocks extra PlxNative features. The difference is how you install and manage updates.
-
-| | Direct installation | Through Homebrew Channel |
-|---|---|---|
-| **What you add to the TV** | PlxNative only. | Homebrew Channel, then PlxNative. |
-| **How you update** | Install a newer `.ipk` from your computer using Dev Manager. | Open Homebrew Channel on the TV and select **Update** when available. |
-| **Why choose it** | Fewer steps and no extra catalogue app. | Browse other homebrew apps and install updates with the TV remote. |
-
-**Both options use the Developer Mode setup above and need the same session renewal.** Installing Homebrew Channel does not remove that requirement. Its catalogue can also contain apps with their own requirements; not every homebrew app works on every TV.
-
-### Option A — install PlxNative directly
-
-**The shorter route if you only want PlxNative.**
-
-1. On your computer, open the [latest PlxNative release](https://github.com/GLinnik21/plx-native/releases/latest).
+1. On your computer, open [Marquee releases](https://github.com/nphil/Marquee/releases) and select a release.
 2. Under **Assets**, download **`com.beb.plxnative_X.Y.Z_arm.ipk`**. `X.Y.Z` is the release's version number. The `.ipk` is the TV app, not something to open on your computer; the manifest and source archives are not installers.
 3. For a manual download, [check the package against the release checksum](#verifying-the-package) before installing it.
 4. In Dev Manager, select your TV, open **Apps**, and click **Install**. Choose the downloaded `.ipk`.
-5. Wait for installation to finish and check that **PlxNative** appears under **Installed**.
+5. Wait for installation to finish and check that **Marquee** appears under **Installed**.
 
-Continue to [step 4](#4-open-plxnative-and-sign-in). You do not need to install Homebrew Channel as well.
+Continue to [step 4](#4-open-marquee-and-sign-in).
 
 For future updates, repeat this with the newer `.ipk`. Install over the existing app rather than uninstalling it first.
 
-### Option B — install Homebrew Channel, then PlxNative
 
-**Choose this for a catalogue and app updates on the TV.** Homebrew Channel is a separate TV app; you still use your computer for this initial setup.
+## 4. Open Marquee and sign in
 
-1. In **Dev Manager on your computer**, select your TV and open **Apps → Available**. This is the webOS Homebrew catalogue.
-2. Find **Homebrew Channel**, open its entry, and select **Install**.
-3. Wait for installation to finish. **On your TV**, open **Homebrew Channel** from the app launcher.
-4. Find **PlxNative**, open its entry, and select **Install**.
-5. Wait for installation to finish, then continue to [step 4](#4-open-plxnative-and-sign-in).
+Open **Marquee** from the TV's app launcher. Scan the on-screen QR code and sign in to the Plex account that has access to your server or shared libraries. Choose your Plex Home profile if prompted.
 
-For future updates, open PlxNative's entry in Homebrew Channel and select **Update** when offered. Updates are installed when you select them, not automatically.
+**Installation is complete.** You can now use Marquee from the TV launcher. The remaining setup responsibility is keeping Developer Mode active, as described below.
 
-Want to try the newest build before it is released? Add the project's nightly repository to Homebrew Channel. See the [nightly builds guide](nightly-builds.md).
-
-## 4. Open PlxNative and sign in
-
-Open **PlxNative** from the TV's app launcher. Scan the on-screen QR code and sign in to the Plex account that has access to your server or shared libraries. Choose your Plex Home profile if prompted.
-
-**Installation is complete.** You can now use PlxNative from the TV launcher. The remaining setup responsibility is keeping Developer Mode active, as described below.
-
-PlxNative is free and open source. If it's useful to you, you can [support it on Ko-fi](https://ko-fi.com/0xbeb).
+Marquee is free and open source. If it's useful to you, you can [support it on Ko-fi](https://ko-fi.com/0xbeb).
 
 ## Important: Developer Mode expires
 
@@ -124,11 +94,11 @@ See [LG's session guidance](https://webostv.developer.lge.com/develop/getting-st
 
 **The apps disappeared:** check **Dev Mode Status** and **Remain Session**. If Developer Mode has been disabled, enable it again and reinstall the apps using the same route.
 
-**PlxNative opens but your libraries are missing:** make sure you signed in to a Plex account with access to a server and that the server is reachable. PlxNative does not include a media library or set up Plex Media Server for you.
+**Marquee opens but your libraries are missing:** make sure you signed in to a Plex account with access to a server and that the server is reachable. Marquee does not include a media library or set up Plex Media Server for you.
 
-For more connection help, see [webOSbrew's troubleshooting guide](https://www.webosbrew.org/devmode/#troubleshooting). To [report a PlxNative problem](https://github.com/GLinnik21/plx-native/issues/new/choose), include your TV model, webOS version, PlxNative version, installation method, and the exact error. Do not post passwords, Passphrase, Plex tokens, or screenshots containing them. For a how-do-I question about setup, ask in [Discussions > Q&A](https://github.com/GLinnik21/plx-native/discussions/categories/q-a); bugs go to the issue form.
+For connection help, see [webOSbrew's troubleshooting guide](https://www.webosbrew.org/devmode/#troubleshooting). To [report a Marquee problem](https://github.com/nphil/Marquee/issues), include the TV model, webOS version, Marquee version, installation method and exact error. Do not post passwords, passphrases, Plex tokens or screenshots containing them.
 
-If PlxNative itself is installed and opens but something inside it doesn't work — sign-in, playback, or anything else — see [Troubleshooting](troubleshooting.md).
+If Marquee itself is installed and opens but something inside it doesn't work — sign-in, playback, or anything else — see [Troubleshooting](troubleshooting.md).
 
 ---
 
@@ -138,16 +108,16 @@ The installation walkthrough ends above. The sections below are a technical refe
 
 The app runs in LG's normal sandbox: an unprivileged uid, chrooted, under the stock jail profile. `appinfo.json` declares two ACGs, `database.operation` and `securitykey.operation` — both are the storage helper's, for the local DB8 keystore and the platform key manager it uses to keep your sign-in off plain disk; neither reaches the network or anything outside this app's own data.
 
-Per-release facts — the hash, sizes, payload, and what was tested on which set — are in that version's [technical audit](https://github.com/GLinnik21/plx-native/tree/main/docs/release-audits).
+Check the selected [Marquee release](https://github.com/nphil/Marquee/releases) for its package and release information.
 
 ### Which file to download
 
-A release attaches five files. **For a direct installation, you need the first one.**
+A release may attach the following files. The `.ipk` is the application.
 
 | File | What it is |
 |---|---|
 | `com.beb.plxnative_X.Y.Z_arm.ipk` | The app. |
-| `com.beb.plxnative.manifest.json` | The Homebrew Channel manifest — how the Channel finds and verifies the update. |
+| `com.beb.plxnative.manifest.json` | Package metadata, when supplied. |
 | `ipk.sha256` | The checksum, for `sha256sum -c`. |
 | `ffmpeg-<version>.tar.xz` | The pristine upstream FFmpeg source, published because we are obliged to. |
 | `build-ffmpeg.sh` | The complete configure invocation that produced the bundled FFmpeg libraries. |
@@ -164,17 +134,13 @@ sha256sum -c ipk.sha256                                    # Linux, with the che
 certutil -hashfile com.beb.plxnative_X.Y.Z_arm.ipk SHA256 # Windows
 ```
 
-[Return to direct installation](#option-a--install-plxnative-directly) after checking the file.
-
-**If Homebrew Channel installs PlxNative from its catalogue, you have nothing to verify manually.** It fetches that release's `com.beb.plxnative.manifest.json`, hashes the download on the television, and refuses to install a package that does not match.
-
-If you point Homebrew Channel at a bare `.ipk` yourself instead of installing the catalogue entry, that catalogue verification path is bypassed, so verify the package yourself.
+[Return to installation](#3-install-marquee) after checking the file.
 
 #### Rebuilding it to compare
 
 Two builds of one commit on one machine produce a byte-identical `.ipk`. It is **not** reproducible across machines yet — the bundled FFmpeg records the toolchain paths it was built against — so a hash from your own rebuild will differ, and that is not evidence of tampering. Each audit's **Reproducibility evidence** section shows exactly which paths a given package carries.
 
-Every release is built and uploaded by GitHub Actions from the tag. If a release's assets were uploaded by a person rather than by `github-actions[bot]`, the build and verification gates did not run — the audit records the uploader for exactly this reason.
+Check the selected release for its source and verification information.
 
 ## What the app does on your television
 
@@ -184,8 +150,8 @@ This section is invariant across releases. Where a release changes one of these 
 
 Both entries below are restricted to the app, but not at the same mode. The three logs are mode `0640` — owner read/write, the app's own group read, nothing for anyone else — so that on a television that is not rooted, Dev Manager should be able to fetch them and you can attach them to a bug report. The signed-in session is mode `0600`, owner only.
 
-- `/tmp/plxnative-events.log`, `/tmp/plxnative-stderr.log` and `/tmp/plxnative-crash.log` (mode `0640`) — the first two are truncated each launch, while the crash log is append-only so it survives a restart. Because the mode includes group read, another app installed on the same television that runs in PlxNative's group can read these three files too; the event log is scrubbed as described next, and so is the panic text the app appends to the crash log, but the crash tracer's own records (a faulting address, registers, one memory-map line) and the stderr log (whatever aborts and the television's own libraries print) are not. Every event-log line is scrubbed **before it is written**: tokens, header and query credentials, hostnames (including `plex.direct` names that encode your LAN address), bare addresses, Plex GUIDs, search queries, and your server and profile names are rewritten. Media titles, search terms, and subtitle text are never written at all. What remains includes ratingKeys — server-local item numbers used to diagnose playback bugs. Someone with access to the same server could map one back to an item, so still think before posting a log publicly. [`PRIVACY.md`](https://github.com/GLinnik21/plx-native/blob/main/PRIVACY.md) is the full contract.
-- Your signed-in session (mode `0600`), as `<id>-auth.json` under `/media/developer` or `/media/internal` — one access token per server your account can reach. PlxNative capability-probes the documented `com.webos.service.keymanager3` service (TV 24+) and uses its AES-GCM operation when LS2 policy permits it. The older `com.palm.keymanager` AES-CFB service is deliberately not used because it cannot authenticate ciphertext. webOS TV 4.10.2 has neither usable service, so the compatible result there is an atomically replaced, app-owned mode-0600 file. A protected file is never silently downgraded during a temporary service failure. The probe is an ordinary application-service call and the fallback needs no root service or root-only HAL API; store entitlement for Key Manager is still capability-tested at runtime rather than assumed from the OS version.
+- `/tmp/plxnative-events.log`, `/tmp/plxnative-stderr.log` and `/tmp/plxnative-crash.log` (mode `0640`) — the first two are truncated each launch, while the crash log is append-only so it survives a restart. Because the mode includes group read, another app installed on the same television that runs in Marquee's group can read these three files too; the event log is scrubbed as described next, and so is the panic text the app appends to the crash log, but the crash tracer's own records (a faulting address, registers, one memory-map line) and the stderr log (whatever aborts and the television's own libraries print) are not. Every event-log line is scrubbed **before it is written**: tokens, header and query credentials, hostnames (including `plex.direct` names that encode your LAN address), bare addresses, Plex GUIDs, search queries, and your server and profile names are rewritten. Media titles, search terms, and subtitle text are never written at all. What remains includes ratingKeys — server-local item numbers used to diagnose playback bugs. Someone with access to the same server could map one back to an item, so still think before posting a log publicly. [`PRIVACY.md`](https://github.com/GLinnik21/plx-native/blob/main/PRIVACY.md) is the full contract.
+- Your signed-in session (mode `0600`), as `<id>-auth.json` under `/media/developer` or `/media/internal` — one access token per server your account can reach. Marquee capability-probes the documented `com.webos.service.keymanager3` service (TV 24+) and uses its AES-GCM operation when LS2 policy permits it. The older `com.palm.keymanager` AES-CFB service is deliberately not used because it cannot authenticate ciphertext. webOS TV 4.10.2 has neither usable service, so the compatible result there is an atomically replaced, app-owned mode-0600 file. A protected file is never silently downgraded during a temporary service failure. The probe is an ordinary application-service call and the fallback needs no root service or root-only HAL API; store entitlement for Key Manager is still capability-tested at runtime rather than assumed from the OS version.
 
 The app does not persist the last screen: an authenticated cold launch starts on Home. Upgrades remove the retired `<id>-lastplace.json` bookmark written by older builds.
 
@@ -201,7 +167,7 @@ The television's codec table at `/etc/umediaserver/device_codec_capability_confi
 
 Stable builds refuse token-bearing plaintext HTTP, with one exception that is yours to make: when a server answers only unencrypted on your home network — every secure route to it, Plex's relay included, failed — the app asks **Connect without encryption?**: on the sign-in screen, on the Home or library read-out that reports the failure, or when you switch the server on in Settings → **Unencrypted connections**. It is offered only for a numeric private address plex.tv lists as local and on the same network as the television, never for a remote address or the relay, and never for a server set to require secure connections. The answer is remembered per server for the Plex account that gave it, so another account signing in is asked again. The permission it grants is never stored: it holds only while each fresh check of that server still reaches the same address, and it ends when you sign in or out, switch to a profile that does not use that server at that address, or bring the app back from the background — the app cannot see the television change network, so those are the points where it proves eligibility again. While it is in use the app keeps retrying HTTPS and switches back as soon as a secure route verifies, and Settings → **Unencrypted connections** turns it off at once. Developer-trigger builds may enable plaintext for a local lab and log that exception.
 
-**Only if you switch them on**, the app also reaches Sentry and PostHog in the European Union. They have separate switches, both are off by default, and both are reversible. [`PRIVACY.md`](https://github.com/GLinnik21/plx-native/blob/main/PRIVACY.md) describes them in full.
+**Only if enabled**, the app can send crash reports and usage analytics. The included [privacy notice](../PRIVACY.md) is inherited from upstream and does not identify Marquee's data controller or support contact.
 
 Nothing is sent anywhere else. A build carries an endpoint only if one was compiled into it, so `strings` on the binary answers the question directly, and each release audit reports what it found there.
 

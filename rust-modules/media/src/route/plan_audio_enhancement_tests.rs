@@ -18,6 +18,16 @@ const PREF: plx_plex::plex::AudioEnhancements = plx_plex::plex::AudioEnhancement
     normalize_loudness: true,
 };
 
+#[test]
+fn enhancement_rejects_explicit_unusable_audio_decisions() {
+    for (decision, expected) in [("unavailable", Fallback::Retry), ("copy", Fallback::Retry), ("transcode", Fallback::Keep), ("", Fallback::Keep)] {
+        let body = format!(r#"{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":2,"decision":"{decision}"}}]}}]}}]}}]}}"#);
+        let mc: plx_plex::plex::MediaContainer = serde_json::from_str(&body).unwrap();
+        assert_eq!(enhancement_fallback(Some(&mc), PREF), expected, "audio decision: {decision:?}");
+        assert_eq!(enhancement_fallback(Some(&mc), plx_plex::plex::AudioEnhancements::NONE), Fallback::Keep);
+    }
+}
+
 fn track(id: i64, codec: &str, channels: i64, capable: bool) -> plx_data::metadata::Stream {
     plx_data::metadata::Stream {
         id,

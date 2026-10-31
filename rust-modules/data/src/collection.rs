@@ -240,6 +240,46 @@ impl Default for CollectionState {
 }
 
 impl CollectionState {
+    pub(crate) fn deleted_media(&mut self, adapter: &CollectionAdapter, at: &crate::viewstate::ViewAt) -> bool {
+        let Some(c) = self.current.as_ref().filter(|c| c.id.sid == at.sid) else { return false };
+        let loaded = c.pages.loaded_rows().count();
+        let found = c.pages.loaded_rows().any(|(_, row)| at.covers(row));
+        if c.header_ready && !c.more && loaded == c.shown() {
+            if !found { return false; }
+            let removed_before = |index: usize| c.pages.loaded_rows()
+                .filter(|(i, row)| *i < index && at.covers(row)).count();
+            let focus = c.focus.map(|i| i.saturating_sub(removed_before(i)));
+            let restore = c.restore.map(|i| i.saturating_sub(removed_before(i)));
+            let rows: Vec<_> = c.pages.loaded_rows().filter(|(_, row)| !at.covers(row))
+                .map(|(_, row)| row.clone()).collect();
+            let removed = loaded - rows.len();
+            self.supersede(adapter);
+            let c = self.current.as_mut().unwrap();
+            c.total = rows.len();
+            c.child_count = c.child_count.saturating_sub(removed);
+            c.pages = PageCache::default();
+            c.pages.set_total(c.total);
+            let mut rows = rows.into_iter();
+            for page in 0..c.total.div_ceil(PAGE_SIZE) {
+                c.pages.set_page(page, rows.by_ref().take(PAGE_SIZE).collect());
+            }
+            c.read = c.total.div_ceil(PAGE_SIZE);
+            c.focus = focus.map(|i| i.min(c.total.saturating_sub(1)));
+            c.restore = restore.map(|i| i.min(c.total.saturating_sub(1)));
+            c.status = if c.total == 0 { CollectionStatus::Empty } else { CollectionStatus::Ready };
+            c.generation = self.generation;
+            self.revision += 1;
+            return true;
+        }
+        let (id, want, key) = (c.id.clone(), c.wanted.end, c.client_key);
+        let (window, focus, restore) = (c.wanted.clone(), c.focus, c.restore);
+        self.supersede(adapter);
+        let mut fresh = Collection::loading(id, want, key, self.generation);
+        (fresh.wanted, fresh.focus, fresh.restore) = (window, focus, restore);
+        self.current = Some(fresh);
+        self.revision += 1;
+        true
+    }
     pub fn view(&self) -> CollectionView<'_> {
         CollectionView { current: self.current.as_ref(), revision: self.revision }
     }
@@ -761,6 +801,45 @@ mod tests {
         fn run_bare(&mut self, adapter: &Arc<CollectionAdapter>, cmd: CollectionCmd) -> bool {
             self.run(adapter, cmd, &ClientKeys::default())
         }
+    }
+
+    #[test]
+    fn delete_membership_collection_keeps_neighbors_and_discards_old_answers() {
+        let adapter = Arc::new(CollectionAdapter::default());
+        let mut state = CollectionState::default();
+        state.run_bare(&adapter, CollectionCmd::Open { target: set_target("50001", 7, "Set") });
+        let tile = |rk: &str| PmsMovie { rk: rk.into(), sid: ServerId::UNSET, ..Default::default() };
+        state.install_for_test(vec![tile("10"), tile("11")], CollectionStatus::Ready);
+        state.run_bare(&adapter, CollectionCmd::Window { wanted: 0..2, focus: Some(1), restore: None });
+        let other = crate::viewstate::ViewAt::leaf(ServerId::UNSET, "99");
+        let old = state.generation();
+        assert!(!state.deleted_media(&adapter, &other));
+        assert_eq!(state.view().current().unwrap().item(0).unwrap().rk, "10");
+        let at = crate::viewstate::ViewAt::leaf(ServerId::UNSET, "10");
+        assert!(state.deleted_media(&adapter, &at));
+        assert_ne!(state.generation(), old);
+        assert_eq!(state.view().current().unwrap().item(0).unwrap().rk, "11");
+        assert_eq!(state.view().current().unwrap().focus, Some(0));
+        adapter.land(old, Landing::Header { rk: None, head: header("Stale", 2) });
+        assert!(!state.take_landing_for_test(&adapter));
+        assert_eq!(state.view().current().unwrap().item(0).unwrap().rk, "11");
+    }
+
+    #[test]
+    fn delete_membership_collection_reloads_incomplete_membership() {
+        let adapter = Arc::new(CollectionAdapter::default());
+        let mut state = CollectionState::default();
+        state.run_bare(&adapter, CollectionCmd::Open { target: set_target("50001", 7, "Set") });
+        state.install_for_test(vec![PmsMovie { sid: ServerId::UNSET, rk: "11".into(), kind: 3,
+            show_rk: "10".into(), ..Default::default() }], CollectionStatus::Ready);
+        state.current.as_mut().unwrap().more = true;
+        let old = state.generation();
+        let at = crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "10".into(),
+            scope: crate::viewstate::Scope::Show };
+        assert!(state.deleted_media(&adapter, &at));
+        assert!(state.view().current().unwrap().item(0).is_none());
+        adapter.land(old, Landing::Header { rk: None, head: header("Stale", 1) });
+        assert!(!state.take_landing_for_test(&adapter));
     }
 
     fn set_target(rk: &str, tag: i64, name: &str) -> CollectionTarget {

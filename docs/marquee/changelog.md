@@ -1,5 +1,13 @@
 # Marquee changelog
 
+## 0.10.0
+
+- Rosé Pine folded-M icon and splash; the package title controls display names across the app and launcher.
+- Bazarr accepts the native keyboard’s literal address and key text, retains invalid drafts, and excludes typed text from diagnostics.
+- Dialogue enhancement rejects unusable audio decisions and restores the previous playback route if the replacement fails.
+- The first Left or Right press opens a scene-thumbnail seek preview; OK seeks and Back cancels. Instant D-pad seeking remains optional.
+- The hold-menu deletes movies, episodes and whole shows after confirmation, with Plex Watchlist cleanup and explicit partial-failure reporting.
+
 ## 0.9.3
 
 - Settings > Subtitles: every part of the subtitle look as a row (preset, font, size, colour, opacity, bold,

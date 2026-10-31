@@ -18,6 +18,21 @@ class StorageServicePackage(unittest.TestCase):
         appdir.mkdir(parents=True)
         (appdir / "appinfo.json").write_text(json.dumps({**app, "requiredPermissions": mkipk.STORAGE_PERMISSIONS}))
 
+    def test_localized_titles_follow_each_package_title(self):
+        repo = Path(__file__).resolve().parent.parent
+        for suffix in ("", " debug", " Nightly"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmp:
+                data = Path(tmp)
+                app = {"id": "com.beb.plxnative", "title": "Another Name" + suffix}
+                locales = mkipk.stage_resources(repo, data, app)
+                self.assertTrue(locales)
+                for loc in locales:
+                    staged = data / "usr/palm/applications" / app["id"] / "resources" / loc / "appinfo.json"
+                    descriptor = json.loads(staged.read_text(encoding="utf-8"))
+                    self.assertEqual(descriptor["title"], app["title"])
+                    self.assertTrue(descriptor["appDescription"])
+
+
     def test_built_helper_packages_for_every_flavor_when_available(self):
         repo = Path(__file__).resolve().parent.parent
         if not (repo / "pkg/plxnative-storage").is_file():

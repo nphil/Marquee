@@ -166,7 +166,7 @@ fn claim(ps: &mut PlaybackSession) -> (ClaimedRouteAction, ClaimTail) {
     let action = claim_route_action().expect("a queued user action");
     let tail = match action.intent {
         RouteIntent::User(UserRouteIntent::Retranscode) => {
-            match execute_retranscode_claim(ps, &action, 60, -1, 0) {
+            match execute_retranscode_claim(ps, &action, 60, -1, 60_000_000_000) {
                 RetranscodeClaimDispatch::Sync(tail) => tail,
                 // The PMS half now runs on a worker (the freeze fix): wait for its landing the
                 // same way the pump does on a later frame, against the SAME loopback fixture this
@@ -202,6 +202,11 @@ fn settle(ps: &mut PlaybackSession, action: &ClaimedRouteAction, tail: ClaimTail
     match tail {
         ClaimTail::Retranscode | ClaimTail::NativeAudio | ClaimTail::Adaptive => {
             finish_route_action(ps, action, RouteApplyResult::Prepared)
+        }
+        ClaimTail::Original(AutoOriginalReload::Remux) => {
+            settle_pending_native_start(ps, RouteStartResult::Started);
+            confirm_original_recovery(ps);
+            true
         }
         ClaimTail::Original(_) => true,
         ClaimTail::Rejected(_) => finish_route_action(ps, action, RouteApplyResult::Rejected),
@@ -407,7 +412,7 @@ fn claim_ticket_invalidated_while_worker_in_flight_is_discarded_then_a_fresh_pic
             tail
         }
     };
-    assert_eq!(tail2, ClaimTail::Retranscode, "the second, current pick must still apply");
+    assert_eq!(tail2, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action2, tail2);
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Applied);
 
@@ -621,6 +626,66 @@ fn recovery_to_an_enhanced_remux_declares_the_source_rate() {
 }
 
 #[test]
+fn failed_enhancement_trial_restores_direct_at_the_original_position() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install(&mut ps, &live, Delivery::Direct, a1(), Some(candidate(true, a1(), None)), 0);
+    let old_url = ps.url.clone();
+    assert!(toggle(&mut ps, PREF));
+    let (_, tail) = claim(&mut ps);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
+    assert!(original_recovery_pending());
+    assert_eq!(cur_enhancement_label(&ps), Some("pending"));
+    assert_eq!(applied_audio_enhancements(&ps), NONE);
+    let rollback = rollback_original_recovery(&mut ps).expect("trial has a retained route");
+    assert_eq!(rollback.offset_ns, 60_000_000_000);
+    assert_eq!(ps.url, old_url);
+    assert!(!is_transcoding(&ps));
+    assert!(matches!(dispatch_rollback_rebase(&mut ps, rollback.offset_ns), RecoveryDispatch::Flying { .. }));
+    let mut landing = None;
+    wait_until("direct rollback landing", || {
+        landing = take_ready_recovery_flight(&mut ps);
+        landing.is_some()
+    });
+    let landing = landing.unwrap();
+    assert_eq!(landing.verdict, RecoveryVerdict::Install);
+    assert_eq!(landing.offset_ns, rollback.offset_ns);
+    settle_pending_native_start(&mut ps, RouteStartResult::Started);
+    assert_eq!(phase(), ControlPhase::Stable);
+    live.finish();
+    cleanup(&mut ps);
+}
+
+#[test]
+fn failed_enhancement_trial_restores_the_previous_remux() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install(&mut ps, &live, Delivery::Remux(NONE), a1(), Some(candidate(false, a1(), None)), 0);
+    assert!(toggle(&mut ps, PREF));
+    let (_, tail) = claim(&mut ps);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
+    let rollback = rollback_original_recovery(&mut ps).expect("trial has a retained route");
+    assert_eq!(rollback.offset_ns, 60_000_000_000);
+    assert_eq!(ps.tsession, "enh-remux-1");
+    assert_eq!(ps.cur_contract.audio, NONE);
+    assert!(matches!(dispatch_rollback_rebase(&mut ps, rollback.offset_ns), RecoveryDispatch::Flying { .. }));
+    let mut landing = None;
+    wait_until("remux rollback landing", || {
+        landing = take_ready_recovery_flight(&mut ps);
+        landing.is_some()
+    });
+    let landing = landing.unwrap();
+    assert_eq!(landing.verdict, RecoveryVerdict::Install);
+    assert_eq!(landing.offset_ns, rollback.offset_ns);
+    settle_pending_native_start(&mut ps, RouteStartResult::Started);
+    assert_eq!(phase(), ControlPhase::Stable);
+    live.finish();
+    cleanup(&mut ps);
+}
+
+#[test]
 fn toggle_on_from_direct_queues_retranscode_then_remux_params() {
     let mut ps = PlaybackSession::IDLE;
     let _g = fresh_registry(&mut ps);
@@ -630,7 +695,7 @@ fn toggle_on_from_direct_queues_retranscode_then_remux_params() {
     assert!(pending_user_route_intent(UserRouteIntent::Retranscode));
     let (action, tail) = claim(&mut ps);
     assert!(!action.displaced_pick, "a bare toggle displaces no pick");
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, false));
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Applied);
@@ -673,7 +738,7 @@ fn claim_frees_the_frame_thread_pms_call_runs_on_a_worker() {
     // there), so it was free to block on the loopback fixture; the frame thread above never did.
     // Drain the mailbox exactly the way the pump does on a later frame.
     let (action, tail, ..) = await_landing(&mut ps, "retranscode claim worker never landed");
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Applied);
     assert_eq!(ps.stream_acodec, "ac3");
@@ -878,7 +943,7 @@ fn a_refused_spawn_settles_like_a_refused_decision_not_a_stuck_applying() {
     // The reducer is usable again: a fresh claim (this time with a real spawn) applies normally.
     assert!(toggle(&mut ps, PREF));
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Applied);
 
@@ -915,6 +980,25 @@ fn a_refused_retranscode_still_stops_the_speculative_encoder() {
         requests.iter().any(|r| r.contains("/video/:/transcode/universal/stop")),
         "a refused decision must stop the encoder it speculatively started: {requests:?}",
     );
+    cleanup(&mut ps);
+}
+
+#[test]
+fn unavailable_enhanced_audio_keeps_the_playing_route() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Unavailable);
+    install(&mut ps, &live, Delivery::Direct, a1(), Some(candidate(true, a1(), None)), 0);
+    let old_url = ps.url.clone();
+    assert!(toggle(&mut ps, PREF));
+    let (action, tail) = claim(&mut ps);
+    assert_eq!(tail, ClaimTail::Rejected(ENHANCEMENT_REJECTED));
+    assert!(settle(&mut ps, &action, tail));
+    assert_eq!(ps.url, old_url);
+    assert!(!is_transcoding(&ps));
+    assert_eq!(displayed_audio_enhancements(&ps), NONE);
+    let requests = live.finish();
+    assert!(requests.iter().any(|r| r.contains("/video/:/transcode/universal/stop")));
     cleanup(&mut ps);
 }
 
@@ -1092,7 +1176,7 @@ fn toggle_off_with_remux_candidate_is_plain_remux() {
     install(&mut ps, &live, Delivery::Remux(PREF), a1(), Some(candidate(false, a1(), None)), 0);
     assert!(toggle(&mut ps, NONE));
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(NONE, false));
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Off);
@@ -1125,7 +1209,7 @@ fn toggle_during_pending_original_sets_deferred_reconcile() {
     confirm_original_recovery(&mut ps);
     assert!(pending_user_route_intent(UserRouteIntent::Retranscode), "commit runs the reconcile");
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, false));
     live.finish();
@@ -1259,7 +1343,7 @@ fn native_capable_pick_with_pref_on_goes_remux_not_native() {
     assert!(pending_user_route_intent(UserRouteIntent::Retranscode));
     let (action, tail) = claim(&mut ps);
     assert!(action.displaced_pick);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, false));
     assert_eq!(ps.cur_audio, Some(a1()));
@@ -1273,7 +1357,7 @@ fn pick_and_settle(ps: &mut PlaybackSession, pick: CarriedAudio) {
     commit_audio_selection(ps, pick);
     assert!(pending_user_route_intent(UserRouteIntent::Retranscode));
     let (action, tail) = claim(ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert!(matches!(tail, ClaimTail::Retranscode | ClaimTail::Original(AutoOriginalReload::Remux)));
     settle(ps, &action, tail);
 }
 
@@ -1492,7 +1576,7 @@ fn subtitle_off_on_direct_with_pref_converges_to_remux() {
     assert!(pending_user_route_intent(UserRouteIntent::Retranscode));
     let (action, tail) = claim(&mut ps);
     assert!(!action.displaced_pick, "a direct subtitle never reloads");
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, false));
     let requests = live.finish();
@@ -1551,7 +1635,7 @@ fn subtitle_pick_while_enhanced_auto_burns_embedded() {
     // fires mid-transcode (`legacy_reloads == transcoding`) — the burn IS the subtitle's own
     // reload, so this is the correct bookkeeping, not a separate legacy fallback underneath it.
     assert!(action.displaced_pick);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, true));
     assert!(!ps.cur_contract.remux, "a burn is a real re-encode");
@@ -1665,7 +1749,7 @@ fn subtitle_off_while_burning_drops_the_burn_keeps_the_enhancement() {
         "back to a plain enhanced remux, no burn"
     );
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert!(ps.cur_contract.remux, "no longer forced to re-encode");
     let requests = live.finish();
@@ -2232,7 +2316,7 @@ fn subtitle_first_pick_while_plain_enhanced_remux_burns_it() {
         "an embedded pick while enhanced must force a Burn"
     );
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert!(!ps.cur_contract.remux, "the pick must turn the plain remux into a real re-encode");
     assert_eq!(ps.cur_contract.audio, PREF, "the DSP preference must survive the pick");
@@ -2355,7 +2439,7 @@ fn a_worker_panic_still_releases_applying_instead_of_hanging_forever() {
     // The reducer is usable again after the panic released it.
     assert!(toggle(&mut ps, PREF));
     let (action2, tail2) = claim(&mut ps);
-    assert_eq!(tail2, ClaimTail::Retranscode);
+    assert_eq!(tail2, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action2, tail2);
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Applied);
 
@@ -2391,7 +2475,7 @@ fn a_second_edit_queued_mid_flight_does_not_get_marked_as_the_first_claims_landi
     assert_ne!(first_revision, second_revision, "the second edit really did advance the contract");
 
     let (action, tail, ..) = await_landing(&mut ps, "first claim worker never landed");
-    assert_eq!(tail, ClaimTail::Retranscode, "the first claim's own attempt still applies");
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(
         PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner()).applied_revision,
@@ -2424,7 +2508,7 @@ fn a_rejected_claim_after_an_accepted_one_restores_the_stream_that_plays() {
         RetranscodeClaimDispatch::Pending
     ));
     let (action, tail, ..) = await_landing(&mut ps, "the worker's landing");
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     let (live_url, live_tsession) = (ps.url.clone(), ps.tsession.clone());
     assert!(!live_tsession.is_empty(), "the accepted claim installed the new encoder");
@@ -2480,9 +2564,7 @@ fn a_rejected_claim_after_a_native_audio_landing_restores_the_codec_that_plays()
     cleanup(&mut ps);
 }
 
-/// Finding: the old encoder was stopped inside the worker's attempt, seconds before the landing
-/// reloads — the engine (paused at the claim offset) was still reading a stream PMS had just
-/// killed. It must stay alive until the landing is installed, and be stopped only after.
+/// The previous encoder stays alive through the replacement Load until decoded frames confirm it.
 #[test]
 fn the_replaced_encoder_stays_alive_until_the_landing_is_installed() {
     let mut ps = PlaybackSession::IDLE;
@@ -2504,10 +2586,10 @@ fn the_replaced_encoder_stays_alive_until_the_landing_is_installed() {
     );
 
     let (action, tail, ..) = take_ready_retranscode_claim(&mut ps).expect("the landing");
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
+    assert!(!stop_seen(&log, "enh-remux-1"), "the previous encoder must survive until decoded frames");
     settle(&mut ps, &action, tail);
-    // The pump reloads onto the new stream, THEN retires the one it replaced.
-    retire_superseded_encoder();
+    // Decoded-frame confirmation retires the retained encoder.
     wait_until("the replaced encoder's stop", || stop_seen(&log, "enh-remux-1"));
 
     live.finish();
@@ -2701,7 +2783,7 @@ fn transcode_seek_refuses_while_an_unrelated_claim_is_in_flight() {
     );
 
     let (action, tail, ..) = await_landing(&mut ps, "claim worker never landed");
-    assert_eq!(tail, ClaimTail::Retranscode, "the seek attempt above must not have disturbed it");
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Applied);
 
@@ -3563,7 +3645,7 @@ fn enabling_normalize_on_a_burned_subtitle_rebuilds_as_the_enhanced_burn() {
     assert!(toggle(&mut ps, PREF));
     assert_eq!(enhancement_step(&ps), EnhancementStep::Remux(enhanced_remux_contract(PREF, true)));
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     settle(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, true));
     assert_eq!(ps.cur_sub_sid, 77, "the subtitle survives the rebuild");
@@ -3889,7 +3971,7 @@ fn subtitle_off_on_a_truehd_enhanced_burn_keeps_the_enhancement_as_a_remux() {
     pick_embedded_subtitle_and_land(&mut ps);
     assert!(toggle(&mut ps, PREF));
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     land(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, true), "the enhanced burn");
     assert_eq!(ps.cur_enhancement, EnhancementOutcome::Unverified, "TrueHD is converted, never verified");
@@ -3902,7 +3984,7 @@ fn subtitle_off_on_a_truehd_enhanced_burn_keeps_the_enhancement_as_a_remux() {
         "Off drops the burn but keeps the params"
     );
     let (action, tail) = claim(&mut ps);
-    assert_eq!(tail, ClaimTail::Retranscode);
+    assert_eq!(tail, ClaimTail::Original(AutoOriginalReload::Remux));
     land(&mut ps, &action, tail);
     assert_eq!(ps.cur_contract, enhanced_remux_contract(PREF, false));
     assert_eq!(

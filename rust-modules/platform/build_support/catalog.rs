@@ -846,11 +846,24 @@ pub fn discover(root: &Path, specs: &[LanguageSpec]) -> Result<Vec<Catalog>, Vec
     if errors.is_empty() { Ok(catalogs) } else { Err(errors) }
 }
 
-pub fn build(root: &Path, out: &Path) -> Result<(), Vec<String>> {
+fn expand_app_name(value: &mut Value, name: &str) {
+    match value {
+        Value::String(s) => *s = s.replace("@APP_NAME_UPPER@", &name.to_uppercase()).replace("@APP_NAME@", name),
+        Value::Array(a) => a.iter_mut().for_each(|v| expand_app_name(v, name)),
+        Value::Object(o) => o.values_mut().for_each(|v| expand_app_name(v, name)),
+        _ => {}
+    }
+}
+
+pub fn build(root: &Path, out: &Path, app_name: &str) -> Result<(), Vec<String>> {
     let text = std::fs::read_to_string(root.join("languages.json"))
         .map_err(|e| vec![format!("locales/languages.json: {e}; every UI language is registered there ({GUIDE})")])?;
     let specs = parse_registry(&text)?;
     let mut catalogs = discover(root, &specs)?;
+    // Expand the shared display name before compiling message placeholders.
+    for catalog in &mut catalogs {
+        for value in catalog.entries.values_mut() { expand_app_name(value, app_name); }
+    }
     let at = catalogs.iter().position(|c| c.spec.tag == "en").expect("registry requires en");
     let source = catalogs.remove(at);
     let generated = compile(&source, &catalogs)?;
@@ -863,6 +876,14 @@ pub fn build(root: &Path, out: &Path) -> Result<(), Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn display_name_expands_in_nested_messages() {
+        let mut entry = serde_json::json!({"value": {"one": "About @APP_NAME@", "other": "@APP_NAME_UPPER@ {count}"}});
+        expand_app_name(&mut entry, "Another Name");
+        assert_eq!(entry["value"]["one"], "About Another Name");
+        assert_eq!(entry["value"]["other"], "ANOTHER NAME {count}");
+    }
+
     const REGISTRY: &str = r#"[
       {"tag":"en","native_name":"English","region":"en-US","script":"Latn","plurals":["one","other"],"row":1},
       {"tag":"es","native_name":"Español","region":"es-ES","script":"Latn","plurals":["one","many","other"],"row":2},
@@ -915,7 +936,7 @@ mod tests {
     fn build_in(root: &Path) -> Result<(), Vec<String>> {
         let out = root.with_extension("out");
         std::fs::create_dir_all(&out).unwrap();
-        let result = build(root, &out);
+        let result = build(root, &out, "Test App");
         let _ = std::fs::remove_dir_all(&out);
         result
     }
@@ -968,7 +989,7 @@ mod tests {
         std::fs::write(root.join("languages.json"), registry).unwrap();
         write_locale(&root, "it", r#"{"test.label":"Ciao"}"#);
         let out = temp_root("seventh-out");
-        build(&root, &out).expect("registered plus catalog directory builds");
+        build(&root, &out, "Test App").expect("registered plus catalog directory builds");
         let languages = std::fs::read_to_string(out.join("languages.rs")).unwrap();
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&out);

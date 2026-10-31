@@ -8,7 +8,7 @@
   "subtitles.about_outline": "Fehér szöveg vastag fekete körvonallal, doboz nélkül. Világos vagy zsúfolt képeken a legolvashatóbb.",
   "subtitles.about_large_print": "Nagyobb, vastagabb szöveg körvonallal, távolról is olvasható.",
   "subtitles.about_high_contrast": "Sárga szöveg fekete körvonallal sötét dobozon, a legnagyobb kontrasztért.",
-  "subtitles.about_marquee": "Inter Bold, fehér, vékony körvonallal: a Marquee saját megjelenése.",
+  "subtitles.about_marquee": "Inter Bold, fehér, vékony körvonallal: a @APP_NAME@ saját megjelenése.",
   "subtitles.about_custom": "Saját beállításkeverék. Válasszon előbeállítást az újrakezdéshez.",
   "subtitles.group_look": "Megjelenés",
   "subtitles.group_text": "Szöveg",

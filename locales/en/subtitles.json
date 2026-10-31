@@ -36,8 +36,8 @@
     "description": "Settings > Subtitles page. Narrative line under the page title when the High contrast preset is the look."
   },
   "subtitles.about_marquee": {
-    "value": "Inter Bold, white, with a thin outline: Marquee's own look.",
-    "description": "Settings > Subtitles page. Narrative line under the page title when the Marquee preset is the look. Inter is a typeface name; Marquee is the app name."
+    "value": "Inter Bold, white, with a thin outline: @APP_NAME@'s own look.",
+    "description": "Settings > Subtitles page. Narrative line under the page title when the @APP_NAME@ preset is the look. Inter is a typeface name; @APP_NAME@ is the app name."
   },
   "subtitles.about_custom": {
     "value": "Your own mix of settings. Pick a preset to start over.",

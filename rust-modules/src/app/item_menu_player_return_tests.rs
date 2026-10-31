@@ -133,6 +133,7 @@ fn chain(host: AppArg, episode: bool, accept_request: bool, accept_start: bool) 
         arg.kind = ItemMenuKind::Episode {
             mark: plx_ui::widgets::PosterMark::None,
             versions: Vec::new(),
+            title: "Episode".into(),
         };
         arg.loaded_episode = true;
     }
@@ -164,7 +165,7 @@ fn chain(host: AppArg, episode: bool, accept_request: bool, accept_start: bool) 
         accept_request,
         accept_start,
     };
-    content::drain_item_menu_requests(&mut ps, &mut pa, &mut d, &mut rig, &mut resources, &mut None, 0);
+    content::drain_item_menu_requests(&mut ps, &mut pa, &mut d, &mut rig, &mut resources, &mut None, 0, true);
     let mut expected = if episode {
         vec![ResourceCall::Episode(row.rk.clone())]
     } else {
@@ -182,7 +183,7 @@ fn chain(host: AppArg, episode: bool, accept_request: bool, accept_start: bool) 
         expected.push(ResourceCall::Start(0)); // real PlayFromStart policy drops the captured resume
     }
     assert_eq!(resources.calls, expected);
-    content::drain_item_menu_requests(&mut ps, &mut pa, &mut d, &mut rig, &mut resources, &mut None, 0);
+    content::drain_item_menu_requests(&mut ps, &mut pa, &mut d, &mut rig, &mut resources, &mut None, 0, true);
     assert_eq!(
         resources.calls, expected,
         "one activation is drained exactly once"

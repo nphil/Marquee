@@ -921,8 +921,8 @@ LOCALE_RE = re.compile(r"^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$")
 LOCALIZED_KEYS = {"title", "appDescription"}
 
 
-def check_tracked_resources(expect_title: str) -> list:
-    """Grade `pkg/resources/`. `expect_title` is the title these must carry. Returns the locales."""
+def check_tracked_resources() -> list:
+    """Grade tracked translations; the title is generated during packaging."""
     src = ROOT / "pkg" / "resources"
     if not src.is_dir():
         check(False, "pkg/resources/ exists — the localized appinfo tree (LG checklist #41)")
@@ -945,14 +945,8 @@ def check_tracked_resources(expect_title: str) -> list:
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             check(False, f"{loc}/appinfo.json is valid UTF-8 JSON ({e})")
             continue
-        check(set(d) == LOCALIZED_KEYS,
-              f"{loc}/appinfo.json carries exactly {sorted(LOCALIZED_KEYS)} (saw {sorted(d)})")
-        # The title is the BRAND, not a string to translate: TRADEMARKS.md reserves it, and LG's
-        # own listing shows it verbatim. A translated one here would also silently un-badge a
-        # flavoured install's tile, which is why `mkipk.stage_resources` reapplies the suffix
-        # rather than trusting whatever is written in the tree.
-        check(d.get("title") == expect_title,
-              f"{loc}/appinfo.json title is the untranslated brand ({expect_title!r})")
+        check(set(d) == {"appDescription"},
+              f"{loc}/appinfo.json carries only appDescription (saw {sorted(d)})")
         desc = d.get("appDescription", "")
         check(bool(desc.strip()) and desc != english,
               f"{loc}/appinfo.json appDescription is present and actually translated")
@@ -1043,7 +1037,7 @@ if len(staged) != 1 and not REQUIRE_PACKAGE:
     # Tracked too, and editable by hand in twelve languages — so graded on the cheap path as well,
     # not only after a cross-build has produced a package.
     print("== localized appinfo (tracked) ==")
-    check_tracked_resources(tracked_appinfo["title"])
+    check_tracked_resources()
     # The release note and the release audit are TRACKED files too, so they are graded on this
     # cheap path as well — which is the one `release.yml`'s `prepare` runs BEFORE it writes a tag.
     # Catching a missing note here costs a job; catching it after the build costs a tag that
@@ -1708,9 +1702,8 @@ for name, why in NEEDED_LICENCES.items():
     check(p.exists() and p.stat().st_size > 200, f"licenses/{name} — {why}")
 
 print("== localized appinfo (staged) ==")
-# The tracked half first, against the TRACKED title — `stage_resources` reapplies the flavour
-# suffix, so the file in the tree carries the bare brand name whatever is being packaged.
-tracked_locales = check_tracked_resources(json.loads((ROOT / "pkg/appinfo.json").read_text())["title"])
+# Package staging supplies the shared, flavoured title to every translation.
+tracked_locales = check_tracked_resources()
 staged_res = PAYLOAD / "resources"
 staged_locales = sorted(p.name for p in staged_res.iterdir() if p.is_dir()) if staged_res.is_dir() else []
 # A SET EQUALITY, not a subset. A locale added to the tree and never staged is the ipk-vs-deploy

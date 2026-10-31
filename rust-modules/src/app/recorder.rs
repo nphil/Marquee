@@ -572,6 +572,11 @@ impl plx_ui::dispatch::Tap<super::bridge::AppHost> for Recplay {
     }
     fn input(&mut self, _frame: u64, input: &plx_machine::machine::InputEvent<u32>) {
         if matches!(self,Self::Off) { return; }
+        if matches!(&input.kind, plx_machine::machine::InputKind::Key { sym, .. }
+            if super::events::printable_key(*sym)) {
+            self.refuse("printable keyboard input is not recorded");
+            return;
+        }
         match super::bootstrap::effects::input(input) {
             Ok(encoded) => self.input(encoded),
             Err(reason) => self.refuse(reason),
@@ -620,6 +625,9 @@ impl plx_ui::dispatch::Tap<super::bridge::AppHost> for Recplay {
         use plx_machine::machine::{Delivery, Fx, MachineId};
         use plx_ui::screen::ScreenEvent;
         if matches!(&stamped.fx, Fx::Deliver(_, Delivery::Machine(msg)) if off_tape(msg)) { return; }
+        if matches!(&stamped.fx, Fx::Deliver(_, Delivery::Screen(ScreenEvent::Input(
+            plx_machine::machine::InputEvent { kind: plx_machine::machine::InputKind::Key { sym, .. }, .. }
+        ))) if super::events::printable_key(*sym)) { return; }
         let name = match &stamped.fx {
             Fx::Nav(_) => "Nav", Fx::Mount(_) => "Mount", Fx::Unmount(_) => "Unmount",
             Fx::Deliver(_, _) => "Deliver", Fx::Timer { .. } => "Timer",

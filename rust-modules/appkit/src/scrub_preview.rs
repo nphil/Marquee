@@ -3,27 +3,25 @@
 //!
 //! **Where the stills come from.** A server that generates video preview thumbnails keeps a BIF
 //! index per part, and PMS serves single stills out of it at
-//! `/library/parts/{part}/indexes/sd/{ms}` — about 10 KB of 320×180 JPEG each, the nearest frame
-//! to `ms`. The whole BIF is tens of MB against a 32-bit heap, so it is never fetched: each still
-//! is ordinary keyed art through the poster source and the render cache (`plx_ui::tex`), exactly
-//! like a chapter card's thumbnail. `plx_platform::imgcache` keeps them off the disk tier.
+//! `/library/parts/{part}/indexes/sd/{ms}` — a JPEG near the requested offset. The whole BIF
+//! is tens of MB against a 32-bit heap, so each still uses the poster source and bounded render
+//! cache instead. Stills are not stored on disk.
 //!
 //! **Absence is the ordinary case.** Many libraries have preview thumbnails off, and then every
 //! still is a 404. The first request of a playback that settles as a miss before any still has
 //! arrived marks the part as having no index, and nothing is drawn or asked for again until the
 //! next playback — no placeholder box, no request per scrub step.
 //!
-//! **One request in flight, always for the newest position.** A held scrub crosses a film in
-//! seconds. Asking for every step it passes would fill the source's 64 slots with stills nobody
-//! will see; instead the memo asks for the position under the knob, waits for that one to settle,
-//! and then asks for wherever the knob has got to. Until a new still lands, the last one stays up.
+//! **One tracked request at a time.** A held scrub crosses a film in seconds. The memo waits
+//! for its current still before asking for the newest target; a timed-out request may still be
+//! finishing in the bounded artwork store. Until a new still lands, the last one stays up.
 //!
 //! The memo is a RENDER memo, like [`crate::player_hud::motion::HudMotion`]'s label widths: what it
 //! holds is which still the draw can show, and it is stepped where the art is probed — in the draw.
 
 use plx_ui::{theme, Painter, Rect};
 
-/// The stills' request size: the BIF's own 320×180, so the server's transcoder never upscales.
+/// The nominal size of the server-generated stills.
 pub const REQ_W: i32 = 320;
 pub const REQ_H: i32 = 180;
 /// The drawn card's height, fixed; its width follows the still's own aspect ([`card_size`]), so a
@@ -83,7 +81,7 @@ pub fn still_ms(pos_ns: i64) -> i64 {
     (pos_ns.max(0) + 500_000_000) / 1_000_000_000 * 1_000
 }
 
-/// The still's server path — what the poster source turns into a transcode request.
+/// The direct server endpoint for the still at the requested offset.
 pub fn still_path(part: i64, ms: i64) -> String {
     format!("/library/parts/{part}/indexes/sd/{ms}")
 }

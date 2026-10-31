@@ -3,8 +3,8 @@
   "findings": [
     {
       "code": "HUD-E0402",
-      "hint": "this PlxNative reads HUD format 1.0",
-      "message": "Made for a newer PlxNative",
+      "hint": "this app reads HUD format 1.0",
+      "message": "Made for a newer version of this app",
       "nearest": [],
       "path": "/format",
       "rule": "format-newer-minor",

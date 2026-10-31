@@ -106,13 +106,12 @@ impl BazarrLink {
         })
     }
 
-    /// A pasted key as it settles: trimmed, no inner whitespace, within the cap; `None` when it
-    /// is empty or holds a character an HTTP header cannot carry.
+    /// A key is trimmed and must be safe to carry as an HTTP header value.
     pub fn normalize_key(typed: &str) -> Option<String> {
         let k = typed.trim();
         let ok = !k.is_empty()
             && k.len() <= MAX_KEY
-            && k.bytes().all(|b| b.is_ascii_graphic() && b != b'"' && b != b'\\');
+            && k.chars().all(|c| !c.is_control());
         ok.then(|| k.to_string())
     }
 }
@@ -213,7 +212,8 @@ mod tests {
     #[test]
     fn keys_are_trimmed_and_header_safe() {
         assert_eq!(BazarrLink::normalize_key(" abc123 ").as_deref(), Some("abc123"));
-        for bad in ["", "   ", "has space", "quo\"te", "back\\slash", "tab\tkey", &"x".repeat(MAX_KEY + 1)] {
+        assert_eq!(BazarrLink::normalize_key("a \"b\\c").as_deref(), Some("a \"b\\c"));
+        for bad in ["", "   ", "tab\tkey", "line\r\nkey", &"x".repeat(MAX_KEY + 1)] {
             assert_eq!(BazarrLink::normalize_key(bad), None, "{bad:?}");
         }
     }

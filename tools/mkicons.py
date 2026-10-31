@@ -10,8 +10,8 @@
 **`--bleed`** is for a master that is already a finished full-bleed tile (gradient and gloss
 included, glyph laid out inside the central 60 %, bottom 22 % kept clear for the badge bar): it is
 resized straight to each size with no ink fit, and `iconColor` becomes the tile's pixel (1,1), the
-one `ci/check-package.py` compares. The current master is drawn by LumaTV's
-tools/make-app-icons.py. Without it the master must be a glyph on one flat colour.
+one `ci/check-package.py` compares. The Marquee master uses a lavender-and-gold folded M on
+Rosé Pine plum; regenerate with `--bleed`. Without it the master must be a glyph on one flat colour.
 
 Emits `pkg/icon.png` (80), `pkg/largeIcon.png` (130) and, for the webosbrew channel listing,
 `pkg/icon160.png` / `pkg/icon320.png`. With `--splash` it also emits `pkg/splash.png` at exactly

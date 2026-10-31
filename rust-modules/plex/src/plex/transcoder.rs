@@ -393,9 +393,13 @@ fn profile_codec_name(codec: &str) -> &str {
 }
 
 impl Client {
+    /// Build the authenticated path of one server-generated part-index image.
+    pub fn index_image_path(&self, src_path: &str) -> String {
+        self.with_token(src_path)
+    }
+
     /// GET /photo/:/transcode?width&height&minSize=1&url=…[&format=png]&X-Plex-Token — returns
-    /// the built PATH (the sole path-returning method): posters uses it as the LRU key AND the
-    /// http_get path. `src_path` is the raw thumb/art path; encoding is centralized in enc().
+    /// the built path used as both artwork cache key and HTTP request. The source is encoded once.
     pub fn image_transcode_path(&self, src_path: &str, w: i64, h: i64, png: bool) -> String {
         let mut q = QueryBuilder::new("/photo/:/transcode")
             .int("width", w)

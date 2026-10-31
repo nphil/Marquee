@@ -29,6 +29,13 @@ impl TextBuffer {
             TextEdit::Right => self.right(),
         }
     }
+    /// Credentials and addresses are literal; prediction replacement is only for search text.
+    pub fn edit_literal(&mut self, edit: &plx_machine::machine::TextEdit) {
+        match edit {
+            plx_machine::machine::TextEdit::Commit(text) => self.insert(text),
+            other => self.edit(other),
+        }
+    }
 
     /// A literal insertion, unlike the TV's prediction-bearing commit.
     pub fn insert(&mut self, text: &str) {

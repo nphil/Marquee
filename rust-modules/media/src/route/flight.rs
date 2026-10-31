@@ -142,6 +142,8 @@ pub(super) enum RetranscodeFallback {
 /// The worker's verdict, applied to `PlaybackSession` by [`take_ready_retranscode_claim`].
 pub(super) enum RetranscodeClaimResult {
     Retranscode(AppliedRetranscode),
+    Enhancement(AppliedRetranscode),
+    RestoreDirect,
     /// An Original recovery's PMS half done ([`run_original_recovery`]) — an enhancement release,
     /// the viewer's Original pick or the Auto watchdog's handoff; the drain installs it
     /// ([`install_original_recovery`]) and the pump's `Original` tail reloads.
@@ -183,7 +185,7 @@ impl RetranscodeClaimResult {
     /// owns the old one any more and it would otherwise run on the server unowned.
     fn discard(self) {
         match self {
-            Self::Retranscode(applied) => stop_discarded_landing(applied),
+            Self::Retranscode(applied) | Self::Enhancement(applied) => stop_discarded_landing(applied),
             Self::OriginalRecovery(landing) => {
                 let OriginalRecoveryLanding { plan, net } = *landing;
                 if let (OriginalRecoveryNet::Remux(prepared), Some(client)) = (net, plan.client) {
@@ -200,7 +202,7 @@ impl RetranscodeClaimResult {
                 let AutoHlsLanding { plan, outcome } = *landing;
                 discard_auto_hls(plan, outcome);
             }
-            Self::NativeAudio { .. } | Self::Rejected(_) => {}
+            Self::NativeAudio { .. } | Self::Rejected(_) | Self::RestoreDirect => {}
         }
     }
 }
@@ -209,6 +211,8 @@ impl RetranscodeClaimResult {
 pub(super) enum ClaimWork {
     /// One `/decision` attempt for this contract ([`try_retranscode`]).
     Encode(plx_plex::plex::EncodeContract),
+    Enhancement(plx_plex::plex::EncodeContract),
+    RestoreDirect,
     /// A recovery back to the Original ([`run_original_recovery`]).
     RecoverOriginal(Box<OriginalRecoveryPlan>),
     /// A transcode rebuilt at an offset ([`run_rebase`]): an adaptive refresh, or a seek.
@@ -307,6 +311,14 @@ fn run_retranscode_claim_worker(
     let claim_inputs = || inputs.expect("an encode, or a recovery owing a rebuild, is dispatched with its claim inputs");
     match work {
         ClaimWork::Rebase(_) | ClaimWork::AutoHls(_) => unreachable!("handled above"),
+        ClaimWork::RestoreDirect => return RetranscodeClaimResult::RestoreDirect,
+        ClaimWork::Enhancement(contract) => {
+            let inputs = claim_inputs();
+            select_streams_for_encode(off, inputs);
+            if let RetranscodeWorkerOutcome::Applied(applied) = try_retranscode(off, inputs, contract) {
+                return RetranscodeClaimResult::Enhancement(applied);
+            }
+        }
         ClaimWork::Encode(primary_contract) => {
             let inputs = claim_inputs();
             select_streams_for_encode(off, inputs);
@@ -565,7 +577,7 @@ pub fn take_ready_flight(ps: &mut PlaybackSession, newer_seek_waiting: bool) -> 
     let RetranscodeClaimLanding { owner, pending_seek, user_target, result } = landing;
     match owner {
         FlightOwner::Claim(action) => {
-            let (action, tail) = install_claim_landing(ps, action, result);
+            let (action, tail) = install_claim_landing(ps, action, result, user_target);
             Some(ReadyFlight::Claim { action, tail, pending_seek, user_target })
         }
         FlightOwner::Start(ticket) => {
@@ -666,6 +678,9 @@ fn install_recovery_landing(
     // landing's `Prepared` one, which a refusal leaves `Failed`.
     let owner = if resume { RebaseFor::Resume } else { RebaseFor::Rollback };
     match result {
+        RetranscodeClaimResult::RestoreDirect => {
+            if prepare_route_start(ticket) { RecoveryVerdict::Install } else { RecoveryVerdict::Refused }
+        }
         RetranscodeClaimResult::Rebase(landing) => {
             let RebaseLanding { plan, outcome } = *landing;
             // A cold resume is a recovery by reducer phase only: it is no rollback, so it reports
@@ -789,8 +804,18 @@ fn install_claim_landing(
     ps: &mut PlaybackSession,
     mut action: ClaimedRouteAction,
     result: RetranscodeClaimResult,
+    user_target: i64,
 ) -> (ClaimedRouteAction, ClaimTail) {
     let tail = match result {
+        RetranscodeClaimResult::Enhancement(applied) => {
+            if is_worker_ticket_current(&applied.ticket) {
+                install_enhancement_trial(ps, &action, &applied, user_target / 1_000_000_000);
+                ClaimTail::Original(AutoOriginalReload::Remux)
+            } else {
+                stop_discarded_landing(applied);
+                ClaimTail::Rejected(ENHANCEMENT_REJECTED)
+            }
+        }
         RetranscodeClaimResult::Retranscode(applied) => {
             // The worker's own `replace_active_encoder_for`/`replace_active_hls_for` check ran
             // before it committed; re-check here against the ticket it actually got back, since a
@@ -860,6 +885,7 @@ fn install_claim_landing(
             ClaimTail::NativeAudio
         }
         RetranscodeClaimResult::Rejected(reason) => ClaimTail::Rejected(reason),
+        RetranscodeClaimResult::RestoreDirect => ClaimTail::Rejected(RETRANSCODE_REJECTED),
     };
     (action, tail)
 }

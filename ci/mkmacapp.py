@@ -28,6 +28,7 @@ graph walk with a verification pass. Same reasoning as `ci/mkipk.py`.
 Usage:  ci/mkmacapp.py [--out DIR] [--zip] [--target-dir DIR]
 """
 import argparse
+import json
 import os
 import platform
 import plistlib
@@ -39,6 +40,9 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+APP_NAME = json.loads((REPO / "pkg/appinfo.json").read_text())["title"]
+if not APP_NAME or APP_NAME in {".", ".."} or "/" in APP_NAME or "\\" in APP_NAME:
+    sys.exit("mkmacapp: package title must be a simple filename")
 sys.path.insert(0, str(REPO / 'ci'))
 from rust_toolchain import pinned  # noqa: E402
 
@@ -155,8 +159,8 @@ def write_plist(contents: Path, ver: str):
     same 1:1 texel contract the television renders under. Without it the OS hands back a
     half-resolution surface and doubles the whole interface."""
     plist = {
-        "CFBundleName": "PlxNative",
-        "CFBundleDisplayName": "PlxNative",
+        "CFBundleName": APP_NAME,
+        "CFBundleDisplayName": APP_NAME,
         "CFBundleExecutable": "PlxNative",
         "CFBundleIdentifier": "com.beb.plxnative",
         "CFBundleIconFile": "AppIcon",
@@ -168,7 +172,7 @@ def write_plist(contents: Path, ver: str):
         "CFBundleVersion": package_version(),
         # Free-form by definition, and the one plist field that may carry the suffix. It is what
         # Finder's Get Info shows, so "which build is this?" is answerable without launching it.
-        "CFBundleGetInfoString": f"PlxNative {ver}",
+        "CFBundleGetInfoString": f"{APP_NAME} {ver}",
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
         "NSHumanReadableCopyright":
@@ -176,7 +180,7 @@ def write_plist(contents: Path, ver: str):
         # macOS 15+ asks before letting an app reach the LAN, and a Plex client that cannot is
         # useless. The string is what the person sees in that prompt, so it says why.
         "NSLocalNetworkUsageDescription":
-            "PlxNative streams from a Plex Media Server on your local network.",
+            f"{APP_NAME} streams from a Plex Media Server on your local network.",
     }
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
 
@@ -261,7 +265,7 @@ def main():
 
     ver = version()
     out = Path(args.out)
-    app = out / "PlxNative.app"
+    app = out / f"{APP_NAME}.app"
     contents, = (app / "Contents",)
     macos, frameworks, res = contents / "MacOS", contents / "Frameworks", contents / "Resources"
 
@@ -310,10 +314,10 @@ def main():
 
     readme = REPO / "docs/macos-app-readme.md"
     if readme.exists():
-        shutil.copy2(readme, out / "PlxNative-README.md")
+        (out / f"{APP_NAME}-README.md").write_text(readme.read_text().replace("@APP_NAME@", APP_NAME))
 
     if args.zip:
-        zip_path = out / f"PlxNative-{ver}-{platform.machine()}.zip"
+        zip_path = out / f"{APP_NAME}-{ver}-{platform.machine()}.zip"
         zip_path.unlink(missing_ok=True)
         # ditto, not zipfile: it is the tool that preserves the extended attributes and symlink
         # layout a signed bundle needs. A plain zip can arrive with a broken signature.

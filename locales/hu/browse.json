@@ -174,7 +174,7 @@
   "browse.auth.insecure": "A Plex-szerver megvan, de HTTPS-kapcsolat nem jött létre. Ellenőrizze, hogy a szerver engedi-e a biztonságos kapcsolatot.",
   "browse.auth.no_access": "{profile} nem fér hozzá a szerverhez",
   "browse.auth.no_source_access": "{profile} nem fér hozzá ehhez a szerverhez",
-  "browse.auth.tls_untrusted": "Ez a TV nem bízik meg a szerver biztonsági tanúsítványában. Frissítse a PlxNative-ot, és próbálja újra.",
+  "browse.auth.tls_untrusted": "Ez a TV nem bízik meg a szerver biztonsági tanúsítványában. Frissítse a @APP_NAME@-ot, és próbálja újra.",
   "browse.kind.episodes": "Epizódok",
   "browse.kind.collections": "Gyűjtemények",
   "browse.kind.films": "Filmek",

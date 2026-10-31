@@ -152,9 +152,9 @@ pkg/lab.json
 # Build products, like pkg/plxnative and the .ipk above — and the bundle carries ~10 copied
 # Homebrew dylibs, which are neither ours to commit nor meaningful outside the machine that
 # assembled them. ci/mkmacapp.py rebuilds all three in about a minute.
-pkg/PlxNative.app/
-pkg/PlxNative-*.zip
-pkg/PlxNative-README.md
+pkg/*.app/
+pkg/*-*.zip
+pkg/*-README.md
 
 # Generated test media (tests/fixtures/make_fixtures.py, `make fixtures`). The default output
 # root is ~/plxnative-fixtures and the generator REFUSES an --out anywhere inside this repo, so

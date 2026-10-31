@@ -20,6 +20,9 @@
 //! tests build it. The application crate enables it in `[dev-dependencies]` only, so no shipped
 //! build sees it.
 
+/// Display name shared with the package title and localized messages.
+pub const APP_NAME: &str = env!("PLX_DISPLAY_NAME");
+
 pub mod devcaps; // what this SoC decodes — the TV's own codec table, read once at boot (the capability profile + direct-play gate derive from it)
 pub mod i18n;
 pub mod imgcache; // bounded persistent artwork cache shared by every image source

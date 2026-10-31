@@ -4004,6 +4004,9 @@ pub const ROLLBACK_REBASE_REFUSED: &str = "abr: restored HLS encoder but could n
 /// landing, which hands the pump [`RecoveryVerdict::Install`] to reload on or
 /// [`RecoveryVerdict::Refused`] to fail on — the `Some`/`None` the synchronous rebase answered.
 pub fn dispatch_rollback_rebase(ps: &mut PlaybackSession, offset_ns: i64) -> RecoveryDispatch {
+    if !is_transcoding(ps) {
+        return dispatch_direct_rollback(offset_ns, false);
+    }
     dispatch_rebase_recovery(ps, offset_ns, RebaseFor::Rollback, ROLLBACK_REBASE_REFUSED, false)
 }
 
@@ -4013,7 +4016,28 @@ pub fn dispatch_rollback_rebase(ps: &mut PlaybackSession, offset_ns: i64) -> Rec
 /// flight is marked Engine-less ([`begin_engineless_flight`]): the app loop drains it, the HUD
 /// reads `Resolving`, and an app-switch suspend drops it.
 pub fn dispatch_engineless_rollback_rebase(ps: &mut PlaybackSession, offset_ns: i64) -> RecoveryDispatch {
+    if !is_transcoding(ps) {
+        return dispatch_direct_rollback(offset_ns, true);
+    }
     dispatch_rebase_recovery(ps, offset_ns, RebaseFor::Rollback, ROLLBACK_REBASE_REFUSED, true)
+}
+
+fn dispatch_direct_rollback(offset_ns: i64, engineless: bool) -> RecoveryDispatch {
+    let Some(ticket) = begin_recovery_flight_start() else {
+        return RecoveryDispatch::Refused;
+    };
+    if engineless {
+        begin_engineless_flight(ticket.serial, offset_ns);
+    } else {
+        begin_recovery_flight(ticket.serial, offset_ns);
+    }
+    if spawn_flight(FlightOwner::Recovery(ticket), offset_ns, offset_ns, None,
+        ClaimWork::RestoreDirect, RetranscodeFallback::RejectWith(ROLLBACK_REBASE_REFUSED)) {
+        RecoveryDispatch::Flying { serial: ticket.serial }
+    } else {
+        release_rebase_start(RebaseFor::Rollback, ticket);
+        RecoveryDispatch::Refused
+    }
 }
 
 /// The rejection a refused cold-resume rebuild settles with (never logged as a rollback's).
@@ -5087,6 +5111,7 @@ struct PendingOriginal {
     /// The new server encoder to retire if this handoff never produces a decoded frame. Empty for
     /// direct play, which opens the raw Part and creates no universal-transcoder replacement.
     replacement_encoder: String,
+    enhancement_trial: bool,
     /// Where to resume the restored route. Kept here rather than read back from `playpos_ns`
     /// because `teardown(for_reload=true)` zeroes that on the way into the reload being graded, so
     /// by the time the failure is detected the playhead no longer remembers where the film was.
@@ -5157,6 +5182,7 @@ fn snapshot_route(ps: &PlaybackSession, encoder: String, offset_secs: i64) -> Pe
         candidate_projection: route_projection(ps),
         encoder,
         replacement_encoder: String::new(),
+        enhancement_trial: false,
         offset_secs,
         previous: route_projection(s),
         adopted_by_user: false,
@@ -5249,6 +5275,13 @@ pub fn confirm_original_recovery(ps: &mut PlaybackSession) {
         pending.candidate_projection.clone()
     };
     let deferred = DeferredOriginalEffects::from_pending(&mut pending);
+    if pending.enhancement_trial {
+        log_enhancement_outcome(
+            Some((&committed_projection.stream_vcodec, &committed_projection.stream_acodec)),
+            committed_projection.enhancement,
+            committed_projection.contract.audio,
+        );
+    }
     if pending.adopted_by_user {
         committed_projection.auto_original_watched = false;
     }
@@ -6287,6 +6320,9 @@ pub fn overlay_gain(ps: &PlaybackSession, source_hdr: bool) -> f32 {
 /// quoting the params must not claim them). Read by the diagnostics Audio row's suffix, which used
 /// to read the unfiltered ask and gate it on `cur_enhancement_label(ps) == Some("applied")` itself.
 pub fn applied_audio_enhancements(ps: &PlaybackSession) -> plx_plex::plex::AudioEnhancements {
+    if enhancement_trial_pending() {
+        return plx_plex::plex::AudioEnhancements::NONE;
+    }
     if ps.cur_enhancement == EnhancementOutcome::Applied {
         ps.cur_contract.audio
     } else {
@@ -6298,12 +6334,20 @@ pub fn applied_audio_enhancements(ps: &PlaybackSession) -> plx_plex::plex::Audio
 /// `Off` (nothing to report); otherwise the wire word `app::diagnostics::route_line` appends as
 /// `enh=<word>`.
 pub fn cur_enhancement_label(ps: &PlaybackSession) -> Option<&'static str> {
+    if enhancement_trial_pending() {
+        return Some("pending");
+    }
     match ps.cur_enhancement {
         EnhancementOutcome::Off => None,
         EnhancementOutcome::Applied => Some("applied"),
         EnhancementOutcome::Unverified => Some("unverified"),
         EnhancementOutcome::Refused => Some("refused"),
     }
+}
+
+fn enhancement_trial_pending() -> bool {
+    PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner())
+        .pending_original.as_ref().is_some_and(|pending| pending.enhancement_trial)
 }
 /// Did this playback forbid the server a video stream COPY? Read by the seek and audio-switch
 /// rebuilds so the constraint survives them — see [`PlaybackSession::cur_contract`].
@@ -10040,6 +10084,31 @@ pub(super) fn install_retranscode_outcome(ps: &mut PlaybackSession, applied: &Ap
     );
 }
 
+/// Keep the old route until the enhanced stream has actually produced a frame.
+pub(super) fn install_enhancement_trial(
+    ps: &mut PlaybackSession, action: &ClaimedRouteAction, applied: &AppliedRetranscode, offset_secs: i64,
+) {
+    let mut rollback = snapshot_route(ps, applied.superseded.clone(), offset_secs);
+    if let Some(previous) = PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner()).applied_projection.clone() {
+        rollback.previous = previous;
+    }
+    rollback.replacement_encoder = applied.qsess.clone();
+    rollback.enhancement_trial = true;
+    let mut projection = route_projection(ps);
+    apply_retranscode_outcome_to_projection(&mut projection, applied);
+    install_route_projection(ps, &projection);
+    set_pending_original(ps, rollback, false);
+    if let Some(snapshot) = action.claim_snapshot.as_ref() {
+        let mut control = PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner());
+        control.applied_revision = snapshot.revision;
+        control.applied_quality = snapshot.quality;
+        if let Some(pending) = control.pending_original.as_mut() {
+            pending.candidate_projection = snapshot.projection.clone();
+            apply_retranscode_outcome_to_projection(&mut pending.candidate_projection, applied);
+        }
+    }
+}
+
 /// **Re-check the stored Original candidate against the attempt's caps**, after a recovery narrowed
 /// them. The refusal-recovery landings ([`install_recovery_landing`]'s `Retranscode` and `AutoHls`
 /// arms) leave the request's attempt without the stream the pipeline refused; a stored candidate (the
@@ -10779,7 +10848,7 @@ fn plan_claim_flight(
                 None => return RetranscodeClaimDispatch::Sync(ClaimTail::Rejected(LEGACY_REJECTED)),
             },
         },
-        ClaimPrimary::Remux(contract) => ClaimWork::Encode(contract),
+        ClaimPrimary::Remux(contract) => ClaimWork::Enhancement(contract),
         ClaimPrimary::Retranscode => match plain_rebuild_precheck(ps, &expected) {
             Some(contract) => ClaimWork::Encode(contract),
             None => return RetranscodeClaimDispatch::Sync(ClaimTail::Rejected(RETRANSCODE_REJECTED)),

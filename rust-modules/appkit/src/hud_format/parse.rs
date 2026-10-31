@@ -427,7 +427,7 @@ fn version_gate(root: &Ordered) -> Result<Since, Finding> {
             clip(text)
         )));
     };
-    let hint = format!("this PlxNative reads HUD format {}", supported_text());
+    let hint = format!("this app reads HUD format {}", supported_text());
     match schema::SUPPORTED
         .iter()
         .find(|(m, _)| u64::from(*m) == major)

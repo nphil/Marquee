@@ -72,12 +72,8 @@ pub struct Scrub {
     /// The key-hold half — direction, the engaged ramp, the bounce debounce and the lost-keyup net —
     /// owned once in `appkit::held_key`, which the trailer transport's hold-to-scrub shares.
     pub key: HeldKey,
-    /// This gesture began on a HIDDEN HUD, so its press was spent raising the transport
-    /// (`ScrubPress::Reveal`) rather than hopping. It is still a fully armed scrub — a user who
-    /// keeps holding gets the ordinary continuous rewind, and the hold engaging clears this — but if
-    /// it turns out to have been a TAP, the release must throw the preview away instead of
-    /// leaving it as a target: it sits on the seed, i.e. exactly where playback already is, and OK
-    /// taking it would be a full reopen+prime to no effect.
+    /// A dedicated FF/REW press is armed on the playhead until a repeat moves its target;
+    /// an untravelled seed must not be committed as a seek to the current position.
     pub reveal: bool,
     /// **The TARGET (the preview position), in ns; `-1` = not scrubbing.**
     ///
@@ -382,7 +378,7 @@ pub const HUD_HEADLESS_MS: u32 = 60_000; // autoplay/headless runs pin the HUD u
 /// the whole LEFT/RIGHT ladder turns on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ScrubPress {
-    /// The transport was not on screen: the press raises it and moves nothing.
+    /// Raise a hidden transport and, when seekable, open a scrub target.
     Reveal,
     /// A scrub-seek hop/gesture on the bar.
     Jump,
@@ -531,7 +527,7 @@ mod hud_visibility_tests {
                 assert_eq!(
                     scrub_press(false, focus, seekable),
                     ScrubPress::Reveal,
-                    "hidden HUD, focus {focus:?}: the press raises it and moves nothing"
+                    "hidden HUD, focus {focus:?}: the press raises it"
                 );
             }
         }

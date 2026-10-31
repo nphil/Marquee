@@ -369,6 +369,32 @@ impl Default for PersonState {
 }
 
 impl PersonState {
+    pub(crate) fn deleted_media(&mut self, adapter: &PersonAdapter, at: &crate::viewstate::ViewAt) -> bool {
+        let Some(source) = self.current.as_ref().and_then(|p| p.srcs.iter().find(|s| s.sid == at.sid)) else { return false };
+        let held = source.shelves.iter().flat_map(|s| &s.items).any(|item| at.covers(item))
+            || source.matches.iter().any(|(_, rk)| rk == &at.rk);
+        if !held && source.settled() { return false; }
+        self.supersede(adapter);
+        let p = self.current.as_mut().unwrap();
+        let source = p.srcs.iter_mut().find(|s| s.sid == at.sid).unwrap();
+        for shelf in &mut source.shelves {
+            let old_len = shelf.items.len();
+            let mut index = 0;
+            shelf.items.retain(|item| {
+                let keep = !at.covers(item);
+                if !keep && index < shelf.roles.len() { shelf.roles.remove(index); }
+                if keep { index += 1; }
+                keep
+            });
+            shelf.total = shelf.total.saturating_sub(old_len - shelf.items.len());
+        }
+        source.matches.retain(|(_, rk)| rk != &at.rk);
+        source.landed = false;
+        source.roled = false;
+        resettle(p);
+        self.revision += 1;
+        true
+    }
     pub fn view(&self) -> PersonView<'_> {
         PersonView { current: self.current.as_ref(), revision: self.revision }
     }
@@ -2489,6 +2515,26 @@ pub struct OwnershipFixture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_membership_person_preserves_other_items_and_roles() {
+        let _g = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let sid = plx_plex::plex::register_for_test("person-delete", "127.0.0.1", 1, "t", "cid");
+        let mut owner = Owner::default();
+        owner.open(sid, "7", "", "Actor", "");
+        owner.state.install_for_test(vec![movie_on(sid, "10"), movie_on(sid, "11")], vec![]);
+        let shelf = &mut owner.state.current.as_mut().unwrap().srcs[0].shelves[0];
+        shelf.roles = vec!["First".into(), "Second".into()];
+        let at = crate::viewstate::ViewAt::leaf(sid, "10");
+        assert!(owner.state.deleted_media(&owner.adapter, &at));
+        let person = owner.state.view().current().unwrap();
+        assert_eq!(person.shelves[0].items.len(), 1);
+        assert_eq!(person.shelves[0].items[0].rk, "11");
+        assert_eq!(person.shelves[0].roles, ["Second"]);
+        owner.reset();
+        plx_plex::plex::reset_servers_for_test();
+    }
     use plx_plex::plex::{Hub, MediaContainer, Metadata};
 
     /// Slot 0 — the server every single-source test opens on. A real slot, so its mailboxes exist,

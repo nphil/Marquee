@@ -94,6 +94,8 @@ impl Lane {
         self.preview.iter_mut().chain(self.rows.values_mut())
     }
 
+    pub fn items(&self) -> impl Iterator<Item = &Item> { self.preview.iter().chain(self.rows.values()) }
+
     pub fn is_growth(&self) -> bool { self.growth }
     pub fn preview_len(&self) -> usize { self.preview.len() }
     pub fn held(&self) -> usize { self.rows.len() }

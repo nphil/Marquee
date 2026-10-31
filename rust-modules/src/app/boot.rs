@@ -1620,13 +1620,7 @@ pub(crate) unsafe fn construct(
         let (w, h) = requested_drawable(&session).unwrap_or((SCR_W, SCR_H));
         (0, 0, w, h)
     };
-    // The title is furniture a television never draws (no window manager, no decoration) and
-    // the first thing a desktop shows, so the two builds spell it differently: the device keeps
-    // the process-shaped name every log, `pidof` recipe and skill already uses.
-    #[cfg(feature = "hostsim")]
-    let title = c"PlxNative";
-    #[cfg(not(feature = "hostsim"))]
-    let title = c"plxnative";
+    let title = std::ffi::CString::new(plx_platform::APP_NAME).expect("validated display name");
     // A frame dump's drawable is exactly the window's size in points: it is the one desktop window
     // that does not ask for ALLOW_HIGHDPI (0x2000), so its window is the 1920x1080 points of the
     // canonical Linux host on a Retina display too, and `fit_window_to_density` finds nothing to
