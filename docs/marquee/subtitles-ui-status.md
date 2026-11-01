@@ -238,8 +238,10 @@ The client uses protocol 1 `POST /api/alignment/windows`, off the playback threa
 verifies English audio independently with a local quantized CPU speech model; word boundaries use
 a 20 ms grid within the authored cues. Production activation requires a trusted
 `SPDOCK_ALIGNMENT_PLEX_URL`, private `SPDOCK_ALIGNMENT_PLEX_TOKEN_FILE` and read-only
-`SPDOCK_ALIGNMENT_ROOTS` mappings. The profile integration defaults Off; missing or unverified
-audio retains explicitly estimated timing rather than a claim of audio alignment.
+`SPDOCK_ALIGNMENT_ROOTS` mappings. An empty session Address disables alignment; a trusted origin
+enables requests for a profile using Word or Line reveal, subject to direct-play, English-subtitle
+and renderer checks. Unavailable or unverified audio retains explicitly estimated timing. There
+is no separate SpeechDock Enable switch or Test connection control.
 
 ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
 karaoke remain required. Embedded alignment capture and publication require the exact displayed
