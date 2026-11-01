@@ -30,7 +30,7 @@ Active, receiver unchanged. Fresh own lease release verified local mirror absent
 gone. Evidence: `/data/home/tmp/marquee-live-setup-20261101.json`; native screenshots are listed
 there. No device job or lease remains.
 
-A subsequent passive root observation during Netflix left playback, input, screenshots and settings
+An earlier passive root observation during Netflix left playback, input, screenshots and settings
 untouched. Exact CPU-summed `osd_irq` advanced 8,233,968 to 8,234,065 over 1.00272638 monotonic
 seconds: 97 interrupts, approximately 96.74 Hz in that one sample, with unchanged CPU topology and
 no reset. This is display sync, not video FPS, unique flips or certified physical raster refresh.
