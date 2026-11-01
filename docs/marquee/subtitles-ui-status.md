@@ -198,10 +198,12 @@ capacity were not established. The proposed offline alignment path is in `design
 The separate speech-alignment effort is not included in this app update; its eventual merge must
 preserve the current sidecar lifecycle and ABI 6 renderer-readiness contract.
 
-SpeechDock owns the separate CPU forced-alignment/backend and asynchronous-client effort. Its
-reserved Marquee seams are `rust-modules/media/src/player/{reveal,ass_source,sidecar,text_ass}.rs`
-and alignment-related subtitle settings/client code. Performance work may inspect these seams but
-must coordinate before editing; integration must preserve alignment changes rather than replace
+SpeechDock session `01a1943c-9834-7106-872e-e017bd1c394b` owns the separate CPU
+forced-alignment/backend and asynchronous-client effort. The source-only handoff permits an
+isolated detached worktree, not the main checkout, cached deployment lane or TV. Its reserved
+Marquee seams are `rust-modules/media/src/player/{reveal,ass_source,sidecar,text_ass}.rs` plus
+alignment-related subtitle settings/client code. Performance work may inspect these seams but must
+coordinate before editing; integration must preserve alignment changes rather than replace
 files with older copies. Use an isolated source worktree and private targets; final integration
 follows the main-only convention. `/data/home/Marquee-subs` and its cached targets remain reserved
 for the app deployment lane. No alignment code is included in the installed build.
