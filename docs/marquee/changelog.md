@@ -9,6 +9,7 @@
 - Watched-state refreshes settle presented and covered detail pages, including failed reads, without leaving the loading indicator active.
 - Returning from playback retains visible artwork within the existing cache limits; fast scrolling prioritizes currently visible uploads.
 - Reveal as spoken can use verified SpeechDock audio timing while retaining authored cue bounds and karaoke; estimated or revised sources cannot retain stale aligned words.
+- SpeechDock requests preserve millisecond-authored cue bounds, skip ineligible long cues without rejecting the batch, and start correctly during the first 15 seconds of playback.
 
 - Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.
 

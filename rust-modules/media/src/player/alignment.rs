@@ -116,9 +116,14 @@ fn valid_request(r: &Request) -> bool {
     let mut bytes = 0usize;
     for cue in &r.cues {
         bytes = match bytes.checked_add(cue.text.len()) { Some(n) => n, None => return false };
+        let authored_start = cue.authored_start_ms.checked_add(r.subtitle_offset_ms);
+        let authored_end = cue.authored_end_ms.checked_add(r.subtitle_offset_ms);
         if bytes > MAX_TEXT || !bounded_string(&cue.cue_id) || !ids.insert(&cue.cue_id)
             || !ordinals.insert(cue.ordinal) || cue.text.trim().is_empty()
             || cue.authored_end_ms <= cue.authored_start_ms || cue.end_ms <= cue.start_ms
+            || cue.authored_end_ms.checked_sub(cue.authored_start_ms).map_or(true, |n| n > 15_000)
+            || authored_start.map_or(true, |t| cue.start_ms < t)
+            || authored_end.map_or(true, |t| cue.end_ms > t)
             || cue.end_ms.checked_sub(cue.start_ms).map_or(true, |n| n > 15_000)
             || cue.start_ms < r.window_start_ms || cue.end_ms > r.window_end_ms {
             return false;
@@ -197,7 +202,7 @@ impl PlaybackSnapshot {
             && self.track == other.track && self.style_generation == other.style_generation
     }
     fn window(&self) -> Option<(i64, i64)> {
-        let start = self.position_ms.max(0).saturating_sub(15_000);
+        let start = self.position_ms.saturating_sub(15_000).max(0);
         Some((start, start.checked_add(30_000)?))
     }
 }
@@ -289,13 +294,17 @@ fn prepare(snapshot: &PlaybackSnapshot, generation: u64) -> Option<(Request, Sou
             start_ms: c.start_ms, end_ms: c.end_ms, text: c.text.clone() }).collect();
         (Source::Embedded(source), cues, "window_manifest_sha256", String::new())
     } else { return None; };
-    for cue in &mut cues {
-        cue.start_ms = cue.start_ms.checked_add(snapshot.subtitle_offset_ms)?;
-        cue.end_ms = cue.end_ms.checked_add(snapshot.subtitle_offset_ms)?;
-    }
-    // Do not clip a cue: the backend independently verifies these exact intervals.
+    // ASS rounds sidecar visibility to centiseconds; never ask for audio outside authored bounds.
     let mut text_bytes = 0usize;
-    cues.retain(|c| {
+    cues.retain_mut(|c| {
+        if c.authored_end_ms.checked_sub(c.authored_start_ms).map_or(true, |n| n <= 0 || n > 15_000) { return false; }
+        let raw_start = c.start_ms.max(c.authored_start_ms);
+        let raw_end = c.end_ms.min(c.authored_end_ms);
+        if raw_end <= raw_start { return false; }
+        let Some(shifted_start) = raw_start.checked_add(snapshot.subtitle_offset_ms) else { return false };
+        let Some(shifted_end) = raw_end.checked_add(snapshot.subtitle_offset_ms) else { return false };
+        c.start_ms = shifted_start;
+        c.end_ms = shifted_end;
         let Some(total) = text_bytes.checked_add(c.text.len()) else { return false };
         if c.start_ms < start || c.end_ms > end || c.end_ms <= c.start_ms
             || c.end_ms.saturating_sub(c.start_ms) > 15_000 || total > MAX_TEXT { return false; }
@@ -310,6 +319,11 @@ fn prepare(snapshot: &PlaybackSnapshot, generation: u64) -> Option<(Request, Sou
         subtitle_offset_ms: snapshot.subtitle_offset_ms, timeline: "container_pts".into(), media_origin_pts_ms: 0,
         window_start_ms: start, window_end_ms: end, cues };
     valid_request(&request).then_some((request, source))
+}
+
+#[cfg(test)]
+pub(super) fn prepare_request_for_test(snapshot: &PlaybackSnapshot) -> Option<Request> {
+    prepare(snapshot, epoch()).map(|(request, _)| request)
 }
 
 fn exchange(endpoint: &str, request: &Request) -> Option<Response> {

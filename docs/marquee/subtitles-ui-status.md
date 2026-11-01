@@ -249,6 +249,12 @@ enables requests for a profile using Word or Line reveal, subject to direct-play
 and renderer checks. Unavailable or unverified audio retains explicitly estimated timing. There
 is no separate SpeechDock Enable switch or Test connection control.
 
+Local source corrections after `c5199efd` intersect rendered sidecar visibility with unchanged
+authored bounds before applying the offset once, omit authored cues longer than 15 seconds, and
+clamp startup windows to zero. Earlier requests could reject an entire batch because ASS rounded
+1009 ms to 1000 ms, admit an ineligible long cue shortened for display, or send nothing before
+15 seconds. These corrections are not in the installed `c5199efd` payload.
+
 The validated Address is published only after durable session save and restored at boot. Settings
 shows Address/Disabled and validation or save errors, not connection or aligned/estimated status.
 The renderer distinguishes verified word timing internally; request failures retain estimates.
@@ -272,6 +278,20 @@ none of these samples. Retained two-second versus four-second context evidence p
 16-character prefix of a 20-character target from both same-support 99-frame crops; extra context
 alone did not resolve acceptance. These are backend coverage limits, not connection failures or
 evidence that playback on the TV is required to diagnose them.
+
+For retained cue 951, the recorded 75-second clip starts at movie second 4890. Its effective cue
+rebases to 13.660–15.660 seconds; the same-target qualified CPU fixture uses 14–16 seconds and
+places the final word at 15.500–15.900, outside the real cue end by 240 ms. The sample-specific
++340 ms mapping is diagnostic only, not a global offset. Full-clip ASR contains the target but
+disagrees on token times, so those timestamps are not timing ground truth. This does not explain
+the remaining 16 lexical rejections or the weak-score rejection.
+
+The corrected real Rust sidecar parse → renderer readiness → request → HTTP → CPU backend →
+sidecar consumer path passed locally: offsets 0 and +300 ms each delivered three acoustic words;
+−300 ms remained estimated with no borrowed words. Requests retained the 1009 ms authored start,
+excluded the authored-long cue and used a valid 0–30-second startup window without HTTP 422.
+Proof: `/data/home/tmp/speechdock-client-cpu-proof.json`. This is bounded fixture proof, not broad
+film accuracy or TV acceptance.
 
 ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
 karaoke remain required. Embedded alignment capture and publication require the exact displayed

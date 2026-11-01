@@ -1203,6 +1203,45 @@ mod tests {
     }
 
     #[test]
+    fn alignment_prepare_preserves_authored_bounds_with_offsets() {
+        use super::super::alignment::{self, Identity, PlaybackSnapshot};
+        let _guard = plx_base::testlock::serial();
+        reset();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/text".into(), "srt".into(),
+            |_, _, _| Some(b"1\n00:00:01,009 --> 00:00:01,800\nfirst\n\n2\n00:00:02,000 --> 00:00:20,000\nlong\n\n3\n00:00:05,000 --> 00:00:06,000\nlast\n".to_vec()));
+        finish_download();
+        render_selected_ready();
+        let parsed = alignment_snapshot(0, 30_000, 32).unwrap();
+        assert_eq!((parsed.cues[0].authored_start_ms, parsed.cues[0].start_ms), (1009, 1000));
+        assert_eq!((parsed.cues[1].authored_end_ms, parsed.cues[1].end_ms), (20_000, 5000));
+        let mut snapshot = PlaybackSnapshot { endpoint: "http://localhost".into(), playback_id: "playback".into(),
+            identity: Identity { server_machine_id: "machine".into(), rating_key: "1".into(), media_id: "2".into(),
+                part_id: "3".into(), part_key: "/part".into(), audio_stream_id: "4".into(),
+                subtitle_stream_id: "42".into(), subtitle_codec: "srt".into() },
+            subtitle_source_kind: "sidecar".into(), language: "en".into(), subtitle_offset_ms: 0,
+            position_ms: 15_000, track: 0, style_generation: 1 };
+        for offset in [-300, 0, 300] {
+            snapshot.subtitle_offset_ms = offset;
+            let request = alignment::prepare_request_for_test(&snapshot).unwrap();
+            assert_eq!(request.subtitle_offset_ms, offset);
+            assert_eq!(request.cues.len(), 2, "long authored cue must not poison the window");
+            assert_eq!(request.cues.iter().map(|cue| cue.ordinal).collect::<Vec<_>>(), [0, 2]);
+            let first = &request.cues[0];
+            assert_eq!((first.authored_start_ms, first.authored_end_ms), (1009, 1800));
+            assert_eq!((first.start_ms - offset, first.end_ms - offset), (1009, 1800));
+        }
+        snapshot.subtitle_offset_ms = 0;
+        for (position, start) in [(-1, 0), (0, 0), (14_999, 0), (15_000, 0), (16_000, 1_000)] {
+            snapshot.position_ms = position;
+            let request = alignment::prepare_request_for_test(&snapshot).expect("early cue is eligible");
+            assert_eq!((request.window_start_ms, request.window_end_ms), (start, start + 30_000));
+            assert!(request.cues.iter().any(|cue| cue.ordinal == 0));
+        }
+        reset();
+        ass::clear();
+    }
+
+    #[test]
     fn regression_sidecar_fences_estimates_and_source_revisions() {
         let _guard = plx_base::testlock::serial();
         reset();
