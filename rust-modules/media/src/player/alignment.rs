@@ -73,6 +73,7 @@ pub(super) struct CueResult {
 #[derive(Debug)]
 pub(super) struct Response {
     pub request: Request,
+    pub source_revision: Option<String>,
     pub cues: Vec<CueResult>,
 }
 
@@ -173,7 +174,7 @@ fn decode_response(body: &[u8], request: &Request) -> Option<Response> {
             _ => return None,
         }
     }
-    Some(Response { request: echoed, cues: payload.cues })
+    Some(Response { request: echoed, source_revision: payload.source_revision, cues: payload.cues })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -330,18 +331,16 @@ fn apply(source: Source, response: Response, offset: i64, generation: u64) -> Op
     };
     match source {
         Source::Embedded(snapshot) => {
-            let results: Option<Vec<_>> = response.cues.iter().filter(|r| r.status == "aligned")
+            let results: Option<Vec<_>> = response.cues.iter()
                 .map(|r| Some(super::ass_source::EmbeddedResult { cue_id: r.cue_id.clone(), words: converted(r)? })).collect();
-            let results = results?;
-            if !results.is_empty() && !super::ass_source::apply_alignment(&snapshot, &results) { return None; }
+            if !super::ass_source::apply_alignment(&snapshot, &results?, response.source_revision.as_deref()) { return None; }
         }
         Source::Sidecar(snapshot) => {
-            let updates: Option<Vec<_>> = response.cues.iter().filter(|r| r.status == "aligned").map(|r| {
+            let updates: Option<Vec<_>> = response.cues.iter().map(|r| {
                 let ordinal = response.request.cues.iter().find(|c| c.cue_id == r.cue_id)?.ordinal;
                 Some(super::sidecar::AlignmentUpdate { ordinal, words: converted(r)? })
             }).collect();
-            let updates = updates?;
-            if !updates.is_empty() && !super::sidecar::apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, generation, updates) { return None; }
+            if !super::sidecar::apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, generation, updates?, response.source_revision.as_deref()) { return None; }
         }
     }
     Some(())
@@ -367,7 +366,10 @@ fn run() {
                 let key = manifest_hash(&request.cues).unwrap_or_default();
                 if completed.as_ref() != Some(&(generation, key.clone())) && last_attempt.elapsed() >= Duration::from_secs(2) {
                     last_attempt = Instant::now();
-                    if !current_generation(generation) || matches!(&source, Source::Sidecar(sidecar) if !super::sidecar::alignment_ready(sidecar.generation, sidecar.source_id, sidecar.source_revision)) { continue; }
+                    if !current_generation(generation) || match &source {
+                        Source::Sidecar(sidecar) => !super::sidecar::alignment_ready(sidecar.generation, sidecar.source_id, sidecar.source_revision),
+                        Source::Embedded(embedded) => !super::ass_source::alignment_ready(embedded),
+                    } { continue; }
                     if let Some(response) = exchange(&snapshot.endpoint, &request) {
                         if current_generation(generation) && apply(source, response, snapshot.subtitle_offset_ms, generation).is_some()
                             && current_generation(generation) {
@@ -387,6 +389,42 @@ fn run() {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn regression_estimated_result_reaches_embedded_consumer() {
+        use super::super::{ass, ass_source};
+        let _guard = plx_base::testlock::serial();
+        super::super::sidecar::reset();
+        super::super::request_subtitle(0);
+        let generation = ass_source::begin("consumer-estimate", vec![(0, ass_source::TrackHeader::Text(super::super::text_ass::TextDialect::Srt))], vec![]);
+        ass_source::push_text(generation, 0, 1_000_000_000, 4_000_000_000, "hello", 1);
+        let render = || {
+            let source = ass_source::try_selected(0).unwrap().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                ass::request(source.clone(), 1500, 320, 180, 320, 180);
+                if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready { break; }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        render();
+        let snapshot = ass_source::alignment_snapshot(0, 0, 5000).unwrap();
+        let cue_id = snapshot.cues[0].cue_id.clone();
+        let epoch = snapshot.epoch;
+        let result = CueResult { cue_id: cue_id.clone(), status: "aligned".into(), reason: "acoustic_match".into(),
+            words: vec![Word { start_byte: 0, end_byte: 5, start_ms: 1100, end_ms: 1500 }] };
+        assert!(apply(Source::Embedded(snapshot), Response { request: request(), source_revision: Some("a".repeat(64)), cues: vec![result] }, 0, epoch).is_some());
+        render();
+        let snapshot = ass_source::alignment_snapshot(0, 0, 5000).unwrap();
+        let previous_id = snapshot.source_id;
+        let result = CueResult { cue_id, status: "estimated".into(), reason: "source_revision_changed".into(), words: vec![] };
+        assert!(apply(Source::Embedded(snapshot), Response { request: request(), source_revision: None, cues: vec![result] }, 0, epoch).is_some());
+        assert_ne!(ass_source::try_selected(0).unwrap().unwrap().id, previous_id, "the old aligned frame must be retired");
+        super::super::request_subtitle(-1);
+        ass_source::reset();
+        ass::clear();
+    }
 
     fn request() -> Request {
         Request { protocol: 1, request_id: "r".into(), generation: 1, playback_id: "p".into(),

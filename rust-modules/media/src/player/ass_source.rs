@@ -88,6 +88,7 @@ struct TextTrack {
     /// events, not of the raw cues, so a change of it is a restyle that re-derives the view.
     reveal: super::reveal::Params,
     aligned_epoch: Option<u64>,
+    verified_source_revision: Option<String>,
     estimated: Option<Arc<Source>>,
 }
 
@@ -100,6 +101,7 @@ impl TextTrack {
             style_generation: style.generation(),
             reveal: super::reveal::Params::of(&style.layout),
             aligned_epoch: None,
+            verified_source_revision: None,
             estimated: None,
         }
     }
@@ -202,6 +204,8 @@ pub(super) struct EmbeddedSnapshot {
     pub epoch: u64,
     pub source_id: u64,
     pub revision: u64,
+    displayed_id: u64,
+    displayed_revision: u64,
     pub style_generation: u32,
     pub track: i32,
     pub cues: Vec<EmbeddedCue>,
@@ -648,11 +652,14 @@ impl Store {
             if cues.len() == 32 { break; }
         }
         if cues.is_empty() { return None; }
+        let displayed = if text.aligned_epoch.is_some() && text.aligned_epoch != Some(super::alignment::epoch()) {
+            text.estimated.as_ref()?
+        } else { source };
         Some(EmbeddedSnapshot { generation: self.generation, epoch: super::alignment::epoch(), source_id: source.id, revision: source.revision,
-            style_generation: text.style_generation, track, cues })
+            displayed_id: displayed.id, displayed_revision: displayed.revision, style_generation: text.style_generation, track, cues })
     }
 
-    fn rebuild_alignment(&mut self, snapshot: &EmbeddedSnapshot, results: &[EmbeddedResult], budget: usize) -> bool {
+    fn rebuild_alignment(&mut self, snapshot: &EmbeddedSnapshot, results: &[EmbeddedResult], budget: usize, verified_revision: Option<&str>) -> bool {
         if self.awaiting_reopen || self.generation != snapshot.generation || snapshot.epoch != super::alignment::epoch() || results.is_empty() { return false; }
         let Some(source) = self.tracks.get(&snapshot.track) else { return false };
         if source.id != snapshot.source_id || source.revision != snapshot.revision { return false; }
@@ -663,7 +670,7 @@ impl Store {
         let mut used = std::collections::HashSet::new();
         for result in results {
             let Some(cue) = snapshot.cues.iter().find(|c| c.cue_id == result.cue_id) else { return false };
-            if !used.insert(&result.cue_id) || result.words.is_empty() || result.words.len() > 256 { return false; }
+            if !used.insert(&result.cue_id) || result.words.len() > 256 || (verified_revision.is_none() && !result.words.is_empty()) { return false; }
             let Some((key, raw)) = text.raw.iter().find(|(_, raw)| raw.readorder.to_string() == cue.cue_id) else { return false };
             if key.0 != cue.authored_start_ms || key.1 != cue.authored_end_ms || raw.text.as_ref() != cue.text { return false; }
             let mut last_byte = 0;
@@ -679,25 +686,30 @@ impl Store {
             }
             updates.push((*key, result.words.clone()));
         }
+        let keep_old = text.aligned_epoch == Some(snapshot.epoch) && verified_revision.is_some()
+            && text.verified_source_revision.as_deref() == verified_revision;
+        let removes_words = (!keep_old && text.raw.values().any(|cue| cue.words.is_some()))
+            || updates.iter().any(|(key, words)| words.is_empty() && text.raw[key].words.is_some());
         let word_size = std::mem::size_of::<super::reveal::AlignedWord>();
         let mut bytes: usize = text.raw.values().map(|cue| cue.payload.len().saturating_add(cue.text.len())
-            .saturating_add(cue.words.as_ref().map_or(0, |w| w.len().saturating_mul(word_size)))).sum();
+            .saturating_add(if keep_old { cue.words.as_ref().map_or(0, |w| w.len().saturating_mul(word_size)) } else { 0 })).sum();
         for (key, words) in &updates {
-            let old = text.raw[key].words.as_ref().map_or(0, |w| w.len().saturating_mul(word_size));
+            let old = if keep_old { text.raw[key].words.as_ref().map_or(0, |w| w.len().saturating_mul(word_size)) } else { 0 };
             bytes = bytes.saturating_sub(old).saturating_add(words.len().saturating_mul(word_size));
         }
         if bytes > budget { return false; }
         let header = header.clone();
         let fonts = fonts.clone();
-        let id = source.id;
+        let id = if removes_words { ass::next_source_id() } else { source.id };
         let revision = source.revision;
         let origin = source.origin;
         let text = self.text.get_mut(&snapshot.track).unwrap();
-        if text.aligned_epoch != Some(snapshot.epoch) {
+        if !keep_old {
             for cue in text.raw.values_mut() { cue.words = None; }
         }
         text.aligned_epoch = Some(snapshot.epoch);
-        for (key, words) in updates { text.raw.get_mut(&key).unwrap().words = Some(words); }
+        text.verified_source_revision = verified_revision.map(str::to_owned);
+        for (key, words) in updates { text.raw.get_mut(&key).unwrap().words = (!words.is_empty()).then_some(words); }
         let events = text.view();
         let estimated = text.estimated_source(&Source { id, revision: revision.wrapping_add(1), origin, alignment_epoch: Some(snapshot.epoch),
             content: Content::Embedded { header: header.clone(), fonts: fonts.clone(), events: Arc::from([]) } });
@@ -738,8 +750,13 @@ impl Store {
 
     #[cfg(test)]
     fn apply_alignment(&mut self, snapshot: &EmbeddedSnapshot, results: &[EmbeddedResult]) -> bool {
+        self.apply_alignment_revision(snapshot, results, Some("test-revision"))
+    }
+
+    #[cfg(test)]
+    fn apply_alignment_revision(&mut self, snapshot: &EmbeddedSnapshot, results: &[EmbeddedResult], verified_revision: Option<&str>) -> bool {
         let Some((mut work, source, budget)) = self.alignment_work(snapshot) else { return false };
-        if !work.rebuild_alignment(snapshot, results, budget) { return false; }
+        if !work.rebuild_alignment(snapshot, results, budget, verified_revision) { return false; }
         self.publish_alignment(snapshot, &source, budget, &mut work).is_some()
     }
 
@@ -851,36 +868,46 @@ pub fn try_selected(track: i32) -> Option<Option<Arc<Source>>> {
         Err(std::sync::TryLockError::WouldBlock) => None,
     }
 }
+/// Check the displayed revision, not just its stable source identity.
+fn displayed_ready(store: &Store, snapshot: &EmbeddedSnapshot) -> bool {
+    let Some(text) = store.text.get(&snapshot.track) else { return false };
+    let displayed = if text.aligned_epoch.is_some() && text.aligned_epoch != Some(super::alignment::epoch()) {
+        text.estimated.as_ref()
+    } else { store.tracks.get(&snapshot.track) };
+    displayed.is_some_and(|source| source.id == snapshot.displayed_id && source.revision == snapshot.displayed_revision
+        && ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready)
+}
+
 /// Called by the alignment worker, never by the frame renderer.
 pub(super) fn alignment_snapshot(track: i32, window_start_ms: i64, window_end_ms: i64) -> Option<EmbeddedSnapshot> {
     if super::desired_sub_idx() != track || super::sidecar::selected() { return None; }
     let style = TextStyle::current();
     let store = store();
-    let text = store.text.get(&track)?;
-    if text.style_generation != style.generation() { return None; }
-    let displayed = if text.aligned_epoch.is_some() && text.aligned_epoch != Some(super::alignment::epoch()) {
-        text.estimated.as_ref()?
-    } else {
-        store.tracks.get(&track)?
-    };
-    let displayed_id = displayed.id;
-    if ass::source_readiness(displayed_id) != ass::SourceReadiness::Ready { return None; }
+    if store.text.get(&track)?.style_generation != style.generation() { return None; }
     let snapshot = store.alignment_snapshot(track, window_start_ms, window_end_ms)?;
+    if !displayed_ready(&store, &snapshot) { return None; }
     drop(store);
-    (super::desired_sub_idx() == track && !super::sidecar::selected()
-        && snapshot.epoch == super::alignment::epoch()
-        && ass::source_readiness(displayed_id) == ass::SourceReadiness::Ready).then_some(snapshot)
+    alignment_ready(&snapshot).then_some(snapshot)
+}
+
+pub(super) fn alignment_ready(snapshot: &EmbeddedSnapshot) -> bool {
+    if super::desired_sub_idx() != snapshot.track || super::sidecar::selected()
+        || TextStyle::current().generation() != snapshot.style_generation || snapshot.epoch != super::alignment::epoch() { return false; }
+    let store = store();
+    store.generation == snapshot.generation && !store.awaiting_reopen
+        && store.tracks.get(&snapshot.track).is_some_and(|source| source.id == snapshot.source_id && source.revision == snapshot.revision)
+        && displayed_ready(&store, snapshot)
 }
 
 /// Apply only to the exact selected source and epoch captured before the request.
-pub(super) fn apply_alignment(snapshot: &EmbeddedSnapshot, results: &[EmbeddedResult]) -> bool {
-    if super::desired_sub_idx() != snapshot.track || super::sidecar::selected() || TextStyle::current().generation() != snapshot.style_generation { return false; }
+pub(super) fn apply_alignment(snapshot: &EmbeddedSnapshot, results: &[EmbeddedResult], verified_revision: Option<&str>) -> bool {
+    if !alignment_ready(snapshot) { return false; }
     let Some((mut work, source, budget)) = store().alignment_work(snapshot) else { return false };
-    if !work.rebuild_alignment(snapshot, results, budget) { return false; }
+    if !work.rebuild_alignment(snapshot, results, budget, verified_revision) { return false; }
     if super::desired_sub_idx() != snapshot.track || super::sidecar::selected() || TextStyle::current().generation() != snapshot.style_generation { return false; }
     let replaced = {
         let mut store = store();
-        if super::desired_sub_idx() != snapshot.track { None }
+        if super::desired_sub_idx() != snapshot.track || !displayed_ready(&store, snapshot) { None }
         else { store.publish_alignment(snapshot, &source, budget, &mut work) }
     };
     replaced.is_some()
@@ -927,6 +954,79 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_estimated_cue_removes_previous_words() {
+        let _guard = plx_base::testlock::serial();
+        let (mut s, g) = text_store("estimated-removal");
+        s.push_text(g, 0, 1000, 4000, "hello", 0);
+        let first = s.alignment_snapshot(0, 0, 5000).unwrap();
+        let id = first.cues[0].cue_id.clone();
+        let word = super::super::reveal::AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1100, end_ms: 1500 };
+        assert!(s.apply_alignment(&first, &[EmbeddedResult { cue_id: id.clone(), words: vec![word] }]));
+        let next = s.alignment_snapshot(0, 0, 5000).unwrap();
+        assert!(s.apply_alignment(&next, &[EmbeddedResult { cue_id: id, words: vec![] }]));
+        assert!(s.text[&0].raw.values().all(|cue| cue.words.is_none()));
+    }
+
+    #[test]
+    fn regression_embedded_requires_displayed_ready_revision() {
+        let _guard = plx_base::testlock::serial();
+        super::super::sidecar::reset();
+        super::super::request_subtitle(0);
+        let g = begin("revision-ready", vec![(0, TrackHeader::Text(TextDialect::Srt))], vec![]);
+        push_text(g, 0, 1_000_000_000, 4_000_000_000, "hello", 1);
+        let source = try_selected(0).unwrap().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            ass::request(source.clone(), 1500, 320, 180, 320, 180);
+            if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready { break; }
+            assert!(std::time::Instant::now() < deadline, "renderer did not publish");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let captured = alignment_snapshot(0, 0, 7000).unwrap();
+        ass::clear();
+        let result = EmbeddedResult { cue_id: captured.cues[0].cue_id.clone(), words: vec![] };
+        assert!(!apply_alignment(&captured, &[result], Some("verified")), "renderer cancellation must fence publication");
+        loop {
+            ass::request(source.clone(), 1500, 320, 180, 320, 180);
+            if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready { break; }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        push_text(g, 0, 5_000_000_000, 6_000_000_000, "later", 2);
+        let newer = try_selected(0).unwrap().unwrap();
+        assert_eq!(newer.id, source.id);
+        assert_ne!(newer.revision, source.revision);
+        assert!(alignment_snapshot(0, 0, 7000).is_none(), "an old rendered revision must not authorize new cues");
+        super::super::request_subtitle(-1);
+        reset();
+        ass::clear();
+    }
+
+    #[test]
+    fn regression_embedded_fences_out_of_window_words_by_source_revision() {
+        let _guard = plx_base::testlock::serial();
+        let (mut s, g) = text_store("verified-revision");
+        s.push_text(g, 0, 1000, 4000, "hello", 0);
+        s.push_text(g, 0, 6000, 9000, "world", 0);
+        let first = s.alignment_snapshot(0, 0, 5000).unwrap();
+        let word = super::super::reveal::AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1100, end_ms: 1500 };
+        assert!(s.apply_alignment_revision(&first, &[EmbeddedResult { cue_id: first.cues[0].cue_id.clone(), words: vec![word] }], Some("a")));
+        let later = s.alignment_snapshot(0, 5000, 10000).unwrap();
+        let next_word = super::super::reveal::AlignedWord { start_ms: 6100, end_ms: 6500, ..word };
+        let update = || EmbeddedResult { cue_id: later.cues[0].cue_id.clone(), words: vec![next_word] };
+        assert!(s.apply_alignment_revision(&later, &[update()], Some("a")));
+        assert_eq!(s.text[&0].raw.values().filter(|cue| cue.words.is_some()).count(), 2);
+        let later = s.alignment_snapshot(0, 5000, 10000).unwrap();
+        let update = || EmbeddedResult { cue_id: later.cues[0].cue_id.clone(), words: vec![next_word] };
+        assert!(s.apply_alignment_revision(&later, &[update()], Some("b")));
+        assert!(s.text[&0].raw.values().next().unwrap().words.is_none());
+        assert!(s.text[&0].raw.values().last().unwrap().words.is_some());
+        let later = s.alignment_snapshot(0, 5000, 10000).unwrap();
+        assert!(s.apply_alignment_revision(&later, &[EmbeddedResult { cue_id: later.cues[0].cue_id.clone(), words: vec![] }], None));
+        assert!(s.text[&0].raw.values().all(|cue| cue.words.is_none()));
+    }
 
     #[test]
     fn nonblocking_selection_reports_busy_separately_from_absent() {
@@ -981,7 +1081,7 @@ mod tests {
                 start_byte: 0, end_byte: 5, start_ms: 1000, end_ms: 1500,
             }] };
             let (mut work, source, budget) = s.alignment_work(&snapshot).unwrap();
-            assert!(work.rebuild_alignment(&snapshot, &[result], budget));
+            assert!(work.rebuild_alignment(&snapshot, &[result], budget, Some("test-revision")));
             match change {
                 0 => { s.push_text(g, 0, 5000, 6000, "later", 0); }
                 1 => s.seek(g),
@@ -1004,7 +1104,7 @@ mod tests {
             start_byte: 0, end_byte: 5, start_ms: 1000, end_ms: 1500,
         }] };
         let (mut work, source, budget) = s.alignment_work(&snapshot).unwrap();
-        assert!(work.rebuild_alignment(&snapshot, &[result], budget));
+        assert!(work.rebuild_alignment(&snapshot, &[result], budget, Some("test-revision")));
         assert!(s.text[&0].raw.values().all(|cue| cue.words.is_none()));
         assert!(s.publish_alignment(&snapshot, &source, budget, &mut work).is_some());
         assert_eq!(s.text[&0].aligned_epoch, Some(snapshot.epoch));

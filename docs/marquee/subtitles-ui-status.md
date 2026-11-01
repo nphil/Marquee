@@ -224,35 +224,30 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 
 ## Speech timing and render provenance
 
-Reveal as spoken estimates word timing from cue text and duration; authored ASS karaoke keeps its
-timings. The installed app does not use a server alignment or timing-result endpoint. The 2026-10-31
-live Unraid inventory included Bazarr but no Whisper/SubGen alignment container; GPU hardware and spare
-capacity were not established. The proposed offline alignment path is in `design-subtitles.md`.
-The separate speech-alignment effort is not included in this app update; its eventual merge must
-preserve the current sidecar lifecycle and ABI 6 renderer-readiness contract.
+The installed build estimates word timing from cue text and duration; authored ASS karaoke keeps
+its timings. The isolated SpeechDock source return `1b0e4e5c3ea32f38f94525aca7a89457f9dec963` is
+integrated into main but is not yet installed or activated on the TV.
 
-SpeechDock session `01a1943c-9834-7106-872e-e017bd1c394b` owns the separate CPU
-forced-alignment/backend and asynchronous-client effort. The source-only handoff permits an
-isolated detached worktree, not the main checkout, cached deployment lane or TV. Its reserved
-Marquee seams are `rust-modules/media/src/player/{reveal,ass_source,sidecar,text_ass}.rs` plus
-alignment-related subtitle settings/client code. Performance work may inspect these seams but must
-coordinate before editing; integration must preserve alignment changes rather than replace
-files with older copies. Use an isolated source worktree and private targets; final integration
-follows the main-only convention. `/data/home/Marquee-subs` and its cached targets remain reserved
-for the app deployment lane. No alignment code is included in the installed build.
+SpeechDock session `01a1943c-9834-7106-872e-e017bd1c394b` owns the CPU backend. Client source
+ownership has returned to Marquee; `/data/home/Marquee-speechdock-alignment` remains frozen. Its
+private `CARGO_HOME` is `/data/home/tmp/marquee-speechdock-alignment-cargo` and
+`CARGO_TARGET_DIR` is `/data/home/tmp/marquee-speechdock-alignment-target`, separate from the
+cached `/data/home/Marquee-subs` deployment lane. Integration follows the main-only convention.
 
-SpeechDock has accepted the source-only handoff and reports the detached worktree
-`/data/home/Marquee-speechdock-alignment` at `761d7cb571857526809efed657a4d362f36a9847`.
-Its private `CARGO_HOME` is `/data/home/tmp/marquee-speechdock-alignment-cargo`;
-`CARGO_TARGET_DIR` is `/data/home/tmp/marquee-speechdock-alignment-target`. The source return must
-include an isolated patch/revision, backend/client contract and focused local behavior evidence
-before main integration. No TV lease or deployment authority accompanies this accepted handoff.
+The client uses protocol 1 `POST /api/alignment/windows`, off the playback thread. SpeechDock
+verifies English audio independently with a local quantized CPU speech model; word boundaries use
+a 20 ms grid within the authored cues. Production activation requires a trusted
+`SPDOCK_ALIGNMENT_PLEX_URL`, private `SPDOCK_ALIGNMENT_PLEX_TOKEN_FILE` and read-only
+`SPDOCK_ALIGNMENT_ROOTS` mappings. The profile integration defaults Off; missing or unverified
+audio retains explicitly estimated timing rather than a claim of audio alignment.
 
-The merge must retain ABI 6 epoch-fenced renderer readiness, truthful player activation, visual
-modes and authored ASS karaoke. Alignment requests must stay off the UI/playback thread and be
-cancelled or ignored when their owning media/audio/subtitle selection changes. Estimated timing
-must not be presented as confirmed audio alignment. Backend deployment and TV verification require
-a separate explicit handoff; no new HomeLabber requests are authorized.
+ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
+karaoke remain required. Embedded alignment capture and publication require the exact displayed
+source ID and revision to be renderer-ready. Estimated cues remove earlier aligned words; a missing
+or changed verified backend source revision invalidates retained timings, while an unchanged
+revision can retain valid out-of-window words. Requests are cancelled or ignored when their owning
+media/audio/subtitle selection changes. Backend deployment and TV verification require a separate
+explicit handoff; no new HomeLabber requests are authorized.
 
 The existing subtitle/Bazarr images in `docs/marquee/renders/` are desktop simulator frames under
 Xvfb, not TV captures. The shared table still uses value read-outs rather than mock sliders/swatches.

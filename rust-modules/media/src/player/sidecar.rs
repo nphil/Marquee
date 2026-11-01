@@ -96,6 +96,7 @@ struct TextHold {
     source_sha256: String,
     script: Arc<text_ass::TextScript>,
     aligned: Arc<std::collections::BTreeMap<u64, Vec<super::reveal::AlignedWord>>>,
+    verified_source_revision: Option<String>,
     alignment_revision: u64,
     published_alignment_revision: u64,
     alignment_epoch: u64,
@@ -196,10 +197,11 @@ pub(super) fn alignment_snapshot(start_ms: i64, end_ms: i64, limit: usize) -> Op
 }
 
 /// Worker-only: the orchestrator validates identity, provenance and response before this call.
-pub(super) fn apply_alignment(generation: u64, source_id: u64, source_revision: u64, epoch: u64, updates: Vec<AlignmentUpdate>) -> bool {
+pub(super) fn apply_alignment(generation: u64, source_id: u64, source_revision: u64, epoch: u64, updates: Vec<AlignmentUpdate>, verified_revision: Option<&str>) -> bool {
     let style = TextStyle::current();
     let mut st = state();
     if st.alignment_generation != generation { return false; }
+    if verified_revision.is_none() && updates.iter().any(|update| !update.words.is_empty()) { return false; }
     if super::alignment::epoch() != epoch { return false; }
     let State { want, loaded, .. } = &mut *st;
     let Some((selection, content)) = loaded.as_mut() else { return false };
@@ -207,7 +209,10 @@ pub(super) fn apply_alignment(generation: u64, source_id: u64, source_revision: 
     if want.as_ref() != Some(selection) || source.id != source_id || source.revision != source_revision
         || !ready_source(content) { return false; }
     let Some(hold) = content.text.as_mut() else { return false };
-    if hold.alignment_epoch != epoch { hold.aligned = Arc::new(std::collections::BTreeMap::new()); }
+    if hold.alignment_epoch != epoch || verified_revision.is_none() || hold.verified_source_revision.as_deref() != verified_revision {
+        hold.aligned = Arc::new(std::collections::BTreeMap::new());
+    }
+    hold.verified_source_revision = verified_revision.map(str::to_owned);
     hold.alignment_epoch = epoch;
     let aligned = Arc::make_mut(&mut hold.aligned);
     for update in updates {
@@ -231,6 +236,7 @@ pub(super) fn invalidate_alignment() {
             if !hold.aligned.is_empty() {
                 hold.aligned = Arc::new(std::collections::BTreeMap::new());
                 hold.alignment_epoch = super::alignment::epoch();
+                hold.verified_source_revision = None;
                 hold.alignment_revision = hold.alignment_revision.wrapping_add(1);
                 start_restyle(content, style);
             }
@@ -502,7 +508,7 @@ fn ass_source_styled(burned: bool, style: TextStyle) -> Option<Arc<super::ass::S
 fn selected_source(content: &Content) -> &Arc<super::ass::Source> {
     if let Some(hold) = &content.text {
         if hold.published_epoch != super::alignment::epoch()
-            || (hold.aligned.is_empty() && hold.published_alignment_revision != hold.alignment_revision) {
+            || hold.published_alignment_revision != hold.alignment_revision {
             if let Some(estimated) = &hold.estimated { return estimated; }
         }
     }
@@ -676,7 +682,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
         }),
         font_generation: None,
         text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, plain,
-            source_sha256, script: Arc::new(converted), aligned: Arc::new(std::collections::BTreeMap::new()),
+            source_sha256, script: Arc::new(converted), aligned: Arc::new(std::collections::BTreeMap::new()), verified_source_revision: None,
             alignment_revision: 0, published_alignment_revision: 0, alignment_epoch: 0, published_epoch: 0,
             estimated: None, restyling: false }),
     })
@@ -1197,6 +1203,43 @@ mod tests {
     }
 
     #[test]
+    fn regression_sidecar_fences_estimates_and_source_revisions() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/text".into(), "srt".into(),
+            |_, _, _| Some(b"1\n00:00:01,000 --> 00:00:04,000\nhello\n\n2\n00:00:06,000 --> 00:00:09,000\nworld\n".to_vec()));
+        finish_download();
+        let word = super::super::reveal::AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1100, end_ms: 1500 };
+        let send = |updates, revision| {
+            render_selected_ready();
+            let snapshot = alignment_snapshot(0, 10000, 32).unwrap();
+            assert!(apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision,
+                super::super::alignment::epoch(), updates, revision));
+            finish_restyle();
+        };
+        send(vec![AlignmentUpdate { ordinal: 0, words: vec![word] }], Some("a"));
+        send(vec![AlignmentUpdate { ordinal: 1, words: vec![word] }], Some("a"));
+        assert_eq!(state().loaded.as_ref().unwrap().1.text.as_ref().unwrap().aligned.len(), 2);
+        send(vec![AlignmentUpdate { ordinal: 1, words: vec![] }], Some("a"));
+        {
+            let st = state();
+            let aligned = &st.loaded.as_ref().unwrap().1.text.as_ref().unwrap().aligned;
+            assert!(aligned.contains_key(&0));
+            assert!(!aligned.contains_key(&1));
+        }
+        send(vec![AlignmentUpdate { ordinal: 1, words: vec![word] }], Some("b"));
+        {
+            let st = state();
+            let aligned = &st.loaded.as_ref().unwrap().1.text.as_ref().unwrap().aligned;
+            assert!(!aligned.contains_key(&0));
+            assert!(aligned.contains_key(&1));
+        }
+        send(vec![AlignmentUpdate { ordinal: 0, words: vec![] }], None);
+        assert!(state().loaded.as_ref().unwrap().1.text.as_ref().unwrap().aligned.is_empty());
+        reset();
+    }
+
+    #[test]
     fn alignment_snapshot_pins_fetched_bytes_and_authored_and_visible_cues() {
         let _guard = plx_base::testlock::serial();
         reset();
@@ -1215,7 +1258,7 @@ mod tests {
         assert_eq!((cue.start_ms, cue.end_ms), (1_000, 3_000));
         assert_eq!(cue.text, "<i>Hello</i> world");
         invalidate_alignment();
-        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new(), None));
         finish_restyle();
         reset();
     }
@@ -1230,7 +1273,7 @@ mod tests {
         render_selected_ready();
         let snapshot = alignment_snapshot(0, 3_000, 32).unwrap();
         deselect();
-        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new(), None));
         select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 43, "/ass".into(), "ass".into(),
             |_, _, _| Some(STYLED_SCRIPT.to_vec()));
         finish_download();
@@ -1251,10 +1294,10 @@ mod tests {
         assert!(alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision));
         ass::clear();
         assert!(!alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision), "readiness must be rechecked before send");
-        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()), "loading must not accept results");
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new(), None), "loading must not accept results");
         render_selected_ready();
         let word = super::super::reveal::AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1_100, end_ms: 1_500 };
-        assert!(apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), vec![AlignmentUpdate { ordinal: 0, words: vec![word] }]));
+        assert!(apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), vec![AlignmentUpdate { ordinal: 0, words: vec![word] }], Some("test-revision")));
         finish_restyle();
         {
             let st = state();
@@ -1285,13 +1328,13 @@ mod tests {
         assert!(alignment_snapshot(0, 5_000, 32).is_none(), "an older published revision is not ready");
         assert!(!alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision));
         assert!(!alignment_ready(snapshot.generation, snapshot.source_id.wrapping_add(1), snapshot.source_revision));
-        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new(), None));
         render_selected_ready();
         let newer = alignment_snapshot(0, 5_000, 32).unwrap();
         assert_eq!(newer.source_id, snapshot.source_id);
         assert_ne!(newer.source_revision, snapshot.source_revision);
         assert!(!alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision));
-        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new(), None));
         reset();
     }
 
