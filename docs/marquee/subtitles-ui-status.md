@@ -98,6 +98,11 @@ pinned rollback through the proven renderer transport are required. App-update p
 not cover this maintenance, and no approved payload may be substituted implicitly. No TV lease
 is held and no new HomeLabber request will be sent.
 
+Local binary review does not establish deployment-packet readiness. No exact current f5-only
+packet or current bundle/manifest/flags rollback pins are claimed ready; these remain platform-task
+prerequisites. Reuse the historical `renderer-fragment.py` cutover steps, not the enclosing
+`wake-maintenance.py` wake-policy/trial/cold-boot workflow unchanged.
+
 The platform owner reports no first request for the final packet and no evidence of a matching
 pending or execution-unknown action. Missing optional `approval_list_requests` does not prevent
 a first request. The operative blocker is Nitin’s explicit no-new-HomeLabber-requests instruction
