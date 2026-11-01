@@ -249,6 +249,10 @@ enables requests for a profile using Word or Line reveal, subject to direct-play
 and renderer checks. Unavailable or unverified audio retains explicitly estimated timing. There
 is no separate SpeechDock Enable switch or Test connection control.
 
+The validated Address is published only after durable session save and restored at boot. Settings
+shows Address/Disabled and validation or save errors, not connection or aligned/estimated status.
+The renderer distinguishes verified word timing internally; request failures retain estimates.
+
 Production SpeechDock 0.2.0 has the trusted PMS origin, private token file and explicit read-only
 movie/TV roots configured. The unchanged production image has bounded acoustic-positive proof:
 authoritative English cue 583 returned one aligned word, UTF-8 bytes 0–4, at
@@ -261,6 +265,10 @@ broad film-accuracy certification, and no guards or authored bounds were relaxed
 must clear earlier alignment. Changed-source validation returns `estimated`, `words: []` and a null
 source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
 `/data/home/tmp/speechdock-alignment-production`. TV activation still requires a quiet-safe app window.
+
+The backend requires its independent speech transcript to match the cue exactly; the dominant
+sample rejection is `independent_lexical_mismatch`, not a connection failure. Playback acceptance
+on the TV is separate from this backend coverage problem.
 
 ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
 karaoke remain required. Embedded alignment capture and publication require the exact displayed
