@@ -78,6 +78,17 @@ environment and ELF-provenance checks and is not approved or installed. The reta
 is classified as occupied and needs a separate explicit input/audio-interruption scope. The unused
 R3 permission and the app-only update window do not authorize R4.
 
+The newer UI-feature compositor candidate is
+`/data/home/tmp/lumatv-foreground-pacing-20261031/lumatv-compositor`, SHA-256
+`904c8e93a985aa25feb07afac8fdde2f0796b67317ac431ef86277e4edbcb6c0`. It is not installed or
+accepted. Exact foreground `com.beb.plxnative` selects nominal 120/divider 1; other foreground
+restores the startup `--refresh` base, default 60. Numeric `ctl refresh 60/120` overrides remain
+sticky; `ctl refresh auto` resumes foreground policy, while `ctl refresh reset` only resets
+measurements. This artifact is distinct from the previously pinned legacy payload: independent
+review and joint maintenance agreement remain required, with no implicit package substitution.
+Divider 1 follows LG’s 100 or 119.88/120 family; independent physical 120 over the 100 family and
+optical seamlessness remain unestablished.
+
 The read-only TV baseline matched all six dispatcher dependencies and all 35 renderer members.
 R3 still rejects the observed supervisor argv `/usr/bin/surface-manager -platform eglfs_webos`
 and nonempty `LD_PRELOAD`/`LD_LIBRARY_PATH`. Historical LG startup uses those argv flags; exact
