@@ -2,32 +2,37 @@
 
 ## Resume here
 
-Stable 0.10.0 is installed on `192.168.1.242` (webOS 10.2.1, platform `o22n2`). Runtime source
-`fce9888a` adds confirmed subtitle activation and separate Stats logging to the earlier banner and
-enhanced-audio fixes. The stable `com.beb.plxnative` storage identity is retained; all 54 deployed
-files match. The versioned IPK and `marquee-latest.ipk` in `/data/home/Marquee-release/` are
-20,970,244 bytes, SHA-256 `0cb296dffd9652981d593b45692980944add0d94da40b4157e2dfe46df979afb`.
-The previous package is retained as `marquee-0.10.0-37d8d0f4-rollback.ipk`.
+Stable 0.10.0 payload source `c5199efd` is deployed on `192.168.1.242` (webOS 10.2.1, platform
+`o22n2`). The existing stable in-place deploy matched all 54 files without launching the app.
+The native executable SHA-256 is
+`8144efbc2cd22acf0d7fc7773666400afd19ab035f81ee5a25757e7abe1ea72d`; its profile is `release`.
+The stable `com.beb.plxnative` storage identity is retained.
 
-Native Bazarr search returned English provider results. The player Stats read-out showed the
-23.976 fps file rate separately from GL swaps and unverified physical refresh; detailed logging
-remained Off. New subtitle downloading and actual media deletion were not exercised on the TV.
-The app ended on Home without the Stats overlay and with zero video planes; the TV lease was
-released and LumaTV notified. No system, refresh, input or power setting changed in this window.
+The staged package is `/data/home/Marquee-release/marquee-0.10.0-c5199efd.ipk`, 21,091,118 bytes,
+SHA-256 `8c9f2f92b341c0630cc7ce47d2bc547b4d88f20a5c9c706c1abe4f0c2d903ffa`. Canonical/versioned
+and `marquee-latest.ipk` packages remain the last on-screen-accepted `fce9888a`: 20,970,244 bytes,
+SHA-256 `0cb296dffd9652981d593b45692980944add0d94da40b4157e2dfe46df979afb`. The earlier
+`marquee-0.10.0-37d8d0f4-rollback.ipk` is also retained.
 
-The unshipped Stats change samples native `osd_irq` counts off the UI thread only while the overlay
+The latest root power reply is `Active Standby`, and the app-only lease is released. Receiver mute
+could not remain stable, so native app launch, playback, screenshots and input checks are held.
+No app launch, wake, power, picture, refresh, compositor or tracing command accompanied this deploy.
+The last observed runtime remains `fce9888a`; current TV Hz, app-jail counter access and the new
+runtime are not verified. Its earlier captures are `/tmp/lt/marquee-fce-*.png` and scrubbed logs are
+`/tmp/marquee-fce-scrubbed/`.
+
+The deployed Stats change samples native `osd_irq` counts off the UI thread only while the overlay
 is visible, showing approximate Hz under `measured display sync`. Video-source rate and returned
 GL swaps remain separate; reset, unreadable and stale counters do not produce live readings.
-TV app-jail access and actual playback verification remain pending; no live panel raster or final
-output HDR field is inferred from video metadata, placed video rectangles or static capabilities.
+No live panel raster or final output HDR field is inferred from video metadata, placed video
+rectangles or static capabilities. LumaTV owns the separate native Quick Settings info pill.
 
-The same unshipped source retains the last drawn artwork viewport through playback and return,
-within the existing 64 source slots, render-scaled 44 MiB texture budget and 8 MiB decode-admission
-threshold. Current drawn demand takes upload priority. Watched-state read-back gives the visible
-detail owner the shared metadata slot and publishes terminal failures while retaining loaded data.
-Focused local consumer/cache regressions pass; actual household reproduction remains unobserved.
-
-Captures are `/tmp/lt/marquee-fce-*.png`; scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
+The updated artwork cache retains the last drawn viewport through playback and return within the
+existing 64 source slots, render-scaled 44 MiB texture budget and 8 MiB decode-admission threshold.
+Current drawn demand takes upload priority. Watched-state read-back gives the visible detail owner
+the shared metadata slot and publishes terminal failures while retaining loaded data. Focused
+consumer/cache and native desktop return/reversal checks passed; household TV reproduction is
+unobserved.
 
 Detailed stats logging retains its own explicit session-only app opt-in, off at boot. LumaTV’s
 supported read-only `GET /v1/logging` reports saved `base.logging.enabled` for optional remote UDP
@@ -36,7 +41,7 @@ local collection is independent. Neither these flags nor Stats visibility author
 no supported external-app capture/submission contract exists. Private collector sockets/files are
 not an app integration API.
 
-The initial focused feature run passed 93 checks; four privacy identifier/preview-isolation checks
+The earlier `fce9888a` feature run passed 93 focused checks; four privacy identifier/preview-isolation checks
 also passed. ARM ELF and package checks passed for the installed build. The stored account opened
 Profiles, Home, Settings and About. Native keyboard input and Bazarr 1.6.2 connectivity were observed;
 the key remained masked. The movie hold-menu displayed Delete; no deletion was submitted. Instant
@@ -224,9 +229,10 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 
 ## Speech timing and render provenance
 
-The installed build estimates word timing from cue text and duration; authored ASS karaoke keeps
-its timings. The isolated SpeechDock source return `1b0e4e5c3ea32f38f94525aca7a89457f9dec963` is
-integrated into main but is not yet installed or activated on the TV.
+The deployed `c5199efd` client includes the isolated SpeechDock source return
+`1b0e4e5c3ea32f38f94525aca7a89457f9dec963` and final renderer/source fences, but audio alignment
+is not activated on the TV. Estimated word timing remains the fallback; authored ASS karaoke keeps
+its timings.
 
 SpeechDock session `01a1943c-9834-7106-872e-e017bd1c394b` owns the CPU backend. Client source
 ownership has returned to Marquee; `/data/home/Marquee-speechdock-alignment` remains frozen. Its
@@ -242,6 +248,13 @@ a 20 ms grid within the authored cues. Production activation requires a trusted
 enables requests for a profile using Word or Line reveal, subject to direct-play, English-subtitle
 and renderer checks. Unavailable or unverified audio retains explicitly estimated timing. There
 is no separate SpeechDock Enable switch or Test connection control.
+
+Production SpeechDock 0.2.0 has the trusted PMS origin, private token file and explicit read-only
+movie/TV roots configured. Acoustic acceptance remains blocked: 16 authoritative English film cues
+returned 15 independent lexical mismatches and one weak-acoustic result, with no aligned cue. A
+non-null `source_revision` can accompany estimated cues and is not proof of aligned words. The
+private production evidence is `/data/home/tmp/speechdock-alignment-production`; connectivity alone
+does not justify activation.
 
 ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
 karaoke remain required. Embedded alignment capture and publication require the exact displayed
