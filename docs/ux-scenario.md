@@ -444,10 +444,8 @@ a bug report, which is the state it is usually seen in.
 because there is no nyx and no codec table to read, so a picture of that state would present the
 panel's failure mode as its normal one. This figure is owed from a television.)*
 
-A panel the viewer turns on, photographs and turns off — the app's answer to "playback does not work
-on my set" from hardware nobody here owns. Its user-facing entry point is during playback,
-**More → Stats for nerds** (§6.3). Automated development captures may arm it directly on another
-route, but the profile menu does not expose a playback instrument as a global setting.
+A panel the viewer turns on, photographs and turns off. **Stats for nerds** is available from the
+account/profile menu and from playback **More** (§6.3), including before anything has played.
 
 It takes **no buttons at all**: every key keeps working underneath it, which is what lets you watch
 the numbers move as you press play, and it turns off by picking the same row again.
@@ -457,6 +455,9 @@ is the pipeline: the source and the server, the codec chain from your file throu
 what was declared to the decoder, the video plane, how far Load got, whether the demuxer produced
 anything, what was fed and whether it was accepted, HTTP status, and the adaptive controller's own
 inputs — with three sweep plots for budget versus demand, network activity, and buffer health.
+Source metadata fps, returned GL swaps per sample, and pipeline-announced fps are distinct: swaps are
+not unique delivered frames, and physical display refresh is unverified. Position callbacks and fed
+access units are labelled as such; estimates are not presented as measurements.
 **Before anything has played** it is the set instead: model and board, the firmware
 codename, what the decoder claims *and whether that table was actually readable*, and whether the
 server ever answered. Those are the facts a report needs when the app opens and finds nothing, which
@@ -464,6 +465,11 @@ is the failure that never reaches a player at all.
 
 Nothing on it names a title, a person, a library, a server or an address, and no value is ever a URL
 or a path — a photograph cannot be redacted after the fact, and it lands in a public issue thread.
+
+Detailed stats logging is independent of overlay visibility and OS logging. It is off at boot, requires
+explicit opt-in and lasts only for the session. A lazy background worker writes a bounded queue of
+numeric-only records; these never contain credentials, URLs, stable identifiers or media titles. Sampling
+runs every 500 ms only while the overlay is visible or logging is opted in; logging alone does not redraw.
 
 ---
 
@@ -676,9 +682,11 @@ full-screen sheet. All three are modal while open: they take every key, and BACK
   statistics, plus **Send diagnostics** when that row is enabled. LEFT/RIGHT are deliberately
   swallowed here: it is one column.
 
-The app exposes **no subtitle appearance settings**, and its client-rendered subtitles do not read
-the television's own subtitle settings — stated here because that is what makes the second half of
-checklist #48 N/A rather than failing.
+Subtitle appearance is configurable in the player Style pages and Settings → Subtitles; client-rendered
+subtitles do not read the television's own subtitle settings. Wrong subtitles? can search Bazarr and
+keeps its sheet open from a confirmed queued download through Plex track discovery and actual loading
+to Active or a typed error. Check Plex again refreshes metadata only, never downloads twice, and reopening
+an installed result does not automatically select it. See `marquee/design-subtitles.md` for the contract.
 
 **2. Over a marked segment: a Skip pill.** When the server has marked an intro or credits region and
 the playhead is inside it, a single **Skip Intro** / **Skip Credits** pill takes the row — same
@@ -787,7 +795,7 @@ Where the four deferring items are answered, and the neighbouring items this doc
 | #44 full/original screen toggle | N/A — no such control; video is always full-panel |
 | **#45 playback control** | **§6** |
 | #46 replay after completion | partly §6.7 (Up Next / end of item). **Not fully answered here** — see `docs/lg-self-checklist.md`, where it is a runnable case as of 2026-08-23 (`pipe_replay_after_eos`) awaiting its device run, rather than the untested item this row used to point at |
-| #48 subtitles | §6.7 — rendering in scope, appearance settings N/A |
+| #48 subtitles | §6.7 — rendering and app appearance settings in scope; television settings are not read |
 | #49 resume | §5.8, §6.4 |
 
 ---

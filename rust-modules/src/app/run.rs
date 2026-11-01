@@ -2599,8 +2599,9 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
         // popover's, the Info card's control pops and the Chapters strip's two springs. Each
         // panel is a surface now and the dispatcher ticks it, containers before pages, once per
         // frame: `PlayerOverlayScreen::step`'s `Tick` arm.)
-        // Re-samples on its own 2 Hz hold; a no-op when the panel is off.
-        app.diagnostics.update(&app.player.session, fr.now, fr.player);
+        // Polling precedes the route snapshot in `fr.player`.
+        let player_route = matches!(app.route(), AppArg::Player);
+        app.diagnostics.update(&app.player.session, fr.now, player_route);
         // …and the lab upload's toast, which expires on a clock rather than a spring.
         crate::lab::update(fr.now);
         #[cfg(feature = "threadcheck")]

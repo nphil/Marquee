@@ -73,8 +73,11 @@ missing or mismatched alignment must retain estimated reveal rather than apply a
   Every family falls back to the default family, which has the Noto script faces, the CJK face and the
   emoji fallback: no family draws a box where Default would draw a glyph.
 - **Encodings**: BOM, UTF-8, UTF-16 and legacy code pages by detection (`sub_charset`).
+- **Sidecar readiness**: native ABI 6 requires at least one authored cue with positive duration. An empty
+  render window before or between cues is valid. Renderer publication carries an epoch so an older load
+  cannot report readiness for a newer selection.
 - **Authored ASS** is kept as authored unless the look's `ass` field says `Mine` (Settings > Subtitles > File
-  styling): libass (`ass_set_selective_style_override`, `plx_ass_set_style_override`, ABI 5) then replaces the
+  styling): libass (`ass_set_selective_style_override`, `plx_ass_set_style_override`) then replaces the
   font, size, weight and edge of every event that is not explicitly placed with the header's own, in white
   letters (the look's colour and opacity are painted over the frame as for a text subtitle), and inline
   `\fn \fs \c` tags are ignored on those events. A positioned event (a sign) keeps the file's look. A karaoke
@@ -87,10 +90,13 @@ Player > Subtitles > Wrong subtitles?:
 1. **Remove this subtitle**: only for an external file (a sidecar). A first OK arms the row, a second
    sends `DELETE /library/streams/{id}`. An embedded track says it cannot be removed.
 2. **Find another with Bazarr**: Bazarr finds the item (title, year, season and episode, file name), asks
-   its providers (`/api/providers/movies|episodes`, tens of seconds), lists score, language, provider and
-   the hearing-impaired and forced flags, downloads the pick (`POST /api/providers/...`), asks PMS to
-   refresh the item and selects the new track when it appears. Every step has its own state: not set up,
-   searching, no results, not reachable, key refused, not in Bazarr, downloading, added.
+   its providers (`/api/providers/movies|episodes`), and lists score, language, provider and the
+   hearing-impaired and forced flags. Stock Bazarr 1.6.2 searches synchronously without provider counts
+   or byte progress; its queued download response has no job ID. The sheet reports confirmed queued,
+   Plex track found, actual loading, then Active or a typed error, without guessed percentages. It remains
+   open through activation. **Check Plex again** refreshes metadata only and never downloads twice; reopening
+   an already installed result does not select it automatically. Search and connection failures have their
+   own states, including not set up, no results, unreachable, key refused and not in Bazarr.
 
 Bazarr's address and API key live in the protected half of the session record, like the Plex tokens, and
 reach only the one kind of request that needs them. `http://` is accepted only for home-network hosts.

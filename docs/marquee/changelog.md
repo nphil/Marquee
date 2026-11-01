@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Bazarr subtitle activation reports confirmed progress through Plex discovery and loading to Active or a typed error; metadata rechecks do not repeat downloads.
+- Sidecar readiness requires a positive-duration cue and uses epoch-tagged renderer publication.
+- Stats distinguishes measured and estimated rates, supports the profile menu, and offers separate session-only opt-in numeric logging.
+
 - Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.
 
 - Home prepares the next banner's text during idle time, moving cold text work out of banner transitions without redrawing the settled screen.
