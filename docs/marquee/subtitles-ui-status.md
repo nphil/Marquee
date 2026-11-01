@@ -24,8 +24,9 @@ seeking displayed a scene still. In-app Stats showed approximately 120 Hz measur
 23.976 fps source metadata and 1916×952 coded pipeline video; GL swaps are not delivered-frame FPS.
 Configured English-subtitled Community playback displayed a partial cue. Its Info label said Direct
 Play, but the actual route and service-aligned timing were not independently captured. A saved
-Address or visible word reveal is not proof of an acoustic result. Ordinary backend receipt
-verification is pending; no diagnostics consent was enabled. Final screen was Marquee Home, power
+Address or visible word reveal is not proof of an acoustic result. The ordinary-records check found
+18 HTTP 200 receipts, but no timestamps or outcomes to attribute them to TV playback. No diagnostics
+consent was enabled. Final screen was Marquee Home, power
 Active, receiver unchanged. Fresh own lease release verified local mirror absent and own token
 gone. Evidence: `/data/home/tmp/marquee-live-setup-20261101.json`; native screenshots are listed
 there. No device job or lease remains.
@@ -309,7 +310,11 @@ broad film-accuracy certification, and no guards or authored bounds were relaxed
 must clear earlier alignment. Changed-source validation returns `estimated`, `words: []` and a null
 source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
 `/data/home/tmp/speechdock-alignment-production`. The native TV Address is saved and Word by word
-enabled; ordinary backend records have been requested to verify live client receipt without new capture.
+enabled. The backend owner reported one 1000-line container-log tail inspected at 15:14 EST:
+18 `POST /api/alignment/windows` receipts, all HTTP 200. Every returned line lacked timestamps,
+and matching receipts contained no aligned-versus-estimated classification. Attribution to the
+15:03–15:12 TV playback window/client and the acoustic outcome remain unobserved. HTTP success
+is not aligned/consumed proof. No bodies, diagnostic capture, new inference or further polls were used.
 
 All 19 sampled cues passed source verification: 17 failed independent exact greedy lexical
 equality, one failed the acoustic score, and one aligned. Repeated-word rejection accounts for
