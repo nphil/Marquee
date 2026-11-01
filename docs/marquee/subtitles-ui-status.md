@@ -69,18 +69,26 @@ contained one 16.7 ms interval near the motion-to-idle boundary. This is not pro
 Idle-to-active gaps and lifetime-average flip counts are not animation FPS. The client frame callback
 is acknowledged at commit; its FPS counter does not prove unique pictures reached the display.
 
-The 2026-11-01 read-only window captured 6.003157 seconds with zero scheduler overruns: 718 draws,
-717 flips and two 16.7 ms flip intervals among continuous 8.3 ms output. Compositor render p50/p90/max
-was 422/460/2900 microseconds; draw-to-GPU-fence was 5.4/5.6/8.0 ms. The pre-capture divider read
-120 Hz and one video plane existed. No mode, input, power, deployment or restart command was sent.
-The ring and trace are `/tmp/marquee-readonly-20261101-ring.json` and
-`/tmp/marquee-readonly-20261101-sched.gz`; the lease was released and LumaTV notified.
+The 2026-11-01 saved capture spans 6.003157 seconds with zero scheduler overruns: 718 draws and
+717 flips. Recorded intervals are 680 × 8.3 ms, 35 × 8.4 ms and two × 16.7 ms; p50/p95/p99 are
+8.3/8.4/8.4 ms at the ring’s 0.1 ms precision. Render p50/p90/max is 422/460/2900 microseconds;
+draw-to-output-fence is 5.4/5.6/8.0 ms. The complete 29.56-second ring includes ten gaps above
+10 ms and is not the same window. The pre-capture divider read 120 Hz and one video plane existed.
+No mode, input, power, deployment or restart command was sent; the lease was released.
+Sources are `/tmp/marquee-readonly-20261101-{ring.json,sched.gz,capture.log}`; corrected parser
+output is `/tmp/marquee-readonly-20261101-saved-analysis.json`.
 
-Both long intervals had zero late/lost/missed counters; those counters assess landed-frame timing,
-not every display refresh. One gap overlaps distributed runnable-off-CPU time, the other a poll
-sleep with an unresolved wake source. Neither proves a particular GPU job or callback caused it.
-The next causal capture needs matching app-buffer, commit and flip identities. Do not infer GPU
-durations from overlapping Mali slot starts/ends, change callback policy or promise zero stutter.
+All 719 `osd_irq` events remain continuous through both gaps: median 8.343 ms, maximum 8.357 ms.
+The first gap overlaps 8.456 ms of app runnable/off-CPU time; the second has only 0.098 ms and
+several poll sleeps. No joined app-buffer/COMMIT → selected draw → output fence → flip identity
+exists, so these records do not justify an app-only pacing patch or a zero-stutter claim.
+
+Identity-bearing GPU events attribute the approximately 4.134 ms interval to the compositor, not
+the hidden Qt shell. Submission-to-completion spans include queueing and resubmission, not
+exclusive GPU execution. The existing `analyse.py` one-job-per-slot tracker loses ownership on
+overlapping submissions; its GPU-busy totals are not causal evidence for this capture. A fresh
+passive identity-observation window must be separately coordinated; repeating scheduler-only
+capture cannot establish the missing buffer/fence links. Preserve native COMMIT callbacks.
 
 Automatic foreground-only 120 Hz is not installed. The single approved R2 platform attempt stopped
 in read-only preflight before mutation; R2 and its consumed approval must not be replayed. Its
@@ -180,8 +188,8 @@ import is not proof of scanout compatibility. Reuse the existing LumaTV
 `perf/{ringsum.py,frametl.py,frametl_parse.py,analyse.py}` with the saved capture pair above.
 
 `Native120PacingRoleRetry` completed the local watched-spinner and bounded artwork-residency fixes.
-`Native120SavedTraceCausality` is the sole active `deep-task`/`@slow` worker, analysing the saved
-native trace without TV access. Normal routing must finish its configured fallback chain.
+`Native120SavedTraceCausality` completed the saved-trace analysis; no Slow worker remains active.
+Normal role routing must finish its configured fallback chain before a worker is declared unavailable.
 
 The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
 path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in

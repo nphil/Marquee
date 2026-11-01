@@ -526,10 +526,12 @@ def run_surface(name, profile_name, args):
             return False
 
         if args.reversal:
+            if spec["window_max"] is None:
+                return {"surface": name, "profile": profile_name}, ["reversal requires a bounded card window"]
             # A legitimate ask is in flight (focus stood at the trailing edge when it was sent) and
             # the reader turns back: the page must be withdrawn, so no landing takes the focused card
             # out of the window. `analyse_focus` below grades it like every other walk.
-            if walk(spec["key"], lambda cur: cur >= WINDOW - 3, "reversal: approach the edge"):
+            if walk(spec["key"], lambda cur: cur >= spec["window_max"] - 3, "reversal: approach the edge"):
                 for _ in range(12):
                     keys.append((sim.key(spec["back"]), spec["back"]))
                     time.sleep(gap)
