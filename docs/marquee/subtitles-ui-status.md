@@ -26,6 +26,18 @@ The last on-screen-accepted Marquee runtime remains `fce9888a`; current TV Hz, a
 access, live alignment and the new runtime are unverified. Earlier captures are
 `/tmp/lt/marquee-fce-*.png` and scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
 
+A subsequent passive root observation during Netflix left playback, input, screenshots and settings
+untouched. Exact CPU-summed `osd_irq` advanced 8,233,968 to 8,234,065 over 1.00272638 monotonic
+seconds: 97 interrupts, approximately 96.74 Hz in that one sample, with unchanged CPU topology and
+no reset. This is display sync, not video FPS, unique flips or certified physical raster refresh.
+`videooutput/getStatus` reported one connected MAIN for Netflix at 3840×2160 / 23.9760246 fps.
+The foreground app matched, but an authoritative foreground-context join was unavailable; these
+remain reported video-source fields, not final output dimensions. Final HDR and physical raster
+remain unknown. Root mode 0444 on `/proc/interrupts` does not prove jailed app readability.
+Power remained Active and the verified own lease was released. Sanitized proof:
+`/data/home/tmp/marquee-main-output-passive-20261101.json`. The installed LumaTV reader/pill is
+private native UI implementation, not a new external-app API or a reason to add a second pill.
+
 The deployed Stats change samples native `osd_irq` counts off the UI thread only while the overlay
 is visible, showing approximate Hz under `measured display sync`. Video-source rate and returned
 GL swaps remain separate; reset, unreadable and stale counters do not produce live readings.
