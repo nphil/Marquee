@@ -71,7 +71,7 @@ The corrected packet is `/data/home/tmp/lumatv-f5-renderer-packet-r3/renderer-en
 one dispatcher pin; actual local `--inspect` returned `ok: true`. One corrected Face ID request
 was subsequently permitted but remains unsent; this is not a standing grant or authority to change
 the packet. The later coordinated read-only capture completed and the TV lease was released again.
-No platform request is pending; the disconnected HomeLabber gate and live compatibility guards remain.
+The failed R2 receipt does not cover the later packet; no valid current-packet approval is established.
 
 The later offline candidate is `/data/home/tmp/lumatv-f5-renderer-packet-r4`. R4 has new argv, loader
 environment and ELF-provenance checks and is not approved or installed. The retained HDMI profile
@@ -97,6 +97,13 @@ A fresh agreed TV window and separately authorized exact compositor/Rust-bundle 
 pinned rollback through the proven renderer transport are required. App-update permission does
 not cover this maintenance, and no approved payload may be substituted implicitly. No TV lease
 is held and no new HomeLabber request will be sent.
+
+The platform owner reports no first request for the final packet and no evidence of a matching
+pending or execution-unknown action. Missing optional `approval_list_requests` does not prevent
+a first request. The operative blocker is Nitin’s explicit no-new-HomeLabber-requests instruction
+in the platform chat; coordination messages do not lift it. Only new direct authorization from
+Nitin can permit the exact maintenance request. Existing wake-read grants must not be reused or
+shared for installation.
 
 The read-only TV baseline matched all six dispatcher dependencies and all 35 renderer members.
 R3 still rejects the observed supervisor argv `/usr/bin/surface-manager -platform eglfs_webos`
