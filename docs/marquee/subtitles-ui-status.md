@@ -185,5 +185,19 @@ capacity were not established. The proposed offline alignment path is in `design
 The separate speech-alignment effort is not included in this app update; its eventual merge must
 preserve the current sidecar lifecycle and ABI 6 renderer-readiness contract.
 
+SpeechDock owns the separate CPU forced-alignment/backend and asynchronous-client effort. Its
+reserved Marquee seams are `rust-modules/media/src/player/{reveal,ass_source,sidecar,text_ass}.rs`
+and alignment-related subtitle settings/client code. Performance work may inspect these seams but
+must coordinate before editing; integration must preserve alignment changes rather than replace
+files with older copies. Use an isolated source worktree and private targets; final integration
+follows the main-only convention. `/data/home/Marquee-subs` and its cached targets remain reserved
+for the app deployment lane. No alignment code is included in the installed build.
+
+The merge must retain ABI 6 epoch-fenced renderer readiness, truthful player activation, visual
+modes and authored ASS karaoke. Alignment requests must stay off the UI/playback thread and be
+cancelled or ignored when their owning media/audio/subtitle selection changes. Estimated timing
+must not be presented as confirmed audio alignment. Backend deployment and TV verification require
+a separate explicit handoff; no new HomeLabber requests are authorized.
+
 The existing subtitle/Bazarr images in `docs/marquee/renders/` are desktop simulator frames under
 Xvfb, not TV captures. The shared table still uses value read-outs rather than mock sliders/swatches.
