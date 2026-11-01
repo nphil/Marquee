@@ -41,11 +41,14 @@ Idle-to-active gaps and lifetime-average flip counts are not animation FPS. The 
 is acknowledged at commit; its FPS counter does not prove unique pictures reached the display.
 
 Automatic foreground-only 120 Hz is not installed. The single approved R2 platform attempt stopped
-in read-only preflight because the installed dispatcher differed from its historical baseline. The
-TV system was unchanged by that attempt. R2 remains frozen; its approval is consumed, not pending.
-The installed dispatcher SHA-256 is `7631005064da542f26f644ae1b636597e729884c4288d996c027b60185f366cf`.
-A corrected packet needs a recognized current baseline and new direct permission before another
-Face ID request. The current runtime 120 Hz setting is not a persistent application preference.
+in read-only preflight before mutation; R2 and its consumed approval must not be replayed. Its
+observed dispatcher SHA-256 `7631005064da542f26f644ae1b636597e729884c4288d996c027b60185f366cf` matches
+the accepted wrapper-package verification record and the review-only dispatcher reference.
+The corrected packet is `/data/home/tmp/lumatv-f5-renderer-packet-r3/renderer-entry-r3.py`, SHA-256
+`e3f1642c10f513f53e0e05406af2cb3b8dad41b82a2c2578b18e87de2f42e666`. Its only entry change is that
+one dispatcher pin; actual local `--inspect` returned `ok: true`. New direct permission is required
+before another Face ID request. Other live dependencies and runtime guards remain unobserved and
+may still abort safely. The current runtime 120 Hz setting is not a persistent application preference.
 
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
 A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
