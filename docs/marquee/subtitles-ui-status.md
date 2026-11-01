@@ -80,8 +80,11 @@ R3 permission and the app-only update window do not authorize R4.
 
 The newer UI-feature compositor candidate is
 `/data/home/tmp/lumatv-foreground-pacing-20261031/lumatv-compositor`, SHA-256
-`904c8e93a985aa25feb07afac8fdde2f0796b67317ac431ef86277e4edbcb6c0`. It is not installed or
-accepted. Exact foreground `com.beb.plxnative` selects nominal 120/divider 1; other foreground
+`904c8e93a985aa25feb07afac8fdde2f0796b67317ac431ef86277e4edbcb6c0`. This uninstalled build is
+superseded: window-type changes and restores from minimized to `Maximized`/`Default` omit policy
+recomputation. A repaired build, replacement artifact hash and independent review are required
+before installation. The intended policy selects nominal 120/divider 1 for exact foreground
+`com.beb.plxnative`; other foreground
 restores the startup `--refresh` base, default 60. Numeric `ctl refresh 60/120` overrides remain
 sticky; `ctl refresh auto` resumes foreground policy, while `ctl refresh reset` only resets
 measurements. This artifact is distinct from the previously pinned legacy payload: independent
@@ -107,6 +110,12 @@ Rendering already uses GLES and reused textures; two bounded workers fetch and d
 A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
 the shell job alone is not established as the cause. Do not change callback policy or force GPU
 synchronization. The bounded ring and scheduler trace do not yet link app buffers to display flips.
+
+The native Qt-host default-GPU-wallpaper probe reported unchanged settled counters over 14–18 s:
+Home frameSwapped 109→109, system 8→8 and nested frameTick 61→61, with hostActive false and
+idleHold true. Quickpanel and keyboard navigation remained usable. This does not establish the
+TV GPU-slot cause or behavior for video wallpapers and all configurations; hidden-shell production
+code remains unchanged.
 
 The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
 path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in
