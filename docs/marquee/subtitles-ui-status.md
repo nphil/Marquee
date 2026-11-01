@@ -2,24 +2,25 @@
 
 ## Resume here
 
-Stable 0.10.0 payload source `c5199efd` is deployed on `192.168.1.242` (webOS 10.2.1, platform
-`o22n2`). The existing stable in-place deploy matched all 54 files without launching the app.
-The native executable SHA-256 is
-`8144efbc2cd22acf0d7fc7773666400afd19ab035f81ee5a25757e7abe1ea72d`; its profile is `release`.
+Stable 0.10.0 payload source `2b12924e` is deployed on `192.168.1.242` (webOS 10.2.1, platform
+`o22n2`). The existing stable in-place deploy matched all 54 file hashes without launching the app.
+The local release executable SHA-256 is
+`01997f77af819aa91b716a104d17bc9b14ccdbb48899d290f0f8cc83faefb823`.
 The stable `com.beb.plxnative` storage identity is retained.
 
-The staged package is `/data/home/Marquee-release/marquee-0.10.0-c5199efd.ipk`, 21,091,118 bytes,
-SHA-256 `8c9f2f92b341c0630cc7ce47d2bc547b4d88f20a5c9c706c1abe4f0c2d903ffa`. Canonical/versioned
-and `marquee-latest.ipk` packages remain the last on-screen-accepted `fce9888a`: 20,970,244 bytes,
-SHA-256 `0cb296dffd9652981d593b45692980944add0d94da40b4157e2dfe46df979afb`. The earlier
-`marquee-0.10.0-37d8d0f4-rollback.ipk` is also retained.
+The staged package is `/data/home/Marquee-release/marquee-0.10.0-2b12924e.ipk`, 21,092,004 bytes,
+SHA-256 `057b4fa017cab90e3afd184670cc70437708cbd9b843ee5a87915fae1d1308bd`. Canonical/versioned
+and `marquee-latest.ipk` packages were not promoted from the last on-screen-accepted `fce9888a`:
+20,970,244 bytes, SHA-256 `0cb296dffd9652981d593b45692980944add0d94da40b4157e2dfe46df979afb`.
+The earlier `marquee-0.10.0-37d8d0f4-rollback.ipk` is also retained.
 
-The latest root power reply is `Active Standby`, and the app-only lease is released. Receiver mute
-could not remain stable, so native app launch, playback, screenshots and input checks are held.
-No app launch, wake, power, picture, refresh, compositor or tracing command accompanied this deploy.
-The last observed runtime remains `fce9888a`; current TV Hz, app-jail counter access and the new
-runtime are not verified. Its earlier captures are `/tmp/lt/marquee-fce-*.png` and scrubbed logs are
-`/tmp/marquee-fce-scrubbed/`.
+The 2026-11-01 12:32 EST handoff records successful root `Active Standby` JSON before and after
+the copy. The same app-only lease was released, with the local mirror absent and its remote token
+gone. No launch, wake, power, picture, refresh, compositor or tracing command accompanied the deploy.
+The TV window was returned to LumaTV; no further Marquee device window is pending.
+The last on-screen-accepted runtime remains `fce9888a`; current TV Hz, app-jail counter access,
+live alignment and the new runtime are not verified. Earlier captures are `/tmp/lt/marquee-fce-*.png`
+and scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
 
 The deployed Stats change samples native `osd_irq` counts off the UI thread only while the overlay
 is visible, showing approximate Hz under `measured display sync`. Video-source rate and returned
@@ -249,18 +250,11 @@ enables requests for a profile using Word or Line reveal, subject to direct-play
 and renderer checks. Unavailable or unverified audio retains explicitly estimated timing. There
 is no separate SpeechDock Enable switch or Test connection control.
 
-Local source corrections after `c5199efd` intersect rendered sidecar visibility with unchanged
-authored bounds before applying the offset once, omit authored cues longer than 15 seconds, and
-clamp startup windows to zero. Earlier requests could reject an entire batch because ASS rounded
-1009 ms to 1000 ms, admit an ineligible long cue shortened for display, or send nothing before
-15 seconds. These corrections are not in the installed `c5199efd` payload.
-
-The corrected `2b12924e` ARM release build passed the existing binary and package checks.
-The unpromoted candidate is `/data/home/Marquee-release/marquee-0.10.0-2b12924e.ipk`
-(21,092,004 bytes, SHA-256 `057b4fa017cab90e3afd184670cc70437708cbd9b843ee5a87915fae1d1308bd`).
-The direct-deploy executable SHA-256 is
-`01997f77af819aa91b716a104d17bc9b14ccdbb48899d290f0f8cc83faefb823`.
-This is a local build record, not TV installation, activation or on-screen acceptance.
+The deployed `2b12924e` corrections intersect rendered sidecar visibility with unchanged authored
+bounds before applying the offset once, omit authored cues longer than 15 seconds, and clamp startup
+windows to zero. Earlier requests could reject an entire batch because ASS rounded 1009 ms to
+1000 ms, admit an ineligible long cue shortened for display, or send nothing before 15 seconds.
+The ARM release passed the existing binary and package checks; native TV activation remains unverified.
 
 The validated Address is published only after durable session save and restored at boot. Settings
 shows Address/Disabled and validation or save errors, not connection or aligned/estimated status.
