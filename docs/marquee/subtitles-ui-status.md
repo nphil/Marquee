@@ -16,6 +16,13 @@ The app ended on Home without the Stats overlay and with zero video planes; the 
 released and LumaTV notified. No system, refresh, input or power setting changed in this window.
 Captures are `/tmp/lt/marquee-fce-*.png`; scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
 
+Detailed stats logging retains its own explicit session-only app opt-in, off at boot. LumaTV’s
+supported read-only `GET /v1/logging` reports saved `base.logging.enabled` for optional remote UDP
+forwarding only; `active` means the worker is configured, not receiver delivery. LumaTV’s bounded
+local collection is independent. Neither these flags nor Stats visibility authorize Marquee capture;
+no supported external-app capture/submission contract exists. Private collector sockets/files are
+not an app integration API.
+
 The initial focused feature run passed 93 checks; four privacy identifier/preview-isolation checks
 also passed. ARM ELF and package checks passed for the installed build. The stored account opened
 Profiles, Home, Settings and About. Native keyboard input and Bazarr 1.6.2 connectivity were observed;
