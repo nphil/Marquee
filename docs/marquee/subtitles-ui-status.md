@@ -56,9 +56,12 @@ and nonempty `LD_PRELOAD`/`LD_LIBRARY_PATH`; loader-environment provenance is un
 retains HDMI2 TV/avconnector records, including six resources. The no-media guard permits only
 empty `vtclient` records, not empty records of any type. Home foreground does not establish idle.
 Space and remaining runtime predicates are unestablished. Do not weaken guards, close input
-resources or replay the broader wake installer to force this update. Reuse an already-proven
-renderer-only route within the approved scope. No platform mutation occurred; runtime 120 Hz
-remains temporary rather than a persistent application preference.
+resources or replay the broader wake installer. The successful R8 record
+`/tmp/lumatv-historical-stage.TyUJ9M4D/wake-maintenance-evidence/events.jsonl:23-54`
+proves the renderer steps inside `wake-maintenance.py:renderer_cutover(ctx)`, not a standalone
+host launcher. It installed baseline `6fe8bae`, not candidate `f5c864`. Reuse those proven steps
+within a compatible scoped entry; the broader wake/trial/coldboot workflow is outside this task.
+No platform mutation occurred; runtime 120 Hz remains temporary rather than persistent.
 
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
 A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
