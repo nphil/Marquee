@@ -61,6 +61,8 @@ use std::sync::Mutex;
 pub trait Packed: Copy {
     /// What the cell holds before anything has restored it.
     const SEED: u8;
+    /// Whether changing this value invalidates subtitle alignment layout.
+    const ALIGNMENT_STYLE: bool = false;
     fn to_u8(self) -> u8;
     fn from_u8(b: u8) -> Self;
 }
@@ -106,7 +108,11 @@ impl<T: Packed> LiveCell<T> {
             self.publishes.fetch_add(1, Relaxed);
             plx_base::testlock::assert_held(self.name);
         }
-        self.a.store(v.to_u8(), Relaxed);
+        let next = v.to_u8();
+        let old = self.a.swap(next, Relaxed);
+        if T::ALIGNMENT_STYLE && old != next {
+            crate::player::alignment::invalidate();
+        }
     }
 
     /// The raw byte, for the tests that pin the packing.
@@ -134,15 +140,16 @@ macro_rules! live_cell {
 /// A type whose in-memory index is its own `index()` / `from_index()` (which already fall back to
 /// the type's default when out of range).
 macro_rules! packed_by_index {
-    ($($ty:ty = $seed:literal),* $(,)?) => {$(
+    ($($ty:ty = $seed:literal $(, alignment = $alignment:literal)?);* $(;)?) => {$(
         impl Packed for $ty {
             const SEED: u8 = $seed;
+            $(const ALIGNMENT_STYLE: bool = $alignment;)?
             fn to_u8(self) -> u8 { self.index() }
             fn from_u8(b: u8) -> Self { <$ty>::from_index(b) }
         }
     )*};
 }
-packed_by_index!(InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
+packed_by_index!(InstantDpadSeeking = 0; NextEpisodeMode = 0; SkipInterval = 1; DeckPress = 0; SubtitleSize = 1, alignment = true; SubtitlePosition = 0, alignment = true; SubtitleTone = 0, alignment = true; HdrOverlayBrightness = 1);
 
 impl Packed for DirectPlayMode {
     const SEED: u8 = 0;
@@ -315,7 +322,15 @@ impl LookCell {
             self.publishes.fetch_add(1, Relaxed);
             plx_base::testlock::assert_held(self.name);
         }
-        *self.v.lock().unwrap_or_else(|e| e.into_inner()) = v;
+        let changed = {
+            let mut current = self.v.lock().unwrap_or_else(|e| e.into_inner());
+            let changed = *current != v;
+            *current = v;
+            changed
+        };
+        if changed {
+            crate::player::alignment::invalidate();
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

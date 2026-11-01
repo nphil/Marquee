@@ -4,8 +4,8 @@
 //! A subtitle file times whole cues, not words, so the time of each word is ESTIMATED from the
 //! cue's own span: words weigh by their syllables (characters for scripts without them), a comma
 //! adds half a word's pause and a full stop one, the last word starts by 90 % of the cue and the
-//! rest of the cue is the tail where everything stays up. Exact word timing needs the audio
-//! (server-side forced alignment, for instance WhisperX); that is a later option, not this module.
+//! rest of the cue is the tail where everything stays up. Validated audio alignment can instead
+//! supply exact word starts; ambiguous mappings fall back to the estimate.
 //!
 //! The reveal is written into the cue itself as ASS override tags, so libass lays the line out
 //! whole (nothing shifts as words appear) and the player's existing "animated cue" handling
@@ -237,6 +237,130 @@ fn hex(a: u8) -> String {
     format!("&H{a:02X}&")
 }
 
+/// A word's UTF-8 byte range in the original cue and times relative to the cue start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct AlignedWord {
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
+/// Use aligned starts only when the original text, ASS body and all word spans agree.
+/// Otherwise use exactly the same estimate as an unaligned cue.
+pub(super) fn reveal_aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, words: &[AlignedWord]) -> String {
+    aligned_body(body, original, duration_ms, params, words)
+        .unwrap_or_else(|| reveal_body(body, duration_ms, params))
+}
+
+fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, words: &[AlignedWord]) -> Option<String> {
+    if params.mode == Reveal::Off || duration_ms < MIN_CUE_MS || super::ass_timing::text_animated(body.as_bytes()) {
+        return Some(body.to_string());
+    }
+    if words.is_empty() {
+        return None;
+    }
+
+    // Only unchanged visible bytes, override tags and newline-to-ASS-break conversions
+    // are unambiguous. Other ASS escapes fall back rather than guessing.
+    let segs = segments(body);
+    let mut map = vec![None; original.len() + 1];
+    let mut source = 0;
+    let mut offset = 0;
+    for seg in &segs {
+        match seg {
+            Seg::Tag(tag) => offset += tag.len(),
+            Seg::Break(br) => {
+                let rest = original.get(source..)?;
+                let len = if rest.starts_with("\r\n") { 2 } else if rest.starts_with('\n') { 1 } else { return None };
+                source += len;
+                offset += br.len();
+            }
+            Seg::Text(text) => {
+                if text.contains(['\\', '\n', '\r']) || !original.get(source..)?.starts_with(text) {
+                    return None;
+                }
+                for (i, _) in text.char_indices() {
+                    map[source + i] = Some(offset + i);
+                }
+                source += text.len();
+                offset += text.len();
+            }
+        }
+    }
+    if source != original.len() || offset != body.len() {
+        return None;
+    }
+
+    let mut previous_end = 0;
+    let mut previous_time = 0;
+    let mut mapped = Vec::with_capacity(words.len());
+    for word in words {
+        if word.start_byte < previous_end || word.start_byte >= word.end_byte || word.end_byte > original.len()
+            || word.start_ms < previous_time || word.start_ms >= word.end_ms || word.end_ms > duration_ms
+        {
+            return None;
+        }
+        let gap = original.get(previous_end..word.start_byte)?;
+        let text = original.get(word.start_byte..word.end_byte)?;
+        if !gap.chars().all(char::is_whitespace) || text.chars().any(char::is_whitespace) {
+            return None;
+        }
+        let at = map[word.start_byte]?;
+        if body.get(at..at.checked_add(text.len())?)? != text {
+            return None;
+        }
+        mapped.push((at, at + text.len(), word.start_ms));
+        previous_end = word.end_byte;
+        previous_time = word.end_ms;
+    }
+    if !original.get(previous_end..)?.chars().all(char::is_whitespace) {
+        return None;
+    }
+
+    let units = units(body, &segs, params.mode);
+    if units.len() < 2 {
+        return Some(body.to_string());
+    }
+    // Reject spans cutting a normal word in half, but allow CJK/Thai subunits.
+    if params.mode == Reveal::Word && mapped.iter().any(|(at, _, _)| !units.iter().any(|u| u.at == *at)) {
+        return None;
+    }
+    let mut timings = Vec::with_capacity(units.len());
+    let mut word_index = 0;
+    for unit in &units {
+        while word_index + 1 < mapped.len() && mapped[word_index + 1].0 <= unit.at {
+            word_index += 1;
+        }
+        let (start, end, time) = mapped[word_index];
+        if unit.at < start || unit.at >= end || (params.mode == Reveal::Line && unit.at != start) {
+            return None;
+        }
+        timings.push((word_index, time));
+    }
+    if timings[0].0 != 0 {
+        return None;
+    }
+
+    let speaking = duration_ms as f64 * SPEAKING_SHARE;
+    let fade = FADE_MS.min((speaking / units.len() as f64).max(60.0) as i64);
+    let closed = format!("\\1a{}\\3a{}\\4a{}", hex(0), hex(params.outline_alpha), hex(params.back_alpha));
+    let open = format!("\\1a{}\\3a{}\\4a{}", hex(0xFF), hex(0xFF), hex(0xFF));
+    let mut out = String::with_capacity(body.len() + units.len() * 64);
+    let mut cursor = 0;
+    for (unit, &(index, start)) in units.iter().zip(&timings) {
+        out.push_str(&body[cursor..unit.at]);
+        cursor = unit.at;
+        if index > 0 {
+            let end = start + fade.min(duration_ms - start);
+            out.push_str(&format!("{{{open}\\t({start},{end},{closed})}}"));
+        }
+    }
+    out.push_str(&body[cursor..]);
+    Some(out)
+}
+
+
 /// The body of an event shown over `duration_ms`, with every unit after the first faded in at its
 /// estimated time. A body with fewer than two units, a cue shorter than [`MIN_CUE_MS`] and a body
 /// that already animates come back unchanged.
@@ -344,6 +468,63 @@ mod tests {
 
     fn starts(s: &str) -> Vec<i64> {
         s.split("\\t(").skip(1).filter_map(|t| t.split(',').next()?.parse().ok()).collect()
+    }
+
+    fn aligned(start_byte: usize, end_byte: usize, start_ms: i64, end_ms: i64) -> AlignedWord {
+        AlignedWord { start_byte, end_byte, start_ms, end_ms }
+    }
+
+    #[test]
+    fn aligned_words_use_exact_starts_and_keep_tags_and_style() {
+        let words = [aligned(0, 5, 100, 300), aligned(6, 11, 1250, 1500), aligned(12, 17, 2900, 2990)];
+        let body = "{\\i1}hello world{\\i0}\\Nagain";
+        let out = reveal_aligned_body(body, "hello world\nagain", 3000, WORDS, &words);
+        assert_eq!(starts(&out), [1250, 2900]);
+        assert!(out.starts_with("{\\i1}hello {"));
+        assert!(out.contains("{\\i0}\\N{"));
+        assert!(out.contains("\\t(2900,3000,\\1a&H00&\\3a&H26&\\4a&HFF&)"));
+        let line_out = reveal_aligned_body(body, "hello world\nagain", 3000, LINES, &words);
+        assert_eq!(starts(&line_out), [2900]);
+    }
+
+    #[test]
+    fn aligned_utf8_spans_and_cjk_subunits_are_safe() {
+        let words = [aligned(0, 6, 0, 500), aligned(7, 13, 700, 900)];
+        let out = reveal_aligned_body("你好 世界", "你好 世界", 2000, WORDS, &words);
+        assert_eq!(starts(&out), [700, 700]);
+        let mut invalid = words;
+        invalid[0].end_byte = 5;
+        assert_eq!(reveal_aligned_body("你好 世界", "你好 世界", 2000, WORDS, &invalid), reveal_body("你好 世界", 2000, WORDS));
+    }
+
+    #[test]
+    fn invalid_alignment_always_uses_the_estimate() {
+        let text = "one two three";
+        let valid = [aligned(0, 3, 0, 400), aligned(4, 7, 900, 1100), aligned(8, 13, 1500, 1800)];
+        let expected = reveal_body(text, 2000, WORDS);
+        assert_ne!(reveal_aligned_body(text, text, 2000, WORDS, &valid), expected);
+        let mut bad = valid;
+        bad[1].start_byte = 5;
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad), expected);
+        bad = valid;
+        bad[1].start_ms = 399;
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad), expected);
+        bad = valid;
+        bad[2].end_ms = 2001;
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad), expected);
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &valid[..2]), expected);
+        assert_eq!(reveal_aligned_body(text, "one two changed", 2000, WORDS, &valid), expected);
+        let split_tag = "one t{\\i1}wo three";
+        assert_eq!(reveal_aligned_body(split_tag, text, 2000, WORDS, &valid), reveal_body(split_tag, 2000, WORDS));
+    }
+
+    #[test]
+    fn alignment_respects_existing_animation_and_reveal_settings() {
+        let words = [aligned(0, 3, 0, 100), aligned(4, 7, 500, 600)];
+        let animated = "{\\fad(100,100)}one two";
+        assert_eq!(reveal_aligned_body(animated, "one two", 2000, WORDS, &words), animated);
+        assert_eq!(reveal_aligned_body("one two", "one two", 2000, Params { mode: Reveal::Off, ..WORDS }, &words), "one two");
+        assert_eq!(reveal_aligned_body("one two", "one two", 600, WORDS, &words), "one two");
     }
 
     #[test]

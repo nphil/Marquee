@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Felirat-időzítési szolgáltatás.",
+  "speechdock.copy": "A SpeechDock hangot és szöveget kap az angol feliratok illesztéséhez. Más nyelveknél becsült időzítés marad. Üres címmel kikapcsolható.",
+  "speechdock.address_detail": "Csak HTTP(S) cím; törléssel kikapcsolható.",
+  "speechdock.disabled": "Kikapcsolva",
+  "speechdock.invalid": "HTTP(S) címet adj meg hitelesítő adatok, útvonal, lekérdezés és töredék nélkül.",
+  "speechdock.save_failed": "A cím mentése sikertelen."
+}

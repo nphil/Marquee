@@ -1499,6 +1499,11 @@ pub(super) fn apply_deferred_capture(rec: &mut super::recorder::Recplay,
 /// (session::load records that decision once). The dev quality override is honoured unless the
 /// harness is `controlled`.
 pub(super) fn restore_player_preferences(session: &plx_plex::plex::session::Session, controlled: bool) {
+    let saved_origin = if controlled { "" } else { session.speechdock_origin() };
+    if plx_media::player::speechdock_settings::set_origin(saved_origin).is_err() {
+        let _ = plx_media::player::speechdock_settings::set_origin("");
+    }
+    plx_media::player::speechdock_settings::set_diagnostics_consent(false);
     plx_media::route::restore_install_rows(session);
     plx_media::route::restore_profile_rows(session, &plx_plex::plex::session::Seat::Unseated,
         plx_media::route::Overrides {

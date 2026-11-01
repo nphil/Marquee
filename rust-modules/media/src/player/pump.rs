@@ -1547,8 +1547,57 @@ fn inject_refuse601(ps: &crate::route::PlaybackSession, eng: &Engine) {
     super::sf_on_event(eng.native_epoch, 18, 601, std::ptr::null());
 }
 
+// Capture only facts from the resolved playing session. The worker owns all cue parsing,
+// hashing, HTTP, and publication; the pump never performs those operations.
+fn update_alignment(ps: &crate::route::PlaybackSession, now: u32) {
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    static LAST: AtomicU32 = AtomicU32::new(0);
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    let last = LAST.load(Ordering::Relaxed);
+    if now.wrapping_sub(last) < 250 { return; }
+    LAST.store(now, Ordering::Relaxed);
+    // A new aligned source has its own real renderer readiness; keep its epoch while
+    // that source is loading instead of invalidating it back to the estimate.
+    if super::sidecar::selected()
+        && crate::route::subtitle_activation(ps, crate::route::cur_sub_sid(ps)) == crate::route::SubtitleActivation::Loading
+    { return; }
+    let snapshot = (|| {
+        if crate::route::is_transcoding(ps) || !super::is_playing(ps) || super::frames() <= 0 { return None; }
+        if super::text_style::TextStyle::current().layout.reveal == plx_plex::plex::session::Reveal::Off { return None; }
+        let endpoint = super::speechdock_settings::origin()?;
+        let p = crate::route::alignment_playback_identity(ps, None)?;
+        let sub = p.subtitle_stream_id?;
+        let sidecar = super::sidecar::selected();
+        if sidecar && crate::route::subtitle_activation(ps, sub) != crate::route::SubtitleActivation::Active { return None; }
+        let track = super::desired_sub_idx();
+        if !sidecar && track < 0 { return None; }
+        let language = p.subtitle_language?;
+        if !matches!(language, "en" | "eng") { return None; }
+        Some(super::alignment::PlaybackSnapshot {
+            endpoint, playback_id: p.playback_session_id?.to_owned(),
+            identity: super::alignment::Identity {
+                server_machine_id: p.machine_id?.to_owned(), rating_key: p.rating_key?.to_owned(),
+                media_id: p.media_id?.to_string(), part_id: p.part_id?.to_string(),
+                part_key: p.part_key?.to_owned(), audio_stream_id: p.audio_stream_id?.to_string(),
+                subtitle_stream_id: sub.to_string(), subtitle_codec: p.subtitle_codec?.to_owned(),
+            },
+            subtitle_source_kind: if sidecar { "sidecar" } else { "embedded" }.to_owned(),
+            language: language.to_owned(), subtitle_offset_ms: super::subtitle_offset_ms(),
+            position_ms: super::playpos_ns().max(0) / 1_000_000, track,
+            style_generation: super::text_style::generation(),
+        })
+    })();
+    if let Some(snapshot) = snapshot {
+        ACTIVE.store(true, Ordering::Relaxed);
+        super::alignment::update(snapshot);
+    } else if ACTIVE.swap(false, Ordering::Relaxed) {
+        super::alignment::invalidate();
+    }
+}
+
 pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, now: u32) {
     use super::shared::PlaybackState;
+    update_alignment(ps, now);
     // A preroll closed by a path with no adapter in hand (`abandon_seek`) leaves its mute behind;
     // the one place every closer funnels through is the next tick.
     if !TX.seek_preroll_active() {

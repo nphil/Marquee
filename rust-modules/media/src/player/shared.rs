@@ -1741,10 +1741,12 @@ impl Shared {
     /// [`Shared::clear_abr_seed`] and [`Shared::clear_abr_failure`]. Everything else here describes
     /// one engine's session and must not outlive it.
     pub fn reset_session(&self) {
+        super::speechdock_settings::set_diagnostics_consent(false);
         self.reset_session_inner(false);
     }
 
     fn reset_session_inner(&self, for_reload: bool) {
+        super::alignment::invalidate();
         // This lock is held through the whole reset. A callback that entered before retirement
         // finishes first; one arriving afterwards sees no owner. It can therefore never validate
         // session A and then publish into the zeroed/reused storage of session B.

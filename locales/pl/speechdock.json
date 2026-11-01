@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Usługa synchronizacji napisów.",
+  "speechdock.copy": "SpeechDock otrzymuje dźwięk i tekst do wyrównania angielskich napisów. Inne języki zachowują szacowany czas. Puste pole wyłącza usługę.",
+  "speechdock.address_detail": "Tylko adres HTTP(S); wyczyść, aby wyłączyć.",
+  "speechdock.disabled": "Wyłączone",
+  "speechdock.invalid": "Podaj adres HTTP(S) bez danych logowania, ścieżki, zapytania i fragmentu.",
+  "speechdock.save_failed": "Nie można zapisać adresu."
+}

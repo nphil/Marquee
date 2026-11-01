@@ -70,6 +70,27 @@ pub(super) fn execute(command: PreferenceCmd) {
                 },
             );
         }
+        PreferenceCmd::SpeechDockOrigin { origin, reply } => {
+            let Ok(origin) = plx_media::player::speechdock_settings::normalize_origin(&origin) else {
+                let _ = reply.send(false);
+                plx_machine::idle::invalidate();
+                return;
+            };
+            let origin = origin.unwrap_or_default();
+            let requested = origin.clone();
+            plx_plex::plex::session::queue_update_settled(
+                move |current| Some(current.with_speechdock_origin(&origin)),
+                move |durable| {
+                    let session = plx_plex::plex::session::peek();
+                    let applied = durable && session.speechdock_origin() == requested;
+                    if applied {
+                        let _ = plx_media::player::speechdock_settings::set_origin(&requested);
+                    }
+                    let _ = reply.send(applied);
+                    plx_machine::idle::invalidate();
+                },
+            );
+        }
         PreferenceCmd::BazarrRead { reply } => {
             let session = plx_plex::plex::session::peek();
             let link = session.bazarr();

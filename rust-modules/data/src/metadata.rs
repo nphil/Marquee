@@ -1621,6 +1621,9 @@ pub struct Detail {
     pub resume_ms: i64, // viewOffset (0 = not partially watched) — the resume position
     pub watched: bool,  // movie: viewCount ≥ 1; show: viewedLeafCount ≥ leafCount
     pub part: String,   // Media[0].Part[0].key for a leaf (movie/episode); empty for a show
+    /// The default Media's actual Plex id, retained alongside its Part key for playback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_id: Option<i64>,
     pub vcodec: String, // Media[0].videoCodec (drives the direct-play/transcode decision)
     pub acodec: String, // Media[0].audioCodec
     #[serde(with = "record::float_bits")]
@@ -2282,6 +2285,7 @@ fn fetch_detail(client: &'static plx_plex::plex::Client, sid: plx_plex::plex::Se
         },
         // empty for a show (no Media on the show container)
         part: it.default_part().map(|p| p.key.clone()).unwrap_or_default(),
+        media_id: media0.map(|m| m.id.0).filter(|id| *id > 0),
         vcodec: media0.map(|m| m.video_codec.clone()).unwrap_or_default(),
         acodec: media0.map(|m| m.audio_codec.clone()).unwrap_or_default(),
         video_fps: 0.0, // set from the video Stream by parse_streams below
@@ -2600,6 +2604,9 @@ pub struct PlayingItem {
     /// would be the wrong file's, with nothing on screen to say so.
     pub sid: plx_plex::plex::ServerId,
     pub rk: String,
+    /// Identity from selected playback metadata, never inferred from an index.
+    pub media_id: Option<i64>,
+    pub part_key: String,
     /// The show's ratingKey when this is an episode (`grandparentRatingKey`), else empty — what
     /// the resolve asks the show's own language settings of (`route::plan::build_stream`).
     pub show_rk: String,
@@ -2642,6 +2649,8 @@ impl PlayingItem {
         PlayingItem {
             sid: plx_plex::plex::ServerId::from_raw(0),
             rk: "rk".into(),
+            media_id: None,
+            part_key: String::new(),
             show_rk: String::new(),
             kind: String::new(),
             audio: Vec::new(),
@@ -2690,6 +2699,8 @@ fn cached_playing(state: &MetadataState, sid: plx_plex::plex::ServerId, rk: &str
         .map(|d| PlayingItem {
             sid,
             rk: rk.to_string(),
+            media_id: d.media_id,
+            part_key: d.part.clone(),
             show_rk: d.show_rk.clone(),
             kind: d.kind.clone(),
             audio: d.audio.clone(),
@@ -2800,6 +2811,8 @@ fn playing_item_of(
     PlayingItem {
         sid,
         rk: rk.to_string(),
+        media_id: media.map(|m| m.id.0).filter(|id| *id > 0),
+        part_key: media.and_then(|m| m.part.first()).map(|p| p.key.clone()).unwrap_or_default(),
         show_rk,
         kind,
         audio,

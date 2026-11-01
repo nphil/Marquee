@@ -433,6 +433,7 @@ impl SampleSource {
             None => (ass::Origin::Authored, AUTHORED.to_string()),
         };
         Arc::new(ass::Source {
+            alignment_epoch: None,
             id,
             revision,
             origin,

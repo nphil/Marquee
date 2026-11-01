@@ -110,6 +110,8 @@ pub struct Source {
     pub id: u64,
     /// Packet append changes this revision without hiding the current frame.
     pub revision: u64,
+    /// Alignment generation for generated timing, or None for authored/estimated sources.
+    pub alignment_epoch: Option<u64>,
     pub origin: Origin,
     pub content: Content,
 }
@@ -175,6 +177,7 @@ impl Fault {
 #[derive(Debug)]
 pub struct Frame {
     pub source_id: u64,
+    pub alignment_epoch: Option<u64>,
     /// Changes only when pixels/placement, canvas or the error state changes.
     pub serial: u64,
     pub width: i32,
@@ -194,6 +197,7 @@ pub fn next_source_id() -> u64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Key {
     epoch: u64,
+    alignment_epoch: Option<u64>,
     source_id: u64,
     revision: u64,
     width: i32,
@@ -208,6 +212,7 @@ struct Key {
 pub struct Runtime {
     source_id: AtomicU64,
     epoch: AtomicU64,
+    alignment_epoch: AtomicU64,
     readiness: AtomicU64,
     started: OnceLock<bool>,
     worker: OnceLock<std::thread::Thread>,
@@ -219,6 +224,7 @@ impl Runtime {
         Self {
             source_id: AtomicU64::new(0),
             epoch: AtomicU64::new(1),
+            alignment_epoch: AtomicU64::new(0),
             readiness: AtomicU64::new(0),
             started: OnceLock::new(),
             worker: OnceLock::new(),
@@ -266,16 +272,24 @@ pub fn request_styled(
     storage_height: i32,
     mine: Option<super::text_style::TextStyle>,
 ) -> Option<Arc<Frame>> {
+    if !alignment_epoch_valid(source.alignment_epoch) {
+        clear();
+        return None;
+    }
     if source.id == 0 {
         clear();
         return None;
     }
-    if runtime().source_id.load(Ordering::Acquire) != source.id {
+    if runtime().source_id.load(Ordering::Acquire) != source.id
+        || runtime().alignment_epoch.load(Ordering::Acquire) != source.alignment_epoch.unwrap_or(0)
+    {
         runtime().epoch.fetch_add(1, Ordering::AcqRel);
+        runtime().alignment_epoch.store(source.alignment_epoch.unwrap_or(0), Ordering::Release);
         runtime().source_id.store(source.id, Ordering::Release);
     }
     let key = Key {
         epoch: runtime().epoch.load(Ordering::Acquire),
+        alignment_epoch: source.alignment_epoch,
         source_id: source.id,
         revision: source.revision,
         width,
@@ -295,10 +309,18 @@ pub fn request_styled(
     let started = *runtime()
         .started
         .get_or_init(|| plx_base::task::spawn("ass-render", worker).is_some());
+    if !alignment_epoch_valid(key.alignment_epoch) {
+        clear();
+        return None;
+    }
     let mut mailbox = runtime().mailbox.try_lock().ok()?;
     if !started {
         let frame = mailbox.publish_error(key, error_frame(key, Fault::StartFailed));
         project_readiness(runtime(), &mailbox);
+        if !alignment_epoch_valid(key.alignment_epoch) {
+            clear();
+            return None;
+        }
         return Some(frame);
     }
     let requested = mailbox.request(key, now_ms, &source);
@@ -308,6 +330,10 @@ pub fn request_styled(
     }
     if requested.wake {
         runtime().wake();
+    }
+    if !alignment_epoch_valid(key.alignment_epoch) {
+        clear();
+        return None;
     }
     mailbox.view(&key)
 }
@@ -330,9 +356,23 @@ pub(crate) fn source_readiness(source_id: u64) -> SourceReadiness {
     source_readiness_in(runtime(), source_id)
 }
 
+/// Readiness for the exact source revision published by the renderer.
+pub(crate) fn source_revision_readiness(source_id: u64, revision: u64) -> SourceReadiness {
+    source_revision_readiness_in(runtime(), source_id, revision)
+}
+
+fn source_revision_readiness_in(runtime: &Runtime, source_id: u64, revision: u64) -> SourceReadiness {
+    let Ok(mailbox) = runtime.mailbox.try_lock() else { return SourceReadiness::Pending };
+    if !mailbox.published.as_ref().is_some_and(|p| p.key.source_id == source_id && p.key.revision == revision) {
+        return SourceReadiness::Pending;
+    }
+    source_readiness_in(runtime, source_id)
+}
+
 fn project_readiness(runtime: &Runtime, mailbox: &Mailbox) {
     let value = mailbox.published.as_ref().and_then(|published| {
         let key = published.key;
+        if !alignment_epoch_valid(key.alignment_epoch) { return None; }
         if published.epoch != key.epoch || published.frame.source_id != key.source_id
             || runtime.source_id.load(Ordering::Acquire) != key.source_id
             || runtime.epoch.load(Ordering::Acquire) != key.epoch
@@ -348,14 +388,23 @@ fn project_readiness(runtime: &Runtime, mailbox: &Mailbox) {
 fn source_readiness_in(runtime: &Runtime, source_id: u64) -> SourceReadiness {
     use SourceReadiness::{Failed, Pending, Ready};
     if source_id == 0 || runtime.source_id.load(Ordering::Acquire) != source_id { return Pending; }
+    let alignment_epoch = runtime.alignment_epoch.load(Ordering::Acquire);
+    if alignment_epoch != 0 && !alignment_epoch_valid(Some(alignment_epoch)) { return Pending; }
     let epoch = runtime.epoch.load(Ordering::Acquire);
     let value = runtime.readiness.load(Ordering::Acquire);
     if runtime.source_id.load(Ordering::Acquire) != source_id
         || runtime.epoch.load(Ordering::Acquire) != epoch || value == 0 || value / 2 != epoch
+        || runtime.alignment_epoch.load(Ordering::Acquire) != alignment_epoch
+        || (alignment_epoch != 0 && !alignment_epoch_valid(Some(alignment_epoch)))
     {
         return Pending;
     }
     if value & 1 == 0 { Ready } else { Failed }
+}
+
+/// Whether an aligned source or frame still belongs to the current alignment generation.
+pub fn alignment_epoch_valid(epoch: Option<u64>) -> bool {
+    epoch.map_or(true, |epoch| epoch == super::alignment::epoch())
 }
 
 /// MAIN THREAD: cancellation is immediate even while libass is rendering.
@@ -394,6 +443,7 @@ fn next_serial() -> u64 {
 fn error_frame(key: Key, message: Fault) -> Arc<Frame> {
     Arc::new(Frame {
         source_id: key.source_id,
+        alignment_epoch: key.alignment_epoch,
         serial: next_serial(),
         width: key.width,
         height: key.height,
@@ -436,7 +486,8 @@ fn worker() {
             super::ass_perf::note_nwait(queued.elapsed());
         }
         super::ass_perf::begin_call();
-        let live = || runtime().epoch.load(Ordering::Acquire) == job.key.epoch;
+        let live = || runtime().epoch.load(Ordering::Acquire) == job.key.epoch
+            && alignment_epoch_valid(job.key.alignment_epoch);
         let rendered = live().then(|| {
             let job_started = std::time::Instant::now();
             let rendered = engine.render(&job);
@@ -871,6 +922,7 @@ impl Engine {
             Ok(None) => match &self.frame {
                 Some(frame) if frame.error.is_none() => {
                     if frame.source_id == key.source_id
+                        && frame.alignment_epoch == key.alignment_epoch
                         && frame.width == key.width
                         && frame.height == key.height
                     {
@@ -881,6 +933,7 @@ impl Engine {
                     // the frame must name the source it now answers for, or it is never shown.
                     Arc::new(Frame {
                         source_id: key.source_id,
+                        alignment_epoch: key.alignment_epoch,
                         serial: next_serial(),
                         width: key.width,
                         height: key.height,
@@ -888,12 +941,14 @@ impl Engine {
                         error: None,
                     })
                 }
-                Some(frame) => return frame.clone(),
+                Some(frame) if frame.source_id == key.source_id && frame.alignment_epoch == key.alignment_epoch => return frame.clone(),
+                Some(_) => error_frame(key, Fault::RenderFailed),
                 None => error_frame(key, Fault::RenderFailed),
             },
             Ok(Some(rects)) => {
                 if let Some(old) = &self.frame {
                     if old.source_id == key.source_id
+                        && old.alignment_epoch == key.alignment_epoch
                         && old.width == key.width
                         && old.height == key.height
                         && old.error.is_none()
@@ -904,6 +959,7 @@ impl Engine {
                 }
                 Arc::new(Frame {
                     source_id: key.source_id,
+                    alignment_epoch: key.alignment_epoch,
                     serial: next_serial(),
                     width: key.width,
                     height: key.height,

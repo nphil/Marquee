@@ -10,6 +10,7 @@ fn event(id: u32, start_ms: i64, duration_ms: i64) -> Event {
 
 fn source(events: Vec<Event>) -> Source {
     Source {
+        alignment_epoch: None,
         id: 1,
         revision: 1,
         origin: Origin::Authored,
@@ -65,6 +66,7 @@ fn ids_do_not_alias_cancellation_or_each_other() {
 
 fn request_key(source: &Source) -> Key {
     Key {
+        alignment_epoch: None,
         epoch: 1,
         source_id: source.id,
         revision: source.revision,
@@ -74,6 +76,24 @@ fn request_key(source: &Source) -> Key {
         storage_height: 180,
         mine: None,
     }
+}
+
+#[test]
+fn stale_alignment_cannot_publish_readiness() {
+    let runtime = Runtime::new();
+    let mut source = source(vec![event(0, 0, 2000)]);
+    let stale = super::super::alignment::epoch().wrapping_add(1);
+    source.alignment_epoch = Some(stale);
+    let mut key = request_key(&source);
+    key.alignment_epoch = source.alignment_epoch;
+    runtime.source_id.store(source.id, Ordering::Release);
+    runtime.alignment_epoch.store(stale, Ordering::Release);
+    let mut mailbox = runtime.mailbox.lock().unwrap();
+    mailbox.publish_error(key, error_frame(key, Fault::InvalidFile));
+    project_readiness(&runtime, &mailbox);
+    assert_eq!(source_readiness_in(&runtime, source.id), SourceReadiness::Pending);
+    assert!(!alignment_epoch_valid(Some(stale)));
+    assert!(alignment_epoch_valid(None));
 }
 
 #[test]
@@ -89,6 +109,7 @@ fn readiness_follows_only_the_current_rendered_source_and_epoch() {
         mailbox.request(key, 3000, &source);
         let job = mailbox.take().unwrap();
         let quiet_frame = Arc::new(Frame {
+            alignment_epoch: None,
             source_id: source.id, serial: 1, width: key.width, height: key.height,
             rects: Vec::new(), error: None,
         });
@@ -99,6 +120,8 @@ fn readiness_follows_only_the_current_rendered_source_and_epoch() {
         assert_eq!(source_readiness_in(&runtime, source.id), Ready, "mailbox contention must not hide a publication");
     }
     assert_eq!(source_readiness_in(&runtime, source.id), Ready);
+    assert_eq!(source_revision_readiness_in(&runtime, source.id, source.revision), Ready);
+    assert_eq!(source_revision_readiness_in(&runtime, source.id, source.revision + 1), Pending);
     assert_eq!(source_readiness_in(&runtime, source.id + 1), Pending);
     clear_runtime(&runtime);
     assert_eq!(source_readiness_in(&runtime, source.id), Pending);
@@ -248,6 +271,7 @@ const HEADER: &str = "[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY
 
 fn script(lines: &str) -> Arc<Source> {
     Arc::new(Source {
+        alignment_epoch: None,
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -262,6 +286,7 @@ fn job(source: &Arc<Source>, now_ms: i64, width: i32, height: i32, storage_width
     Job {
         kind: Kind::Normal,
         key: Key {
+            alignment_epoch: None,
             epoch: 1,
             source_id: source.id,
             revision: source.revision,
@@ -398,6 +423,7 @@ fn native_pixels_preserve_position_layers_alpha_motion_karaoke_and_readorder() {
     );
 
     let embedded = Arc::new(Source {
+        alignment_epoch: None,
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -525,6 +551,7 @@ fn native_script_font_revision_and_cjk_fallback_use_real_glyphs() {
         unreachable!()
     };
     let attached = Arc::new(Source {
+        alignment_epoch: None,
         id: plain.id,
         revision: 2,
         origin: Origin::Authored,
@@ -702,6 +729,7 @@ fn native_with(fonts: &[Font], text: &str) -> Native {
 
 fn native_key() -> Key {
     Key {
+        alignment_epoch: None,
         epoch: 1,
         source_id: 1,
         revision: 1,
@@ -920,6 +948,7 @@ fn font_script(font_name: &str, face: usize, events: usize) -> Arc<Source> {
         ));
     }
     Arc::new(Source {
+        alignment_epoch: None,
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -1031,6 +1060,7 @@ fn text_source(id: u64, revision: u64, style: &TextStyle, cues: &[(i64, i64, &st
         })
         .collect();
     Arc::new(Source {
+        alignment_epoch: None,
         id,
         revision,
         origin: Origin::Text(*style),
@@ -1293,6 +1323,7 @@ const BLUE: &str = r"{\an7\pos(100,100)\c&HFF0000&\p1}m 0 0 l 40 0 40 40 0 40";
 /// An embedded track with `header`, one event `(start, duration, drawing)` per entry.
 fn track(header: &str, events: &[(i64, i64, &str)]) -> Arc<Source> {
     Arc::new(Source {
+        alignment_epoch: None,
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -1341,6 +1372,7 @@ fn restyle_applies_to_text_origin_tracks_of_equal_fonts_and_a_different_header_o
     assert!(restyles(&medium, &seek));
 
     let authored = |header: &'static [u8]| Source {
+        alignment_epoch: None,
         id: 1,
         revision: 1,
         origin: Origin::Authored,
@@ -1359,6 +1391,7 @@ fn restyle_applies_to_text_origin_tracks_of_equal_fonts_and_a_different_header_o
     };
     assert!(!restyles(&medium, &other_fonts), "different fonts need their own renderer");
     let script = |bytes: &'static [u8]| Source {
+        alignment_epoch: None,
         id: 1,
         revision: 1,
         origin: Origin::Text(no_cues_style()),
@@ -1395,6 +1428,7 @@ fn aligns_are_read_from_the_style_name_of_each_active_script_line() {
         text.push_str("Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,low\n");
         text.push_str("Dialogue: 0,0:00:02.50,0:00:04.00,An4,,0,0,0,,mid\n");
         Arc::new(Source {
+            alignment_epoch: None,
             id: n as u64,
             revision: 1,
             origin: Origin::Text(no_cues_style()),
@@ -1708,6 +1742,7 @@ fn native_a_text_script_past_the_whole_script_bound_renders_through_its_windows(
     }
     assert!(text.len() > MAX_SCRIPT_BYTES);
     let source = Arc::new(Source {
+        alignment_epoch: None,
         id: next_source_id(),
         revision: 1,
         origin: Origin::Text(style),

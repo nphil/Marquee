@@ -1,0 +1,30 @@
+{
+  "speechdock.title": {
+    "value": "SpeechDock",
+    "description": "Settings > Integrations > SpeechDock: title."
+  },
+  "speechdock.root_detail": {
+    "value": "Subtitle timing service.",
+    "description": "Settings > Integrations > SpeechDock: root detail."
+  },
+  "speechdock.copy": {
+    "value": "SpeechDock receives audio and subtitle text for English alignment. Other languages keep estimated timing. Leave the address empty to disable it.",
+    "description": "Settings > Integrations > SpeechDock: copy."
+  },
+  "speechdock.address_detail": {
+    "value": "HTTP(S) origin only; clear to disable.",
+    "description": "Settings > Integrations > SpeechDock: address detail."
+  },
+  "speechdock.disabled": {
+    "value": "Disabled",
+    "description": "Settings > Integrations > SpeechDock: disabled."
+  },
+  "speechdock.invalid": {
+    "value": "Enter an HTTP(S) origin without credentials, path, query or fragment.",
+    "description": "Settings > Integrations > SpeechDock: invalid."
+  },
+  "speechdock.save_failed": {
+    "value": "Could not save the address.",
+    "description": "Settings > Integrations > SpeechDock: save failed."
+  }
+}

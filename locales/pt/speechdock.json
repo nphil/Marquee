@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Serviço de sincronização de legendas.",
+  "speechdock.copy": "O SpeechDock recebe áudio e texto para alinhar legendas em inglês. As outras línguas mantêm a temporização estimada. Deixe o endereço vazio para desativar.",
+  "speechdock.address_detail": "Apenas origem HTTP(S); limpe para desativar.",
+  "speechdock.disabled": "Desativado",
+  "speechdock.invalid": "Introduza uma origem HTTP(S) sem credenciais, caminho, consulta ou fragmento.",
+  "speechdock.save_failed": "Não foi possível guardar o endereço."
+}

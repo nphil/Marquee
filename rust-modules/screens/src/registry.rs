@@ -110,6 +110,8 @@ pub enum PreferenceCmd {
     /// Ask the stored Bazarr who it is: the app reads the stored address and key itself (a screen
     /// never holds them) and answers with Bazarr's status or why it could not.
     BazarrTest { reply: std::sync::mpsc::Sender<Result<plx_plex::plex::bazarr::Status, plx_plex::plex::bazarr::BazarrError>> },
+    /// Save a validated SpeechDock origin through the session write door.
+    SpeechDockOrigin { origin: String, reply: std::sync::mpsc::Sender<bool> },
 }
 
 /// Whether an item has a context menu to open (`item_menu::has_actions`): the one predicate the

@@ -93,6 +93,14 @@ struct TextHold {
     cues: usize,
     /// The `Dialogue:` lines before any reveal tags, held only while the script carries them.
     plain: Option<Arc<str>>,
+    source_sha256: String,
+    script: Arc<text_ass::TextScript>,
+    aligned: Arc<std::collections::BTreeMap<u64, Vec<super::reveal::AlignedWord>>>,
+    alignment_revision: u64,
+    published_alignment_revision: u64,
+    alignment_epoch: u64,
+    published_epoch: u64,
+    estimated: Option<Arc<super::ass::Source>>,
     /// A worker is already building the script for newer picks (one at a time; a later pick that
     /// lands meanwhile is taken up by the next call once this one has published).
     restyling: bool,
@@ -101,6 +109,7 @@ struct TextHold {
 struct State {
     want: Option<Selection>,
     generation: u64,
+    alignment_generation: u64,
     pending: Option<(u64, Selection)>,
     running: bool,
     /// The complete selected file, kept across Off→On so re-picking is instant.
@@ -111,6 +120,7 @@ struct State {
 static STATE: Mutex<State> = Mutex::new(State {
     want: None,
     generation: 0,
+    alignment_generation: 0,
     pending: None,
     running: false,
     loaded: None,
@@ -125,6 +135,107 @@ static SETTLED: std::sync::Condvar = std::sync::Condvar::new();
 const FAILURE_SHOWN: Duration = Duration::from_secs(6);
 fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(super) struct AlignmentSnapshot {
+    pub generation: u64,
+    pub source_id: u64,
+    pub source_revision: u64,
+    pub stream_id: i64,
+    pub source_sha256: String,
+    pub cues: Vec<AlignmentCue>,
+}
+
+pub(super) struct AlignmentCue {
+    pub ordinal: u64,
+    pub authored_start_ms: i64,
+    pub authored_end_ms: i64,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub text: String,
+}
+
+pub(super) struct AlignmentUpdate {
+    pub ordinal: u64,
+    pub words: Vec<super::reveal::AlignedWord>,
+}
+
+fn ready_source(content: &Content) -> bool {
+    let source = selected_source(content);
+    super::ass::source_revision_readiness(source.id, source.revision) == super::ass::SourceReadiness::Ready
+}
+
+/// Worker-only: recheck immediately before submitting a captured window.
+pub(super) fn alignment_ready(generation: u64, source_id: u64, source_revision: u64) -> bool {
+    let st = state();
+    if st.alignment_generation != generation { return false; }
+    let Some((selection, content)) = st.loaded.as_ref() else { return false };
+    let source = selected_source(content);
+    st.want.as_ref() == Some(selection) && content.text.is_some()
+        && source.id == source_id && source.revision == source_revision && ready_source(content)
+}
+
+/// Worker-only: clone a bounded window of the exact text that produced the selected script.
+pub(super) fn alignment_snapshot(start_ms: i64, end_ms: i64, limit: usize) -> Option<AlignmentSnapshot> {
+    if end_ms <= start_ms || limit == 0 { return None; }
+    let (generation, source_id, source_revision, stream_id, source_sha256, script) = {
+        let st = state();
+        let (selection, content) = st.loaded.as_ref()?;
+        if st.want.as_ref() != Some(selection) || !ready_source(content) { return None; }
+        let hold = content.text.as_ref()?;
+        let source = selected_source(content);
+        (st.alignment_generation, source.id, source.revision, selection.stream_id, hold.source_sha256.clone(), hold.script.clone())
+    };
+    let cues = script.source_cues.iter()
+        .filter(|cue| cue.end_ms > start_ms && cue.start_ms < end_ms && cue.text.len() <= 4096)
+        .take(limit.min(32))
+        .map(|cue| AlignmentCue { ordinal: cue.ordinal, authored_start_ms: cue.authored_start_ms,
+            authored_end_ms: cue.authored_end_ms, start_ms: cue.start_ms, end_ms: cue.end_ms,
+            text: cue.text.clone() }).collect();
+    Some(AlignmentSnapshot { generation, source_id, source_revision, stream_id, source_sha256, cues })
+}
+
+/// Worker-only: the orchestrator validates identity, provenance and response before this call.
+pub(super) fn apply_alignment(generation: u64, source_id: u64, source_revision: u64, epoch: u64, updates: Vec<AlignmentUpdate>) -> bool {
+    let style = TextStyle::current();
+    let mut st = state();
+    if st.alignment_generation != generation { return false; }
+    if super::alignment::epoch() != epoch { return false; }
+    let State { want, loaded, .. } = &mut *st;
+    let Some((selection, content)) = loaded.as_mut() else { return false };
+    let source = selected_source(content);
+    if want.as_ref() != Some(selection) || source.id != source_id || source.revision != source_revision
+        || !ready_source(content) { return false; }
+    let Some(hold) = content.text.as_mut() else { return false };
+    if hold.alignment_epoch != epoch { hold.aligned = Arc::new(std::collections::BTreeMap::new()); }
+    hold.alignment_epoch = epoch;
+    let aligned = Arc::make_mut(&mut hold.aligned);
+    for update in updates {
+        if hold.script.source_cues.iter().any(|cue| cue.ordinal == update.ordinal) {
+            if update.words.is_empty() { aligned.remove(&update.ordinal); }
+            else { aligned.insert(update.ordinal, update.words); }
+        }
+    }
+    hold.alignment_revision = hold.alignment_revision.wrapping_add(1);
+    start_restyle(content, style);
+    true
+}
+
+/// Worker-only: invalidate in-flight answers and remove times from the previous playback context.
+pub(super) fn invalidate_alignment() {
+    let style = TextStyle::current();
+    let mut st = state();
+    st.alignment_generation = st.alignment_generation.wrapping_add(1);
+    if let Some((_, content)) = st.loaded.as_mut() {
+        if let Some(hold) = content.text.as_mut() {
+            if !hold.aligned.is_empty() {
+                hold.aligned = Arc::new(std::collections::BTreeMap::new());
+                hold.alignment_epoch = super::alignment::epoch();
+                hold.alignment_revision = hold.alignment_revision.wrapping_add(1);
+                start_restyle(content, style);
+            }
+        }
+    }
 }
 
 /// Select the sidecar `stream_id`, fetching `key` from `server` unless that file is already
@@ -154,6 +265,7 @@ fn select_with_fetch(
         let mut st = state();
         let selection_changed = st.want.as_ref() != Some(&selection);
         st.generation = st.generation.wrapping_add(1);
+        st.alignment_generation = st.alignment_generation.wrapping_add(1);
         st.want = Some(selection.clone());
         st.failed = None;
         st.pending = None;
@@ -219,6 +331,7 @@ fn select_with_fetch(
 pub fn deselect() {
     let mut st = state();
     st.generation = st.generation.wrapping_add(1);
+    st.alignment_generation = st.alignment_generation.wrapping_add(1);
     st.pending = None;
     st.want = None;
     st.failed = None;
@@ -244,7 +357,7 @@ pub(crate) fn activation(server: plx_plex::plex::ServerId, stream_id: i64) -> cr
     }
     let Some((selection, content)) = st.loaded.as_ref() else { return SubtitleActivation::Loading };
     if selection != want { return SubtitleActivation::Loading; }
-    match super::ass::source_readiness(content.source.id) {
+    match super::ass::source_readiness(selected_source(content).id) {
         super::ass::SourceReadiness::Pending => SubtitleActivation::Loading,
         super::ass::SourceReadiness::Ready => SubtitleActivation::Active,
         super::ass::SourceReadiness::Failed => SubtitleActivation::Failed,
@@ -257,6 +370,7 @@ pub(crate) fn activation(server: plx_plex::plex::ServerId, stream_id: i64) -> cr
 pub fn select_without_fetch_for_test(stream_id: i64) {
     let mut st = state();
     st.generation = st.generation.wrapping_add(1);
+    st.alignment_generation = st.alignment_generation.wrapping_add(1);
     st.pending = None;
     st.want = Some(Selection {
         server: plx_plex::plex::ServerId::UNSET, stream_id, key: String::new(), codec: String::new(),
@@ -279,6 +393,7 @@ pub fn fail_for_test(stream_id: i64, age: Duration) {
 pub fn reset() {
     let mut st = state();
     st.generation = st.generation.wrapping_add(1);
+    st.alignment_generation = st.alignment_generation.wrapping_add(1);
     st.pending = None;
     st.want = None;
     st.loaded = None;
@@ -355,7 +470,8 @@ fn ass_source_styled(burned: bool, style: TextStyle) -> Option<Arc<super::ass::S
     // store never acquires the sidecar lock, so this short snapshot has one lock order; no native
     // work runs under either lock.
     let (generation, fonts) = super::ass_source::font_snapshot();
-    let restyled = content.text.as_ref().is_some_and(|hold| hold.style_generation != style.generation());
+    let restyled = content.text.as_ref().is_some_and(|hold| hold.style_generation != style.generation()
+        || hold.published_alignment_revision != hold.alignment_revision);
     if restyled {
         // The new script is built off this thread (it is the whole file again, megabytes for a long
         // one) and published under this lock when ready; until then the old look stays up.
@@ -365,11 +481,32 @@ fn ass_source_styled(burned: bool, style: TextStyle) -> Option<Arc<super::ass::S
         let super::ass::Content::Script { bytes, .. } = &content.source.content else { return None; };
         content.source = Arc::new(super::ass::Source {
             id: content.source.id, revision: content.source.revision.wrapping_add(1),
-            origin: content.source.origin, content: super::ass::Content::Script { bytes: bytes.clone(), fonts },
+            alignment_epoch: content.source.alignment_epoch,
+            origin: content.source.origin, content: super::ass::Content::Script { bytes: bytes.clone(), fonts: fonts.clone() },
         });
+        if let Some(hold) = content.text.as_mut() {
+            if let Some(estimated) = hold.estimated.as_mut() {
+                if let super::ass::Content::Script { bytes, .. } = &estimated.content {
+                    *estimated = Arc::new(super::ass::Source { id: estimated.id,
+                        revision: estimated.revision.wrapping_add(1), origin: estimated.origin,
+                        alignment_epoch: None,
+                        content: super::ass::Content::Script { bytes: bytes.clone(), fonts } });
+                }
+            }
+        }
         content.font_generation = Some(generation);
     }
-    Some(content.source.clone())
+    Some(selected_source(content).clone())
+}
+
+fn selected_source(content: &Content) -> &Arc<super::ass::Source> {
+    if let Some(hold) = &content.text {
+        if hold.published_epoch != super::alignment::epoch()
+            || (hold.aligned.is_empty() && hold.published_alignment_revision != hold.alignment_revision) {
+            if let Some(estimated) = &hold.estimated { return estimated; }
+        }
+    }
+    &content.source
 }
 
 /// Begin building `content`'s script for `style` on a worker, unless one is already running.
@@ -381,6 +518,8 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
     let super::ass::Content::Script { bytes, .. } = &content.source.content else { return };
     let (id, base_generation, header_len, bytes, plain) =
         (content.source.id, hold.style_generation, hold.header_len, bytes.clone(), hold.plain.clone());
+    let (text_script, aligned, alignment_revision) = (hold.script.clone(), hold.aligned.clone(), hold.alignment_revision);
+    let alignment_epoch = hold.alignment_epoch;
     hold.restyling = true;
     let started = plx_base::task::spawn_small("sidecar restyle", move || {
         let header = text_ass::header(&style);
@@ -389,17 +528,25 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
             None => std::str::from_utf8(&bytes[header_len..]).unwrap_or(""),
         };
         let revealing = style.layout.reveal != plx_plex::plex::session::Reveal::Off;
-        let script = if revealing {
+        let estimated = if revealing {
             let events = super::reveal::reveal_events(held, super::reveal::Params::of(&style.layout));
+            joined(header.as_bytes(), events.as_bytes())
+        } else { joined(header.as_bytes(), held.as_bytes()) };
+        let script = if revealing {
+            let events = text_script.aligned_events(super::reveal::Params::of(&style.layout), &aligned);
             joined(header.as_bytes(), events.as_bytes())
         } else {
             joined(header.as_bytes(), held.as_bytes())
         };
         let plain = revealing.then(|| plain.clone().unwrap_or_else(|| Arc::from(held)));
         drop(bytes);
+        let current_style = TextStyle::current();
         let mut st = state();
         if let Some((_, content)) = st.loaded.as_mut() {
-            publish_restyle(content, id, base_generation, style, header.len(), script, plain);
+            publish_restyle(content, id, base_generation, alignment_revision, alignment_epoch, style, header.len(), script, estimated, plain);
+            if content.text.as_ref().is_some_and(|hold| hold.alignment_revision != hold.published_alignment_revision) {
+                start_restyle(content, current_style);
+            }
         }
         SETTLED.notify_all();
         drop(st);
@@ -418,23 +565,35 @@ fn publish_restyle(
     content: &mut Content,
     id: u64,
     base_generation: u32,
+    alignment_revision: u64,
+    alignment_epoch: u64,
     style: TextStyle,
     header_len: usize,
     script: Arc<[u8]>,
+    estimated: Arc<[u8]>,
     plain: Option<Arc<str>>,
 ) {
     let (revision, origin, fonts) = match (&content.source.content, content.text.as_mut()) {
         (super::ass::Content::Script { fonts, .. }, Some(hold)) if content.source.id == id => {
             hold.restyling = false;
-            if hold.style_generation != base_generation {
+            if hold.style_generation != base_generation || hold.alignment_revision != alignment_revision {
                 return;
             }
             (hold.header_len, hold.style_generation, hold.plain) = (header_len, style.generation(), plain);
+            hold.published_alignment_revision = alignment_revision;
+            hold.published_epoch = alignment_epoch;
+            let estimate_id = hold.estimated.as_ref().map_or_else(super::ass::next_source_id, |source| source.id);
+            let estimate_revision = hold.estimated.as_ref().map_or(1, |source| source.revision.wrapping_add(1));
+            hold.estimated = Some(Arc::new(super::ass::Source { id: estimate_id, revision: estimate_revision,
+                alignment_epoch: None,
+                origin: super::ass::Origin::Text(style), content: super::ass::Content::Script {
+                    bytes: estimated, fonts: fonts.clone() } }));
             (content.source.revision.wrapping_add(1), super::ass::Origin::Text(style), fonts.clone())
         }
         _ => return,
     };
     content.source = Arc::new(super::ass::Source {
+        alignment_epoch: Some(alignment_epoch),
         id, revision, origin, content: super::ass::Content::Script { bytes: script, fonts },
     });
 }
@@ -471,6 +630,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
         return Ok(Content {
             source: Arc::new(super::ass::Source {
                 id: super::ass::next_source_id(), revision: 1, origin: super::ass::Origin::Authored,
+                alignment_epoch: None,
                 content: super::ass::Content::Script { bytes: bytes.into(), fonts: Arc::from([]) },
             }),
             font_generation: None,
@@ -481,6 +641,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
     if codec.eq_ignore_ascii_case("ass") || codec.eq_ignore_ascii_case("ssa") {
         return Err(Failure::Empty);
     }
+    let source_sha256: String = plx_base::sha256::sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     // A sidecar file is whole-file text of unknown language here: the charset step is the BOM,
     // valid UTF-8, else the encoding `chardetng` guesses from the whole file (`sub_charset`).
     let text = super::sub_charset::subtitle_text_whole(&bytes, &super::sub_charset::TrackCharset::unknown());
@@ -507,14 +668,17 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
         joined(header.as_bytes(), converted.events.as_bytes())
     };
     let plain = revealing.then(|| Arc::<str>::from(converted.events.as_str()));
-    drop(converted.events);
     Ok(Content {
         source: Arc::new(super::ass::Source {
             id: super::ass::next_source_id(), revision: 1, origin: super::ass::Origin::Text(style),
+            alignment_epoch: None,
             content: super::ass::Content::Script { bytes: script, fonts: Arc::from([]) },
         }),
         font_generation: None,
-        text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, plain, restyling: false }),
+        text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, plain,
+            source_sha256, script: Arc::new(converted), aligned: Arc::new(std::collections::BTreeMap::new()),
+            alignment_revision: 0, published_alignment_revision: 0, alignment_epoch: 0, published_epoch: 0,
+            estimated: None, restyling: false }),
     })
 }
 
@@ -1019,5 +1183,136 @@ mod tests {
             finish_download();
             deselect();
         }
+    }
+
+    fn render_selected_ready() {
+        let source = ass_source(false).unwrap();
+        let deadline = Instant::now() + WORKER_HUNG;
+        loop {
+            ass::request(source.clone(), 1_500, 320, 180, 320, 180);
+            if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready { return; }
+            assert!(Instant::now() < deadline, "renderer did not publish the selected source");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn alignment_snapshot_pins_fetched_bytes_and_authored_and_visible_cues() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        let body = b"1\r\n00:00:01,000 --> 00:00:05,000\r\n<i>Hello</i> world\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\nNext\r\n";
+        let expected: String = plx_base::sha256::sha256(body).iter().map(|b| format!("{b:02x}")).collect();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/stream".into(), "srt".into(),
+            move |_, _, _| Some(body.to_vec()));
+        finish_download();
+        render_selected_ready();
+        let snapshot = alignment_snapshot(0, 6_000, 1).unwrap();
+        assert_eq!(snapshot.stream_id, 42);
+        assert_eq!(snapshot.source_sha256, expected);
+        assert_eq!(snapshot.cues.len(), 1);
+        let cue = &snapshot.cues[0];
+        assert_eq!((cue.ordinal, cue.authored_start_ms, cue.authored_end_ms), (0, 1_000, 5_000));
+        assert_eq!((cue.start_ms, cue.end_ms), (1_000, 3_000));
+        assert_eq!(cue.text, "<i>Hello</i> world");
+        invalidate_alignment();
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        finish_restyle();
+        reset();
+    }
+
+    #[test]
+    fn alignment_rejects_an_old_selection_and_excludes_authored_ass() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/text".into(), "srt".into(),
+            |_, _, _| Some(b"1\n00:00:01,000 --> 00:00:02,000\nHello\n".to_vec()));
+        finish_download();
+        render_selected_ready();
+        let snapshot = alignment_snapshot(0, 3_000, 32).unwrap();
+        deselect();
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 43, "/ass".into(), "ass".into(),
+            |_, _, _| Some(STYLED_SCRIPT.to_vec()));
+        finish_download();
+        assert!(alignment_snapshot(0, 3_000, 32).is_none());
+        reset();
+    }
+
+    #[test]
+    fn accepted_alignment_is_retained_and_invalidated_off_thread() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/text".into(), "srt".into(),
+            |_, _, _| Some(b"1\n00:00:01,000 --> 00:00:04,000\nHello world\n".to_vec()));
+        finish_download();
+        assert!(alignment_snapshot(0, 5_000, 32).is_none(), "loading is not ready");
+        render_selected_ready();
+        let snapshot = alignment_snapshot(0, 5_000, 32).unwrap();
+        assert!(alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision));
+        ass::clear();
+        assert!(!alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision), "readiness must be rechecked before send");
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()), "loading must not accept results");
+        render_selected_ready();
+        let word = super::super::reveal::AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1_100, end_ms: 1_500 };
+        assert!(apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), vec![AlignmentUpdate { ordinal: 0, words: vec![word] }]));
+        finish_restyle();
+        {
+            let st = state();
+            let hold = st.loaded.as_ref().unwrap().1.text.as_ref().unwrap();
+            assert_eq!(hold.aligned.get(&0).unwrap()[0], word);
+            assert_eq!(hold.alignment_revision, hold.published_alignment_revision);
+        }
+        invalidate_alignment();
+        finish_restyle();
+        assert!(state().loaded.as_ref().unwrap().1.text.as_ref().unwrap().aligned.is_empty());
+        reset();
+    }
+
+    #[test]
+    fn alignment_requires_the_exact_selected_published_revision() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/text".into(), "srt".into(),
+            |_, _, _| Some(b"1\n00:00:01,000 --> 00:00:04,000\nHello world\n".to_vec()));
+        finish_download();
+        render_selected_ready();
+        let snapshot = alignment_snapshot(0, 5_000, 32).unwrap();
+        {
+            let mut st = state();
+            let content = &mut st.loaded.as_mut().unwrap().1;
+            Arc::make_mut(&mut content.source).revision += 1;
+        }
+        assert!(alignment_snapshot(0, 5_000, 32).is_none(), "an older published revision is not ready");
+        assert!(!alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision));
+        assert!(!alignment_ready(snapshot.generation, snapshot.source_id.wrapping_add(1), snapshot.source_revision));
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        render_selected_ready();
+        let newer = alignment_snapshot(0, 5_000, 32).unwrap();
+        assert_eq!(newer.source_id, snapshot.source_id);
+        assert_ne!(newer.source_revision, snapshot.source_revision);
+        assert!(!alignment_ready(snapshot.generation, snapshot.source_id, snapshot.source_revision));
+        assert!(!apply_alignment(snapshot.generation, snapshot.source_id, snapshot.source_revision, super::super::alignment::epoch(), Vec::new()));
+        reset();
+    }
+
+    #[test]
+    fn invalidating_empty_alignment_does_not_restyle() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/text".into(), "srt".into(),
+            |_, _, _| Some(b"1\n00:00:01,000 --> 00:00:04,000\nHello\n".to_vec()));
+        finish_download();
+        render_selected_ready();
+        let source = ass_source(false).unwrap();
+        invalidate_alignment();
+        invalidate_alignment();
+        let st = state();
+        let content = &st.loaded.as_ref().unwrap().1;
+        let hold = content.text.as_ref().unwrap();
+        assert!(!hold.restyling);
+        assert_eq!(hold.alignment_revision, hold.published_alignment_revision);
+        assert!(Arc::ptr_eq(&source, selected_source(content)));
+        drop(st);
+        reset();
     }
 }

@@ -31,6 +31,7 @@ struct Sim {
 
 fn key_of(epoch: u64, revision: u64) -> Key {
     Key {
+        alignment_epoch: None,
         epoch,
         source_id: 1,
         revision,
@@ -47,6 +48,7 @@ impl Sim {
         Self {
             mb: Mailbox::new(),
             source: Arc::new(Source {
+                alignment_epoch: None,
                 id: 1,
                 revision: 1,
                 origin: Origin::Authored,
@@ -93,6 +95,7 @@ impl Sim {
                     vec![Rect { x: 0, y: 0, width: 1, height: 1, rgba: Arc::from([tag, 0, 0, 255]) }]
                 };
                 Arc::new(Frame {
+                    alignment_epoch: job.key.alignment_epoch,
                     source_id: job.key.source_id,
                     serial: next_serial(),
                     width: job.key.width,

@@ -421,6 +421,8 @@ pub(super) fn fourk_item_with_subs(
     plx_data::metadata::PlayingItem {
         sid,
         rk: "rk-4k".into(),
+        media_id: None,
+        part_key: String::new(),
         show_rk: String::new(),
         kind: String::new(),
         audio,

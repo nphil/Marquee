@@ -19,6 +19,7 @@
 //! and `sink()` answers a no-op sink to every other main-thread verb until it is done.
 #![allow(non_upper_case_globals)]
 pub mod adapter;
+pub(crate) mod alignment; // bounded SpeechDock alignment worker
 pub mod claim_hold;
 pub mod ass; // pinned libass worker and immutable rendered frames
 pub mod ass_perf; // per-second libass cost line (`assperf:`)
@@ -52,6 +53,7 @@ mod foreground_flight_tests;
 mod resume_tests;
 mod shared;
 pub mod sidecar;
+pub mod speechdock_settings;
 pub mod blend; // "Blend with video": the caption's brightness follows the scene, eased (pure)
 pub mod paint; // what the player paints with a text caption besides libass's pixels: ink, shadow, box, placement (pure)
 pub mod reveal; // "Reveal as spoken": a cue shown a word or a line at a time, timed by estimate (pure)
@@ -707,6 +709,7 @@ pub fn ended() -> bool {
     SHARED.ended.load(Relaxed)
 }
 pub fn request_seek(ns: i64) {
+    alignment::invalidate();
     report::note_seek_for(crate::route::playback_trace_generation());
     crate::route::note_user_seek_intent(ns);
     SHARED.ended.store(false, Relaxed); // seeking back from the end un-ends the stream
@@ -1807,6 +1810,7 @@ pub fn request_audio_switch(ps: &crate::route::PlaybackSession, _sid: i64) {
 /// position next tick (switch_audio_native). Used when the item direct-plays and the target track
 /// is a direct-playable codec (aac/ac3/eac3).
 pub fn request_audio_track(ps: &mut crate::route::PlaybackSession, audio_idx: i32, codec: &str) {
+    alignment::invalidate();
     stage_native_audio(ps, audio_idx, codec);
     crate::route::request_user_route_intent(ps, crate::route::UserRouteIntent::NativeAudioReload);
 }
@@ -2084,6 +2088,7 @@ pub fn desired_sub_idx() -> i32 {
 /// cues: the demuxer runs well ahead of the playhead, so clearing here would reintroduce the
 /// ~10-20s buffer-gap delay. A new item / transcode re-point clears them via reset_session / the pump.
 pub fn request_subtitle(idx: i32) {
+    alignment::invalidate();
     SHARED.desired_sub_idx.store(idx, Relaxed);
     if idx < 0 {
         // subs Off: free the image-cue store now (the demuxer also stops decoding new
@@ -2267,6 +2272,7 @@ pub fn set_subtitle_tone(tone: plx_plex::plex::session::SubtitleTone) {
 /// here; a commit remembers it per item, never per track, through the memory door
 /// (`route::persist_subtitle_offset`) — see [`SUBTITLE_OFFSET_MS`].
 pub fn set_subtitle_offset(offset_ms: i64) {
+    alignment::invalidate();
     SUBTITLE_OFFSET_MS.store(clamp_subtitle_offset_ms(offset_ms), Relaxed);
     plx_machine::idle::invalidate();
 }

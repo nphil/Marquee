@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Dienst für Untertitel-Timing.",
+  "speechdock.copy": "SpeechDock erhält Audio und Untertiteltext zur englischen Ausrichtung. Andere Sprachen behalten geschätztes Timing. Ein leeres Feld deaktiviert den Dienst.",
+  "speechdock.address_detail": "Nur HTTP(S)-Adresse; leeren zum Deaktivieren.",
+  "speechdock.disabled": "Deaktiviert",
+  "speechdock.invalid": "HTTP(S)-Adresse ohne Zugangsdaten, Pfad, Abfrage oder Fragment eingeben.",
+  "speechdock.save_failed": "Adresse konnte nicht gespeichert werden."
+}

@@ -1420,6 +1420,9 @@ pub struct Plan {
     /// The played version's `mediaIndex`: 0 for the default, else the picked version's position
     /// in the item this resolve fetched. `part_id` and the source codecs are that version's too.
     pub media_index: usize,
+    /// Selected Plex identities, only when metadata names the same part as the route.
+    pub alignment_media_id: Option<i64>,
+    pub alignment_part_key: String,
     pub pq_id: String,
     pub pq_item_id: String,
     pub machine_id: String, // "" = leave the cached one alone
@@ -1671,6 +1674,10 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 plan.part_id = part_id_of(part);
                 plan.src_vcodec = vcodec.to_string();
                 plan.src_acodec = acodec.to_string();
+            }
+            if let Some(item) = playing.as_ref().filter(|item| !item.part_key.is_empty() && item.part_key == part) {
+                plan.alignment_media_id = item.media_id;
+                plan.alignment_part_key = item.part_key.clone();
             }
             let media_index = plan.media_index;
             plan.playing = playing;

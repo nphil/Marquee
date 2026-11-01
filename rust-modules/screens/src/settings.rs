@@ -468,6 +468,7 @@ fn mount_page(
         SettingsPage::UnderPostersDetails => Box::new(under_posters::DetailsPage::new(entry)),
         SettingsPage::Subtitles => Box::new(subtitles::SubtitlesPage::new(entry)),
         SettingsPage::Bazarr => Box::new(bazarr::BazarrPage::new(entry)),
+        SettingsPage::SpeechDock => Box::new(speechdock::SpeechDockPage::new(entry)),
         SettingsPage::Contribute => Box::new(super::legal::DocumentPage::contribute(entry)),
         SettingsPage::Playback => Box::new(super::preferences::PreferencesPage::new(entry, super::preferences::Kind::Playback)),
         SettingsPage::AudioSubtitles => Box::new(super::preferences::PreferencesPage::new(entry, super::preferences::Kind::AudioSubtitles)),
@@ -974,6 +975,7 @@ enum RootId {
     Playback,
     Subtitles,
     Bazarr,
+    SpeechDock,
     AudioSubtitles,
     Language,
     AutoSignIn,
@@ -1006,6 +1008,7 @@ impl FormId for RootId {
             RootId::UnderPosters => 11,
             RootId::Subtitles => 12,
             RootId::Bazarr => 13,
+            RootId::SpeechDock => 14,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1250,6 +1253,14 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::bazarr_title())
                 .detail(plx_platform::i18n::msg::bazarr_root_detail())
                 .value(bazarr::summary(&inputs.bazarr))
+                .chevron(true),
+        )
+        .item(
+            RootId::SpeechDock,
+            RowKind::Nav(SettingsPage::SpeechDock),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::speechdock_title())
+                .detail(plx_platform::i18n::msg::speechdock_root_detail())
                 .chevron(true),
         );
     let has_plaintext = signed_in && !inputs.plaintext.is_empty();
@@ -1682,6 +1693,8 @@ mod under_posters;
 mod subtitles;
 #[path = "settings_bazarr.rs"]
 mod bazarr;
+#[path = "settings_speechdock.rs"]
+mod speechdock;
 pub use under_posters::caption_policy_of;
 
 #[cfg(test)]

@@ -312,6 +312,8 @@ pub struct PlaybackSession {
     /// plan, so every later encoder of this playback (seek, quality change, ABR rung, Original
     /// recovery) asks for the same version.
     cur_media_index: usize,
+    alignment_media_id: Option<i64>,
+    alignment_part_key: String,
     /// The SERVER the currently-playing item came from — the other half of its identity.
     ///
     /// A ratingKey names an item only within one server: `1` is a real item on our own server and a
@@ -579,6 +581,8 @@ impl PlaybackSession {
         auto_bootstrap_rung: None,
         cur_rk: String::new(),
         cur_media_index: 0,
+        alignment_media_id: None,
+        alignment_part_key: String::new(),
         cur_sid: ServerId::UNSET,
         cur_audio: None,
         cur_sub_sid: 0,
@@ -668,6 +672,8 @@ impl PlaybackSession {
             auto_bootstrap_rung,
             cur_rk,
             cur_media_index,
+            alignment_media_id,
+            alignment_part_key,
             cur_sid,
             cur_audio,
             cur_sub_sid,
@@ -739,6 +745,8 @@ impl PlaybackSession {
             auto_bootstrap_rung: *auto_bootstrap_rung,
             cur_rk: cur_rk.clone(),
             cur_media_index: *cur_media_index,
+            alignment_media_id: *alignment_media_id,
+            alignment_part_key: alignment_part_key.clone(),
             cur_sid: *cur_sid,
             cur_audio: cur_audio.clone(),
             cur_sub_sid: *cur_sub_sid,
@@ -860,6 +868,64 @@ pub fn url(ps: &PlaybackSession) -> String {
 pub fn has_url(ps: &PlaybackSession) -> bool {
     !ps.url.is_empty()
 }
+
+/// Identity of the resolved playback, borrowed for capture by an alignment request.
+/// Missing identifiers remain absent rather than being inferred from version indices.
+/// A known subtitle selection with no stream id means subtitles are off.
+#[derive(Debug)]
+pub struct AlignmentPlaybackIdentity<'a> {
+    pub machine_id: Option<&'a str>,
+    pub rating_key: Option<&'a str>,
+    pub media_id: Option<i64>,
+    pub part_key: Option<&'a str>,
+    pub part_id: Option<i64>,
+    pub audio_stream_id: Option<i64>,
+    pub subtitle_selection_known: bool,
+    pub subtitle_stream_id: Option<i64>,
+    pub subtitle_codec: Option<&'a str>,
+    pub subtitle_language: Option<&'a str>,
+    /// Stable app playback generation, not the replaceable physical encoder session.
+    pub playback_session_id: Option<&'a str>,
+}
+
+/// Snapshot the resolved route only. Subtitle facts come from the session's landing metadata;
+/// an optional playback metadata store supplies them when the session is a screen publication.
+/// `None` means no resolved URL is currently held, including after teardown.
+pub fn alignment_playback_identity<'a>(
+    ps: &'a PlaybackSession,
+    playing: Option<&'a plx_data::metadata::PlayingItem>,
+) -> Option<AlignmentPlaybackIdentity<'a>> {
+    if ps.url.is_empty() {
+        return None;
+    }
+    let nonempty = |s: &'a str| (!s.is_empty()).then_some(s);
+    let machine_id = plx_plex::plex::client_for(ps.cur_sid)
+        .and_then(|client| nonempty(client.machine_id()))
+        .or_else(|| (ps.machine_sid == ps.cur_sid).then(|| nonempty(&ps.machine_id)).flatten());
+    let subtitle_stream_id = (ps.selection_known && ps.cur_sub_sid > 0).then_some(ps.cur_sub_sid);
+    let subtitle = subtitle_stream_id.and_then(|id| {
+        ps.track_ctx.as_ref().and_then(|ctx| ctx.subs.iter().find(|stream| stream.id == id))
+            .or_else(|| playing
+                .filter(|item| item.sid == ps.cur_sid && item.rk == ps.cur_rk
+                    && !ps.alignment_part_key.is_empty() && item.part_key == ps.alignment_part_key)
+                .and_then(|item| item.subs.iter().find(|stream| stream.id == id)))
+    });
+    Some(AlignmentPlaybackIdentity {
+        machine_id,
+        rating_key: nonempty(&ps.cur_rk),
+        media_id: ps.alignment_media_id,
+        part_key: nonempty(&ps.alignment_part_key),
+        part_id: (ps.cur_part_id > 0).then_some(ps.cur_part_id),
+        audio_stream_id: ps.selection_known.then_some(ps.cur_audio.as_ref()).flatten()
+            .and_then(|audio| (audio.sid > 0).then_some(audio.sid)),
+        subtitle_selection_known: ps.selection_known,
+        subtitle_stream_id,
+        subtitle_codec: subtitle.and_then(|stream| nonempty(&stream.codec)),
+        subtitle_language: subtitle.and_then(|stream| nonempty(&stream.lang_code)),
+        playback_session_id: nonempty(&ps.sess),
+    })
+}
+
 /// Whole-file transport requirement captured by the playback resolve. Diagnostics uses it for
 /// manual Original, where no adaptive controller exists to publish `dg_abr_kbps`.
 pub fn transport_kbps(ps: &PlaybackSession) -> i64 {
@@ -1154,6 +1220,10 @@ fn route_projection(ps: &PlaybackSession) -> AppliedRouteProjection {
 }
 
 fn install_route_projection(ps: &mut PlaybackSession, projection: &AppliedRouteProjection) {
+    if ps.cur_audio.as_ref().map(|a| a.sid) != projection.audio.as_ref().map(|a| a.sid)
+        || ps.cur_sub_sid != projection.subtitle_sid {
+        crate::player::alignment::invalidate();
+    }
     { let s = &mut *ps; {
         s.url = projection.url.clone();
         s.tsession = projection.tsession.clone();
@@ -5043,6 +5113,9 @@ fn recover_original_direct(
         s.cur_contract = plx_plex::plex::EncodeContract::original(false, plx_plex::plex::AudioEnhancements::NONE);
         s.cur_enhancement = outcome;
         s.cur_auto_original_watched = watched;
+        if s.cur_audio.as_ref().map(|a| a.sid) != candidate.audio.as_ref().map(|a| a.sid) {
+            crate::player::alignment::invalidate();
+        }
         s.cur_audio = candidate.audio.clone();
         s.stream_vcodec = candidate.vcodec.clone();
         // A server-default candidate carries no track facts; the file's own default codec
@@ -5365,7 +5438,7 @@ pub fn rollback_original_recovery(ps: &mut PlaybackSession) -> Option<OriginalRo
     let kept_side_refused = ps.side_subs_refused;
     let kept_auto_original = ps.auto_original.clone();
     install_route_projection(ps, &pending.previous);
-    ps.cur_sub_sid = kept_subtitle_sid;
+    set_subtitle(ps, kept_subtitle_sid);
     ps.cur_sub_sidecar = kept_subtitle_sidecar;
     ps.cur_sub_client_drawable = kept_subtitle_drawable;
     ps.cur_sub_ordinal = kept_subtitle_ordinal;
@@ -5624,6 +5697,9 @@ pub fn install_active_encoder_for_test(session: &str) {
 /// select the subtitle to BURN into any transcode of the current item (0 = none). This
 /// is the transcode path; direct-play uses the client renderer (player::request_subtitle).
 pub fn set_subtitle(ps: &mut PlaybackSession, sid: i64) {
+    if ps.cur_sub_sid != sid {
+        crate::player::alignment::invalidate();
+    }
     { let s = &mut *ps; s.cur_sub_sid = sid }
 }
 /// the subtitle stream id currently burned into the transcode (0 = none).
@@ -8803,6 +8879,9 @@ fn request_play_with_queue(
 /// What a play REQUEST clears of the outgoing item's live track selection (the landing installs
 /// the incoming item's own).
 fn clear_track_selection(s: &mut PlaybackSession) {
+    if s.selection_known {
+        crate::player::alignment::invalidate();
+    }
     s.cur_audio = None;
     s.cur_sub_sid = 0;
     s.selection_known = false;
@@ -9267,6 +9346,8 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
             // the 10 s progress reporter engine.rs is about to spawn) resolves its server from it.
             cur_rk: rk.to_string(),
             cur_media_index: plan.media_index,
+            alignment_media_id: plan.alignment_media_id,
+            alignment_part_key: plan.alignment_part_key,
             cur_sid: plan.sid,
             // The carried track, as `build_stream` froze it from the fetched stream. `None` = the
             // plan names the server default, or its track list was never fetched.
@@ -9514,6 +9595,9 @@ fn install_original_remux(
         s.cur_contract = enhanced_remux_contract(prepared.audio, prepared.force_burn);
         s.cur_enhancement = prepared.enhancement;
         s.cur_auto_original_watched = watched;
+        if s.cur_audio.as_ref().map(|a| a.sid) != candidate.audio.as_ref().map(|a| a.sid) {
+            crate::player::alignment::invalidate();
+        }
         s.cur_audio = candidate.audio.clone();
         s.stream_vcodec = prepared.vcodec.clone();
         s.stream_acodec = prepared.acodec.clone();
@@ -11441,6 +11525,9 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
     let stream_id = audio.sid;
     let native = family == RouteFamily::Direct && direct_plays;
     let (ordinal, codec) = (audio.ordinal, audio.codec.clone());
+    if ps.cur_audio.as_ref().map(|a| a.sid) != Some(audio.sid) {
+        crate::player::alignment::invalidate();
+    }
     { let s = &mut *ps; s.cur_audio = Some(audio); s.selection_known = true };
     if native {
         // record the pick: the timeline then reports the stream that actually plays, and a

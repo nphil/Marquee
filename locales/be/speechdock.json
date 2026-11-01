@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Сэрвіс сінхранізацыі субцітраў.",
+  "speechdock.copy": "SpeechDock атрымлівае аўдыя і тэкст для выраўноўвання англійскіх субцітраў. Для іншых моў застаецца прыблізны час. Пусты адрас адключае сэрвіс.",
+  "speechdock.address_detail": "Толькі адрас HTTP(S); ачысціце для адключэння.",
+  "speechdock.disabled": "Адключана",
+  "speechdock.invalid": "Увядзіце адрас HTTP(S) без уліковых даных, шляху, запыту і фрагмента.",
+  "speechdock.save_failed": "Не ўдалося захаваць адрас."
+}

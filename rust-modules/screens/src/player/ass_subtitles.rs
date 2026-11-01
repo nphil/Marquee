@@ -38,6 +38,8 @@ impl Mapping {
 pub struct AssSubtitles {
     frame: Option<Arc<ass::Frame>>,
     source: u64,
+    /// Embedded track for the held source; None also covers sidecars and previews.
+    embedded_track: Option<i32>,
     clock: ass_source::Clock,
     textures: Vec<CachedTexture>,
     uploaded: u64,
@@ -69,23 +71,61 @@ pub struct AssSubtitles {
 const UNKNOWN_ALIGNS: ass::AlignSet = ass::AlignSet { bottom: true, middle: true, top: true };
 
 impl AssSubtitles {
+    fn may_hold_busy_embedded(&self, track: i32) -> bool {
+        track >= 0 && self.source != 0 && self.embedded_track == Some(track)
+            && self.frame.as_ref().map_or(true, |frame| ass::alignment_epoch_valid(frame.alignment_epoch))
+    }
+
+    fn retire_stale_alignment(&mut self) {
+        if self.frame.as_ref().is_some_and(|frame| !ass::alignment_epoch_valid(frame.alignment_epoch)) {
+            self.frame = None;
+            self.aligns = None;
+            self.source = 0;
+            self.embedded_track = None;
+            ass::clear();
+        }
+    }
+
     pub fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, source_hdr: bool) {
         self.now = now;
         self.scene = blend::Scene { luma: None, hdr: source_hdr };
-        let source = if plx_media::route::subtitles_burned(ps) || plx_media::player::loading(ps) {
-            None
+        self.retire_stale_alignment();
+        let (source, embedded_track) = if plx_media::route::subtitles_burned(ps) || plx_media::player::loading(ps) {
+            (None, None)
+        } else if sidecar::selected() {
+            (sidecar::ass_source(false), None)
         } else {
-            sidecar::ass_source(false)
-                .or_else(|| ass_source::selected(plx_media::player::desired_sub_idx()))
+            let track = plx_media::player::desired_sub_idx();
+            let Some(source) = ass_source::try_selected(track) else {
+                if !self.may_hold_busy_embedded(track) {
+                    self.frame = None;
+                    self.aligns = None;
+                    self.source = 0;
+                    self.embedded_track = None;
+                    ass::clear();
+                }
+                return;
+            };
+            (source, Some(track))
         };
         let Some(source) = source else {
             if self.source != 0 {
                 ass::clear();
             }
             self.source = 0;
+            self.embedded_track = None;
             self.frame = None;
             return;
         };
+        if !ass::alignment_epoch_valid(source.alignment_epoch) {
+            self.frame = None;
+            self.aligns = None;
+            self.source = 0;
+            self.embedded_track = None;
+            ass::clear();
+            return;
+        }
+        self.embedded_track = embedded_track;
         if self.source != source.id {
             self.source = source.id;
             self.clock = ass_source::Clock::default();
@@ -125,6 +165,7 @@ impl AssSubtitles {
     ) {
         self.now = now;
         self.scene = blend::Scene { luma: Some(luma), hdr: false };
+        self.embedded_track = None;
         if self.source != source.id {
             self.source = source.id;
             self.frame = None;
@@ -147,8 +188,13 @@ impl AssSubtitles {
         }
         let origin = source.origin;
         if let Some(frame) = ass::request_styled(source, clock, viewport.width, viewport.height, coded.0, coded.1, mine) {
-            self.frame = Some(frame);
-            self.frame_origin = origin;
+            if ass::alignment_epoch_valid(frame.alignment_epoch) {
+                self.frame = Some(frame);
+                self.frame_origin = origin;
+            } else {
+                self.retire_stale_alignment();
+                ass::clear();
+            }
         }
     }
 
@@ -156,7 +202,7 @@ impl AssSubtitles {
     /// frame; the live look's painted half, so a colour, opacity, box, shadow or nudge change
     /// owes one too; and the clock while Blend with video is still easing toward its level.
     pub fn fingerprint(&self) -> u64 {
-        let serial = self.frame.as_ref().map_or(0, |f| f.serial);
+        let serial = self.frame.as_ref().filter(|f| ass::alignment_epoch_valid(f.alignment_epoch)).map_or(0, |f| f.serial);
         let look = plx_media::route::subtitle_look();
         let easing = u64::from(look.blend && !self.follower.settled()) * u64::from(self.now);
         serial.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ look.stamp() ^ easing
@@ -168,6 +214,7 @@ impl AssSubtitles {
     pub(super) fn set_frame_serial_for_test(&mut self, serial: u64) {
         self.frame = Some(Arc::new(ass::Frame {
             source_id: self.source,
+            alignment_epoch: None,
             serial,
             width: 0,
             height: 0,
@@ -201,6 +248,7 @@ impl AssSubtitles {
         look: &plx_plex::plex::session::SubtitleLook,
         map: Mapping,
     ) {
+        self.retire_stale_alignment();
         let Some(frame) = self.frame.clone() else {
             if self.source == 0 {
                 clear_textures(&mut self.textures);
@@ -333,6 +381,7 @@ impl AssSubtitles {
         self.bands_serial = 0;
         self.follower.reset();
         self.source = 0;
+        self.embedded_track = None;
         ass::clear();
     }
 
@@ -510,6 +559,21 @@ mod tests {
 
     const BOTTOM: ass::AlignSet = ass::AlignSet { bottom: true, middle: false, top: false };
     const TOP_AND_BOTTOM: ass::AlignSet = ass::AlignSet { bottom: true, middle: false, top: true };
+
+    #[test]
+    fn busy_selection_only_keeps_the_same_embedded_track() {
+        let mut subtitles = AssSubtitles::default();
+        subtitles.source = 7;
+        subtitles.embedded_track = Some(2);
+        assert!(subtitles.may_hold_busy_embedded(2));
+        assert!(!subtitles.may_hold_busy_embedded(3));
+        assert!(!subtitles.may_hold_busy_embedded(-1));
+        subtitles.embedded_track = None; // Sidecar or preview, not this embedded selection.
+        assert!(!subtitles.may_hold_busy_embedded(2));
+        subtitles.embedded_track = Some(2);
+        subtitles.source = 0;
+        assert!(!subtitles.may_hold_busy_embedded(2));
+    }
 
     fn dys_in(
         band: HudBand,

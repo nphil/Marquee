@@ -2483,6 +2483,22 @@ impl Session {
         &self.bazarr
     }
 
+    /// The configured SpeechDock origin, if any. Unrecognised values fail closed on restore.
+    pub fn speechdock_origin(&self) -> &str {
+        self.extensions.0.get("speechdock_origin").and_then(Value::as_str).unwrap_or("")
+    }
+
+    /// Preserve every other session field when saving or clearing the origin.
+    pub fn with_speechdock_origin(&self, origin: &str) -> Self {
+        let mut next = self.clone();
+        if origin.is_empty() {
+            next.extensions.0.remove("speechdock_origin");
+        } else {
+            next.extensions.0.insert("speechdock_origin".into(), Value::String(origin.into()));
+        }
+        next
+    }
+
     /// The install-wide hero trailer autoplay key: the FALLBACK every profile reads until it picks
     /// its own (`prefs::stored_effective::<TrailerAutoplayPref>` is what a profile sees). No pick
     /// writes it; session creation sets it on.

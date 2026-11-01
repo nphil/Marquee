@@ -1024,6 +1024,7 @@ fn the_player_panels_dim_through_the_container_in_the_neutral_dim_whatever_the_i
     let mut store = plx_data::stores::metadata::MetadataStore::default();
     assert!(store.run(plx_data::stores::metadata::MetadataCmd::InstallPlaying(Some(plx_data::metadata::PlayingItem {
         sid: plx_plex::plex::ServerId::from_raw(0), rk: "rk".into(), show_rk: String::new(), kind: String::new(), audio: Vec::new(), subs: Vec::new(),
+        media_id: None, part_key: String::new(),
         video_fps: 0.0, width: 0, height: 0, bitrate: 0, dovi: Default::default(),
         markers: Vec::new(), chapters: Vec::new(), hdr: false,
     }))));

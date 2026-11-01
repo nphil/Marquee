@@ -792,9 +792,50 @@ pub struct TextScript {
     pub events: String,
     /// How many cues survived (empty, zero-length and clipped-away cues do not).
     pub cues: usize,
+    pub(super) source_cues: Vec<SourceCue>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SourceCue {
+    pub ordinal: u64,
+    pub authored_start_ms: i64,
+    pub authored_end_ms: i64,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub text: String,
+    align: Align,
+    body: String,
+}
+
+impl SourceCue {
+    fn event(&self, body: &str) -> String {
+        format!("Dialogue: 0,{},{},{},,0,0,0,,{}\n",
+            centis(self.start_ms / 10), centis(self.end_ms / 10), style_name(self.align), body)
+    }
 }
 
 impl TextScript {
+    pub(super) fn aligned_events(&self, params: super::reveal::Params, words: &std::collections::BTreeMap<u64, Vec<super::reveal::AlignedWord>>) -> String {
+        let mut events = String::new();
+        for cue in &self.source_cues {
+            let body = match words.get(&cue.ordinal) {
+                Some(words) => {
+                    let relative: Vec<_> = words.iter().map(|w| super::reveal::AlignedWord {
+                        start_byte: w.start_byte, end_byte: w.end_byte,
+                        start_ms: w.start_ms.saturating_sub(cue.start_ms),
+                        end_ms: w.end_ms.saturating_sub(cue.start_ms),
+                    }).collect();
+                    super::reveal::reveal_aligned_body(&cue.body, &cue.text, cue.end_ms - cue.start_ms, params, &relative)
+                }
+                None => {
+                    events.push_str(&super::reveal::reveal_events(&cue.event(&cue.body), params));
+                    continue;
+                }
+            };
+            events.push_str(&cue.event(&body));
+        }
+        events
+    }
     /// The complete script for the viewer's picks.
     pub fn assemble(&self, style: &TextStyle) -> String {
         let mut script = header(style);
@@ -820,7 +861,7 @@ pub fn script_from_vtt(text: &str) -> TextScript {
 fn script_from(text: &str, dialect: TextDialect) -> TextScript {
     let mut cues = Vec::new();
     let mut converted = Vec::new();
-    for cue in file_cues(text) {
+    for (ordinal, cue) in file_cues(text).into_iter().enumerate() {
         if cue.end_ns <= cue.start_ns {
             continue;
         }
@@ -829,10 +870,10 @@ fn script_from(text: &str, dialect: TextDialect) -> TextScript {
             continue;
         };
         cues.push(ClipCue { start: cue.start_ns, end: cue.end_ns, class: c.class(), seq: cues.len() as u32 });
-        converted.push(c);
+        converted.push((ordinal as u64, cue, c));
     }
     let clipped = clip_newest_wins(&cues);
-    let mut lines: Vec<(i64, usize, i64, String)> = Vec::new();
+    let mut lines: Vec<(i64, usize, SourceCue)> = Vec::new();
     for (i, span) in clipped.iter().enumerate() {
         let Some((start, end)) = *span else { continue };
         // Floor to the centisecond (under a frame), then drop what rounding emptied.
@@ -840,18 +881,19 @@ fn script_from(text: &str, dialect: TextDialect) -> TextScript {
         if end_cs <= start_cs {
             continue;
         }
-        let line = format!(
-            "Dialogue: 0,{},{},{},,0,0,0,,{}\n",
-            centis(start_cs),
-            centis(end_cs),
-            style_name(converted[i].align),
-            converted[i].body
-        );
-        lines.push((start_cs, i, end_cs, line));
+        let (ordinal, original, converted) = &converted[i];
+        lines.push((start_cs, i, SourceCue {
+            ordinal: *ordinal, authored_start_ms: original.start_ns / 1_000_000,
+            authored_end_ms: original.end_ns / 1_000_000,
+            start_ms: start_cs * 10, end_ms: end_cs * 10,
+            text: original.text.clone(), align: converted.align, body: converted.body.clone(),
+        }));
     }
     lines.sort_by_key(|l| (l.0, l.1));
     let count = lines.len();
-    TextScript { events: lines.into_iter().map(|l| l.3).collect(), cues: count }
+    let source_cues: Vec<_> = lines.into_iter().map(|l| l.2).collect();
+    let events = source_cues.iter().map(|cue| cue.event(&cue.body)).collect();
+    TextScript { events, cues: count, source_cues }
 }
 
 /// `H:MM:SS.cc` from centiseconds.

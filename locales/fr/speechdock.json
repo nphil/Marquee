@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Service de synchronisation des sous-titres.",
+  "speechdock.copy": "SpeechDock reçoit le son et le texte pour synchroniser les sous-titres anglais. Les autres langues gardent un minutage estimé. Laissez l’adresse vide pour le désactiver.",
+  "speechdock.address_detail": "Origine HTTP(S) uniquement ; effacez pour désactiver.",
+  "speechdock.disabled": "Désactivé",
+  "speechdock.invalid": "Saisissez une origine HTTP(S) sans identifiants, chemin, requête ni fragment.",
+  "speechdock.save_failed": "Impossible d’enregistrer l’adresse."
+}

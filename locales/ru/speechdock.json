@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Сервис синхронизации субтитров.",
+  "speechdock.copy": "SpeechDock получает аудио и текст для выравнивания английских субтитров. Для других языков сохраняется приблизительное время. Пустой адрес отключает сервис.",
+  "speechdock.address_detail": "Только адрес HTTP(S); очистите для отключения.",
+  "speechdock.disabled": "Отключено",
+  "speechdock.invalid": "Введите адрес HTTP(S) без учётных данных, пути, запроса и фрагмента.",
+  "speechdock.save_failed": "Не удалось сохранить адрес."
+}

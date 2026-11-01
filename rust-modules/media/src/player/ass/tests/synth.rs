@@ -11,6 +11,7 @@ use plx_plex::plex::session::{SubtitlePosition, SubtitleSize};
 
 fn text_key() -> Key {
     Key {
+        alignment_epoch: None,
         epoch: 1,
         source_id: 1,
         revision: 1,
