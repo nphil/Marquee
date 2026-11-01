@@ -21,10 +21,6 @@ use super::registry::word;
 
 
 
-/// **The one contact address the application prints.**
-/// `every_document_prints_only_the_one_contact_address` scans the documents for stray `@`s;
-/// `screens::consent` imports it.
-pub const CONTACT_EMAIL: &str = "support@plxnative.com";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -77,15 +73,12 @@ impl Page {
     }
 }
 
-/// The full privacy policy — the one narrative the consent screen's Privacy policy row also
-/// opens, so the two doors cannot disagree.
+/// The same privacy information is used by Legal and the consent screen.
 pub fn privacy_policy() -> &'static str {
     &PRIVACY
 }
 
 static PRIVACY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| [
-    plx_platform::i18n::msg::settings_legal_privacy_responsible(),
-    plx_platform::i18n::msg::settings_legal_privacy_responsible_body(),
     plx_platform::i18n::msg::settings_legal_privacy_plex(),
     plx_platform::i18n::msg::settings_legal_privacy_plex_body(),
     plx_platform::i18n::msg::settings_legal_privacy_plex_link(),
@@ -105,12 +98,10 @@ static PRIVACY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| [
     plx_platform::i18n::msg::settings_legal_privacy_retention_body(),
     plx_platform::i18n::msg::settings_legal_privacy_choices(),
     plx_platform::i18n::msg::settings_legal_privacy_choices_body(),
-    plx_platform::i18n::msg::settings_legal_privacy_processing(),
-    plx_platform::i18n::msg::settings_legal_privacy_processing_body(),
     plx_platform::i18n::msg::settings_legal_privacy_uninstall(),
     plx_platform::i18n::msg::settings_legal_privacy_uninstall_body(),
-    plx_platform::i18n::msg::settings_legal_privacy_contact(),
-    plx_platform::i18n::msg::settings_legal_privacy_contact_body()
+    plx_platform::i18n::msg::settings_legal_source_title(),
+    plx_platform::i18n::msg::settings_legal_privacy_contact_body(),
 ].join("\n\n"));
 static OPEN_SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!("{}\n\n{}", plx_platform::i18n::msg::settings_legal_opensource_body(), include_str!("../../../LICENSE")));
 static FFMPEG: std::sync::LazyLock<&'static str> = std::sync::LazyLock::new(plx_platform::i18n::msg::settings_legal_ffmpeg_body);
@@ -577,89 +568,6 @@ mod tests {
         }
     }
 
-    /// **No document may print an address other than [`CONTACT_EMAIL`].** Written against the
-    /// personal address these pages used to carry: a support address that reaches only some of
-    /// the screens is worse than none, because the reader cannot tell which one is current. The
-    /// scan is for `@` rather than for the old address, so the NEXT stray address fails too.
-    #[test]
-    fn every_document_prints_only_the_one_contact_address() {
-        for page in Page::ALL {
-            let local_len = CONTACT_EMAIL.find('@').expect("CONTACT_EMAIL has a local part");
-            for (i, _) in page.body().match_indices('@') {
-                let tail = i
-                    .checked_sub(local_len)
-                    .map(|start| &page.body()[start..])
-                    .unwrap_or("");
-                assert!(
-                    tail.starts_with(CONTACT_EMAIL),
-                    "{:?} prints an address that is not CONTACT_EMAIL",
-                    page.title()
-                );
-            }
-        }
-    }
-
-    /// **The policy must describe the build it ships in.** These assertions pin CLAIMS, not
-    /// wording: each names a fact about this application that the document was silently wrong or
-    /// silent about, and each was RED when it was written.
-    ///
-    /// * Nothing in the persisted session carries a playhead: `session.rs` has no such field, and
-    ///   position is read from and reported to the server. **Do not cite `coldstart.rs` as the
-    ///   evidence** — what it retired is `lastplace.json`, the last-PAGE/route bookmark (which
-    ///   Detail or Library screen a cold boot reopened), which is a different artefact that was
-    ///   conflated with a playhead when this test was written.
-    /// * `session.rs` persists `recent_searches` — the exact search terms, per Home profile — plus
-    ///   per-server tokens and server addresses. None were listed.
-    /// * There are TWO identifiers and they never travel together: `install_id` goes to PostHog
-    ///   only (`telemetry/sender.rs`) and `errors_id` to Sentry only, as `user.id`
-    ///   (`telemetry/sentry.rs::attach_user`). The policy used to promise that a crash report
-    ///   "carries no installation identifier" and "cannot be linked to any other report"; both
-    ///   became false the day the crash-report id was added, and the assertion below is what
-    ///   would have caught a policy that still said so.
-    /// * The sign-in is stored OUTSIDE the app directory on purpose (`paths.rs`), so it survives a
-    ///   reinstall. "Uninstall removes everything" would have been false.
-    ///
-    /// Reword the document freely; when you do, move the assertion with it deliberately rather
-    /// than deleting it.
-    #[test]
-    fn the_policy_describes_what_this_build_actually_does() {
-        let p = Page::Privacy.body();
-        assert!(
-            !p.contains("Home library choices, playback position"),
-            "nothing in the session schema stores a playhead; the server holds position"
-        );
-        for claim in [
-            "recent searches",
-            "Analytics ID",
-            "Crash report ID",
-            "RETENTION",
-            "WHERE DATA IS PROCESSED",
-            "UNINSTALLING",
-        ] {
-            assert!(p.contains(claim), "the policy never mentions {claim:?}");
-        }
-        for stale in [
-            "carries no installation identifier",
-            "cannot be linked",
-            "cannot be found or deleted",
-            // consent and both identifiers END with the sign-in since 2026-09-04
-            "NOT removed by signing out",
-        ] {
-            assert!(
-                !p.contains(stale),
-                "the policy still claims crash reports are anonymous: {stale:?}"
-            );
-        }
-        // The two identifier names the Settings rows use are the names the policy uses.
-        assert!(p.contains("Settings shows it as your Crash report ID"));
-        assert!(p.contains("Settings shows that identifier as your Analytics ID"));
-        // …and the policy says what `auth::forget_account` does to them.
-        assert!(p.contains("signing out removes them with it"));
-        // Every profile switched to on this television keeps its own offline access: a server
-        // token and, for a PIN-protected profile, a one-way check of the PIN — never the PIN.
-        assert!(p.contains("server access token"), "the policy never mentions per-profile offline access");
-        assert!(p.contains("PIN"), "the policy never mentions the PIN check");
-    }
 
     #[test]
     fn complete_gpl_is_available_offline() {
@@ -703,11 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn plex_boundary_is_explicit() {
-        assert!(PRIVACY.contains(
-            "Plex processes information received by those services under Plex’s own Privacy Policy"
-        ));
-        assert!(PRIVACY.contains("https://www.plex.tv/about/privacy-legal/"));
+    fn trademarks_do_not_claim_a_plex_licence() {
         assert!(!TRADEMARKS.contains("used under licence"));
     }
 

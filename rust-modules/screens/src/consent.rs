@@ -41,7 +41,6 @@ use super::registry::{alert_index, band_index, word, AppFx, ConsentCmd, LoopReq,
 
 // ---- the words -------------------------------------------------------------------------------
 
-use super::legal::CONTACT_EMAIL;
 
 /// Should the app put the sign-in's question on screen?
 ///
@@ -1411,19 +1410,7 @@ fn preview() -> String {
     preview_crash() + &preview_usage()
 }
 
-/// The privacy policy this screen's Information section opens — **`ui::legal`'s document, not a
-/// copy of it.** The row promises "the complete PlxNative privacy policy for this build", and the
-/// only text that can keep that promise is the one the Legal notices index shows under the same
-/// name.
-///
-/// It WAS a second literal here, and the two had drifted: this one had no `ON THIS TELEVISION`
-/// section at all, so the door that described its document as complete opened the one omitting
-/// what the app stores locally and what deleting it does. Nothing checks one `&'static str`
-/// against another, which is why the guard is a test
-/// (`both_privacy_policy_doors_open_the_same_document`) rather than a comment asking the next
-/// editor to change two places.
-/// The Analytics ID document — the identifier itself, what it is attached to, and the one process
-/// that can act on a deletion request.
+/// The Analytics ID document reads the stored identifier rather than an uncommitted draft.
 ///
 /// **It reads the STORED consent rather than the draft.** The draft is what the toggles currently
 /// show, which may be an answer the person has not committed yet; the identifier that has actually
@@ -1435,8 +1422,8 @@ fn preview() -> String {
 /// ever turned back on, so "off" really does mean the old handle is gone.
 fn analytics_id_document() -> String {
     match consent::current().and_then(|c| c.install_id).as_deref() {
-        Some(id) => plx_platform::i18n::msg::settings_consent_analytics_present(CONTACT_EMAIL, id),
-        None => plx_platform::i18n::msg::settings_consent_analytics_absent(CONTACT_EMAIL),
+        Some(id) => plx_platform::i18n::msg::settings_consent_analytics_present(id),
+        None => plx_platform::i18n::msg::settings_consent_analytics_absent().to_string(),
     }
 }
 
@@ -1452,8 +1439,8 @@ fn analytics_id_document() -> String {
 /// owed the reason.
 fn errors_id_document() -> String {
     match consent::current().and_then(|c| c.errors_id).as_deref() {
-        Some(id) => plx_platform::i18n::msg::settings_consent_errors_present(CONTACT_EMAIL, id),
-        None => plx_platform::i18n::msg::settings_consent_errors_absent(CONTACT_EMAIL),
+        Some(id) => plx_platform::i18n::msg::settings_consent_errors_present(id),
+        None => plx_platform::i18n::msg::settings_consent_errors_absent().to_string(),
     }
 }
 

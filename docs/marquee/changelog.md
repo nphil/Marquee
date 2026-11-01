@@ -7,6 +7,7 @@
 - Dialogue enhancement rejects unusable audio decisions and restores the previous playback route if the replacement fails.
 - The first Left or Right press opens a scene-thumbnail seek preview; OK seeks and Back cancels. Instant D-pad seeking remains optional.
 - The hold-menu deletes movies, episodes and whole shows after confirmation, with Plex Watchlist cleanup and explicit partial-failure reporting.
+- About, support and privacy notices use fork links and current data disclosures.
 
 ## 0.9.3
 

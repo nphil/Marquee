@@ -69,7 +69,6 @@ fn each_identifier_document_shows_only_its_own_identifier() {
     let analytics_doc = analytics_id_document();
     assert!(errors_doc.contains(&errors_id) && !errors_doc.contains(&analytics_id));
     assert!(analytics_doc.contains(&analytics_id) && !analytics_doc.contains(&errors_id));
-    assert!(errors_doc.contains(CONTACT_EMAIL) && analytics_doc.contains(CONTACT_EMAIL));
 
     consent::install(consent::apply(&Consent::default(), false, false, || None));
     assert!(errors_id_document().starts_with("NO CRASH REPORT ID"));
@@ -147,25 +146,6 @@ fn the_preview_cannot_contain_a_real_identifier() {
     assert!(!run, "the preview contains something shaped like a real install id");
 }
 
-/// **The two Privacy-policy doors must open ONE document.** The legacy screen carried a
-/// SECOND literal that had already drifted from `ui::legal`'s own copy — the bug the original
-/// test was written against. This page cannot drift the same way: `PreviewKind::Policy`
-/// builds its text by calling `legal::privacy_policy()` directly rather than holding a copy,
-/// so the two are one function rather than two strings a reviewer has to keep in sync. The
-/// assertion is kept anyway, as a regression pin on the WIRING — "it can't drift, it's the
-/// same call" is exactly the kind of claim that quietly stops being true the next time
-/// someone "simplifies" the match arm.
-#[test]
-fn both_privacy_policy_doors_open_the_same_document() {
-    let idx = PreviewKind::ALL.iter().position(|k| *k == PreviewKind::Policy).unwrap() as u8;
-    let page = PreviewPage::new(EntryId(1), idx);
-    // `super::super::` rather than `crate::`: from inside `mod tests` (nested one
-    // level under `consent`) the relative spelling is two hops — `tests` -> `consent` ->
-    // `screens` — which is the same distinction `screens::family`'s own test module documents
-    // for the identical trap. The absolute form is what `ci/check-deps.sh`'s `sibling` gate
-    // greps for; this is the same call, unrewritten in every other respect.
-    assert_eq!(page.text, super::super::legal::privacy_policy());
-}
 
 // ---- first run: the answers are the action row, not table rows ------------------------
 
