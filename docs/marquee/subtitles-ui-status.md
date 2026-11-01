@@ -4,14 +4,14 @@
 
 Stable 0.10.0 is installed on `192.168.1.242` (webOS 10.2.1, platform `o22n2`). The existing
 installer and payload deployment retained `com.beb.plxnative` and its storage identity; all 54
-deployed files matched. The runtime code is from `7531f3c0`, with package metadata from `572946d9`.
+deployed files matched. Runtime build `25c0c7be` identifies Marquee and the fork repository in About.
 The versioned IPK and `marquee-latest.ipk` are staged in `/data/home/Marquee-release/`.
 
-The focused host run passed 93 checks; ARM ELF and package checks passed. On the TV, the stored
-account opened Profiles and Home, remote navigation reached Settings, native keyboard text reached
-the Bazarr address draft, and Test connection reported Bazarr 1.6.2 connected. The key remained masked.
-The movie hold-menu displayed Delete; no deletion was submitted. Instant D-pad seeking is Off for the
-active profile. Playback and actual media deletion were not tested.
+The initial focused feature run passed 93 checks; four privacy identifier/preview-isolation checks
+also passed. ARM ELF and package checks passed for the installed build. The stored account opened
+Profiles, Home, Settings and About. Native keyboard input and Bazarr 1.6.2 connectivity were observed;
+the key remained masked. The movie hold-menu displayed Delete; no deletion was submitted. Instant
+D-pad seeking is Off for the active profile. Playback and actual media deletion were not tested.
 
 ## Proven local paths
 
@@ -22,6 +22,23 @@ active profile. Playback and actual media deletion were not tested.
   `make ... run` uses the stored account without embedding a Plex token.
 - Capture this webOS 10 set with `python3 /tmp/lt/shot.py NAME 1920 1080`; the repository capture
   script uses an older service and macOS tooling. `/tmp/lt/kb.py` is the proven SSAP remote helper.
+
+## Frame pacing and hardware
+
+Active Marquee navigation measured about 60 display flips/s at the compositor’s default divider,
+and 119.7/s at runtime `refresh 120`, with an 8.3 ms 99th-percentile interval during steady motion.
+Short 120 Hz samples still contained one missed interval during horizontal navigation and four
+when entering new rows. Idle-to-active boundaries are not animation drops. The client frame callback
+is acknowledged at commit; its FPS counter does not prove unique pictures reached the display.
+
+Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
+A measured late frame combined native texture/GPU work with a preceding 4.1 ms hidden-shell GPU job;
+the shell job alone is not established as the cause. Do not change callback policy or force GPU
+synchronization to diagnose it: the existing scheduler trace and compositor ring are sufficient first.
+
+The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
+path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in
+the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the panel’s video clock.
 
 ## Input and private configuration
 
