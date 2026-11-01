@@ -17,10 +17,14 @@ The earlier `marquee-0.10.0-37d8d0f4-rollback.ipk` is also retained.
 The 2026-11-01 12:32 EST handoff records successful root `Active Standby` JSON before and after
 the copy. The same app-only lease was released, with the local mirror absent and its remote token
 gone. No launch, wake, power, picture, refresh, compositor or tracing command accompanied the deploy.
-The TV window was returned to LumaTV; no further Marquee device window is pending.
-The last on-screen-accepted runtime remains `fce9888a`; current TV Hz, app-jail counter access,
-live alignment and the new runtime are not verified. Earlier captures are `/tmp/lt/marquee-fce-*.png`
-and scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
+LumaTV subsequently released its separately authorized native-platform window. The next Marquee
+acceptance attempt verified a fresh own lease and read power Active, but foreground `netflix` was
+IN USE. It stopped before launch, input, screenshots or settings changes, preserving Active power
+and the intentionally unmuted receiver. Release verified the local mirror absent and own remote
+token gone. Evidence: `/data/home/tmp/marquee-native-acceptance-20261101.json`. No device job remains.
+The last on-screen-accepted Marquee runtime remains `fce9888a`; current TV Hz, app-jail counter
+access, live alignment and the new runtime are unverified. Earlier captures are
+`/tmp/lt/marquee-fce-*.png` and scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
 
 The deployed Stats change samples native `osd_irq` counts off the UI thread only while the overlay
 is visible, showing approximate Hz under `measured display sync`. Video-source rate and returned
@@ -96,7 +100,20 @@ overlapping submissions; its GPU-busy totals are not causal evidence for this ca
 passive identity-observation window must be separately coordinated; repeating scheduler-only
 capture cannot establish the missing buffer/fence links. Preserve native COMMIT callbacks.
 
-Automatic foreground-only 120 Hz is not installed. The single approved R2 platform attempt stopped
+LumaTV's final native-platform handoff reports persistent enabled/live/UI-ready and zero failures,
+with compositor SHA-256 `d19adcfec0d2edefc41de322b7a7f6c23e805362c5f78fe6ddf76aa213701da9`,
+UI `b622a6764c1cd23658ed49f3fe5162efcce334345a09624c0c8552d8ef3ddd06` and surface manager
+`f9625a8a57d9a226647c94065cc06c4ee11072bbd428935e6ba01cc0c7b3134d`. Its reported control
+target was 120 Hz, with an earlier approximately 119.9 Hz measurement, not a zero-stutter guarantee.
+Focused recovery checks passed; the full old gate exited 1, followed by a narrow checker fix and
+43 passing checks, not a full rerun. Native Home proof is
+`/data/home/tmp/lumatv-ui-proof.68u1vel0/native-final.png`. Marquee typing, Stats, main-output
+telemetry and SpeechDock activation were not accepted in that platform window.
+
+The following R2/R3/R4 notes are historical legacy-path evidence, not remaining installation steps
+or authority to replay a packet. The later native pair has the separate pins above.
+
+The legacy f5 foreground-only 120 Hz candidate was not installed. Its approved R2 attempt stopped
 in read-only preflight before mutation; R2 and its consumed approval must not be replayed. Its
 observed dispatcher SHA-256 `7631005064da542f26f644ae1b636597e729884c4288d996c027b60185f366cf` matches
 the accepted wrapper-package verification record and the review-only dispatcher reference.
@@ -168,9 +185,9 @@ within a compatible scoped entry; the broader wake/trial/coldboot workflow is ou
 No platform mutation occurred; runtime 120 Hz remains temporary rather than persistent.
 
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
-A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
-the shell job alone is not established as the cause. Do not change callback policy or force GPU
-synchronization. The bounded ring and scheduler trace do not yet link app buffers to display flips.
+The approximately 4.134 ms compositor submission-to-completion span is not exclusive hidden-shell
+GPU execution or proof of its causality. Preserve callback policy without forced GPU synchronization.
+The bounded ring and scheduler trace do not yet link app buffers to display flips.
 
 The native Qt-host default-GPU-wallpaper probe reported unchanged settled counters over 14–18 s:
 Home frameSwapped 109→109, system 8→8 and nested frameTick 61→61, with hostActive false and
@@ -230,7 +247,7 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 
 ## Speech timing and render provenance
 
-The deployed `c5199efd` client includes the isolated SpeechDock source return
+The deployed `2b12924e` client includes the isolated SpeechDock source return
 `1b0e4e5c3ea32f38f94525aca7a89457f9dec963` and final renderer/source fences, but audio alignment
 is not activated on the TV. Estimated word timing remains the fallback; authored ASS karaoke keeps
 its timings.
@@ -271,7 +288,8 @@ broad film-accuracy certification, and no guards or authored bounds were relaxed
 `source_revision` can accompany estimated cues and is not proof of aligned words; estimated cues
 must clear earlier alignment. Changed-source validation returns `estimated`, `words: []` and a null
 source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
-`/data/home/tmp/speechdock-alignment-production`. TV activation still requires a quiet-safe app window.
+`/data/home/tmp/speechdock-alignment-production`. TV activation awaits an available app-only window;
+the latest attempt stopped at Netflix IN USE without changing the Address.
 
 All 19 sampled cues passed source verification: 17 failed independent exact greedy lexical
 equality, one failed the acoustic score, and one aligned. Repeated-word rejection accounts for
