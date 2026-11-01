@@ -220,6 +220,13 @@ files with older copies. Use an isolated source worktree and private targets; fi
 follows the main-only convention. `/data/home/Marquee-subs` and its cached targets remain reserved
 for the app deployment lane. No alignment code is included in the installed build.
 
+SpeechDock has accepted the source-only handoff and reports the detached worktree
+`/data/home/Marquee-speechdock-alignment` at `761d7cb571857526809efed657a4d362f36a9847`.
+Its private `CARGO_HOME` is `/data/home/tmp/marquee-speechdock-alignment-cargo`;
+`CARGO_TARGET_DIR` is `/data/home/tmp/marquee-speechdock-alignment-target`. The source return must
+include an isolated patch/revision, backend/client contract and focused local behavior evidence
+before main integration. No TV lease or deployment authority accompanies this accepted handoff.
+
 The merge must retain ABI 6 epoch-fenced renderer readiness, truthful player activation, visual
 modes and authored ASS karaoke. Alignment requests must stay off the UI/playback thread and be
 cancelled or ignored when their owning media/audio/subtitle selection changes. Estimated timing
