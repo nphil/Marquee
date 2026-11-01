@@ -1829,6 +1829,17 @@ fn pointer_on_bar(app: &App, x: f32, y: f32) -> bool {
 pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         park_on_decoder_release(app);
         if playback_may_run(app) {
+            if plx_media::player::engine::take_opus_metadata_refusal(&mut app.adapters.player) {
+                if !super::playback::retry_failed_playback(
+                    &mut app.player.session,
+                    &mut app.adapters.player,
+                    app.bridge.metadata_mut(),
+                    None,
+                    plx_media::player::report::AttemptOrigin::Recovery,
+                ) {
+                    app.player.session.native_start_refused = Some(plx_media::route::StartRefusal::StartFailed);
+                }
+            }
             if is_started() {
                 plx_media::player::pump(&mut app.player.session, &mut app.adapters.player, fr.now);
             }
@@ -2778,7 +2789,7 @@ fn finish_landed_play(app: &mut App, resume_prepared: bool) {
     // A preview is the exception: the detail page stays mounted, and an off-route
     // engine is the feature, not a violation.
     if resume_prepared {
-        let outcome = plx_media::player::start_bufferfeed_tracked(
+        let outcome = plx_media::player::engine::start_cold_bufferfeed_tracked(
             &mut app.player.session,
             &mut app.adapters.player,
         );
@@ -2786,6 +2797,22 @@ fn finish_landed_play(app: &mut App, resume_prepared: bool) {
         // Queued behind the previous object's `Unload`: not started yet, so not admitted yet.
         let deferred = outcome == plx_media::player::BufferfeedStartOutcome::Deferred;
         let preview = plx_media::route::is_preview(&app.player.session);
+        if !started && !preview && !app.player.session.jail_load_blocked {
+            let can_recover = app.player.session.native_start_refused.is_none()
+                && plx_media::route::start_requested_enhancement(&app.player.session);
+            if can_recover && super::playback::retry_failed_playback(
+                &mut app.player.session,
+                &mut app.adapters.player,
+                app.bridge.metadata_mut(),
+                None,
+                plx_media::player::report::AttemptOrigin::Recovery,
+            ) {
+                return;
+            }
+            if app.player.session.native_start_refused.is_none() {
+                app.player.session.native_start_refused = Some(plx_media::route::StartRefusal::StartFailed);
+            }
+        }
         if started && !matches!(app.route(), AppArg::Player) && !preview {
             log("pump_play: engine started off-route → restoring AppArg::Player");
             // The page is being taken off screen by a LANDING, not by a navigation. It
@@ -4854,6 +4881,95 @@ mod lifecycle_regression_tests {
              "Media":[{"videoCodec":"h264","audioCodec":"aac",
              "Part":[{"id":2,"key":"/library/parts/2/file.mkv"}]}]}]}}"#
         }
+    }
+
+    struct EnhancementPrefs {
+        audio: plx_plex::plex::AudioEnhancements,
+        quality: plx_media::route::Quality,
+    }
+
+    impl Drop for EnhancementPrefs {
+        fn drop(&mut self) {
+            plx_media::player::restore_audio_enhancements(self.audio);
+            plx_media::route::restore_quality(self.quality);
+        }
+    }
+
+    fn cold_enhancement_start_refusal(plain_also_refused: bool, opus_metadata_failure: bool) {
+        use plx_plex::plex::{AudioEnhancements, serverinfo::Subscription};
+        let _serial = plx_base::testlock::serial();
+        let _prefs = EnhancementPrefs {
+            audio: plx_media::player::audio_enhancements(),
+            quality: plx_media::route::quality(),
+        };
+        let Some(mut rig) = Rig::serving_with(move |request| {
+            if request.contains("/decision?") && !request.contains("hasMDE=1") {
+                let codec = if opus_metadata_failure { "opus" } else { "ac3" };
+                return format!(r#"{{"MediaContainer":{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":1,"codec":"h264","decision":"copy"}},{{"streamType":2,"codec":"{codec}","decision":"transcode"}}]}}]}}]}}]}}}}"#);
+            }
+            queue_body(request, true).replace("aac", "ac3")
+                .replace("\"codec\":\"ac3\",\"selected\":true", "\"codec\":\"ac3\",\"selected\":true,\"channels\":2,\"canNormalizeLoudness\":true")
+        }) else { panic!("fixture worker could not start") };
+        plx_plex::plex::client_for(rig.sid).unwrap().set_link(plx_plex::plex::probe::Location::Local);
+        plx_plex::plex::serverinfo::store_for_test(rig.sid, Subscription::Yes, "1.43.4");
+        plx_media::route::restore_quality(plx_media::route::Quality::Original);
+        let requested = AudioEnhancements { boost_dialog: true, normalize_loudness: false };
+        plx_media::player::restore_audio_enhancements(requested);
+        rig.request();
+        assert!(plx_media::route::arm_play_resume(&mut rig.app.player.session, 17_000_000_000));
+        rig.resolve();
+        assert!(plx_media::route::start_requested_enhancement(&rig.app.player.session), "fixture must resolve an enhanced route");
+        if !opus_metadata_failure {
+            assert_eq!(plx_media::route::cur_enhancement_label(&rig.app.player.session), Some("applied"));
+            // Missing URL produces a synchronous refusal before an Engine exists.
+            plx_media::route::clear_url(&mut rig.app.player.session);
+            finish_landed_play(&mut rig.app, true);
+        } else {
+            // The fixture serves JSON instead of media, so the Opus output metadata never arrives.
+            finish_landed_play(&mut rig.app, true);
+            assert!(rig.app.adapters.player.is_live(), "the enhanced attempt must launch first");
+            let mut fr = Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view());
+            poll_until("Opus metadata refusal did not trigger recovery", || {
+                unsafe { playback_tick(&mut rig.app, &mut fr); }
+                plx_media::route::play_pending()
+            });
+        }
+        assert!(plx_media::route::play_pending(), "the failed enhanced start must start a fresh resolve");
+        assert_eq!(plx_media::route::unpresented_resume_ns(&rig.app.player.session), 17_000_000_000);
+        assert_ne!(plx_media::player::state(&rig.app.player.session), plx_media::player::PlaybackState::Error);
+        poll_until("plain retry did not land", || {
+            plx_media::route::pump_play(&mut rig.app.player.session, rig.app.bridge.metadata_mut()).is_some()
+        });
+        assert!(!plx_media::route::start_requested_enhancement(&rig.app.player.session));
+        assert_eq!(plx_media::route::unpresented_resume_ns(&rig.app.player.session), 17_000_000_000);
+        assert_eq!(plx_media::route::cur_enhancement_label(&rig.app.player.session), Some("start_failed"));
+        assert_eq!(plx_media::player::audio_enhancements(), requested, "recovery must not change the preference");
+        assert!(!plx_media::route::url(&rig.app.player.session).contains("boostDialog"));
+        if plain_also_refused {
+            plx_media::route::clear_url(&mut rig.app.player.session);
+            finish_landed_play(&mut rig.app, true);
+            assert_eq!(plx_media::player::state(&rig.app.player.session), plx_media::player::PlaybackState::Error);
+            assert!(!plx_media::route::play_pending(), "a refused plain start must not retry again");
+        } else {
+            finish_landed_play(&mut rig.app, true);
+            assert!(rig.app.adapters.player.is_live(), "the plain route must reach the player");
+            assert!(!plx_media::route::play_pending());
+        }
+    }
+
+    #[test]
+    fn cold_enhanced_start_refusal_retries_plain_at_the_resume_point() {
+        cold_enhancement_start_refusal(false, false);
+    }
+
+    #[test]
+    fn cold_enhanced_and_plain_start_refusals_end_in_error() {
+        cold_enhancement_start_refusal(true, false);
+    }
+
+    #[test]
+    fn cold_enhanced_opus_metadata_refusal_retries_plain() {
+        cold_enhancement_start_refusal(false, true);
     }
 
     struct Rig {

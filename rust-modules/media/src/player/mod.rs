@@ -1144,6 +1144,9 @@ fn runtime_failure(
 /// The cause the worker signals publish right now: what [`error_now`] reads while an Engine is up,
 /// and what a failed Engine freezes into the session as it is released.
 fn live_runtime_failure(ps: &crate::route::PlaybackSession) -> RuntimeFailure {
+    if ps.native_start_refused == Some(crate::route::StartRefusal::StartFailed) {
+        return RuntimeFailure::Unknown;
+    }
     if ps.native_start_refused == Some(crate::route::StartRefusal::ReleaseTimeout) {
         return RuntimeFailure::ReleaseTimeout;
     }

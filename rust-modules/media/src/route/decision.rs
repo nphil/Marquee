@@ -115,6 +115,8 @@ struct RetryContext {
 /// Why the last native start was refused with no Engine built ([`PlaybackSession::native_start_refused`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartRefusal {
+    /// Start preparation failed before an Engine was created.
+    StartFailed,
     /// A timed-out Load is still inside `sf_load` (an `AbandonedLoad` owns the one native object).
     LoadTimeout,
     /// The previous object's off-frame `Unload` outlived `player::release::RELEASE_DEADLINE`.
@@ -530,6 +532,8 @@ pub struct PlaybackSession {
 /// `apply_plan` beside `cur_contract` — written only after a decision, never at the selection (I9).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(super) enum EnhancementOutcome {
+    /// The enhanced stream could not start; playback recovered without it.
+    StartFailed,
     #[default]
     Off,
     /// Remux, the audio decision was a transcode, and the source codec is in the profile's own
@@ -6329,6 +6333,11 @@ pub fn applied_audio_enhancements(ps: &PlaybackSession) -> plx_plex::plex::Audio
         plx_plex::plex::AudioEnhancements::NONE
     }
 }
+
+/// Whether the failed start actually requested enhancement, regardless of its verdict.
+pub fn start_requested_enhancement(ps: &PlaybackSession) -> bool {
+    ps.cur_contract.audio.any()
+}
 /// **Narrow diagnostics accessor** — deliberately not `pub fn cur_enhancement`, which would
 /// widen [`EnhancementOutcome`] itself past `pub(super)` for one read-only caller. `None` for
 /// `Off` (nothing to report); otherwise the wire word `app::diagnostics::route_line` appends as
@@ -6342,6 +6351,7 @@ pub fn cur_enhancement_label(ps: &PlaybackSession) -> Option<&'static str> {
         EnhancementOutcome::Applied => Some("applied"),
         EnhancementOutcome::Unverified => Some("unverified"),
         EnhancementOutcome::Refused => Some("refused"),
+        EnhancementOutcome::StartFailed => Some("start_failed"),
     }
 }
 
@@ -8738,8 +8748,11 @@ fn request_play_with_queue(
         // catch_unwind OUTSIDE the mailbox write, like `metadata::finish_season_job`: a panicking
         // resolve must still land (as !ok) or PLAY_BUSY latches and the screen wedges on a spinner
         // forever.
-        let plan = std::panic::catch_unwind(|| build_stream(off, &rk, &part, &vc, &ac, &env))
+        let mut plan = std::panic::catch_unwind(|| build_stream(off, &rk, &part, &vc, &ac, &env))
             .unwrap_or_else(|_| Plan { direct_play_mode: env.direct_play_mode, ..Default::default() });
+        if retry.is_some_and(|r| r.suppress_enhancement) {
+            plan.enhancement = EnhancementOutcome::StartFailed;
+        }
         let landing = PlayLanding {
             gen,
             trace_generation,

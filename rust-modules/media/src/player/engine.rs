@@ -249,6 +249,11 @@ pub struct Engine {
     pub source: Source,
     pub stream_th: Option<std::thread::JoinHandle<()>>,
     pub load_th: Option<std::thread::JoinHandle<()>>,
+    opus_start_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    opus_metadata_refused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    opus_metadata_waiting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    opus_payload_owner: std::sync::Arc<std::sync::OnceLock<std::ffi::CString>>,
+    opus_recovery_armed: bool,
     pub report_th: Option<std::thread::JoinHandle<()>>, // /:/timeline progress reporter
     pub report_stop: Option<std::sync::Arc<threads::ReportStop>>, // ITS stop signal, not SHARED's
     /// Preview Load that must land unbound. The media join waits until the thread has returned.
@@ -265,6 +270,33 @@ pub struct Engine {
 impl Engine {
     pub fn uses_stream_queues(&self) -> bool {
         matches!(self.source, Source::Stream)
+    }
+
+    pub(super) fn defer_opus_metadata_failure(&self) -> bool {
+        self.opus_recovery_armed && self.opus_metadata_waiting.load(Ordering::Acquire)
+    }
+
+    pub(super) fn opus_metadata_refused(&self) -> bool {
+        self.opus_metadata_refused.load(Ordering::Acquire)
+    }
+}
+
+/// Arm only the cold enhanced attempt; an Engine replacement drops its recovery ownership.
+pub fn arm_opus_metadata_recovery(pa: &mut super::adapter::PlayerAdapter, attempt: crate::route::RouteStartAttempt) -> bool {
+    let Some(engine) = pa.engine() else { return false; };
+    if engine.route_start != attempt { return false; }
+    engine.opus_recovery_armed = true;
+    true
+}
+
+/// Consume the pre-Load metadata refusal for the armed Engine, once.
+pub fn take_opus_metadata_refusal(pa: &mut super::adapter::PlayerAdapter) -> bool {
+    let Some(engine) = pa.engine() else { return false; };
+    if engine.opus_recovery_armed && engine.opus_metadata_refused.swap(false, Ordering::AcqRel) {
+        engine.opus_recovery_armed = false;
+        true
+    } else {
+        false
     }
 }
 
@@ -388,6 +420,7 @@ pub struct AbandonedLoad {
     load_th: std::thread::JoinHandle<()>,
     /// The Load payload `sf_load` was handed as a raw pointer. Must outlive the thread.
     _payload: std::ffi::CString,
+    _opus_payload: std::sync::Arc<std::sync::OnceLock<std::ffi::CString>>,
     abandoned_at: std::time::Instant,
 }
 
@@ -561,7 +594,7 @@ fn run_release_effects(
                 }
             }
             E::Start(q) if may_start => {
-                let launched = match start_bufferfeed_for(ps, pa, q.route_start) {
+                let launched = match start_bufferfeed_for(ps, pa, q.route_start, q.cold_enhancement) {
                     BufferfeedStartOutcome::Launched(attempt) => Some(attempt),
                     _ => None,
                 };
@@ -1230,53 +1263,49 @@ fn audio_declaration(codec: &str, pcm: Option<&crate::route::PcmFormat>) -> Opti
     audio_payload_codec(codec)
 }
 
-/// RFC 7845 §5.1 `OpusHead` as libopus's surround encoder writes it: mapping family 0 for mono and
-/// stereo, family 1 (Vorbis channel order) for 3-8 channels, pre-skip 312, 48 kHz, 0 dB gain.
-/// The Load is built before the demuxer opens the file, so the file's own CodecPrivate is not
-/// available here; a 5.1 Opus track of a real library carries exactly this header (see the test).
-fn opus_head(channels: i64) -> Option<Vec<u8>> {
-    // (streams, coupled streams, channel mapping) for 3..=8 channels — libopus `vorbis_mappings`.
-    const FAMILY1: [(u8, u8, &[u8]); 6] = [
-        (2, 1, &[0, 2, 1]),
-        (2, 2, &[0, 1, 2, 3]),
-        (3, 2, &[0, 4, 1, 2, 3]),
-        (4, 2, &[0, 4, 1, 2, 3, 5]),
-        (4, 3, &[0, 4, 1, 2, 3, 5, 6]),
-        (5, 3, &[0, 6, 1, 2, 3, 4, 5, 7]),
-    ];
-    let ch = u8::try_from(channels).ok().filter(|c| (1..=8).contains(c))?;
-    let mut head = b"OpusHead".to_vec();
-    head.extend_from_slice(&[1, ch]);
-    head.extend_from_slice(&312u16.to_le_bytes());
-    head.extend_from_slice(&48_000u32.to_le_bytes());
-    head.extend_from_slice(&0u16.to_le_bytes());
-    if ch <= 2 {
-        head.push(0);
-    } else {
-        let (streams, coupled, mapping) = FAMILY1[usize::from(ch) - 3];
-        head.extend_from_slice(&[1, streams, coupled]);
-        head.extend_from_slice(mapping);
+/// Declare exactly the selected stream's Opus identification header, including its mapping and pre-skip.
+fn with_opus_info(p: &str, channels: i64, head: &[u8]) -> Option<String> {
+    let ch = usize::try_from(channels).ok().filter(|n| (1..=8).contains(n))?;
+    if head.len() < 19 || &head[..8] != b"OpusHead" || head[8] == 0 || head[8] > 15 || usize::from(head[9]) != ch {
+        return None;
     }
-    Some(head)
-}
-
-/// The `contents.opusInfo` node an `OPUS` Load needs: SMP has no in-band way to learn a
-/// multistream layout, so the channel count and the identification header travel in the payload
-/// (`streamHeader` is standard padded base64, as ss4s sends it).
-/// `None` when the count cannot be described or the payload has no `contents` anchor: the caller
-/// refuses the Load rather than declaring a layout the stream does not have.
-fn with_opus_info(p: &str, channels: i64) -> Option<String> {
-    let head = opus_head(channels)?;
+    match head[18] {
+        0 if ch <= 2 && head.len() == 19 => {},
+        1 if head.len() == 21 + ch => {
+            let streams = head[19];
+            let coupled = head[20];
+            if streams == 0 || coupled > streams || u16::from(streams) + u16::from(coupled) > 255
+                || head[21..].iter().any(|&m| m != 255 && u16::from(m) >= u16::from(streams) + u16::from(coupled))
+            {
+                return None;
+            }
+        },
+        _ => return None,
+    }
     let anchor = r#""provider":"plxnative""#;
     p.contains(anchor).then(|| {
         p.replace(
             anchor,
             &format!(
                 r#"{anchor},"opusInfo":{{"channels":{channels},"sampleRate":48,"streamHeader":"{}"}}"#,
-                plx_base::b64::encode(&head)
+                plx_base::b64::encode(head)
             ),
         )
     })
+}
+
+fn opus_payload_from_output(
+    rx: std::sync::mpsc::Receiver<Option<(i64, Vec<u8>)>>,
+    cancelled: &std::sync::atomic::AtomicBool,
+    base: &str,
+) -> Option<std::ffi::CString> {
+    let (channels, head) = rx.recv().ok().flatten()?;
+    if cancelled.load(Ordering::Acquire) {
+        return None;
+    }
+    let payload = with_opus_info(base, channels, &head)?;
+    log(&format!("start_bufferfeed: opusInfo channels={channels}"));
+    std::ffi::CString::new(payload).ok()
 }
 
 /// **Who owns the PCM a Load declares.** Audio the app decodes at 1x (FLAC, ALAC, LPCM, and a lossy codec the attempt decodes in
@@ -1659,6 +1688,16 @@ pub fn start_bufferfeed(ps: &mut crate::route::PlaybackSession, pa: &mut super::
 /// Foreground recovery uses this to wait for the media-thread result instead of treating thread
 /// creation as proof that the television accepted the payload.
 pub fn start_bufferfeed_tracked(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) -> BufferfeedStartOutcome {
+    start_bufferfeed_tracked_with_recovery(ps, pa, false)
+}
+
+/// Start a cold play, retaining its recovery ownership if native release is still pending.
+pub fn start_cold_bufferfeed_tracked(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) -> BufferfeedStartOutcome {
+    let recover = !crate::route::is_preview(ps) && crate::route::start_requested_enhancement(ps);
+    start_bufferfeed_tracked_with_recovery(ps, pa, recover)
+}
+
+fn start_bufferfeed_tracked_with_recovery(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, cold_enhancement: bool) -> BufferfeedStartOutcome {
     if plx_platform::tv::sandbox::blocks_native_video() {
         ps.jail_load_blocked = true;
         log("start_bufferfeed: refusing native video; affected chassis cannot read /dev/rtkmem");
@@ -1704,7 +1743,7 @@ pub fn start_bufferfeed_tracked(ps: &mut crate::route::PlaybackSession, pa: &mut
         ));
         return BufferfeedStartOutcome::Failed;
     };
-    let outcome = start_bufferfeed_for(ps, pa, route_start);
+    let outcome = start_bufferfeed_for(ps, pa, route_start, cold_enhancement);
     // The refusal for an outstanding abandoned Load builds no Engine, so no pump will ever publish
     // why the player is empty. Record it where `player::state` derives the read-out from; the start
     // itself stays refused.
@@ -1730,6 +1769,7 @@ fn start_bufferfeed_for(
     ps: &mut crate::route::PlaybackSession,
     pa: &mut super::adapter::PlayerAdapter,
     route_start: crate::route::RouteStartTransaction,
+    cold_enhancement: bool,
 ) -> BufferfeedStartOutcome {
     // The last real stop's object may still be inside its off-frame `Unload`. A tail that is ready
     // runs now; one that is not defers this start into the release machine (never a blocking join:
@@ -1739,7 +1779,7 @@ fn start_bufferfeed_for(
     }
     let mut fx = Vec::new();
     pa.release_step(
-        &super::release::ReleaseEvent::StartRequested(super::release::QueuedStart { route_start }),
+        &super::release::ReleaseEvent::StartRequested(super::release::QueuedStart { route_start, cold_enhancement }),
         &mut fx,
     );
     let mut go = false;
@@ -1768,6 +1808,9 @@ fn start_bufferfeed_for(
     }
     match start_bufferfeed_inner(ps, pa, route_start) {
         Ok(attempt) => {
+            if cold_enhancement {
+                arm_opus_metadata_recovery(pa, attempt);
+            }
             // Every start funnels through here (fresh, reload and the rollback's reload alike), so
             // the refusal's read-out ends at the first start that is NOT refused. Clearing it only
             // in `start_bufferfeed_tracked` left a reload landing after a refused fresh start
@@ -2038,18 +2081,7 @@ fn start_bufferfeed_inner(
             // three HEVC cells declared FHD before this read the right flag).
             sink_env = sink_envelope_now(ps, lv);
             let av = build_av_payload(ps, lv.payload_name(), ac, sink_env);
-            stream_payload = if ac == "OPUS" {
-                let channels = crate::route::stream_achannels(ps);
-                let Some(p) = with_opus_info(&av, channels) else {
-                    log(&format!("start_bufferfeed: no Opus layout for {channels} channel(s); refusing the Load"));
-                    SHARED.demux_failed.store(true, Ordering::Release);
-                    return Err(crate::route::RouteStartResult::StartFailed);
-                };
-                log(&format!("start_bufferfeed: opusInfo channels={channels}"));
-                p
-            } else {
-                av
-            };
+            stream_payload = av;
             &stream_payload
         }
     } else if is_h265 {
@@ -2067,6 +2099,17 @@ fn start_bufferfeed_inner(
     // `with_window_id`'s anchor is the composed `"appId":"<id>"`, so the placeholder has to be
     // gone by then.
     let payload_c = std::ffi::CString::new(with_window_id(pa.mt(), &with_app_id(payload_str))).unwrap();
+    let wait_for_opus = stream && audio_declared == "OPUS";
+    let (opus_tx, opus_rx) = if wait_for_opus {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+    let opus_start_cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let opus_metadata_refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let opus_metadata_waiting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(wait_for_opus));
+    let opus_payload_owner = std::sync::Arc::new(std::sync::OnceLock::new());
     if stream {
         // What the payload ACTUALLY declared, once, in the event log. Not test scaffolding: until
         // this line, the only answer to "what did we tell the television this stream was" lived in
@@ -2169,7 +2212,7 @@ fn start_bufferfeed_inner(
             crate::ff::native_audio::reset();
             SHARED.side_subs_owner.store(side_target.is_some(), Ordering::Release);
             stream_th = plx_base::task::spawn_off_frame_keeping("demux", move |off| {
-                crate::ff::demux(off, origin, path, acodec, abr, auto_original, aqp, aqap, hsp)
+                crate::ff::demux(off, origin, path, acodec, abr, auto_original, aqp, aqap, hsp, opus_tx)
             });
             if stream_th.is_none() {
                 SHARED.side_subs_owner.store(false, Ordering::Release);
@@ -2190,8 +2233,31 @@ fn start_bufferfeed_inner(
     // the media thread constructs + loads + runs the loop (owns the GMainContext)
     let payload_ptr = threads::SendPtr(payload_c.as_ptr() as *mut c_char);
     let native_epoch = native_start.epoch();
+    let opus_cancel = opus_start_cancelled.clone();
+    let opus_refused = opus_metadata_refused.clone();
+    let opus_waiting = opus_metadata_waiting.clone();
+    let opus_payload_keepalive = opus_payload_owner.clone();
+    let opus_payload = wait_for_opus.then(|| payload_c.to_string_lossy().into_owned());
     let load_th = plx_base::task::spawn("media", move || {
-        threads::load_thread(payload_ptr, native_epoch, Some(route_attempt), audio_lead)
+        if let (Some(rx), Some(base)) = (opus_rx, opus_payload) {
+            let payload = opus_payload_from_output(rx, &opus_cancel, &base);
+            if opus_cancel.load(Ordering::Acquire) {
+                return;
+            }
+            if let Some(payload) = payload {
+                opus_waiting.store(false, Ordering::Release);
+                let payload = opus_payload_keepalive.get_or_init(|| payload);
+                threads::load_thread(threads::SendPtr(payload.as_ptr() as *mut c_char), native_epoch, Some(route_attempt), audio_lead);
+            } else {
+                log("start_bufferfeed: selected output has no supported Opus layout; refusing the Load");
+                SHARED.mark_native_load_returned(native_epoch, None);
+                crate::route::publish_route_start_result(route_attempt, crate::route::RouteStartResult::StartFailed);
+                opus_refused.store(true, Ordering::Release);
+                SHARED.fail_demux(DemuxExitClass::LoadRefused);
+            }
+        } else {
+            threads::load_thread(payload_ptr, native_epoch, Some(route_attempt), audio_lead);
+        }
     });
     if load_th.is_none() {
         // Without the media thread nothing is ever Loaded and nothing drains the AU queues, so the
@@ -2276,6 +2342,11 @@ fn start_bufferfeed_inner(
         source,
         stream_th,
         load_th,
+        opus_start_cancelled,
+        opus_metadata_refused,
+        opus_metadata_waiting,
+        opus_payload_owner,
+        opus_recovery_armed: false,
         report_th,
         report_stop: Some(report_stop),
         preview_abandon: false,
@@ -2490,7 +2561,7 @@ fn reload_start_outcome(
     pa: &mut super::adapter::PlayerAdapter,
     ticket: crate::route::RouteStartTransaction,
 ) -> ReloadOutcome {
-    if start_bufferfeed_for(ps, pa, ticket).accepted() {
+    if start_bufferfeed_for(ps, pa, ticket, false).accepted() {
         ReloadOutcome::Started
     } else {
         ReloadOutcome::StartFailed
@@ -2519,7 +2590,7 @@ fn reload_transcode_start(ps: &mut crate::route::PlaybackSession, pa: &mut super
     teardown(ps, pa, true); // keep the session; reload mode
     SHARED.disp_base.store(offset_ns, Ordering::Relaxed); // transcode is 0-based at content=offset
     SHARED.playpos_ns.store(offset_ns, Ordering::Relaxed);
-    Some(start_bufferfeed_for(ps, pa, ticket))
+    Some(start_bufferfeed_for(ps, pa, ticket, false))
 }
 
 /// Every target `reload_at` was asked for (test probe, #568): proves a refused native Seek reloads
@@ -2572,7 +2643,7 @@ pub fn reload_at_tracked(ps: &mut crate::route::PlaybackSession, pa: &mut super:
     };
     teardown(ps, pa, true);
     arm_seek(target_ns);
-    start_bufferfeed_for(ps, pa, ticket)
+    start_bufferfeed_for(ps, pa, ticket, false)
 }
 
 /// NATIVE audio-track switch (direct-play, NO transcode): select the Nth audio stream from the
@@ -2800,6 +2871,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     crate::route::begin_engine_teardown(for_reload);
     SHARED.stop_hls_clock();
     let mut eng = pa.take().expect("main-thread live check and take are one transaction");
+    eng.opus_start_cancelled.store(true, Ordering::Release);
     let stream = matches!(eng.source, Source::Stream { .. });
 
     // capture the final-position report BEFORE teardown zeroes playpos/duration (a reload is
@@ -2933,6 +3005,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
             epoch: eng.native_epoch,
             load_th,
             _payload: std::mem::take(&mut eng.payload),
+            _opus_payload: eng.opus_payload_owner.clone(),
             abandoned_at: std::time::Instant::now(),
         });
     } else if !for_reload {
@@ -5315,6 +5388,11 @@ mod prime_livelock_tests {
             source: Source::Stream,
             stream_th: None,
             load_th: None,
+            opus_start_cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            opus_metadata_refused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            opus_metadata_waiting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            opus_payload_owner: std::sync::Arc::new(std::sync::OnceLock::new()),
+            opus_recovery_armed: false,
             report_th: None,
             report_stop: None,
             preview_abandon: false,
@@ -6496,7 +6574,54 @@ mod off_frame_release_tests {
         assert_ne!(crate::player::error_now(&ps).kind, crate::player::FailureKind::ReleaseTimeout);
     }
 
-    /// A stop over a deferred start ends that playback: the queued start must not run after the tail.
+    #[test]
+    fn unenhanced_opus_metadata_refusal_reaches_error_before_sink_ready() {
+        let _serial = plx_base::testlock::serial();
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        let mut pa = arm(&ps);
+        let _cleanup = Cleanup;
+        crate::route::set_url(&mut ps, "http://127.0.0.1:1/missing.mkv");
+        crate::route::set_stream_acodec(&mut ps, "opus");
+        assert!(matches!(start_bufferfeed_tracked(&mut ps, &mut pa), BufferfeedStartOutcome::Launched(_)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while crate::player::state(&ps) != crate::player::PlaybackState::Error {
+            assert!(std::time::Instant::now() < deadline, "metadata refusal left the player connecting");
+            crate::player::pump(&mut ps, &mut pa, 0);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        crate::player::pump(&mut ps, &mut pa, 0);
+        assert_eq!(crate::player::state(&ps), crate::player::PlaybackState::Error);
+        stop_bufferfeed(&mut ps, &mut pa);
+    }
+
+    #[test]
+    fn deferred_cold_enhanced_opus_refusal_keeps_recovery_owner() {
+        let _serial = plx_base::testlock::serial();
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        let mut pa = arm(&ps);
+        let _cleanup = Cleanup;
+        let _release = ReleaseUnloadOnDrop;
+        playing_engine(&mut pa);
+        crate::player::ffi_host::hold_unload_for_test();
+        stop_bufferfeed(&mut ps, &mut pa);
+        crate::route::set_url(&mut ps, "http://127.0.0.1:1/missing.mkv");
+        crate::route::set_stream_acodec(&mut ps, "opus");
+        assert_eq!(start_bufferfeed_tracked_with_recovery(&mut ps, &mut pa, true), BufferfeedStartOutcome::Deferred);
+        assert!(!pa.is_live());
+        crate::player::ffi_host::release_unload_for_test();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            poll_release(&mut ps, &mut pa, std::time::Instant::now());
+            if take_opus_metadata_refusal(&mut pa) { break; }
+            assert!(std::time::Instant::now() < deadline, "deferred start lost its recovery owner");
+            if pa.is_live() { crate::player::pump(&mut ps, &mut pa, 0); }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!take_opus_metadata_refusal(&mut pa), "refusal is consumed once");
+        stop_bufferfeed(&mut ps, &mut pa);
+    }
+
+    /// A stop over a deferred start cancels the queued start.
     #[test]
     fn a_stop_over_a_deferred_start_cancels_it() {
         let mut ps = crate::route::PlaybackSession::IDLE;
@@ -7842,43 +7967,37 @@ mod sink_envelope_tests {
         c.hevc_row = hevc;
         c
     }
-    /// The synthesized header is byte-for-byte the CodecPrivate of a real 5.1 Opus MKV track
-    /// (`ffprobe -show_entries stream=extradata`, libopus surround layout), and stereo is the
-    /// 19-byte family-0 form; a width SMP cannot be told about is refused, not guessed.
     #[test]
-    fn opus_head_matches_a_real_surround_track_and_refuses_unknown_widths() {
-        let real_51: [u8; 27] = [
-            0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x06, 0x38, 0x01, 0x80, 0xbb,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x04, 0x02, 0x00, 0x04, 0x01, 0x02, 0x03, 0x05,
-        ];
-        assert_eq!(opus_head(6).unwrap(), real_51);
-        let stereo = opus_head(2).unwrap();
-        assert_eq!(stereo.len(), 19);
-        assert_eq!(&stereo[8..10], &[1, 2]);
-        assert_eq!(stereo[18], 0, "mapping family 0");
-        for channels in 1..=8 {
-            let h = opus_head(channels).unwrap();
-            assert_eq!(h.len(), if channels <= 2 { 19 } else { 21 + channels as usize });
-        }
-        for bad in [0, -1, 9, 255] {
-            assert_eq!(opus_head(bad), None);
-        }
-    }
-
-    /// An OPUS Load declares the codec and carries exactly one `opusInfo` inside `contents`, and
-    /// the result is still one valid JSON document.
-    #[test]
-    fn an_opus_load_carries_one_opus_info_node() {
-        assert_eq!(audio_payload_codec("opus"), Some(("OPUS", 6)));
+    fn opus_load_uses_selected_header_and_refuses_invalid_or_cancelled_metadata() {
         let ps = crate::route::PlaybackSession::IDLE;
-        let p = with_opus_info(&build_av_payload(&ps, "AV1", "OPUS", ENVELOPE_FHD60), 6).unwrap();
-        assert_eq!(p.matches(r#""opusInfo""#).count(), 1);
-        let v: serde_json::Value = serde_json::from_str(&p).expect("valid JSON");
-        let contents = &v["args"][0]["option"]["externalStreamingInfo"]["contents"];
-        assert_eq!(contents["codec"]["audio"], "OPUS");
-        assert_eq!(contents["opusInfo"]["channels"], 6);
-        assert_eq!(contents["opusInfo"]["streamHeader"], plx_base::b64::encode(&opus_head(6).unwrap()));
-        assert_eq!(with_opus_info(&p, 0), None);
+        let base = build_av_payload(&ps, "AV1", "OPUS", ENVELOPE_FHD60);
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let head = b"OpusHead\x01\x02\x00\x00\x80\xbb\x00\x00\x00\x00\x00".to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Some((2, head.clone()))).unwrap();
+        let payload = opus_payload_from_output(rx, &cancelled, &base).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(payload.as_bytes()).unwrap();
+        let info = &value["args"][0]["option"]["externalStreamingInfo"]["contents"]["opusInfo"];
+        assert_eq!(info["channels"], 2);
+        assert_eq!(info["streamHeader"], plx_base::b64::encode(&head));
+        assert!(with_opus_info(&base, 6, &head).is_none());
+        assert!(with_opus_info(&base, 2, &head[..18]).is_none());
+        let surround = b"OpusHead\x01\x06\x38\x01\x80\xbb\x00\x00\x00\x00\x01\x04\x02\x00\x04\x01\x02\x03\x05";
+        let result = with_opus_info(&base, 6, surround).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let info = &value["args"][0]["option"]["externalStreamingInfo"]["contents"]["opusInfo"];
+        assert_eq!(info["channels"], 6);
+        assert_eq!(info["streamHeader"], plx_base::b64::encode(surround));
+        let mut invalid = surround.to_vec();
+        invalid[21] = 7;
+        assert!(with_opus_info(&base, 6, &invalid).is_none());
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(tx);
+        assert!(opus_payload_from_output(rx, &cancelled, &base).is_none());
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Some((2, head))).unwrap();
+        cancelled.store(true, Ordering::Release);
+        assert!(opus_payload_from_output(rx, &cancelled, &base).is_none());
     }
 
     /// The speed menu offers only what the Load can declare: on a set whose measured H.264 row is

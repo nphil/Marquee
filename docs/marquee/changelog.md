@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.
+
 - Home prepares the next banner's text during idle time, moving cold text work out of banner transitions without redrawing the settled screen.
 
 ## 0.10.0

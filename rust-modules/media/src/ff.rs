@@ -9015,6 +9015,7 @@ pub fn demux(
     aq: SendPtr<AuQueue>,
     aqa: SendPtr<AuQueue>,
     hs: SendPtr<HttpStream>,
+    mut opus_metadata: Option<std::sync::mpsc::Sender<Option<(i64, Vec<u8>)>>>,
 ) {
     PUSHED_ANY.store(false, Ordering::Relaxed);
     *SHARED.side_anchor.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -9038,6 +9039,8 @@ pub fn demux(
         .to_ascii_lowercase()
         .ends_with(".m3u8")
     {
+        // Segmented playback accepts AAC only, not Opus.
+        drop(opus_metadata.take());
         crate::player::log("hls: segmented demux start");
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             hls_demux(off, &origin, &path, &acodec, abr, aq_p, aqa_p, hs_p)
@@ -9371,6 +9374,23 @@ pub fn demux(
                 let streams = (*fmt).streams;
                 let vst = *streams.add(vi as usize);
                 let vcp = stream_codecpar(vst);
+                if let Some(tx) = opus_metadata.take() {
+                    let channels = if ai >= 0 {
+                        let cp = stream_codecpar(*streams.add(ai as usize));
+                        let name = std::ffi::CStr::from_ptr(avcodec_get_name((*cp).codec_id));
+                        if name.to_bytes() == b"opus" && !(*cp).extradata.is_null()
+                            && (19..=276).contains(&(*cp).extradata_size)
+                        {
+                            Some((i64::from((*cp).ch_layout.nb_channels),
+                                std::slice::from_raw_parts((*cp).extradata, (*cp).extradata_size as usize).to_vec()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    let _ = tx.send(channels);
+                }
                 // AAC needs ADTS framing for LG's decoder (mp4/mkv carry raw AAC). Precompute the
                 // per-frame ADTS fields (freq index + channel config) for the selected audio stream;
                 // None => not AAC (or a non-standard rate) => fed verbatim.

@@ -303,7 +303,7 @@ impl DemuxRun {
         let thread = std::thread::spawn(move || {
             let off = plx_base::task::OffFrame::for_test();
             // `acodec` is the Load payload's audio codec: the demuxer feeds the track that matches.
-            demux(&off, origin, "/library/parts/1/file.mkv".into(), "eac3".into(), None, None, vp, ap, hp)
+            demux(&off, origin, "/library/parts/1/file.mkv".into(), "eac3".into(), None, None, vp, ap, hp, None)
         });
         DemuxRun { video, audio, thread: Some(thread), hs }
     }

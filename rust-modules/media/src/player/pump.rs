@@ -1662,6 +1662,18 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
             return;
         }
     }
+    // A rejected Opus header means Load was never called and the sink cannot become ready.
+    if eng.opus_metadata_refused() && SHARED.demux_failed.load(Acquire) {
+        if eng.defer_opus_metadata_failure() {
+            return;
+        }
+        if crate::route::preview_request(ps) {
+            finish_preview_open_failure(ps, pa);
+        } else {
+            fail_engine_for_good();
+        }
+        return;
+    }
     // wait for the media-thread ctor
     if unsafe { super::sink().ready(mt) } == 0 {
         // Same `!eng.preview_abandon` reasoning as the loadCompleted arms below: an abandoned
@@ -1730,6 +1742,10 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         return;
     }
     if SHARED.demux_failed.load(Acquire) && SHARED.frames.load(Relaxed) == 0 {
+        // A cold enhanced start owns this failure until its metadata worker publishes the result.
+        if eng.defer_opus_metadata_failure() {
+            return;
+        }
         if crate::route::preview_request(ps) {
             finish_preview_open_failure(ps, pa);
             return;

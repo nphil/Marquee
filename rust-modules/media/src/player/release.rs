@@ -32,6 +32,7 @@ pub const RELEASE_DEADLINE: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueuedStart {
     pub route_start: crate::route::RouteStartTransaction,
+    pub cold_enhancement: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,11 +120,12 @@ impl NativeRelease {
             // lose the first.
             (_, V::UnloadHandedOff { .. }) => {}
             (S::Idle, V::StartRequested(q)) => fx.push(E::Start(q)),
-            (S::Releasing { epoch, since, queued }, V::StartRequested(q)) => {
+            (S::Releasing { epoch, since, queued }, V::StartRequested(mut q)) => {
                 if let Some(old) = queued {
-                    // The same transaction asked twice is one start; a different one supersedes.
-                    if old != q {
+                    if old.route_start != q.route_start {
                         fx.push(E::AbortSuperseded(old));
+                    } else {
+                        q.cold_enhancement |= old.cold_enhancement;
                     }
                 }
                 self.state = S::Releasing { epoch, since, queued: Some(q) };
@@ -177,7 +179,7 @@ mod tests {
     use super::*;
 
     fn q(serial_from: u64) -> QueuedStart {
-        QueuedStart { route_start: crate::route::RouteStartTransaction::fixture(serial_from) }
+        QueuedStart { route_start: crate::route::RouteStartTransaction::fixture(serial_from), cold_enhancement: false }
     }
 
     fn run(m: &mut NativeRelease, ev: ReleaseEvent) -> Vec<ReleaseEffect> {
