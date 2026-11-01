@@ -117,6 +117,16 @@ idleHold true. Quickpanel and keyboard navigation remained usable. This does not
 TV GPU-slot cause or behavior for video wallpapers and all configurations; hidden-shell production
 code remains unchanged.
 
+The existing C4 graphics research is under
+`/tmp/lumatv-historical-stage.TyUJ9M4D/docs/research/`. In `scanout-research.md:11–22,84–103`,
+OSD1 aliases OSD0 rather than providing a second simultaneously blended graphics layer; LG video
+windows are not general RGBA overlays. Its default-off `--scanout direct` path can omit a GL copy
+for a compatible sole fullscreen client, with composition required when other layers need the screen.
+That archived report leaves on-set display validation pending. `rustui-result.md:65–118` records
+the older Rust-client flip-copy comparison; the upside-down no-copy diagnostic is not proof of a
+viable display path. Check the current baseline before treating these as new optimizations; neither
+report identifies the current two frame gaps, and LG retains native video-plane ownership.
+
 The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
 path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in
 the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the panel’s video clock.
