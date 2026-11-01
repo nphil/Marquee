@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Маштаб відэа",
+  "widgets.scaling.fit": "Упісаць",
+  "widgets.scaling.fill": "Запоўніць / абрэзаць",
+  "widgets.scaling.original": "Арыгінальны памер",
+  "widgets.scaling.zoom": "Павелічэнне 125%",
+  "widgets.scaling.stretch": "Расцягнуць",
   "widgets.menu.options": "Параметры",
   "widgets.menu.quality": "Якасць",
   "widgets.menu.quality_converted": "Канвертавана",

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Playback preserves non-standard picture aspect ratios by default. More offers Fit, Fill/crop, Original size, Zoom and Stretch without restarting playback.
 - Bazarr subtitle activation reports confirmed progress through Plex discovery and loading to Active or a typed error; metadata rechecks do not repeat downloads.
 - Sidecar readiness requires a positive-duration cue and uses epoch-tagged renderer publication.
 - Stats distinguishes measured and estimated rates, supports the profile menu, and offers separate session-only opt-in numeric logging.

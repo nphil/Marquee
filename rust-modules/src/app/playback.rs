@@ -129,6 +129,9 @@ pub(crate) fn apply_more_action(ps: &mut plx_media::route::PlaybackSession, pa: 
         plx_appkit::more_menu::Action::SetSpeed(r) => {
             plx_media::player::set_play_rate(ps, r);
         }
+        plx_appkit::more_menu::Action::SetScaling(mode) => {
+            plx_media::player::set_video_scaling(mode);
+        }
         // Lab builds only. Nothing about playback changes: the snapshot is taken and the toast
         // reports, over whatever the player is doing.
         plx_appkit::more_menu::Action::SendDiagnostics => crate::lab::request_upload("menu", ps),

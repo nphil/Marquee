@@ -211,6 +211,7 @@ impl LogicalState for PlayerOverlayArg {
                     None => 0,
                     Some(plx_appkit::more_menu::MorePage::Quality) => 1,
                     Some(plx_appkit::more_menu::MorePage::Speed) => 2,
+                    Some(plx_appkit::more_menu::MorePage::Scaling) => 3,
                 });
             }
             OverlayKind::Info | OverlayKind::Chapters | OverlayKind::Timing => {}

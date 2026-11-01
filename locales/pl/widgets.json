@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Skalowanie wideo",
+  "widgets.scaling.fit": "Dopasuj",
+  "widgets.scaling.fill": "Wypełnij / przytnij",
+  "widgets.scaling.original": "Rozmiar oryginalny",
+  "widgets.scaling.zoom": "Powiększenie 125%",
+  "widgets.scaling.stretch": "Rozciągnij",
   "widgets.menu.options": "Opcje",
   "widgets.menu.quality": "Jakość",
   "widgets.menu.quality_converted": "Po konwersji",

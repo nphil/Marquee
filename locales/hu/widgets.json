@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Videó méretezése",
+  "widgets.scaling.fit": "Illesztés",
+  "widgets.scaling.fill": "Kitöltés / vágás",
+  "widgets.scaling.original": "Eredeti méret",
+  "widgets.scaling.zoom": "Nagyítás 125%",
+  "widgets.scaling.stretch": "Nyújtás",
   "widgets.menu.options": "Opciók",
   "widgets.menu.quality": "Minőség",
   "widgets.menu.quality_converted": "Konvertált",

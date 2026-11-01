@@ -98,6 +98,7 @@ pub enum Action {
     /// select a playback speed, in thousandths (one of [`plx_media::player::PLAY_RATES`];
     /// [`plx_media::player::set_play_rate`])
     SetSpeed(i32),
+    SetScaling(plx_media::player::Scaling),
     /// **Lab builds only** — snapshot and upload the diagnostic ring (`crate::lab`). Here as well
     /// as in `account_menu` because the account menu is unreachable during playback, and playback
     /// is what a Cloud Test Lab session is usually reproducing.
@@ -114,6 +115,7 @@ pub enum MorePage {
     /// The playback speeds, slowest first, Normal checked by default ([`MoreRow::Act`] of a
     /// [`Action::SetSpeed`]).
     Speed,
+    Scaling,
 }
 
 impl MorePage {
@@ -122,6 +124,7 @@ impl MorePage {
         match self {
             Self::Quality => plx_platform::i18n::msg::widgets_menu_quality().to_string(),
             Self::Speed => plx_platform::i18n::msg::widgets_menu_speed().to_string(),
+            Self::Scaling => plx_platform::i18n::msg::widgets_menu_scaling().to_string(),
         }
     }
 
@@ -130,6 +133,7 @@ impl MorePage {
         match self {
             Self::Quality => 1,
             Self::Speed => 2,
+            Self::Scaling => 3,
         }
     }
 }
@@ -142,6 +146,7 @@ pub enum MoreRow {
     OpenQuality,
     /// The root's Playback speed row ([`MorePage::Speed`]): reads out the current speed.
     OpenSpeed,
+    OpenScaling,
     Act(Action),
 }
 
@@ -227,6 +232,7 @@ impl FormId for Action {
             Action::SetSpeed(r) => {
                 20 + plx_media::player::PLAY_RATES.iter().position(|x| *x == *r).map_or(9, |i| i as u32)
             }
+            Action::SetScaling(mode) => 30 + *mode as u32,
         })
     }
 }
@@ -237,6 +243,7 @@ impl FormId for MoreRow {
             // free in `Action`'s key space (0..=2, 10..=16 and 20..=29)
             MoreRow::OpenQuality => RowKey(3),
             MoreRow::OpenSpeed => RowKey(4),
+            MoreRow::OpenScaling => RowKey(6),
             MoreRow::Act(a) => a.key(),
         }
     }
@@ -280,6 +287,11 @@ fn root_form(
         RowKind::Nav(MorePage::Speed),
         Action::None,
         Row::new(plx_platform::i18n::msg::widgets_menu_speed()).value(speed_label(speed)),
+    ).item(
+        MoreRow::OpenScaling,
+        RowKind::Nav(MorePage::Scaling),
+        Action::None,
+        Row::new(plx_platform::i18n::msg::widgets_menu_scaling()).value(scaling_label(plx_media::player::video_scaling())),
     );
     Form::new().section(quality).section(options)
 }
@@ -293,6 +305,27 @@ fn speed_form(ps: &plx_media::route::PlaybackSession, speed: i32, speeds: &[i32]
     );
     Form::new().section(sec)
 }
+
+fn scaling_label(mode: plx_media::player::Scaling) -> &'static str {
+    use plx_media::player::Scaling;
+    match mode {
+        Scaling::Fit => plx_platform::i18n::msg::widgets_scaling_fit(),
+        Scaling::Fill => plx_platform::i18n::msg::widgets_scaling_fill(),
+        Scaling::Original => plx_platform::i18n::msg::widgets_scaling_original(),
+        Scaling::Zoom => plx_platform::i18n::msg::widgets_scaling_zoom(),
+        Scaling::Stretch => plx_platform::i18n::msg::widgets_scaling_stretch(),
+    }
+}
+
+fn scaling_form(ps: &plx_media::route::PlaybackSession) -> MoreForm {
+    let current = MoreRow::Act(Action::SetScaling(plx_media::player::video_scaling()));
+    let sec = plx_media::player::scaling_modes().iter().copied().fold(FormSection::new(""), |sec, mode| {
+        let a = Action::SetScaling(mode);
+        sec.choice(MoreRow::Act(a), a, row_for(ps, a), |id| *id == current)
+    });
+    Form::new().section(sec)
+}
+
 
 /// A speed's name: `Normal` at 1x, else the multiplier (`plx_media::player::rate_name`).
 fn speed_label(permille: i32) -> String {
@@ -383,12 +416,15 @@ impl MoreMenuState {
             None => false,
             Some(MorePage::Quality) => quality_offered(&st.rows, st.forced),
             Some(MorePage::Speed) => st.speeds.len() > 1,
+            Some(MorePage::Scaling) => true,
         };
         if let Some(page) = page.filter(|_| offered) {
             // the page is pushed from its opener's row, so BACK lands where a viewer would have
             // pressed to get here
-            if page == MorePage::Speed {
-                st.focus_key(MoreRow::OpenSpeed.key().0);
+            match page {
+                MorePage::Speed => { st.focus_key(MoreRow::OpenSpeed.key().0); }
+                MorePage::Scaling => { st.focus_key(MoreRow::OpenScaling.key().0); }
+                MorePage::Quality => {}
             }
             st.push(ps, page);
             st.motion.cancel_slide();
@@ -413,6 +449,7 @@ impl MoreMenuState {
         match page {
             MorePage::Quality => quality_form(ps, &self.rows, self.current),
             MorePage::Speed => speed_form(ps, self.speed, &self.speeds),
+            MorePage::Scaling => scaling_form(ps),
         }
     }
 
@@ -422,6 +459,7 @@ impl MoreMenuState {
         match page {
             MorePage::Quality => Some(MoreRow::Act(Action::SetQuality(self.current))),
             MorePage::Speed => Some(MoreRow::Act(Action::SetSpeed(self.speed))),
+            MorePage::Scaling => Some(MoreRow::Act(Action::SetScaling(plx_media::player::video_scaling()))),
         }
     }
 
@@ -521,6 +559,7 @@ impl MoreMenuState {
             let still_offered = match first.page {
                 MorePage::Speed => self.speeds.len() > 1,
                 MorePage::Quality => quality_offered(&self.rows, self.forced),
+                MorePage::Scaling => true,
             };
             if still_offered {
                 let page = self.pages.top().unwrap_or(first.page);
@@ -813,6 +852,7 @@ fn label(a: Action) -> std::borrow::Cow<'static, str> {
         // the picker's leading mark (see this module's doc)
         Action::SetQuality(q) => q.label().into(),
         Action::SetSpeed(r) => speed_label(r).into(),
+        Action::SetScaling(mode) => scaling_label(mode).into(),
         Action::SendDiagnostics => plx_platform::i18n::msg::widgets_menu_diagnostics().into(),
         Action::None => "".into(),
     }
@@ -855,7 +895,7 @@ fn is_on(a: Action) -> bool {
         Action::ToggleStats => stats_on(),
         Action::ToggleStatsLogging => logging_on(),
         // a rung is not a switch — see `row_for`, which gives it the leading mark instead
-        Action::SetQuality(_) | Action::SetSpeed(_) | Action::SendDiagnostics | Action::None => false,
+        Action::SetQuality(_) | Action::SetSpeed(_) | Action::SetScaling(_) | Action::SendDiagnostics | Action::None => false,
     }
 }
 
@@ -897,7 +937,7 @@ fn row_for(ps: &plx_media::route::PlaybackSession, a: Action) -> Row {
     match a {
         Action::SetQuality(q) => Row::new(label(a)).detail(quality_detail(q, plx_media::route::source_decodable(ps))),
         // a picker row like a rung: the leading mark comes from the page's `choice`
-        Action::SetSpeed(_) => Row::new(label(a)),
+        Action::SetSpeed(_) | Action::SetScaling(_) => Row::new(label(a)),
         _ => Row::new(label(a)).toggle(is_on(a)),
     }
 }

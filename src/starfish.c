@@ -59,8 +59,9 @@ static struct {
     int  (*setMediaVideoData)(long, const char *, long *);
     int  (*setState)(long, int, int, long *);
     int  (*setDisplayWindow)(long, long, long, long, long, int, long *);
-    /* OPTIONAL — deliberately absent from the all-present gate below, and this is the one
-     * pointer here that may legitimately be NULL. `AcbAPI_setMediaAudioData` is exported on
+    int  (*setCustomDisplayWindow)(long, long, long, long, long, long, long, long, long, int, long *);
+    /* Optional audio metadata, deliberately absent from the all-present gate below.
+     * `AcbAPI_setMediaAudioData` is exported on
      * webOS 3.9.2 / 4.4.2 / 4.10.0 but NOT on 2.2.3 or 3.4.0 (tools/fwcompat.py --lib
      * libAcbAPI.so.1.0.0 --grep setMedia). Adding it to the AND would refuse ACB outright on
      * those two releases and take ALL VIDEO with it — a Dolby Atmos read-out is not worth a
@@ -95,6 +96,7 @@ int vp_mode(void) {
         acb.setMediaVideoData = dlsym(h, "AcbAPI_setMediaVideoData");
         acb.setState          = dlsym(h, "AcbAPI_setState");
         acb.setDisplayWindow  = dlsym(h, "AcbAPI_setDisplayWindow");
+        acb.setCustomDisplayWindow = dlsym(h, "AcbAPI_setCustomDisplayWindow");
         /* Optional; NULL on 2.2.3/3.4.0 and acb_send_atmos() simply does nothing there. */
         acb.setMediaAudioData = dlsym(h, "AcbAPI_setMediaAudioData");
         /* Every pointer assigned above, checked. This list used to name seven of the eight and
@@ -152,16 +154,36 @@ const char *vp_create_window(void) {
  * the caller never owns it. Never NULL: an empty string IS the "no window" answer. */
 const char *vp_window_id(void) { return g_window_id; }
 
-/* Place the video: source frame size -> on-screen rect. The VP_EXPORTED counterpart of
- * acb_start's setDisplayWindow, and the pair also expresses scaling. */
+static int acb_place(VpRect src, VpRect dst, int cropped);
+
+int vp_can_crop(void) {
+    int mode = vp_mode();
+    return mode == VP_EXPORTED || (mode == VP_ACB && acb.setCustomDisplayWindow != NULL);
+}
+
+/* Clip the destination and its matching source together; native window APIs need on-screen rects. */
 int vp_place(int src_w, int src_h, int dst_x, int dst_y, int dst_w, int dst_h) {
-    if (vp_mode() != VP_EXPORTED || !g_window_id[0] || !sdlvp.setExportedWindow) return 0;
-    VpRect src = { 0, 0, src_w, src_h };
-    VpRect dst = { dst_x, dst_y, dst_w, dst_h };
-    int rv = sdlvp.setExportedWindow(g_window_id, &src, &dst);
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return 0;
+    int x = dst_x < 0 ? 0 : dst_x, y = dst_y < 0 ? 0 : dst_y;
+    int64_t right = (int64_t)dst_x + dst_w, bottom = (int64_t)dst_y + dst_h;
+    if (right > 1920) right = 1920;
+    if (bottom > 1080) bottom = 1080;
+    if (right <= x || bottom <= y) return 0;
+    int sx = (int)(((int64_t)x - dst_x) * src_w / dst_w);
+    int sy = (int)(((int64_t)y - dst_y) * src_h / dst_h);
+    int sr = (int)(((right - dst_x) * src_w + dst_w - 1) / dst_w);
+    int sb = (int)(((bottom - dst_y) * src_h + dst_h - 1) / dst_h);
+    VpRect src = { sx, sy, sr - sx, sb - sy };
+    VpRect dst = { x, y, (int)(right - x), (int)(bottom - y) };
+    int mode = vp_mode(), rv;
+    if (mode == VP_ACB) {
+        rv = acb_place(src, dst, sx != 0 || sy != 0 || sr != src_w || sb != src_h);
+    } else if (mode == VP_EXPORTED && g_window_id[0] && sdlvp.setExportedWindow) {
+        rv = sdlvp.setExportedWindow(g_window_id, &src, &dst);
+    } else return 0;
     if (elogf) {
-        fprintf(elogf, "vplane: place %dx%d -> %d,%d %dx%d rv=%d\n",
-                src_w, src_h, dst_x, dst_y, dst_w, dst_h, rv);
+        fprintf(elogf, "vplane: place src=%d,%d %dx%d -> %d,%d %dx%d rv=%d\n",
+                src.x, src.y, src.w, src.h, dst.x, dst.y, dst.w, dst.h, rv);
         fflush(elogf);
     }
     return rv;
@@ -876,9 +898,16 @@ int acb_send_video_data(const char *sourceInfo) {
     if (!g_acb) return 0;
     return acb.setMediaVideoData(g_acb, sourceInfo, &g_taskId);
 }
-void acb_start(long x, long y, long w, long h) {
+static int acb_place(VpRect src, VpRect dst, int cropped) {
+    if (!g_acb) return 0;
+    if (acb.setCustomDisplayWindow)
+        return acb.setCustomDisplayWindow(g_acb, src.x, src.y, src.w, src.h,
+            dst.x, dst.y, dst.w, dst.h, 0, &g_taskId);
+    if (cropped) return 0;
+    return acb.setDisplayWindow(g_acb, dst.x, dst.y, dst.w, dst.h, 0, &g_taskId);
+}
+void acb_start(void) {
     if (!g_acb) return;
-    acb.setDisplayWindow(g_acb, x, y, w, h, 1, &g_taskId);
     acb.setState(g_acb, APPSTATE_FOREGROUND, PLAYSTATE_PLAYING, &g_taskId);
 }
 void acb_unload(void) {

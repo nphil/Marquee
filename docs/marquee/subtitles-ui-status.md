@@ -2,6 +2,16 @@
 
 ## Resume here
 
+### Picture scaling
+
+Native placement and authored subtitle geometry share the decoded raster and pixel aspect ratio.
+Fit is the default; a 1920×800 picture occupies `(0,140,1920,800)` in the 1920×1080 player canvas.
+More → Video scaling changes the window without restarting or unpausing playback. Original size
+is relative to that player canvas, not certified physical-panel 1:1. Fill/crop and Zoom use paired
+source/destination clipping; crop choices are offered only when the native sink supports them.
+ACB placement uses explicit windows with `fullScreen=false` before the separate PLAYING transition.
+
+
 Stable 0.10.0 payload source `2b12924e` is deployed on `192.168.1.242` (webOS 10.2.1, platform
 `o22n2`). The existing stable in-place deploy matched all 54 file hashes without launching the app.
 The local release executable SHA-256 is

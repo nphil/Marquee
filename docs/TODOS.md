@@ -1,5 +1,16 @@
 # TODOS
 
+## Sonarr and Radarr integration backlog
+
+- [ ] Add clean native Sonarr/Radarr connection settings and connection checks.
+- [ ] Request movies directly through Radarr.
+- [ ] Request shows directly through Sonarr.
+- [ ] Expose basic library, monitoring, quality-profile and download management.
+- [ ] Search and select manual releases, with quality and rejection reasons visible.
+- [ ] Delete movies, episodes and shows with explicit confirmation and clear file/library scope.
+
+This backlog is separate from the current playback aspect-ratio fix.
+
 ## Marquee / device follow-through
 
 - [ ] Complete the foreground-only 120 Hz platform cutover through a newly approved exact packet.

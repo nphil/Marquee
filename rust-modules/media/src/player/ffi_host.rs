@@ -135,6 +135,8 @@ pub(super) static ACB_START_CALLS: AtomicU64 = AtomicU64::new(0);
 pub(super) static ACB_PAUSE_CALLS: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 pub(super) static ACB_RESUME_CALLS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub(super) static PLACED_WINDOW: Mutex<(c_long, c_long, c_long, c_long)> = Mutex::new((0, 0, 0, 0));
 /// `(setMediaVideoData, acb_start, acb_pause, acb_resume)` call counts. Test-only.
 #[cfg(test)]
 pub(super) fn acb_calls_for_test() -> (u64, u64, u64, u64) {
@@ -1111,6 +1113,8 @@ unsafe fn vp_place(
     _dst_w: c_int,
     _dst_h: c_int,
 ) -> c_int {
+    #[cfg(test)]
+    { *PLACED_WINDOW.lock().unwrap() = (_dst_x.into(), _dst_y.into(), _dst_w.into(), _dst_h.into()); }
     c_int::from(enabled())
 }
 unsafe fn vp_destroy_window() {}
@@ -1141,7 +1145,7 @@ unsafe fn acb_send_atmos(_media_id: *const c_char) -> c_int {
     note_dispatch("acb_send_atmos");
     0 // 0 = no ACB / no symbol, which is exactly the host's situation
 }
-unsafe fn acb_start(_x: c_long, _y: c_long, _w: c_long, _h: c_long) {
+unsafe fn acb_start() {
     #[cfg(any(test, feature = "test-support"))]
     note_dispatch("acb_start");
     #[cfg(test)]
@@ -1235,6 +1239,7 @@ impl VideoSink for HostSink {
     fn window_mode(&self) -> c_int {
         unsafe { vp_mode() }
     }
+    fn window_cropping(&self) -> bool { enabled() }
     fn window_id(&self) -> &'static CStr {
         // SAFETY: `vp_window_id` is never null and returns a static, NUL-terminated literal.
         unsafe { CStr::from_ptr(vp_window_id()) }
@@ -1275,8 +1280,8 @@ impl VideoSink for HostSink {
     unsafe fn plane_send_atmos(&self, _: &MainThread, media_id: *const c_char) -> c_int {
         acb_send_atmos(media_id)
     }
-    unsafe fn plane_start(&self, _: &MainThread, x: c_long, y: c_long, w: c_long, h: c_long) {
-        acb_start(x, y, w, h)
+    unsafe fn plane_start(&self, _: &MainThread) {
+        acb_start()
     }
     unsafe fn plane_unload(&self, _: &MainThread) {
         acb_unload()

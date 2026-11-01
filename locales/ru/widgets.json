@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Масштаб видео",
+  "widgets.scaling.fit": "Вписать",
+  "widgets.scaling.fill": "Заполнить / обрезать",
+  "widgets.scaling.original": "Исходный размер",
+  "widgets.scaling.zoom": "Увеличение 125%",
+  "widgets.scaling.stretch": "Растянуть",
   "widgets.menu.options": "Параметры",
   "widgets.menu.speed": "Скорость",
   "widgets.speed.normal": "Обычная",

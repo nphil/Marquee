@@ -66,6 +66,7 @@ pub mod text_style; // the viewer's size/position picks as the numbers that conv
 pub mod threads;
 pub mod transport;
 pub mod video_geometry;
+pub use video_geometry::Scaling;
 pub mod vp9_hdr; // HDR10 for a VP9 stream: the container's PQ tag, written into the sourceInfo envelope ACB is sent
 
 use plx_base::task::MainThread;
@@ -675,14 +676,22 @@ pub fn video_raster() -> (i32, i32) {
     SHARED.video_raster()
 }
 
-/// The picture inside the full-screen video window, including non-square pixels.
+/// The same picture rectangle drives the native plane and authored subtitle geometry.
 pub fn video_viewport(width: i32, height: i32) -> video_geometry::Viewport {
-    let (w, h) = SHARED.video_raster();
+    let raster = SHARED.video_raster();
     video_geometry::Aspect::unpack(SHARED.video_aspect.load(std::sync::atomic::Ordering::Acquire))
-        .or_else(|| video_geometry::Aspect::from_raster(w, h))
+        .or_else(|| video_geometry::Aspect::from_raster(raster.0, raster.1))
         .unwrap_or_else(|| video_geometry::Aspect::from_raster(width, height).unwrap())
-        .fit(width, height)
+        .layout(video_scaling(), raster, width, height)
 }
+
+pub fn video_scaling() -> Scaling { video_geometry::scaling() }
+
+pub fn set_video_scaling(mode: Scaling) { video_geometry::set_scaling(mode); }
+pub fn scaling_modes() -> &'static [Scaling] {
+    if sink().window_cropping() { &Scaling::ALL } else { &[Scaling::Fit, Scaling::Stretch] }
+}
+
 
 pub fn playpos_ns() -> i64 {
     SHARED.playpos_ns.load(Relaxed)

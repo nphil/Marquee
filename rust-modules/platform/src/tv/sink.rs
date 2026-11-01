@@ -92,6 +92,7 @@ pub trait VideoSink: Sync {
     unsafe fn destroy(&self, mt: &MainThread) -> c_int;
     unsafe fn quarantine(&self, mt: &MainThread);
     fn window_mode(&self) -> c_int;
+    fn window_cropping(&self) -> bool { false }
     /// The exported windowId the sink holds, or `""` when none was created. Never null. The
     /// storage is the sink's own long-lived buffer (the C seam's `g_window_id`), rewritten only by
     /// `create_window`/`destroy_window` on the main thread, so a caller copies it at once.
@@ -109,7 +110,7 @@ pub trait VideoSink: Sync {
     unsafe fn plane_bind(&self, mt: &MainThread, media_id: *const c_char);
     unsafe fn plane_send_video_data(&self, mt: &MainThread, source_info: *const c_char) -> c_int;
     unsafe fn plane_send_atmos(&self, mt: &MainThread, media_id: *const c_char) -> c_int;
-    unsafe fn plane_start(&self, mt: &MainThread, x: c_long, y: c_long, w: c_long, h: c_long);
+    unsafe fn plane_start(&self, mt: &MainThread);
     unsafe fn plane_unload(&self, mt: &MainThread);
     unsafe fn plane_pause(&self, mt: &MainThread);
     unsafe fn plane_resume(&self, mt: &MainThread);
@@ -153,7 +154,7 @@ macro_rules! refuse_every_verb {
         unsafe fn plane_bind(&self, _mt: &MainThread, _media_id: *const c_char) {}
         unsafe fn plane_send_video_data(&self, _mt: &MainThread, _source_info: *const c_char) -> c_int { -1 }
         unsafe fn plane_send_atmos(&self, _mt: &MainThread, _media_id: *const c_char) -> c_int { 0 }
-        unsafe fn plane_start(&self, _mt: &MainThread, _x: c_long, _y: c_long, _w: c_long, _h: c_long) {}
+        unsafe fn plane_start(&self, _mt: &MainThread) {}
         unsafe fn plane_unload(&self, _mt: &MainThread) {}
         unsafe fn plane_pause(&self, _mt: &MainThread) {}
         unsafe fn plane_resume(&self, _mt: &MainThread) {}
@@ -180,5 +181,6 @@ impl VideoSink for RefusingSink {
     refuse_every_verb!();
     fn feed_abi_is_cow(&self) -> bool { (self.0)().feed_abi_is_cow() }
     fn window_mode(&self) -> c_int { (self.0)().window_mode() }
+    fn window_cropping(&self) -> bool { (self.0)().window_cropping() }
     fn window_id(&self) -> &'static CStr { (self.0)().window_id() }
 }

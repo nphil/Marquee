@@ -1,6 +1,5 @@
-//! Picture geometry for overlays, independent of the subtitle's authoring resolution.
-//! The ACB sourceInfo supplies the decoded raster and pixel aspect ratio; the dev
-//! TV's 1440x1080 capture proves that its full-panel window pillarboxes that picture.
+//! Shared picture and authored-subtitle geometry in the 1920×1080 player canvas.
+//! Decoded raster and pixel aspect ratio determine the fitted picture; scaling is explicit.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Viewport {
@@ -9,6 +8,39 @@ pub struct Viewport {
     pub width: i32,
     pub height: i32,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Scaling {
+    #[default]
+    Fit,
+    Fill,
+    Original,
+    Zoom,
+    Stretch,
+}
+
+impl Scaling {
+    pub const ALL: [Self; 5] = [Self::Fit, Self::Fill, Self::Original, Self::Zoom, Self::Stretch];
+}
+
+static SCALING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(Scaling::Fit as u8);
+
+pub fn scaling() -> Scaling {
+    use std::sync::atomic::Ordering::Acquire;
+    match SCALING.load(Acquire) {
+        1 => Scaling::Fill,
+        2 => Scaling::Original,
+        3 => Scaling::Zoom,
+        4 => Scaling::Stretch,
+        _ => Scaling::Fit,
+    }
+}
+
+pub fn set_scaling(mode: Scaling) {
+    SCALING.store(mode as u8, std::sync::atomic::Ordering::Release);
+}
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Aspect(u32, u32);
@@ -25,6 +57,25 @@ impl Aspect {
     pub fn unpack(value: u64) -> Option<Self> {
         let aspect = Self((value >> 32) as u32, value as u32);
         (aspect.0 != 0 && aspect.1 != 0).then_some(aspect)
+    }
+
+    pub fn layout(self, mode: Scaling, raster: (i32, i32), width: i32, height: i32) -> Viewport {
+        let fit = self.fit(width, height);
+        let (num, den) = (i64::from(self.0), i64::from(self.1));
+        let (w, h) = (i64::from(width.max(1)), i64::from(height.max(1)));
+        let (w, h) = match mode {
+            Scaling::Fit => return fit,
+            Scaling::Stretch => (w, h),
+            Scaling::Fill if w * den >= h * num => (w, (w * den + num - 1) / num),
+            Scaling::Fill => ((h * num + den - 1) / den, h),
+            Scaling::Original => {
+                let h = i64::from(raster.1.max(1));
+                ((h * num + den / 2) / den, h)
+            }
+            Scaling::Zoom => (i64::from(fit.width) * 5 / 4, i64::from(fit.height) * 5 / 4),
+        };
+        let (w, h) = (w.clamp(1, i64::from(i32::MAX)) as i32, h.clamp(1, i64::from(i32::MAX)) as i32);
+        Viewport { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h }
     }
 
     pub fn fit(self, width: i32, height: i32) -> Viewport {
@@ -71,6 +122,20 @@ pub(super) fn source_aspect(bytes: &[u8]) -> Option<Aspect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_scaling_distinguishes_fit_crop_zoom_original_and_stretch() {
+        let aspect = Aspect::from_raster(1920, 800).unwrap();
+        let layout = |mode| aspect.layout(mode, (1920, 800), 1920, 1080);
+        assert_eq!(layout(Scaling::Fit), Viewport { x: 0, y: 140, width: 1920, height: 800 });
+        assert_eq!(layout(Scaling::Fill), Viewport { x: -336, y: 0, width: 2592, height: 1080 });
+        assert_eq!(layout(Scaling::Zoom), Viewport { x: -240, y: 40, width: 2400, height: 1000 });
+        assert_eq!(layout(Scaling::Original), Viewport { x: 0, y: 140, width: 1920, height: 800 });
+        assert_eq!(layout(Scaling::Stretch), Viewport { x: 0, y: 0, width: 1920, height: 1080 });
+        let anamorphic = source_aspect(br#"{"video":{"width":720,"height":576,"pixelAspectRatio":{"width":64,"height":45}}}"#).unwrap();
+        assert_eq!(anamorphic.layout(Scaling::Original, (720, 576), 1920, 1080), Viewport { x: 448, y: 252, width: 1024, height: 576 });
+    }
+
 
     #[test]
     fn picture_fit_covers_pillarbox_letterbox_and_anamorphic_sources() {

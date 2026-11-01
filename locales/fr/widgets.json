@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Cadrage vidéo",
+  "widgets.scaling.fit": "Ajuster",
+  "widgets.scaling.fill": "Remplir / recadrer",
+  "widgets.scaling.original": "Taille originale",
+  "widgets.scaling.zoom": "Zoom 125%",
+  "widgets.scaling.stretch": "Étirer",
   "widgets.menu.options": "Options",
   "widgets.menu.quality": "Qualité",
   "widgets.menu.quality_converted": "Convertie",

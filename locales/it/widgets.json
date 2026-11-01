@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Ridimensionamento video",
+  "widgets.scaling.fit": "Adatta",
+  "widgets.scaling.fill": "Riempi / ritaglia",
+  "widgets.scaling.original": "Dimensioni originali",
+  "widgets.scaling.zoom": "Zoom 125%",
+  "widgets.scaling.stretch": "Allunga",
   "widgets.menu.options": "Opzioni",
   "widgets.menu.quality": "Qualità",
   "widgets.menu.quality_converted": "Convertito",

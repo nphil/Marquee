@@ -50,14 +50,15 @@ void sf_quarantine(void);
 #define VP_ACB      1   /* webOS 2.2.3 .. 4.10.0 — libAcbAPI.so.1 */
 #define VP_EXPORTED 2   /* webOS 5.3.1 .. 11.2.0 — SDL_webOS*ExportedWindow* (device-verified webOS 6.5.2, issue #22) */
 int vp_mode(void);
+int vp_can_crop(void);
 
 /* VP_EXPORTED only. Create the exported window and return its compositor-assigned id, or NULL.
  * MUST be called before Load: the id travels inside the Load payload as option.windowId, and on
  * webOS 5 that string is the entire binding. The returned pointer is owned by this seam. */
 const char *vp_create_window(void);
-/* VP_EXPORTED counterpart of acb_start's setDisplayWindow: source frame size -> on-screen rect. */
 /* The exported windowId we hold, or "" when none was created. Diagnostics only; never NULL. */
 const char *vp_window_id(void);
+/* Source frame -> on-screen picture, cropped together outside the player canvas. */
 int  vp_place(int src_w, int src_h, int dst_x, int dst_y, int dst_w, int dst_h);
 void vp_destroy_window(void);
 
@@ -66,7 +67,7 @@ void vp_destroy_window(void);
 long acb_create(const char *appId, int playerType);        /* create+initialize; 0 = failed */
 void acb_bind(const char *mediaId);                        /* setSinkType(MAIN)+setMediaId+setState(LOADED) */
 int  acb_send_video_data(const char *sourceInfo);  /* setMediaVideoData; the pipeline's own envelope (vp9_hdr may have added HDR keys); -1 = rejected */
-void acb_start(long x, long y, long w, long h);            /* setDisplayWindow + setState(PLAYING) */
+void acb_start(void);                                      /* setState(PLAYING); placement precedes this */
 void acb_unload(void);                                     /* setState(UNLOADED) */
 
 /* ---- library-thread callbacks the seam forwards to (consumer-defined) ---- */

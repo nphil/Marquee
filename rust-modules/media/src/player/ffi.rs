@@ -65,12 +65,13 @@ mod sys {
             dst_h: c_int,
         ) -> c_int;
         pub(super) fn vp_destroy_window();
+        pub(super) fn vp_can_crop() -> c_int;
 
         pub(super) fn acb_create(app_id: *const c_char, player_type: c_int) -> c_long;
         pub(super) fn acb_bind(media_id: *const c_char);
         pub(super) fn acb_send_video_data(source_info: *const c_char) -> c_int;
         pub(super) fn acb_send_atmos(media_id: *const c_char) -> c_int;
-        pub(super) fn acb_start(x: c_long, y: c_long, w: c_long, h: c_long);
+        pub(super) fn acb_start();
         pub(super) fn acb_unload();
         pub(super) fn acb_pause();
         pub(super) fn acb_resume();
@@ -182,6 +183,7 @@ impl plx_platform::tv::sink::VideoSink for StarfishSink {
     fn window_mode(&self) -> c_int {
         unsafe { sys::vp_mode() }
     }
+    fn window_cropping(&self) -> bool { unsafe { sys::vp_can_crop() != 0 } }
 
     /// The exported windowId the seam holds, or an empty string when none was created. Diagnostics
     /// only (`app::diagnostics`): it answers "did the window this firmware needs ever exist?", which is the
@@ -241,8 +243,8 @@ impl plx_platform::tv::sink::VideoSink for StarfishSink {
         sys::acb_send_atmos(media_id)
     }
     #[inline]
-    unsafe fn plane_start(&self, _: &MainThread, x: c_long, y: c_long, w: c_long, h: c_long) {
-        sys::acb_start(x, y, w, h)
+    unsafe fn plane_start(&self, _: &MainThread) {
+        sys::acb_start()
     }
     #[inline]
     unsafe fn plane_unload(&self, _: &MainThread) {

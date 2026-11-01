@@ -187,9 +187,9 @@ pub struct Engine {
     /// beyond it is seen. A paused preroll re-pauses only after that tick: a picture presented
     /// before the bind is not on the panel.
     pub bound_at_frames: Option<i32>,
-    /// webOS 5+ only: the source size the exported window was last placed with, so a corrective
-    /// re-place happens exactly once if the demuxer publishes the real one later. 0 = never placed.
+    /// Last source and destination window, replaced when metadata or scaling changes.
     pub placed_src: (c_int, c_int),
+    pub placed_dst: Option<super::video_geometry::Viewport>,
     pub eos_pushed: bool, // Kodi VIDEO_DRAIN: pushEOS() sent once at true EOF
     pub rebase_pending: bool, // g_rebase_pending
     // In-place seek only: keyframes this far AHEAD of the seek target are stale frames the demuxer
@@ -2314,6 +2314,7 @@ fn start_bufferfeed_inner(
         video_info_sent: false,
         bound_at_frames: None,
         placed_src: (0, 0),
+        placed_dst: None,
         eos_pushed: false,
         // if a seek is armed for the FIRST open (resume, or reload_at), rebase the first
         // post-seek keyframe to fed-pts 0 so the pipeline sees a 0-based timeline identical
@@ -5364,6 +5365,7 @@ mod prime_livelock_tests {
             video_info_sent: true,
             bound_at_frames: None,
             placed_src: (0, 0),
+            placed_dst: None,
             eos_pushed: false,
             rebase_pending: false,
             rebase_drops: 0,

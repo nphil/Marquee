@@ -1,4 +1,10 @@
 {
+  "widgets.menu.scaling": "Escala do vídeo",
+  "widgets.scaling.fit": "Ajustar",
+  "widgets.scaling.fill": "Preencher / recortar",
+  "widgets.scaling.original": "Tamanho original",
+  "widgets.scaling.zoom": "Zoom 125%",
+  "widgets.scaling.stretch": "Esticar",
   "widgets.menu.options": "Opções",
   "widgets.menu.quality": "Qualidade",
   "widgets.menu.quality_converted": "Convertido",

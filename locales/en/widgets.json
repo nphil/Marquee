@@ -1,4 +1,28 @@
 {
+  "widgets.menu.scaling": {
+    "value": "Video scaling",
+    "description": "Opens the current picture scaling choices."
+  },
+  "widgets.scaling.fit": {
+    "value": "Fit",
+    "description": "Preserves the picture aspect ratio with black bars when needed."
+  },
+  "widgets.scaling.fill": {
+    "value": "Fill / crop",
+    "description": "Fills the screen without stretching by cropping the picture edges."
+  },
+  "widgets.scaling.original": {
+    "value": "Original size",
+    "description": "Centers the picture at its original size in the player canvas."
+  },
+  "widgets.scaling.zoom": {
+    "value": "Zoom 125%",
+    "description": "Enlarges the fitted picture by 25 percent without stretching."
+  },
+  "widgets.scaling.stretch": {
+    "value": "Stretch",
+    "description": "Fills the screen by stretching the picture."
+  },
   "widgets.diagnostics.uploading": {
     "value": "Uploading diagnostics…",
     "translate": false,

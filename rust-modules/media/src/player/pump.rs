@@ -358,34 +358,18 @@ fn maybe_begin_hls_rebuffer(ps: &crate::route::PlaybackSession, mt: &MainThread,
     ));
 }
 
-/// Place the webOS 5+ exported window: source frame -> on-screen rect.
-///
-/// No-op on the ACB path. `src` is the frame being FED and `dst` where it lands, and the pair is
-/// what expresses scaling — so a 4K direct play must not be described as 1080p, which passing the
-/// authoring canvas for both would do. The coded size comes from the demuxer, the only thing that
-/// knows it for certain; before it has published, the canvas is the least-wrong fallback and the
-/// caller re-places once the real one arrives.
-fn place_exported(mt: &MainThread, eng: &mut super::engine::Engine) {
-    if super::sink().window_mode() != super::VP_EXPORTED {
-        return;
-    }
+/// Place only when the source, aspect or selected scaling changes; never restart playback.
+fn place_video(mt: &MainThread, eng: &mut super::engine::Engine) {
     let (w, h) = SHARED.video_raster();
     let src = if w > 0 && h > 0 { (w, h) } else { (1920, 1080) };
-    let rv = unsafe { super::sink().place_window(mt, src.0, src.1, 0, 0, 1920, 1080) };
+    let dst = super::video_viewport(1920, 1080);
+    let rv = unsafe { super::sink().place_window(mt, src.0, src.1, dst.x, dst.y, dst.width, dst.height) };
     eng.placed_src = src;
-    // RECORD it, do not merely log it. These three fields had no writer anywhere in the tree, so
-    // `dg_place_rv` sat at its `i32::MIN` "never called" sentinel for the life of the process and
-    // the diagnostics read-out rendered `Placed: not placed` in DANGER bold on every webOS 5+ set
-    // — a fabricated fault, on the one firmware family nobody here can test, pointing every reader
-    // at the video plane. The dev TV takes the ACB path, so no amount of looking at it would have
-    // caught this.
+    eng.placed_dst = Some(dst);
     SHARED.dg_place_rv.store(rv, Relaxed);
     SHARED.dg_placed_w.store(src.0, Relaxed);
     SHARED.dg_placed_h.store(src.1, Relaxed);
-    super::log(&format!(
-        "vplane: exported window placed src={}x{} rv={rv}",
-        src.0, src.1
-    ));
+    super::log(&format!("vplane: place {}x{} -> {},{} {}x{} rv={rv}", src.0, src.1, dst.x, dst.y, dst.width, dst.height));
 }
 
 /// Mirror Engine-confined observations into `Shared` for diagnostics and handled-error context.
@@ -2318,8 +2302,8 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         // the pipeline has produced something. The exported window has no such dependency: the
         // BINDING already happened via `option.windowId` in the Load payload, and this call is
         // pure geometry.
-        place_exported(mt, eng);
         if super::sink().window_mode() == super::VP_EXPORTED {
+            place_video(mt, eng);
             // Playing -> Streaming directly: there is no bind sequence to sit in the middle of.
             // The transition is load-bearing beyond bookkeeping — `pushEOS` is gated on
             // `>= Streaming`, so without it the last frames never drain and Up Next never fires.
@@ -2502,7 +2486,8 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
             if rv != -1 {
                 // -1 = client-side isJsonError reject; else accepted
                 eng.video_info_sent = true;
-                unsafe { super::sink().plane_start(mt, 0, 0, 1920, 1080) };
+                place_video(mt, eng);
+                unsafe { super::sink().plane_start(mt) };
                 eng.stage = Stage::Streaming;
                 eng.bound_at_frames = Some(SHARED.frames.load(Relaxed));
                 // `acb_start` sets ACB PLAYING. Under a pipeline that is really paused (a late
@@ -2518,15 +2503,16 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         }
     }
 
-    // ---------- webOS 5+ (VP_EXPORTED): correct the placement if the real frame size only
-    // became known after Load. The demuxer publishes the coded size when it opens the stream,
-    // which races the load thread — so the placement above may have used the fallback. Re-placing
-    // costs one call, and Kodi re-places on every render-area change anyway.
-    // ----------
-    if eng.stage >= Stage::Playing && eng.placed_src != (0, 0) {
-        let now = SHARED.video_raster();
-        if now.0 > 0 && now.1 > 0 && now != eng.placed_src {
-            place_exported(mt, eng);
+    let placed = if super::sink().window_mode() == super::VP_EXPORTED {
+        eng.stage >= Stage::Playing
+    } else {
+        eng.stage >= Stage::Streaming
+    };
+    if placed {
+        let raster = SHARED.video_raster();
+        let src = if raster.0 > 0 && raster.1 > 0 { raster } else { (1920, 1080) };
+        if eng.placed_src != src || eng.placed_dst != Some(super::video_viewport(1920, 1080)) {
+            place_video(mt, eng);
         }
     }
 
@@ -6241,6 +6227,28 @@ mod native_seek_pump_tests {
             e.bound_at_frames = None;
             e.stage = Stage::Playing;
         }
+    }
+
+    #[test]
+    fn video_scaling_preserves_ultrawide_picture_at_native_bind() {
+        let _serial = plx_base::testlock::serial();
+        let _acb = AcbGuard::arm();
+        let mut rig = Rig::new(None);
+        rig.unbound_acb_session();
+        SHARED.video_aspect.store(super::super::video_geometry::Aspect::from_raster(1920, 800).unwrap().pack(), Release);
+        SHARED.frames.store(2, Relaxed);
+        rig.frame();
+        assert_eq!(*ffi_host::PLACED_WINDOW.lock().unwrap(), (0, 140, 1920, 800));
+        let starts = ffi_host::acb_calls_for_test().1;
+        rig.viewer_pause();
+        rig.frame();
+        super::super::set_video_scaling(super::super::Scaling::Fill);
+        rig.frame();
+        let placed = *ffi_host::PLACED_WINDOW.lock().unwrap();
+        super::super::set_video_scaling(super::super::Scaling::Fit);
+        assert_eq!(placed, (-336, 0, 2592, 1080));
+        assert!(TX.paused.load(Acquire), "resizing must not resume a paused film");
+        assert_eq!(ffi_host::acb_calls_for_test().1, starts, "resizing must not restart the plane");
     }
 
     /// THE reported bug: the paused reload preroll re-paused at the first position tick, below
