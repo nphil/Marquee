@@ -255,6 +255,13 @@ clamp startup windows to zero. Earlier requests could reject an entire batch bec
 1009 ms to 1000 ms, admit an ineligible long cue shortened for display, or send nothing before
 15 seconds. These corrections are not in the installed `c5199efd` payload.
 
+The corrected `2b12924e` ARM release build passed the existing binary and package checks.
+The unpromoted candidate is `/data/home/Marquee-release/marquee-0.10.0-2b12924e.ipk`
+(21,092,004 bytes, SHA-256 `057b4fa017cab90e3afd184670cc70437708cbd9b843ee5a87915fae1d1308bd`).
+The direct-deploy executable SHA-256 is
+`01997f77af819aa91b716a104d17bc9b14ccdbb48899d290f0f8cc83faefb823`.
+This is a local build record, not TV installation, activation or on-screen acceptance.
+
 The validated Address is published only after durable session save and restored at boot. Settings
 shows Address/Disabled and validation or save errors, not connection or aligned/estimated status.
 The renderer distinguishes verified word timing internally; request failures retain estimates.
