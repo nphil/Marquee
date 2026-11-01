@@ -258,9 +258,9 @@ The source revision is `c50d1543…` and the model SHA-256 is `cd5040c1…`.
 Coverage remains limited: one of 19 sampled film cues aligned; 18 stayed estimated. This is not
 broad film-accuracy certification, and no guards or authored bounds were relaxed. A non-null
 `source_revision` can accompany estimated cues and is not proof of aligned words; estimated cues
-must clear earlier alignment. Changed-source validation returns estimated words with no retained
-timing. The private proof pair is `/data/home/tmp/speechdock-alignment-production/actual-plex-single-`
-`{request,response}-583.json`. TV activation still requires the separate quiet-safe app window.
+must clear earlier alignment. Changed-source validation returns `estimated`, `words: []` and a null
+source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
+`/data/home/tmp/speechdock-alignment-production`. TV activation still requires a quiet-safe app window.
 
 ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
 karaoke remain required. Embedded alignment capture and publication require the exact displayed
