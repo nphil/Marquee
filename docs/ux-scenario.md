@@ -678,8 +678,9 @@ full-screen sheet. All three are modal while open: they take every key, and BACK
 - **More** opens a popover led by the **Quality** ladder — Auto plus the fixed rungs — then
   **Playback speed** (0.5× to 2×, Plex Web's seven, back to Normal on a new item; a pick reloads the
   stream at the same position; shown only where the playback can play a speed — not over segmented
-  HLS, and not above 60 fps fed), with an *Options* section beneath them: **Stats for nerds**, an On/Off toggle that overlays live playback
-  statistics, plus **Send diagnostics** when that row is enabled. LEFT/RIGHT are deliberately
+  HLS, and not above 60 fps fed), with an *Options* section beneath them: **Stats for nerds** toggles
+  the live overlay; **Detailed stats logging** is a separate, session-only numeric-log opt-in, Off at
+  boot. **Send diagnostics** is present when that row is enabled. LEFT/RIGHT are deliberately
   swallowed here: it is one column.
 
 Subtitle appearance is configurable in the player Style pages and Settings → Subtitles; client-rendered

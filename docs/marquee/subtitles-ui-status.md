@@ -2,11 +2,19 @@
 
 ## Resume here
 
-Stable 0.10.0 is installed on `192.168.1.242` (webOS 10.2.1, platform `o22n2`). The existing
-installer and payload deployment retained `com.beb.plxnative` and its storage identity; all 54
-deployed files matched. Runtime build `37d8d0f4` includes banner prewarming and enhanced-audio startup
-recovery. The versioned IPK and `marquee-latest.ipk` are staged in `/data/home/Marquee-release/`, with
-SHA-256 `c9e95defb396b62062fd7405551606c135d4da318a694fb28ddfe420162b7812`.
+Stable 0.10.0 is installed on `192.168.1.242` (webOS 10.2.1, platform `o22n2`). Runtime source
+`fce9888a` adds confirmed subtitle activation and separate Stats logging to the earlier banner and
+enhanced-audio fixes. The stable `com.beb.plxnative` storage identity is retained; all 54 deployed
+files match. The versioned IPK and `marquee-latest.ipk` in `/data/home/Marquee-release/` are
+20,970,244 bytes, SHA-256 `0cb296dffd9652981d593b45692980944add0d94da40b4157e2dfe46df979afb`.
+The previous package is retained as `marquee-0.10.0-37d8d0f4-rollback.ipk`.
+
+Native Bazarr search returned English provider results. The player Stats read-out showed the
+23.976 fps file rate separately from GL swaps and unverified physical refresh; detailed logging
+remained Off. New subtitle downloading and actual media deletion were not exercised on the TV.
+The app ended on Home without the Stats overlay and with zero video planes; the TV lease was
+released and LumaTV notified. No system, refresh, input or power setting changed in this window.
+Captures are `/tmp/lt/marquee-fce-*.png`; scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
 
 The initial focused feature run passed 93 checks; four privacy identifier/preview-isolation checks
 also passed. ARM ELF and package checks passed for the installed build. The stored account opened
@@ -26,14 +34,15 @@ the preview. Playback stopped cleanly, the video-plane list became empty, and th
 - Reserve and release the TV from the same build worktree with `tools/tv-lock.sh`.
   `make ... run` uses the stored account without embedding a Plex token.
 - Capture this webOS 10 set with `python3 /tmp/lt/shot.py NAME 1920 1080`; the repository capture
-  script uses an older service and macOS tooling. `/tmp/marquee-ui-kb.py` sends native remote key
-  events through the existing SmartRemoteRCU device; `/tmp/lt/kb.py` is the SSAP remote helper.
+  script uses an older service and macOS tooling. `/tmp/marquee-ui-kb.py` lives on the TV and sends
+  native SmartRemoteRCU events: invoke `/usr/bin/python3 /tmp/marquee-ui-kb.py` through `/tmp/lt/tv.py`.
 
 ## Frame pacing and hardware
 
 Active Marquee navigation measured about 60 display flips/s at the compositor’s default divider,
 and 119.7/s at runtime `refresh 120`, with an 8.3 ms 99th-percentile interval during steady motion.
-SDL already requests VSync with swap interval 1; the compositor pacer uses actual display-flip phase.
+SDL requests VSync with swap interval 1 but does not check whether the request succeeded. Effective
+client swap blocking remains unverified; the compositor pacer uses actual display-flip phase.
 The banner fix prewarms incoming text through the existing owned queue without presenting. Its
 automatic-transition sample had only 8.3 ms intervals; a six-second manual-navigation sample still
 contained one 16.7 ms interval near the motion-to-idle boundary. This is not proof of zero stutter.
@@ -63,6 +72,11 @@ one dispatcher pin; actual local `--inspect` returned `ok: true`. One corrected 
 was subsequently permitted but remains unsent; this is not a standing grant or authority to change
 the packet. The later coordinated read-only capture completed and the TV lease was released again.
 No platform request is pending; the disconnected HomeLabber gate and live compatibility guards remain.
+
+The later offline candidate is `/data/home/tmp/lumatv-f5-renderer-packet-r4`. R4 has new argv, loader
+environment and ELF-provenance checks and is not approved or installed. The retained HDMI profile
+is classified as occupied and needs a separate explicit input/audio-interruption scope. The unused
+R3 permission and the app-only update window do not authorize R4.
 
 The read-only TV baseline matched all six dispatcher dependencies and all 35 renderer members.
 R3 still rejects the observed supervisor argv `/usr/bin/surface-manager -platform eglfs_webos`
@@ -117,9 +131,11 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 ## Speech timing and render provenance
 
 Reveal as spoken estimates word timing from cue text and duration; authored ASS karaoke keeps its
-timings. No server audio alignment or timing-result endpoint exists. The 2026-10-31 live Unraid
-inventory included Bazarr but no Whisper/SubGen alignment container; GPU hardware and spare capacity
-were not established. The proposed offline alignment path is in `design-subtitles.md`.
+timings. The installed app does not use a server alignment or timing-result endpoint. The 2026-10-31
+live Unraid inventory included Bazarr but no Whisper/SubGen alignment container; GPU hardware and spare
+capacity were not established. The proposed offline alignment path is in `design-subtitles.md`.
+The separate speech-alignment effort is not included in this app update; its eventual merge must
+preserve the current sidecar lifecycle and ABI 6 renderer-readiness contract.
 
 The existing subtitle/Bazarr images in `docs/marquee/renders/` are desktop simulator frames under
 Xvfb, not TV captures. The shared table still uses value read-outs rather than mock sliders/swatches.

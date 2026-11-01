@@ -1,5 +1,19 @@
 # TODOS
 
+## Marquee / device follow-through
+
+- [ ] Complete the foreground-only 120 Hz platform cutover through a newly approved exact packet.
+  R4 is uninstalled and needs its own occupied-input/audio scope; the app-only update is not authority.
+- [ ] Attribute the two remaining 16.7 ms intervals with matching app-buffer, commit, GPU-fence and
+  display-flip identities. Reuse the saved ring/scheduler capture and a separately authorized TV window;
+  the current evidence does not justify changing callback policy or promising zero stutter.
+- [ ] Integrate the separate server speech-alignment effort without replacing the current sidecar
+  lifecycle or ABI 6 readiness. Installed Reveal as spoken is still estimated from cue duration.
+
+Alignment and platform preparation can proceed in isolated worktrees; live TV checks remain
+exclusive. The existing trailer-completion state-machine item below is an independent local slice,
+but remains P3 rather than displacing the measured pacing work.
+
 ## Player / trailer preview
 
 ### Grade `hero_scrim_a`'s legibility contract against synopsis text over live trailer video
