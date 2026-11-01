@@ -78,19 +78,25 @@ environment and ELF-provenance checks and is not approved or installed. The reta
 is classified as occupied and needs a separate explicit input/audio-interruption scope. The unused
 R3 permission and the app-only update window do not authorize R4.
 
-The newer UI-feature compositor candidate is
-`/data/home/tmp/lumatv-foreground-pacing-20261031/lumatv-compositor`, SHA-256
-`904c8e93a985aa25feb07afac8fdde2f0796b67317ac431ef86277e4edbcb6c0`. This uninstalled build is
-superseded: window-type changes and restores from minimized to `Maximized`/`Default` omit policy
-recomputation. A repaired build, replacement artifact hash and independent review are required
-before installation. The intended policy selects nominal 120/divider 1 for exact foreground
-`com.beb.plxnative`; other foreground
-restores the startup `--refresh` base, default 60. Numeric `ctl refresh 60/120` overrides remain
-sticky; `ctl refresh auto` resumes foreground policy, while `ctl refresh reset` only resets
-measurements. This artifact is distinct from the previously pinned legacy payload: independent
-review and joint maintenance agreement remain required, with no implicit package substitution.
-Divider 1 follows LG’s 100 or 119.88/120 family; independent physical 120 over the 100 family and
-optical seamlessness remain unestablished.
+The final reported legacy compositor candidate is
+`/data/home/tmp/lumatv-foreground-pacing-20261031/lumatv-compositor-legacy`, SHA-256
+`f5c864ae1e869da3e2f60af14faca77ef51664254c8043652dff84a2fbf3463a`. LumaTV reports clear
+independent local review after protocol-type/title, input-panel and minimize/restore boundary fixes.
+Hardware installation and acceptance remain pending; the old UI-feature `904c8`/`9762` artifacts
+are superseded and must not be installed.
+
+Exact foreground `com.beb.plxnative` selects nominal 120/divider 1; other foreground restores the
+startup `--refresh` base, default 60. Numeric `ctl refresh 60/120` overrides remain sticky;
+`ctl refresh auto` resumes policy and `ctl refresh reset` is measurement-only. Maintenance hand-back
+must verify the normal base is restored outside Marquee, not leave a global manual 120 setting.
+Quickpanel/IME overlay behavior is awaiting a source-only owner answer; the exact-app policy does
+not establish 120 Hz system menus. Divider 1 follows LG’s 100 or 119.88/120 family; independent
+physical 120 over the 100 family and optical seamlessness remain unestablished.
+
+A fresh agreed TV window and separately authorized exact compositor/Rust-bundle restart with
+pinned rollback through the proven renderer transport are required. App-update permission does
+not cover this maintenance, and no approved payload may be substituted implicitly. No TV lease
+is held and no new HomeLabber request will be sent.
 
 The read-only TV baseline matched all six dispatcher dependencies and all 35 renderer members.
 R3 still rejects the observed supervisor argv `/usr/bin/surface-manager -platform eglfs_webos`
