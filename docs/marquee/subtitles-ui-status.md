@@ -32,7 +32,7 @@ when entering new rows. Idle-to-active boundaries are not animation drops. The c
 is acknowledged at commit; its FPS counter does not prove unique pictures reached the display.
 
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
-A measured late frame combined native texture/GPU work with a preceding 4.1 ms hidden-shell GPU job;
+A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
 the shell job alone is not established as the cause. Do not change callback policy or force GPU
 synchronization to diagnose it: the existing scheduler trace and compositor ring are sufficient first.
 

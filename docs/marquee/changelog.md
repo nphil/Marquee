@@ -1,5 +1,9 @@
 # Marquee changelog
 
+## Unreleased
+
+- Home prepares the next banner's text during idle time, moving cold text work out of banner transitions without redrawing the settled screen.
+
 ## 0.10.0
 
 - Rosé Pine folded-M icon and splash; the package title controls display names across the app and launcher.

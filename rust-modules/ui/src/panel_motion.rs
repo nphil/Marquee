@@ -194,9 +194,9 @@ impl PanelMotion {
     /// The live queue goes first and the parked one only with at least [`BACKGROUND_MIN_US`] left, so speculation yields
     /// to the page that is about to be drawn; the first string is always taken. Called from the
     /// PRESENTING side of the present decision (`app::run::prepare_window`, step 9's upload seam),
-    /// never from `update`: this uploads GL textures, and §10 says a frame that does not present
-    /// uploads nothing (nor may it reach EGL while the window is backgrounded). It still runs
-    /// before the draw's first `glClear`, so the work overlaps the back-buffer wait. The wall clock
+    /// never from `update` or while the window is backgrounded. Idle-only speculation is excluded
+    /// here and drained separately by [`Self::drain_idle_text`]. This still runs before the draw's
+    /// first `glClear`, so the work overlaps the back-buffer wait. The wall clock
     /// makes how many frames a queue takes environmental, which is why a held surface reads its
     /// readiness through the recorded latch ([`plx_gfx::text::latch_surface_text_pending`]).
     pub fn drain_queued_text(mut now_us: impl FnMut() -> u64) -> usize {
@@ -215,6 +215,14 @@ impl PanelMotion {
                 }
             }
             done
+        })
+    }
+
+    /// A settled foreground window can prepare speculative Home copy without presenting.
+    /// Uses the same time bound, but never consumes the live queue or a menu's parked work.
+    pub fn drain_idle_text(now_us: impl FnMut() -> u64) -> usize {
+        plx_base::diag::spans::span("warmidle", || {
+            plx_gfx::text::drain_idle_background_prewarm(PREWARM_BUDGET_US, now_us)
         })
     }
 

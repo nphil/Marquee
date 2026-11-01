@@ -258,7 +258,7 @@ extern "C" {
     fn glClear(mask: c_uint);
     #[cfg(feature = "devtriggers")]
     fn glFinish();
-    #[cfg(feature = "devtriggers")]
+    #[cfg(not(any(test, feature = "test-support")))]
     fn glFlush();
     fn glGenTextures(n: c_int, textures: *mut c_uint);
     // `#[allow(dead_code)]` — the same shape as `app/mod.rs`'s SDL text-input externs: the sole
@@ -593,13 +593,10 @@ pub fn gl_finish() {
     unsafe { glFinish() }
 }
 
-/// Submit everything queued without waiting for it. Unlike [`gl_finish`] this does not stall the
-/// CPU, which is what lets the asynchronous timer path use it: on a tile-based Midgard GPU the
-/// fragment work for a render target is only issued when that target's pass is flushed, so a
-/// `GL_TIME_ELAPSED` interval closed before the flush contains no submitted job and reports a
-/// cost of essentially zero. Profiler-only, for the same reason `gl_finish` is.
-#[cfg(feature = "devtriggers")]
+/// Submit queued work without waiting for it. Idle texture preparation has no swap to flush its
+/// offscreen residency samples; the GPU timer uses the same nonblocking submission boundary.
 pub fn gl_flush() {
+    #[cfg(not(any(test, feature = "test-support")))]
     unsafe { glFlush() }
 }
 
@@ -2729,6 +2726,8 @@ pub fn warm_tex(tex: c_uint) {
         let slot = &mut *std::ptr::addr_of_mut!(WARM_TARGET);
         let target = *slot.get_or_insert_with(|| fbo_target(WARM_PX, WARM_PX, "warm"));
         let Some((_, fbo)) = target else { return };
+        let scissor = LIVE_SCISSOR;
+        scissor_off();
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         // The whole logical screen maps onto the target, so a screen-sized quad fills it and
         // every texel of it samples `tex`.
@@ -2759,6 +2758,10 @@ pub fn warm_tex(tex: c_uint) {
         glBindFramebuffer(GL_FRAMEBUFFER, plx_base::surface::default_fb());
         let (vx, vy, vw, vh) = plx_base::surface::viewport();
         glViewport(vx, vy, vw, vh);
+        match scissor {
+            Some(b) => scissor_box(b[0], b[1], b[2] - b[0], b[3] - b[1]),
+            None => scissor_off(),
+        }
     }
 }
 

@@ -449,6 +449,8 @@ thread_local! {
     /// Which park the [`BACKGROUND`] queue belongs to: bumped by every
     /// [`park_prewarm_as_background`], compared by [`clear_background_prewarm_owned`].
     static BACKGROUND_OWNER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Speculative Home copy must not spend an animating frame's budget or request a present.
+    static BACKGROUND_IDLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// This iteration's answer to "is recorded text still warming?", latched once before dispatch
     /// by [`latch_surface_text_pending`]. `None` outside the product loop (host tests that drive a
     /// dispatcher directly), where [`surface_text_pending`] reads the queue itself.
@@ -540,19 +542,22 @@ pub fn drain_prewarm(budget_us: u64, now: impl FnMut() -> u64) -> usize {
     let budget_us = if crate::dump::armed() { u64::MAX } else { budget_us };
     PREWARM.with(|slot| {
         let mut jobs = std::mem::take(&mut *slot.borrow_mut());
-        let done = drain_budgeted(&mut jobs, budget_us, now, rasterise_warm);
+        let done = drain_budgeted(&mut jobs, budget_us, now, |job| rasterise_warm(job, false));
         *slot.borrow_mut() = jobs;
         done
     })
 }
 
 /// Rasterise and upload one queued key (host tests: record it as resident).
-fn rasterise_warm(job: &WarmKey) {
+fn rasterise_warm(job: &WarmKey, _resident: bool) {
     #[cfg(not(any(test, feature = "test-support")))]
     unsafe {
         if *addr_of!(TEXT_OK) != 0 {
             if let Ok(s) = CString::new(job.bytes.clone()) {
-                let _ = text_tex(&job.bytes, s.as_ptr(), job.sz, job.bold);
+                let (tex, ..) = text_tex(&job.bytes, s.as_ptr(), job.sz, job.bold);
+                if _resident {
+                    crate::gfx::warm_tex(tex);
+                }
             }
         }
     }
@@ -573,10 +578,19 @@ fn rasterise_warm(job: &WarmKey) {
 pub fn park_prewarm_as_background() -> u64 {
     let jobs = PREWARM.with(|q| std::mem::take(&mut *q.borrow_mut()));
     BACKGROUND.with(|b| *b.borrow_mut() = jobs);
+    BACKGROUND_IDLE.with(|idle| idle.set(false));
     BACKGROUND_OWNER.with(|o| {
         o.set(o.get() + 1);
         o.get()
     })
+}
+
+/// Park the same owned queue for idle-only preparation. A later ordinary park replaces both
+/// its work and this policy; idle preparation never consumes another screen's queue.
+pub fn park_prewarm_as_idle_background() -> u64 {
+    let owner = park_prewarm_as_background();
+    BACKGROUND_IDLE.with(|idle| idle.set(true));
+    owner
 }
 
 /// Rasterise background strings, oldest first, until the deadline `budget_us` after the first
@@ -587,10 +601,37 @@ pub fn park_prewarm_as_background() -> u64 {
 /// would reach the same ceiling a recording walk is held to (`TCACHE - PREWARM_HEADROOM`): the
 /// strings stay queued for a calmer frame instead of evicting what the frame is standing on.
 pub fn drain_background_prewarm(budget_us: u64, now: impl FnMut() -> u64) -> usize {
-    drain_background_prewarm_at(budget_us, now, || live_this_frame() as usize)
+    if BACKGROUND_IDLE.with(std::cell::Cell::get) {
+        return 0;
+    }
+    drain_background_prewarm_at(budget_us, now, || live_this_frame() as usize, false)
 }
 
-fn drain_background_prewarm_at(budget_us: u64, mut now: impl FnMut() -> u64, live: impl Fn() -> usize) -> usize {
+/// Main-thread, active-window work only: no framebuffer-0 draw or swap. Keep the last drawn
+/// frame's occupancy intact so speculation cannot evict the picture still on screen.
+pub fn drain_idle_background_prewarm(budget_us: u64, now: impl FnMut() -> u64) -> usize {
+    let done = drain_idle_background_prewarm_at(budget_us, now, || live_this_frame() as usize);
+    if done > 0 {
+        // There is no swap to submit the offscreen residency samples on this iteration.
+        crate::gfx::gl_flush();
+    }
+    done
+}
+
+fn drain_idle_background_prewarm_at(budget_us: u64, now: impl FnMut() -> u64, live: impl Fn() -> usize) -> usize {
+    if !BACKGROUND_IDLE.with(std::cell::Cell::get) || prewarm_pending() {
+        return 0;
+    }
+    let done = drain_background_prewarm_at(budget_us, now, live, true);
+    if done == 0 || !background_prewarm_pending() {
+        // Occupancy cannot fall while the same picture stays on screen. Retire blocked
+        // speculation rather than retrying forever; a new banner can try again.
+        clear_background_prewarm();
+    }
+    done
+}
+
+fn drain_background_prewarm_at(budget_us: u64, mut now: impl FnMut() -> u64, live: impl Fn() -> usize, resident: bool) -> usize {
     // dump mode: no time budget (the occupancy ceiling below is logical and still applies)
     let budget_us = if crate::dump::armed() { u64::MAX } else { budget_us };
     BACKGROUND.with(|b| {
@@ -603,7 +644,7 @@ fn drain_background_prewarm_at(budget_us: u64, mut now: impl FnMut() -> u64, liv
             }
             let Some(job) = b.borrow_mut().pop_front() else { break };
             if !cache_has(&job.bytes, job.sz, job.bold) {
-                rasterise_warm(&job);
+                rasterise_warm(&job, resident);
                 done += 1;
             }
         }
@@ -619,6 +660,7 @@ pub fn background_prewarm_pending() -> bool {
 /// Drop the background queue: the page it was warming can no longer be shown.
 pub fn clear_background_prewarm() {
     BACKGROUND.with(|b| b.borrow_mut().clear());
+    BACKGROUND_IDLE.with(|idle| idle.set(false));
 }
 
 /// Drop the background queue only if `owner` (a [`park_prewarm_as_background`] token) still owns
@@ -644,10 +686,10 @@ pub fn prewarm_pending() -> bool {
 /// so the answer is an environmental observation like the page capture's GPU readiness: the
 /// product loop samples the queue once before dispatch, lets the recorder record it or supply
 /// the recorded one (`app::recorder::Recplay::capture_readiness`), and latches the result here.
-/// The queue changes only inside an iteration's own phases — a panel's recording walk in
-/// `update`, the budgeted drain on the presenting side before the draw, the draw's warm pass — and
-/// a frame that does not present drains nothing, so the latch is the queue as that iteration's
-/// springs saw it. In dump mode the latch is always `false` (see `crate::dump`).
+/// The live queue changes only inside an iteration's own phases — a panel's recording walk in
+/// `update`, the presenting-side drain, the draw's warm pass. Idle background preparation never
+/// drains that queue, so the latch is what this iteration's springs saw. In dump mode the latch
+/// is always `false` (see `crate::dump`).
 pub fn latch_surface_text_pending(pending: bool) {
     // dump mode: forced false on the premise that the dump driver drains to empty before the
     // sample, so the sample is never an input (`crate::dump`); the product loop's order differs
@@ -776,10 +818,9 @@ const TCACHE_HOT_FRAMES: c_uint = 8;
 /// **Start a frame for the glyph cache**: advance the frame serial and clear the live count.
 ///
 /// It arms the hot rule the first time it is called. The ONE call site is the loop's draw entry
-/// (`app/run.rs`, immediately before `draw` on a PRESENTING iteration): a frame that does not
-/// present rasterises nothing, so the serial counts drawn frames and "touched within 8 frames"
-/// means eight frames the cache could actually have been consulted on — not eight settled loop
-/// iterations, after which everything on a still screen would read as cold.
+/// (`app/run.rs`, immediately before `draw` on a PRESENTING iteration). Idle preparation
+/// retains the last picture's occupancy: the serial counts drawn frames, not settled loop
+/// iterations after which everything on a still screen would read as cold.
 pub fn begin_frame() {
     unsafe {
         TFRAME = TFRAME.wrapping_add(1).max(1);
@@ -3644,11 +3685,43 @@ mod cache_policy_tests {
         BACKGROUND.with(|b| *b.borrow_mut() = (0..3).map(key).collect());
         let ceiling = TCACHE - PREWARM_HEADROOM;
         let steady = || 0;
-        assert_eq!(drain_background_prewarm_at(9, steady, || ceiling - 1), 0, "live + 1 >= ceiling: refused");
+        assert_eq!(drain_background_prewarm_at(9, steady, || ceiling - 1, false), 0, "live + 1 >= ceiling: refused");
         assert!(background_prewarm_pending(), "refused strings stay queued");
-        assert_eq!(drain_background_prewarm_at(9, steady, || ceiling - 2), 3, "one below the bound proceeds");
+        assert_eq!(drain_background_prewarm_at(9, steady, || ceiling - 2, false), 3, "one below the bound proceeds");
         reset_prewarm_for_test();
     }
+
+    #[test]
+    fn idle_background_work_retires_when_the_still_picture_fills_the_cache() {
+        let _g = plx_base::testlock::serial();
+        reset_prewarm_for_test();
+        PREWARM.with(|q| q.borrow_mut().push_back(WarmKey { bytes: b"next banner".to_vec(), sz: 20, bold: 0 }));
+        park_prewarm_as_idle_background();
+        assert_eq!(drain_idle_background_prewarm_at(2500, || 0, || TCACHE - PREWARM_HEADROOM - 1), 0);
+        assert!(!background_prewarm_pending(), "a still picture cannot free occupancy: retire instead of spinning");
+        assert_eq!(drain_idle_background_prewarm_at(2500, || 0, || 0), 0);
+        assert_eq!(rasterised_for_test(), 0);
+        reset_prewarm_for_test();
+    }
+
+    #[test]
+    fn idle_background_work_yields_to_the_live_text_queue() {
+        let _g = plx_base::testlock::serial();
+        reset_prewarm_for_test();
+        PREWARM.with(|q| q.borrow_mut().push_back(WarmKey { bytes: b"next banner".to_vec(), sz: 20, bold: 0 }));
+        park_prewarm_as_idle_background();
+        PREWARM.with(|q| q.borrow_mut().push_back(WarmKey { bytes: b"live panel".to_vec(), sz: 20, bold: 0 }));
+        assert_eq!(drain_idle_background_prewarm_at(2500, || 0, || 0), 0);
+        assert!(prewarm_pending() && background_prewarm_pending());
+        assert_eq!(drain_prewarm(2500, || 0), 1);
+        assert!(prewarm_resident_for_test(b"live panel", 20, 0));
+        assert!(!prewarm_resident_for_test(b"next banner", 20, 0));
+        assert_eq!(drain_idle_background_prewarm_at(2500, || 0, || 0), 1);
+        assert!(prewarm_resident_for_test(b"next banner", 20, 0));
+        assert!(!background_prewarm_pending());
+        reset_prewarm_for_test();
+    }
+
 
     /// **A background queue has one owner**: a stale token (the menu fading out) cannot clear what
     /// a newer park queued.

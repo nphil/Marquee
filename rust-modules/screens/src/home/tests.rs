@@ -2551,6 +2551,11 @@ fn parent_read_only_api_projects_engine_focus_without_setters() {
 #[test]
 fn a_settled_hero_counting_down_lets_the_gate_close_and_still_flips() {
     let _guard = plx_base::testlock::serial();
+    plx_ui::tex::install(&HeroArtSpy);
+    plx_ui::tex::reset_for_test(64 << 20);
+    HERO_ART.with(|a| *a.borrow_mut() = HeroArtState::default());
+    plx_gfx::text::reset_prewarm_for_test();
+    plx_gfx::text::begin_frame();
     let mut state = plx_data::pms::PmsState::default();
     let adapter = std::sync::Arc::new(plx_data::pms::PmsAdapter::default());
     plx_data::pms::seed_for_test(&mut state, &adapter, 3, plx_data::pms::HubState::Ready);
@@ -2577,7 +2582,9 @@ fn a_settled_hero_counting_down_lets_the_gate_close_and_still_flips() {
             let tick = ScreenEvent::Tick(Tick { ms: frame * 16, dt_us: 16_000 });
             Machine::<TestHost>::step(&mut s, &tick, &context, &mut fx);
         }
+        prepare_banner_text(&mut s, view);
         let asked = present.take(0);
+        if !asked { drain_idle_banner_text(); }
         if s.outgoing.is_some() {
             flipped_at.get_or_insert(frame);
             assert!(asked, "the flip's slide is motion and must present");
@@ -2594,6 +2601,8 @@ fn a_settled_hero_counting_down_lets_the_gate_close_and_still_flips() {
         asked_while_counting, 0,
         "a settled hero asked for {asked_while_counting} presents while only counting down"
     );
+    assert!(plx_gfx::text::rasterised_for_test() > 0, "idle preparation happened with no requested presents");
+    plx_gfx::text::reset_prewarm_for_test();
 }
 
 #[test]
@@ -3022,6 +3031,7 @@ struct HeroArtState {
     delivered: Vec<String>,
     /// Shelf posters still in flight — Home's ordinary state for its first seconds on screen.
     busy: bool,
+    logo_probes: usize,
 }
 
 /// A poster source that answers READY only for what the test delivered, and records the rest.
@@ -3042,6 +3052,7 @@ impl plx_ui::tex::Source for HeroArtSpy {
         plx_ui::tex::Warm::Claimed
     }
     fn logo(&self, _: u16, _: &str) -> Option<plx_machine::machine::PosterKey> {
+        HERO_ART.with(|a| a.borrow_mut().logo_probes += 1);
         None
     }
     fn logo_warm(&self, _: u16, _: &str) -> plx_ui::tex::Warm {
@@ -3096,6 +3107,133 @@ fn deliver_hero_art(path: &str) {
     let mut handle = plx_machine::machine::PresentHandle::of(&mut present);
     let mut up = StubUp(key as u32 * 10);
     plx_ui::tex::prepare(&mut budget, &mut up, &mut handle, || 0);
+}
+
+fn banner_text_home() -> plx_data::pms::HubsSnapshot {
+    plx_ui::tex::install(&HeroArtSpy);
+    plx_ui::tex::reset_for_test(64 << 20);
+    HERO_ART.with(|a| *a.borrow_mut() = HeroArtState::default());
+    plx_gfx::text::reset_prewarm_for_test();
+    plx_gfx::text::begin_frame();
+    let mut state = plx_data::pms::PmsState::default();
+    let adapter = std::sync::Arc::new(plx_data::pms::PmsAdapter::default());
+    plx_data::pms::seed_for_test(&mut state, &adapter, 3, plx_data::pms::HubState::Ready);
+    for rk in ["1", "2", "3"] {
+        plx_data::pms::edit_test_item(&mut state, rk, &|m| {
+            m.title = format!("Banner {rk}: a different incoming title");
+            m.year = 2000 + rk.parse::<i32>().unwrap();
+            m.rating = "PG-13".into();
+            m.summary = format!("Chapter {rk} opens with a traveler arriving in a distant city. The unfamiliar streets hide a secret that will change the journey, bringing old friends together as the night falls.");
+        });
+    }
+    plx_data::pms::hubs_snapshot(&state)
+}
+
+fn prepare_banner_text(s: &mut HomeScreen, view: HubsView<'_>) {
+    Screen::<TestHost>::prepare(s, &mut Budget::new(), &cx(view, None));
+}
+
+fn drain_idle_banner_text() -> usize {
+    plx_ui::panel_motion::PanelMotion::drain_idle_text(|| plx_gfx::text::rasterised_for_test() * 1000)
+}
+
+#[test]
+fn next_banner_copy_is_resident_before_its_slide_without_warming_on_presenting_frames() {
+    let _guard = plx_base::testlock::serial();
+    let snapshot = banner_text_home();
+    let view = snapshot.view();
+    let mut s = screen(view);
+    prepare_banner_text(&mut s, view);
+    assert!(plx_gfx::text::background_prewarm_pending());
+    assert_eq!(HERO_ART.with(|a| a.borrow().logo_probes), 0,
+        "preparing copy must not promote the neighbor's logo to draw demand");
+    assert_eq!(plx_ui::panel_motion::PanelMotion::drain_queued_text_for_test(), 0,
+        "presenting frames must leave idle-only Home work alone");
+    for _ in 0..32 {
+        let before = plx_gfx::text::rasterised_for_test();
+        drain_idle_banner_text();
+        assert!(plx_gfx::text::rasterised_for_test() - before <= 3,
+            "the existing 2.5 ms deadline allows at most three new 1 ms strings");
+        if !plx_gfx::text::background_prewarm_pending() { break; }
+    }
+    assert!(!plx_gfx::text::background_prewarm_pending(), "the idle copy work finishes");
+    let warmed = plx_gfx::text::rasterised_for_test();
+    assert!(warmed >= 3, "distinct title, metadata and synopsis must really be prepared");
+    for _ in 0..10 {
+        prepare_banner_text(&mut s, view);
+        assert!(!plx_gfx::text::background_prewarm_pending(), "a completed banner is not re-recorded");
+        assert_eq!(drain_idle_banner_text(), 0);
+    }
+
+    let play = FocusKey { entry: s.entry, elem: HERO_PLAY_ELEM };
+    assert_eq!(step(&mut s, view, Some(play), &hero_edge_right()).0, Handled::Yes);
+    assert_eq!(s.carousel_index(view), 1);
+    let incoming = s.selected_hero(view).unwrap();
+    let runs = plx_gfx::text::capture_text_runs_for_test(|| {
+        plx_ui::record_walk(|| hero_content(incoming.item, display_source(incoming.source),
+            Painter::recording().alpha(0.5), 0.0, cx(view, None).measure, false));
+    });
+    assert!(runs.iter().any(|run| run.contains("Chapter")), "the incoming synopsis is drawn");
+    plx_gfx::text::drain_prewarm(u64::MAX, || 0);
+    assert_eq!(plx_gfx::text::rasterised_for_test(), warmed,
+        "the slide's exact strings, sizes and weights introduce no cold text key");
+    plx_gfx::text::reset_prewarm_for_test();
+}
+
+#[test]
+fn a_manual_banner_flip_cancels_pending_copy_until_the_new_banner_settles() {
+    let _guard = plx_base::testlock::serial();
+    let snapshot = banner_text_home();
+    let view = snapshot.view();
+    let mut s = screen(view);
+    prepare_banner_text(&mut s, view);
+    assert!(plx_gfx::text::background_prewarm_pending());
+    let play = FocusKey { entry: s.entry, elem: HERO_PLAY_ELEM };
+    step(&mut s, view, Some(play), &hero_edge_right());
+    assert!(s.outgoing.is_some());
+    assert!(!plx_gfx::text::background_prewarm_pending(), "the old speculative work is cancelled");
+    prepare_banner_text(&mut s, view);
+    assert_eq!(drain_idle_banner_text(), 0, "the moving banner must not queue its successor");
+    for frame in 1..=125 {
+        step(&mut s, view, Some(play), &hero_tick(frame * 16));
+    }
+    assert!(s.outgoing.is_none());
+    prepare_banner_text(&mut s, view);
+    assert!(plx_gfx::text::background_prewarm_pending(), "the new settled banner prepares its own successor");
+    assert!(drain_idle_banner_text() > 0);
+    plx_gfx::text::reset_prewarm_for_test();
+}
+
+#[test]
+fn covered_and_unmounted_home_cancel_copy_without_stealing_a_newer_menu_queue() {
+    let _guard = plx_base::testlock::serial();
+    let snapshot = banner_text_home();
+    let view = snapshot.view();
+    let mut s = screen(view);
+    prepare_banner_text(&mut s, view);
+    assert!(plx_gfx::text::background_prewarm_pending());
+    step(&mut s, view, None, &ScreenEvent::Cover);
+    assert!(!plx_gfx::text::background_prewarm_pending());
+    prepare_banner_text(&mut s, view);
+    assert_eq!(drain_idle_banner_text(), 0);
+    step(&mut s, view, None, &ScreenEvent::Uncover);
+    prepare_banner_text(&mut s, view);
+    assert!(plx_gfx::text::background_prewarm_pending());
+    step(&mut s, view, None, &ScreenEvent::Unmount);
+    assert!(!plx_gfx::text::background_prewarm_pending());
+
+    let mut another = screen(view);
+    prepare_banner_text(&mut another, view);
+    let menu = std::ffi::CString::new("The newer menu owns its work").unwrap();
+    plx_gfx::text::queue_prewarm(menu.as_ptr(), 20, 0);
+    plx_gfx::text::park_prewarm_as_background();
+    drop(another);
+    assert!(plx_gfx::text::background_prewarm_pending(), "dropping Home cannot cancel a newer owner");
+    assert_eq!(drain_idle_banner_text(), 0, "the idle drain cannot consume menu work");
+    assert_eq!(plx_ui::panel_motion::PanelMotion::drain_queued_text_for_test(), 1);
+    assert!(plx_gfx::text::prewarm_resident_for_test(menu.as_bytes(), 20, 0));
+    assert!(!plx_gfx::text::background_prewarm_pending());
+    plx_gfx::text::reset_prewarm_for_test();
 }
 
 /// **Owner field report (2026-09-30): a MANUAL hero flip blinks; the 8 s auto-advance never does.**

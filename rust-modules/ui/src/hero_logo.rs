@@ -192,12 +192,13 @@ impl<'a> HeroLogo<'a> {
         // The hero draws the item the shelf under it has focused, and that shelf is the server
         // being browsed — so its clearLogo is asked of the current server. An item that came from
         // somewhere else (a merged Continue Watching row) names its own, once items carry one.
-        if let Some((tex, sw, sh)) = crate::tex::logo_src(self.sid, self.rk) {
-            let (w, h) = fit(self.rung, sw, sh, band.w);
-            // NOT pixel-snapped: a logo is SCALED content, and the crispness contract snaps
-            // 1:1-texel content only (see the note above `theme.rs`'s size ladder).
-            p.tex(tex, place(band, w, h, align), 0.0, theme::TEXT_PRIMARY);
-            return;
+        if !self.rk.is_empty() {
+            if let Some((tex, sw, sh)) = crate::tex::logo_src(self.sid, self.rk) {
+                let (w, h) = fit(self.rung, sw, sh, band.w);
+                // Scaled logo art is not 1:1 text and must not be pixel-snapped.
+                p.tex(tex, place(band, w, h, align), 0.0, theme::TEXT_PRIMARY);
+                return;
+            }
         }
         // `cs` must outlive the draw — `Label` holds a non-owning pointer (ui/CLAUDE.md's first gotcha)
         let Ok(cs) = std::ffi::CString::new(line) else {

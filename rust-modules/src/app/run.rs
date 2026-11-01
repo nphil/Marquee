@@ -484,14 +484,13 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     if fr.present {
         app.window_activity.begin_present(fr.player);
     }
-    // ---- step 9's UPLOAD, on the presenting side of the decision ---------------------
+    // ---- step 9's UPLOAD, after the present decision ---------------------------------
     //
-    // The render cache's upload step under the frame budget (§3.3 step 9, §10: "a frame that
-    // does not present uploads nothing"). Two placement rules, both load-bearing:
+    // Image and live-page uploads belong to presenting frames. Home's optional idle-only
+    // text queue is the bounded exception below; it does not submit a new screen image.
     //
-    // * **Only on a presenting frame.** The spec's rule: a frame that is skipped wholesale
-    //   uploads nothing and the queue waits (`GfxUploader::warm` is `gfx::warm_tex`, which
-    //   also draws, so it wants the frame's GL state in place).
+    // * **Only on a presenting frame for images and live text.** Speculative Home text has
+    //   its own idle-only turn below: it samples an offscreen target and submits without a swap.
     // * **Before the draw.** `warm_tex` draws into its own tiny offscreen target and never
     //   touches framebuffer 0 (the first framebuffer-0 draw of a frame is where the back-buffer
     //   wait lands, and it must stay with the page's `frame_clear`, not with this window), so
@@ -508,6 +507,10 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
             &mut ph,
             plx_base::diag::heartbeat::now_us,
         );
+    } else if !fr.deferred && app.window_activity.allow_present(true) {
+        // Do not reopen the present gate for speculation, or pile it onto an animating frame.
+        // The owned queue retains the last picture's text occupancy and retires if it stalls.
+        plx_ui::panel_motion::PanelMotion::drain_idle_text(plx_base::diag::heartbeat::now_us);
     }
     // EXPERIMENT (`/tmp/plxnative-opaque`): one `static` read and a return when the trigger
     // is absent. Edge-triggered — see `system.rs`.

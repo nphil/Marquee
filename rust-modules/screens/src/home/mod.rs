@@ -617,6 +617,9 @@ pub struct HomeScreen {
     /// operation sequence that measurably diverges the hash. `tick`'s own comment explains why
     /// the timer deliberately reports no `Motion` while it counts.
     hero_auto: f32,
+    /// Render-only preparation stamp: catalog generation and background-queue owner.
+    /// Retained after completion/refusal; every selected-banner change invalidates it.
+    hero_text_warm: Option<(u32, u64)>,
     /// `HomeCmd::PinHero` holds the billboard: the countdown above stops for the life of the page.
     /// A screenshot pin only, never set by the product, and not logical state (no replay sets it).
     hero_pinned: bool,
@@ -661,6 +664,12 @@ pub struct HomeScreen {
     grid: Grid,
 }
 
+impl Drop for HomeScreen {
+    fn drop(&mut self) {
+        self.cancel_hero_text_warm();
+    }
+}
+
 impl HomeScreen {
     pub fn new(entry: EntryId, id: InstanceId) -> Self {
         Self {
@@ -692,6 +701,7 @@ impl HomeScreen {
             hero_slide: Spring::at(1.0),
             hero_dir: 1.0,
             hero_auto: HERO_AUTO_S,
+            hero_text_warm: None,
             hero_pinned: false,
             covered: false,
             snap_target: 0.0,
@@ -1404,6 +1414,7 @@ impl HomeScreen {
         let Some(incoming) = view.hero(next).and_then(|h| Self::identity_of(h.item)) else {
             return false;
         };
+        self.cancel_hero_text_warm();
         self.outgoing = Some(current);
         self.carousel = Some(incoming);
         self.hero_dir = dir as f32;
@@ -1853,6 +1864,44 @@ impl HomeScreen {
         }
     }
 
+    fn cancel_hero_text_warm(&mut self) {
+        if let Some((_, owner)) = self.hero_text_warm.take() {
+            plx_gfx::text::clear_background_prewarm_owned(owner);
+        }
+    }
+
+    fn prepare_hero_text<H: HomeLike>(&mut self, cx: &Cx<'_, H>) {
+        let view = H::hubs(cx);
+        if self.covered || self.outgoing.is_some() || self.snap_target != 0.0
+            || self.snap.pos.abs() > SNAP_REST_POS || self.snap.vel.abs() > SNAP_REST_VEL
+            || view.hero_count() <= 1 || status_read(view).is_some()
+        {
+            self.cancel_hero_text_warm();
+            return;
+        }
+        if self.hero_text_warm.is_some_and(|(generation, _)| generation == view.generation) {
+            return;
+        }
+        self.cancel_hero_text_warm();
+        // A foreground recording or another screen's speculative page owns these queues first.
+        if plx_gfx::text::prewarm_pending() || plx_gfx::text::background_prewarm_pending()
+            || !plx_ui::tex::source_idle()
+        {
+            return;
+        }
+        let next = (self.carousel_index(view) + 1) % view.hero_count();
+        let Some(hero) = view.hero(next) else { return };
+        plx_gfx::gfx::without_frame_clear(|| {
+            plx_ui::rec::speculative(|| {
+                plx_ui::record_walk(|| {
+                    hero_content(hero.item, display_source(hero.source), Painter::recording(), 0.0, cx.measure, true);
+                })
+            })
+        });
+        let owner = plx_gfx::text::park_prewarm_as_idle_background();
+        self.hero_text_warm = Some((view.generation, owner));
+    }
+
     fn request_for_strip(elem: u32) -> Option<HomeReq> {
         Some(match elem {
             STRIP_HOME_ELEM => HomeReq::Tab(HomeTab::Home),
@@ -1950,6 +1999,7 @@ impl HomeScreen {
                 let Some(identity) = Self::identity_of(hero.item) else {
                     return Handled::No;
                 };
+                self.cancel_hero_text_warm();
                 self.carousel = Some(identity);
                 self.outgoing = None;
                 self.hero_slide.jump(1.0);
@@ -2144,14 +2194,14 @@ impl HomeScreen {
         if let Some((out_x, in_x)) = self.slide_offsets() {
             if let Some(old) = self.outgoing_hero(view) {
                 let po = p.translate(out_x, 0.0);
-                hero_content(old.item, display_source(old.source), po, out_x, measure);
+                hero_content(old.item, display_source(old.source), po, out_x, measure, false);
                 self.draw_hero_actions(old.item, env, po, out_x, false, page_alpha, focus, measure, press_scale);
             }
             let pi = p.translate(in_x, 0.0);
-            hero_content(hero.item, display_source(hero.source), pi, in_x, measure);
+            hero_content(hero.item, display_source(hero.source), pi, in_x, measure, false);
             self.draw_hero_actions(hero.item, env, pi, in_x, true, page_alpha, focus, measure, press_scale);
         } else {
-            hero_content(hero.item, display_source(hero.source), p, 0.0, measure);
+            hero_content(hero.item, display_source(hero.source), p, 0.0, measure, false);
             self.draw_hero_actions(hero.item, env, p, 0.0, true, page_alpha, focus, measure, press_scale);
         }
         if view.hero_count() > 1 {
@@ -2520,6 +2570,8 @@ impl LogicalState for HomeScreen {
             // `item_index` / `group_index` are caches of `items` / `groups`, which are covered.
             rows: _, elem_at: _, item_index: _, group_index: _, projected_generation: _, cw_cards: _, cw_offset: _, carousel_anchor: _, rebound: _, ghost_cards: _, restored_scroll: _, restore_reveal: _, hold: _, since_prune: _, #[cfg(test)] cost: _, carousel: _,
             outgoing: _, hero_flip_cd: _, hero_slide: _, hero_dir: _, hero_auto: _, hero_pinned: _, covered: _,
+            // Residency preparation changes rendering only, not replayed input state.
+            hero_text_warm: _,
             snap_target: _,
             // Whether the tick pulls the scroll to the focused shelf. What it decides is
             // `grid.scroll_target`, encoded below, and it is a hand-off from the pointer's events
@@ -3112,6 +3164,7 @@ impl<H: HomeLike> Machine<H> for HomeScreen {
                 Handled::Yes
             }
             ScreenEvent::Cover => {
+                self.cancel_hero_text_warm();
                 for row in 0..self.rows.len() { self.cancel_row_page(row, cx, fx); }
                 self.covered = true;
                 Handled::Yes
@@ -3121,6 +3174,10 @@ impl<H: HomeLike> Machine<H> for HomeScreen {
                 self.hero_auto = HERO_AUTO_S;
                 self.sync_catalog(cx);
                 fx.invalidate(Provenance::Nav);
+                Handled::Yes
+            }
+            ScreenEvent::WillLeave(_) | ScreenEvent::Unmount | ScreenEvent::Suspend => {
+                self.cancel_hero_text_warm();
                 Handled::Yes
             }
             ScreenEvent::Tick(tick) => {
@@ -3302,7 +3359,9 @@ impl<H: HomeLike> Screen<H> for HomeScreen {
     fn crumb(&self, _cx: &Cx<'_, H>) -> Option<Cow<'_, str>> {
         None
     }
-    fn prepare(&mut self, _budget: &mut Budget, _cx: &Cx<'_, H>) {}
+    fn prepare(&mut self, _budget: &mut Budget, cx: &Cx<'_, H>) {
+        self.prepare_hero_text(cx);
+    }
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
         self.draw_page(f);
     }
@@ -3811,7 +3870,7 @@ fn meta_drawn_w(view: &TextView<'_>, text: &str, width: f32, measure: &dyn Measu
     }
     measure.width_str(text, theme::size::BODY, false).min(width)
 }
-fn hero_content(hero: &PmsMovie, source: &str, p: Painter, dx: f32, measure: &dyn Measure) {
+fn hero_content(hero: &PmsMovie, source: &str, p: Painter, dx: f32, measure: &dyn Measure, text_only: bool) {
     if !on_axis(
         MARGIN_X + dx,
         if source.is_empty() {
@@ -3854,7 +3913,10 @@ fn hero_content(hero: &PmsMovie, source: &str, p: Painter, dx: f32, measure: &dy
     let meta_h = meta_view.measure_h(HERO_COL_W);
     let synopsis = (!hero.summary.is_empty()).then(|| plx_ui::hero_synopsis(&hero.summary, ""));
     let stack = hero_stack(title_h, meta_h, synopsis.as_ref().map(|v| v.measure_h(HERO_COL_W)));
-    HeroLogo::new(hero.sid.raw(), hero_logo_rk(hero), title, LogoRung::Hero)
+    // A speculative walk uses the exact fallback typography without promoting neighbor logos
+    // to visible-image demand. Their existing settled/source-idle prefetch remains the owner.
+    let logo_key = if text_only { "" } else { hero_logo_rk(hero) };
+    HeroLogo::new(hero.sid.raw(), logo_key, title, LogoRung::Hero)
         .draw(p, Rect::new(MARGIN_X, stack.title.y, HERO_COL_W, title_h), measure);
     let y = stack.meta.y;
     meta_view.draw(p, Rect::new(MARGIN_X, y, HERO_COL_W, 0.0));
