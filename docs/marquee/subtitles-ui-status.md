@@ -101,9 +101,12 @@ Exact foreground `com.beb.plxnative` selects nominal 120/divider 1; other foregr
 startup `--refresh` base, default 60. Numeric `ctl refresh 60/120` overrides remain sticky;
 `ctl refresh auto` resumes policy and `ctl refresh reset` is measurement-only. Maintenance hand-back
 must verify the normal base is restored outside Marquee, not leave a global manual 120 setting.
-Quickpanel/IME overlay behavior is awaiting a source-only owner answer; the exact-app policy does
-not establish 120 Hz system menus. Divider 1 follows LG’s 100 or 119.88/120 family; independent
-physical 120 over the 100 family and optical seamlessness remain unestablished.
+Source routing selects the newest mapped, non-minimized nongroup card; overlay, volume, toast,
+keyboard, ShellSystem and cover windows do not replace it. Menus over Marquee inherit its nominal
+120 target; over Home they inherit startup base 60. This is not universal 120 Hz animation.
+Qt Shell has a nominal 16 ms basic timer and selected frame-driven paths; Rust UI’s initial
+60 Hz scene hint is not a proven global cap. Divider 1 follows LG’s 100 or 119.88/120 family;
+independent physical 120 over the 100 family and optical seamlessness remain unestablished.
 
 A fresh agreed TV window and separately authorized exact compositor/Rust-bundle restart with
 pinned rollback through the proven renderer transport are required. App-update permission does
@@ -157,6 +160,15 @@ That archived report leaves on-set display validation pending. `rustui-result.md
 the older Rust-client flip-copy comparison; the upside-down no-copy diagnostic is not proof of a
 viable display path. Check the current baseline before treating these as new optimizations; neither
 report identifies the current two frame gaps, and LG retains native video-plane ownership.
+
+The current source-only packet is `/tmp/lumatv-r28/docs/research/framerate-result.md:9–21`.
+Its primary map covers scanout, complex Home load and native commit-callback constraints; AFBC
+import is not proof of scanout compatibility. Reuse the existing LumaTV
+`perf/{ringsum.py,frametl.py,frametl_parse.py,analyse.py}` with the saved capture pair above.
+
+`Native120Pacing` remains the sole `deep-task`/`@slow` worker. Its latest reported wake failed
+with HTTP 400 before analysis; no Slow analysis is running or complete. Resume that role with
+this packet when provider access is restored; no substitute worker or device permission is implied.
 
 The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
 path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in
