@@ -73,10 +73,15 @@ was subsequently permitted but remains unsent; this is not a standing grant or a
 the packet. The later coordinated read-only capture completed and the TV lease was released again.
 The failed R2 receipt does not cover the later packet; no valid current-packet approval is established.
 
-The later offline candidate is `/data/home/tmp/lumatv-f5-renderer-packet-r4`. R4 has new argv, loader
-environment and ELF-provenance checks and is not approved or installed. The retained HDMI profile
-is classified as occupied and needs a separate explicit input/audio-interruption scope. The unused
-R3 permission and the app-only update window do not authorize R4.
+R4 is reported frozen offline at `/data/home/tmp/lumatv-f5-renderer-packet-r4`, PREPARED NOT RUN.
+Entry SHA-256: `3e5fd3953c3c67aae80d849b0ab6187f7c3df9300d1336104b0d86614a41cd5b`.
+`scope-receipt-r4.json` SHA-256:
+`b006de5f91f6f88dfa5cfc06af322ffee5141ffdbfdd4296c6f0e10b16537c37`.
+`execute-command.txt` SHA-256:
+`c4596739ce95df9eca054f4df94ac85c0f9152536b09a7aa7b461d78be977735`.
+The packet retains the renderer/R8/f5 and rollback payloads; frozen R2/R3 remain unchanged. The
+retained HDMI profile is OCCUPIED and requires explicit possible input/audio-interruption scope.
+Unused R3 permission and app-update authorization do not authorize R4.
 
 The final reported legacy compositor candidate is
 `/data/home/tmp/lumatv-foreground-pacing-20261031/lumatv-compositor-legacy`, SHA-256
@@ -98,10 +103,11 @@ pinned rollback through the proven renderer transport are required. App-update p
 not cover this maintenance, and no approved payload may be substituted implicitly. No TV lease
 is held and no new HomeLabber request will be sent.
 
-Local binary review does not establish deployment-packet readiness. No exact current f5-only
-packet or current bundle/manifest/flags rollback pins are claimed ready; these remain platform-task
-prerequisites. Reuse the historical `renderer-fragment.py` cutover steps, not the enclosing
-`wake-maintenance.py` wake-policy/trial/cold-boot workflow unchanged.
+Frozen local proofs do not establish live TV state. Fresh vendor-header, hash, complete loader-
+environment and inode checks, plus hardware acceptance, remain unobserved. Local settlement and
+rollback stand-ins do not establish device recovery. Reuse the historical `renderer-fragment.py`
+cutover, not the enclosing wake-policy/trial/cold-boot workflow. The separate movie picture-mode
+arrow/selection fix is outside frozen R4.
 
 The platform owner reports no first request for the final packet and no evidence of a matching
 pending or execution-unknown action. Missing optional `approval_list_requests` does not prevent
