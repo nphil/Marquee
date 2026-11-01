@@ -4,14 +4,19 @@
 
 Stable 0.10.0 is installed on `192.168.1.242` (webOS 10.2.1, platform `o22n2`). The existing
 installer and payload deployment retained `com.beb.plxnative` and its storage identity; all 54
-deployed files matched. Runtime build `25c0c7be` identifies Marquee and the fork repository in About.
-The versioned IPK and `marquee-latest.ipk` are staged in `/data/home/Marquee-release/`.
+deployed files matched. Runtime build `37d8d0f4` includes banner prewarming and enhanced-audio startup
+recovery. The versioned IPK and `marquee-latest.ipk` are staged in `/data/home/Marquee-release/`, with
+SHA-256 `c9e95defb396b62062fd7405551606c135d4da318a694fb28ddfe420162b7812`.
 
 The initial focused feature run passed 93 checks; four privacy identifier/preview-isolation checks
 also passed. ARM ELF and package checks passed for the installed build. The stored account opened
 Profiles, Home, Settings and About. Native keyboard input and Bazarr 1.6.2 connectivity were observed;
 the key remained masked. The movie hold-menu displayed Delete; no deletion was submitted. Instant
-D-pad seeking is Off for the active profile. Playback and actual media deletion were not tested.
+D-pad seeking is Off for the active profile. The Apothecary Diaries S1E5 resumed at 193 seconds with
+dialogue enhancement enabled: the selected output was H264/Opus, its actual Opus header supplied two
+channels, and decoded video advanced. Arrow-key seeking displayed a Plex scene still; Back cancelled
+the preview. Playback stopped cleanly, the video-plane list became empty, and the UI retained the
+120 Hz runtime setting. Actual media deletion was not tested.
 
 ## Proven local paths
 
@@ -21,15 +26,26 @@ D-pad seeking is Off for the active profile. Playback and actual media deletion 
 - Reserve and release the TV from the same build worktree with `tools/tv-lock.sh`.
   `make ... run` uses the stored account without embedding a Plex token.
 - Capture this webOS 10 set with `python3 /tmp/lt/shot.py NAME 1920 1080`; the repository capture
-  script uses an older service and macOS tooling. `/tmp/lt/kb.py` is the proven SSAP remote helper.
+  script uses an older service and macOS tooling. `/tmp/marquee-ui-kb.py` sends native remote key
+  events through the existing SmartRemoteRCU device; `/tmp/lt/kb.py` is the SSAP remote helper.
 
 ## Frame pacing and hardware
 
 Active Marquee navigation measured about 60 display flips/s at the compositor’s default divider,
 and 119.7/s at runtime `refresh 120`, with an 8.3 ms 99th-percentile interval during steady motion.
-Short 120 Hz samples still contained one missed interval during horizontal navigation and four
-when entering new rows. Idle-to-active boundaries are not animation drops. The client frame callback
+SDL already requests VSync with swap interval 1; the compositor pacer uses actual display-flip phase.
+The banner fix prewarms incoming text through the existing owned queue without presenting. Its
+automatic-transition sample had only 8.3 ms intervals; a six-second manual-navigation sample still
+contained one 16.7 ms interval near the motion-to-idle boundary. This is not proof of zero stutter.
+Idle-to-active gaps and lifetime-average flip counts are not animation FPS. The client frame callback
 is acknowledged at commit; its FPS counter does not prove unique pictures reached the display.
+
+Automatic foreground-only 120 Hz is not installed. The single approved R2 platform attempt stopped
+in read-only preflight because the installed dispatcher differed from its historical baseline. The
+TV system was unchanged by that attempt. R2 remains frozen; its approval is consumed, not pending.
+The installed dispatcher SHA-256 is `7631005064da542f26f644ae1b636597e729884c4288d996c027b60185f366cf`.
+A corrected packet needs a recognized current baseline and new direct permission before another
+Face ID request. The current runtime 120 Hz setting is not a persistent application preference.
 
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
 A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
@@ -55,6 +71,11 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 
 - Enhancement uses one native playback engine: successful route changes reload it; failed trials
   restore the prior route and position. The recovery is not seamless or a second decoder.
+- Cold enhanced startup waits nonblockingly for the selected demux output metadata. OpusHead carries
+  channels, mapping and pre-skip; original media channels must not be guessed for transcoded output.
+  A refused cold enhanced start retries plain playback once at the retained position. Deferred unloads
+  retain that recovery owner; a refused plain start becomes Failed even before native Ready. Seven
+  focused cold-start/Opus checks passed; the successful enhanced path was exercised on the TV.
 - Scene stills use authenticated Plex Part-index endpoints, not the photo transcoder. The image
   cache is memory-only; missing generated indexes show no still. The request deadline does not
   interrupt synchronous DNS resolution.
