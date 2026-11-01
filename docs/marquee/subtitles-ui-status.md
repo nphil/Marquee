@@ -17,14 +17,18 @@ The earlier `marquee-0.10.0-37d8d0f4-rollback.ipk` is also retained.
 The 2026-11-01 12:32 EST handoff records successful root `Active Standby` JSON before and after
 the copy. The same app-only lease was released, with the local mirror absent and its remote token
 gone. No launch, wake, power, picture, refresh, compositor or tracing command accompanied the deploy.
-LumaTV subsequently released its separately authorized native-platform window. The next Marquee
-acceptance attempt verified a fresh own lease and read power Active, but foreground `netflix` was
-IN USE. It stopped before launch, input, screenshots or settings changes, preserving Active power
-and the intentionally unmuted receiver. Release verified the local mirror absent and own remote
-token gone. Evidence: `/data/home/tmp/marquee-native-acceptance-20261101.json`. No device job remains.
-The last on-screen-accepted Marquee runtime remains `fce9888a`; current TV Hz, app-jail counter
-access, live alignment and the new runtime are unverified. Earlier captures are
-`/tmp/lt/marquee-fce-*.png` and scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
+The later owner-opened stable 0.10.0 app window verified native keyboard entry, durable SpeechDock
+Address save and the same value after reopening: `https://speechdock.nateshome.net`. Reveal changed
+from Off to Word by word; detailed stats logging stayed Off. Brief enhanced playback advanced and
+seeking displayed a scene still. In-app Stats showed approximately 120 Hz measured display sync,
+23.976 fps source metadata and 1916×952 coded pipeline video; GL swaps are not delivered-frame FPS.
+Configured English-subtitled Community playback displayed a partial cue. Its Info label said Direct
+Play, but the actual route and service-aligned timing were not independently captured. A saved
+Address or visible word reveal is not proof of an acoustic result. Ordinary backend receipt
+verification is pending; no diagnostics consent was enabled. Final screen was Marquee Home, power
+Active, receiver unchanged. Fresh own lease release verified local mirror absent and own token
+gone. Evidence: `/data/home/tmp/marquee-live-setup-20261101.json`; native screenshots are listed
+there. No device job or lease remains.
 
 A subsequent passive root observation during Netflix left playback, input, screenshots and settings
 untouched. Exact CPU-summed `osd_irq` advanced 8,233,968 to 8,234,065 over 1.00272638 monotonic
@@ -43,6 +47,10 @@ is visible, showing approximate Hz under `measured display sync`. Video-source r
 GL swaps remain separate; reset, unreadable and stale counters do not produce live readings.
 No live panel raster or final output HDR field is inferred from video metadata, placed video
 rectangles or static capabilities. LumaTV owns the separate native Quick Settings info pill.
+
+A 23.976 fps source can use five evenly repeated refreshes at 119.88 Hz. The rounded `~120 Hz`
+display cannot distinguish that from exactly 120.00 Hz or certify physical-panel cadence matching.
+Do not infer a broken rate switch, a verified switch, or 120 fps video from that rounded reading.
 
 The updated artwork cache retains the last drawn viewport through playback and return within the
 existing 64 source slots, render-scaled 44 MiB texture budget and 8 MiB decode-admission threshold.
@@ -260,9 +268,9 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 ## Speech timing and render provenance
 
 The deployed `2b12924e` client includes the isolated SpeechDock source return
-`1b0e4e5c3ea32f38f94525aca7a89457f9dec963` and final renderer/source fences, but audio alignment
-is not activated on the TV. Estimated word timing remains the fallback; authored ASS karaoke keeps
-its timings.
+`1b0e4e5c3ea32f38f94525aca7a89457f9dec963` and final renderer/source fences. The native Address
+and Word by word mode are now configured; successful acoustic timing application on the TV remains
+unverified. Estimated timing is the fallback; authored ASS karaoke retains its timings.
 
 SpeechDock session `01a1943c-9834-7106-872e-e017bd1c394b` owns the CPU backend. Client source
 ownership has returned to Marquee; `/data/home/Marquee-speechdock-alignment` remains frozen. Its
@@ -283,7 +291,7 @@ The deployed `2b12924e` corrections intersect rendered sidecar visibility with u
 bounds before applying the offset once, omit authored cues longer than 15 seconds, and clamp startup
 windows to zero. Earlier requests could reject an entire batch because ASS rounded 1009 ms to
 1000 ms, admit an ineligible long cue shortened for display, or send nothing before 15 seconds.
-The ARM release passed the existing binary and package checks; native TV activation remains unverified.
+The ARM release passed binary/package checks. Native Address/reveal setup is verified; live acoustic provenance is not.
 
 The validated Address is published only after durable session save and restored at boot. Settings
 shows Address/Disabled and validation or save errors, not connection or aligned/estimated status.
@@ -300,8 +308,8 @@ broad film-accuracy certification, and no guards or authored bounds were relaxed
 `source_revision` can accompany estimated cues and is not proof of aligned words; estimated cues
 must clear earlier alignment. Changed-source validation returns `estimated`, `words: []` and a null
 source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
-`/data/home/tmp/speechdock-alignment-production`. TV activation awaits an available app-only window;
-the latest attempt stopped at Netflix IN USE without changing the Address.
+`/data/home/tmp/speechdock-alignment-production`. The native TV Address is saved and Word by word
+enabled; ordinary backend records have been requested to verify live client receipt without new capture.
 
 All 19 sampled cues passed source verification: 17 failed independent exact greedy lexical
 equality, one failed the acoustic score, and one aligned. Repeated-word rejection accounts for
