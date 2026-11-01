@@ -224,6 +224,7 @@ struct Pslot {
     /// cooldown is armed ([`PosterSource::unresident`]) or the slot's eviction history is
     /// otherwise cleared (recovery, recycle) — a new deadline is something to wake for again.
     evict_wake_sent: bool,
+    return_pin: bool,
 }
 impl Pslot {
     const ZERO: Pslot = Pslot {
@@ -248,6 +249,7 @@ impl Pslot {
         evict_attempts: 0,
         evict_cooldown_until: None,
         evict_wake_sent: false,
+        return_pin: false,
     };
 }
 
@@ -995,7 +997,7 @@ fn is_settled_victim(s: &Pslot, frame: c_uint) -> bool {
 /// (a queued request is live, a picture is kept) or not (both are recyclable). Speculation
 /// (`visible` unset: a warm, a lookahead entry nobody has drawn) never qualifies.
 fn drawn_recently(s: &Pslot, frame: c_uint) -> bool {
-    s.visible && frame.wrapping_sub(s.frame) < WANT_STALE_FRAMES
+    s.return_pin || (s.visible && frame.wrapping_sub(s.frame) < WANT_STALE_FRAMES)
 }
 
 /// A request a worker has not picked up whose card has not been drawn for [`WANT_STALE_FRAMES`].
@@ -1335,6 +1337,7 @@ fn lookup(srv: ServerId, key_s: &str, touch: Touch) -> (Hit, Warm) {
         s.state = P_WANT;
         s.visible = touch == Touch::Draw;
         s.ahead = touch == Touch::Ahead;
+        s.return_pin = false;
         s.use_ = use_;
         s.frame = frame;
         s.pw = 0;
@@ -1535,16 +1538,30 @@ fn store_idle() -> bool {
 // cover-fitted tile now costs exactly what a stretched one does. Both of its callers, `logo_src` and
 // `ui::widgets::resolve_tex_wh`, go through `poster_get_wh`.)
 
-/// MAIN thread, once per frame, first: a new frame — nothing is "touched" yet (evict-protection
-/// is per frame, see [`victim`]). Also where the residency instrument's settle snapshot is
-/// checked (see [`log_residency_settled`]'s doc for why THIS seam and not `PosterSource::idle`):
-/// the slot scan below is the same one [`idle_of`] would run, so this is the store's one
-/// once-a-frame, screen-agnostic read of whether it is quiet.
+/// The existing source slots and texture entries retain the same return viewport.
+pub(crate) fn hold_return(player: bool, transitioning: bool) {
+    // The return page may still be represented by a cached transition image.
+    if !player && transitioning { return; }
+    let mut g = store();
+    let frame = g.frame;
+    tex::hold_return(player, |key, keep| {
+        if let Some(slot) = g.slots.get_mut(key.0 as usize) {
+            if slot.return_pin && !keep { slot.frame = frame; }
+            slot.return_pin = keep;
+        }
+    });
+}
+
+fn upload_priority(slot: &Pslot, frame: u32) -> (bool, u32, u32) {
+    (!slot.visible, frame.wrapping_sub(slot.frame), slot.use_)
+}
+
+/// MAIN thread, once per loop: retry deadlines and the residency settle snapshot.
+/// Draw-frame age advances in `prepare`, not while an unchanged screen is idle.
 pub(crate) fn begin_frame() {
     trace::begin_frame();
     let now = crate::app::clock::now();
     let mut g = store();
-    g.frame = g.frame.wrapping_add(1);
     invalidate_due_retries(&mut g.slots, now);
     invalidate_due_evictions(&mut g.slots, now);
     let settled = idle_of(&g.slots);
@@ -1650,6 +1667,14 @@ pub(crate) fn prepare(
     present: &mut plx_machine::machine::PresentHandle<'_>,
     now_us: impl Fn() -> u64,
 ) -> usize {
+    {
+        let mut g = store();
+        // Residency age counts drawn frames, not idle loop turns. Otherwise a still
+        // visible viewport loses source-slot protection while nothing repaints it.
+        g.frame = g.frame.wrapping_add(1);
+        let frame = g.frame;
+        tex::prioritize_pending(|key| upload_priority(&g.slots[key.0 as usize], frame));
+    }
     let n = tex::prepare(b, &mut GfxUploader, present, now_us);
     if n > 0 {
         CV.notify_all();
@@ -2612,6 +2637,126 @@ mod tests {
             "a cache rejection must synchronously revoke the source's READY claim"
         );
     }
+
+    #[test]
+    fn poster_residency_return_survives_long_playback_and_pressure() {
+        struct Up;
+        impl Uploader for Up {
+            fn upload(&mut self, d: &Decoded) -> Tex { Tex { id: 1, w: d.w, h: d.h } }
+            fn warm(&mut self, _: Tex) {}
+            fn free(&mut self, _: Tex) {}
+        }
+        let (_fresh, sid, _) = one_server();
+        tex::install(&SOURCE);
+        tex::reset_for_test(48);
+        let paths = ["/library/metadata/return-a/thumb", "/library/metadata/return-b/thumb"];
+        {
+            let client = plx_plex::plex::client_for(sid).unwrap();
+            let mut g = store();
+            g.slots = [Pslot::ZERO; PT_CAP];
+            g.frame = 1;
+            for (i, path) in paths.iter().enumerate() {
+                let slot = &mut g.slots[i];
+                slot.srv = sid;
+                slot.cache_gen = plx_platform::imgcache::generation();
+                slot.token_gen = client.token_gen();
+                slot.grant_epoch = client.grant_epoch();
+                slot.state = P_READY;
+                set_key(slot, &key_for(sid, path, 2, 2, 0));
+            }
+        }
+        let decoded = |key| tex::PosterReady {
+            key: PosterKey(key), result: Ok(Decoded { w: 2, h: 2, rgba: vec![0; 16].into_boxed_slice() })
+        };
+        let mut budget = plx_ui::frame::Budget::new();
+        let mut present = plx_machine::present::Present::new();
+        let mut up = Up;
+        for key in 0..3 { tex::accept(decoded(key)); }
+        budget.begin_frame(0);
+        tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || 0);
+        for path in paths { assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0); }
+        // Idle loop turns cannot age the currently displayed source slots out.
+        for _ in 0..100 { begin_frame(); }
+        assert_eq!(store().frame, 1);
+        assert!(drawn_recently(&store().slots[0], 1));
+        // The route dip draws a cached page image, not individual posters, before Player commits.
+        for n in 1..40 {
+            budget.begin_frame(n * 16_000);
+            tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || n * 16_000);
+        }
+        hold_return(true, false);
+        { let g = store(); assert!(g.slots[0].return_pin && g.slots[1].return_pin); }
+        assert!(!store().slots[2].return_pin, "not all cached art is a return viewport");
+        // Two hours of logical playback, with a changing HUD picture every minute.
+        for minute in 1..=120u64 {
+            let key = 2 + (minute as u32 % 62);
+            store().frame = minute as u32 * 60 * 60;
+            tex::accept(decoded(key));
+            let now = minute * 60_000_000;
+            budget.begin_frame(now);
+            tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || now);
+            let g = store();
+            assert!(!is_settled_victim(&g.slots[0], g.frame));
+            assert!(!is_settled_victim(&g.slots[1], g.frame));
+            assert!(tex::resident_bytes() <= 48);
+        }
+        hold_return(false, true);
+        assert!(store().slots[0].return_pin, "the return dip has not drawn the page yet");
+        hold_return(false, false);
+        { let g = store(); assert!(!g.slots[0].return_pin && !g.slots[1].return_pin); }
+        for path in paths { assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0, "return is a resident hit, not a re-decode"); }
+        let g = store();
+        assert!(is_settled_victim(&g.slots[0], g.frame + WANT_STALE_FRAMES), "normal source eviction resumes after return");
+        drop(g);
+        for n in 0..3 {
+            let now = 7_201_000_000 + n * 16_000;
+            budget.begin_frame(now);
+            tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || now);
+        }
+        for key in 50..53 { tex::accept(decoded(key)); }
+        budget.begin_frame(7_202_000_000);
+        tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || 7_202_000_000);
+        assert_eq!(store().slots[0].state, P_EVICTED, "ordinary texture pressure resumes after release");
+        tex::shutdown(&mut up);
+        tex::reset_for_test(tex::TEX_RESIDENT_BYTES_MAX);
+    }
+
+    #[test]
+    fn poster_residency_uploads_follow_current_scroll_demand() {
+        struct Up;
+        impl Uploader for Up {
+            fn upload(&mut self, d: &Decoded) -> Tex { Tex { id: 1, w: d.w, h: d.h } }
+            fn warm(&mut self, _: Tex) {}
+            fn free(&mut self, _: Tex) {}
+        }
+        let mut cache = tex::TexCache::<u32>::with_budget(64, 4 * 1024 * 1024);
+        let mut slots = [Pslot::ZERO; PT_CAP];
+        for key in 0..9u32 {
+            slots[key as usize].visible = true;
+            slots[key as usize].frame = if key >= 6 { 100 } else { 1 };
+            slots[key as usize].use_ = key;
+            cache.accept(tex::PosterReady { key, result: Ok(Decoded {
+                w: 1, h: 1, rgba: vec![0; if key == 0 { 2_000_000 } else { 16 }].into_boxed_slice()
+            }) });
+        }
+        let mut budget = plx_ui::frame::Budget::new();
+        let mut present = plx_machine::present::Present::new();
+        cache.prioritize_pending(|key| upload_priority(&slots[key as usize], 101));
+        budget.begin_frame(0);
+        assert_eq!(cache.prepare(&mut budget, &mut Up, &mut plx_machine::machine::PresentHandle::of(&mut present), || 0), 3);
+        for key in 6..9 { assert!(cache.resolve(key).is_some()); }
+        assert!(cache.resolve(0).is_none(), "an old heavy decode must not block current posters");
+        // Reverse before the backlog drains: the next frame must follow the new viewport.
+        for key in [4, 5] { slots[key].frame = 102; }
+        cache.prioritize_pending(|key| upload_priority(&slots[key as usize], 103));
+        budget.begin_frame(16_000);
+        cache.prepare(&mut budget, &mut Up, &mut plx_machine::machine::PresentHandle::of(&mut present), || 16_000);
+        for key in [4, 5] { assert!(cache.resolve(key).is_some()); }
+        assert!(cache.resolve(0).is_none());
+        assert!(cache.has_pending(), "obsolete work is deprioritized, not unlimited new work");
+        assert!(cache.resident_bytes() <= 4 * 1024 * 1024);
+    }
+
 
     /// The whole product loop, using the installed [`PosterSource`], the thread-local product
     /// cache and the global poster store: resident → byte-pressure release → dormant EVICTED → a

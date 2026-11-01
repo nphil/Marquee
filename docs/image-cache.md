@@ -47,6 +47,13 @@ candidate directories; requests capture that epoch when queued, so old work cann
 write or publish images after account erasure. Profile switching within one account retains
 reusable artwork. Filesystem deletion failures remain best effort, like the existing avatar cache.
 
+The last drawn viewport is pinned in the same source slots and texture cache when a Player
+transition starts. Pins survive playback and its return transition, then ordinary eviction
+resumes. They reserve no additional pixel storage and cannot expand the slot or byte limits.
+Source-slot age advances on presenting frames, not idle loop turns. Pending decoded uploads
+are reordered by current drawn demand before each upload allowance, so a rapid scroll reversal
+does not leave visible posters behind an obsolete backdrop.
+
 ## Reproducible television stress test
 
 `tools/image-cache-stress.py` serves a synthetic Plex library with 1,200 movies. Each has its own

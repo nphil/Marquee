@@ -377,9 +377,11 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     // only the forward-progress escape let ONE through. A quota of three that was really a
     // quota of one, on exactly the frames with the most textures waiting.
     app.pages.budget.begin_frame(plx_base::diag::heartbeat::now_us());
-    // The poster adapter's frame (spec §3.3 step 3's tail): a new frame for the slot LRU and
-    // every decoded image handed to the render cache as owned pixels. No GL here — the
-    // upload is below, on the presenting side of the decision.
+    // Retry deadlines and decoded handoff run even on idle frames. Residency age
+    // advances only in the presenting-side prepare below.
+    super::adapters::poster::hold_return(matches!(app.route(), AppArg::Player)
+        || matches!(app.pages.nav.tabs.stack.pending_dest(), Some(AppArg::Player)),
+        app.pages.nav.tabs.stack.transition.in_flight());
     super::adapters::poster::begin_frame();
     super::adapters::poster::drain_decoded();
 
@@ -2601,7 +2603,8 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
         // frame: `PlayerOverlayScreen::step`'s `Tick` arm.)
         // Polling precedes the route snapshot in `fr.player`.
         let player_route = matches!(app.route(), AppArg::Player);
-        app.diagnostics.update(&app.player.session, fr.now, player_route);
+        let diagnostics_visible = !player_route || super::bridge::player_diagnostics_visible(&app.pages);
+        app.diagnostics.update(&app.player.session, fr.now, player_route, diagnostics_visible);
         // …and the lab upload's toast, which expires on a clock rather than a spring.
         crate::lab::update(fr.now);
         #[cfg(feature = "threadcheck")]

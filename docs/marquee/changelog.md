@@ -5,6 +5,9 @@
 - Bazarr subtitle activation reports confirmed progress through Plex discovery and loading to Active or a typed error; metadata rechecks do not repeat downloads.
 - Sidecar readiness requires a positive-duration cue and uses epoch-tagged renderer publication.
 - Stats distinguishes measured and estimated rates, supports the profile menu, and offers separate session-only opt-in numeric logging.
+- Stats samples native display sync separately from video and app rates, and clears unreadable or stale output rather than retaining it as live.
+- Watched-state refreshes settle presented and covered detail pages, including failed reads, without leaving the loading indicator active.
+- Returning from playback retains visible artwork within the existing cache limits; fast scrolling prioritizes currently visible uploads.
 
 - Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.
 

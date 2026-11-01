@@ -382,7 +382,10 @@ impl MetadataStore {
 
     /// The async detail landing alone — `app/run.rs`'s own call site, pumped before season.
     pub fn pump_detail_with_gate(&mut self, gate: &plx_machine::landgate::Gate) -> bool {
-        let changed = crate::metadata::pump_detail_with_gate(&mut self.state, &self.adapter, gate);
+        // A failed/refused read still finishes loading and must wake its refresh consumer.
+        let loading = self.view().detail_loading();
+        let changed = crate::metadata::pump_detail_with_gate(&mut self.state, &self.adapter, gate)
+            || loading != self.view().detail_loading();
         if changed { self.bump(); }
         changed
     }
@@ -527,6 +530,32 @@ mod view_edit_notice_tests {
     use super::*;
     use crate::metadata::{Detail, Related};
     use crate::viewstate::{ViewAt, ViewEdit};
+
+    #[test]
+    fn terminal_detail_refresh_notifies_even_without_replacement_data() {
+        use plx_machine::job::Port;
+        let _serial = plx_base::testlock::serial();
+        let sid = plx_plex::plex::ServerId::UNSET;
+        for refused in [false, true] {
+            let mut store = MetadataStore::default();
+            crate::metadata::install_for_test(store.state_mut(), Some(Detail {
+                sid, rk: "movie".into(), ..Default::default()
+            }));
+            store.run(MetadataCmd::RequestDetail { sid, rk: "movie".into() });
+            let super::super::StoreJob::Detail(job, port) = store.take_jobs().pop().unwrap() else { panic!("detail job") };
+            let _ = store.take_notice();
+            assert!(store.view().detail_loading());
+            assert!(!store.pump_detail());
+            assert_eq!(store.take_notice(), None, "genuine loading remains pending");
+            if refused { port.refused(job.addr); } else { port.done(job.addr, ((sid, "movie".into()), None)); }
+            assert!(store.pump_detail());
+            assert!(store.take_notice().is_some(), "terminal failure is a visible state change");
+            assert!(!store.view().detail_loading());
+            assert_eq!(store.view().current().unwrap().rk, "movie");
+            assert!(!store.pump_detail());
+            assert_eq!(store.take_notice(), None);
+        }
+    }
 
     /// An `ApplyView` that matched no tile raises no notice: a notice relayouts a mounted Detail
     /// page, re-measures it and releases its pending Related page requests, so a server's

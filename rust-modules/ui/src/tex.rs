@@ -371,6 +371,15 @@ pub fn prepare(b: &mut Budget, up: &mut dyn Uploader, present: &mut PresentHandl
     n
 }
 
+/// Mirror viewport residency protection into the source before it can recycle an image key.
+pub fn hold_return(held: bool, pin: impl FnMut(PosterKey, bool)) {
+    CACHE.with(|cache| cache.borrow_mut().hold_return(held, pin));
+}
+
+pub fn prioritize_pending<R: Ord>(rank: impl FnMut(PosterKey) -> R) {
+    CACHE.with(|cache| cache.borrow_mut().prioritize_pending(rank));
+}
+
 /// Unuploaded pixels, published after queue mutations and readable by demand workers.
 pub fn pending_bytes() -> usize { PENDING_BYTES.load(Ordering::Acquire) }
 
@@ -451,6 +460,7 @@ struct Entry {
     /// which always runs (and so reaches at least `1`) before the first `resolve` that could
     /// possibly touch a freshly-inserted entry — see [`TexCache::prepare`]'s doc.
     drawn_frame: u64,
+    return_pin: bool,
 }
 
 pub struct TexCache<K> {
@@ -485,6 +495,9 @@ pub struct TexCache<K> {
     /// call advances it to `1` before touching the pending queue, so `0` is never a real frame
     /// and stays free as [`Entry::drawn_frame`]'s "never drawn" sentinel.
     frame: u64,
+    /// Cached route images can present for many frames without resolving their artwork.
+    last_draw_frame: u64,
+    return_held: bool,
 }
 
 impl<K: Copy + Eq + Hash> TexCache<K> {
@@ -505,7 +518,27 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
             clock: 0,
             bytes: 0,
             frame: 0,
+            last_draw_frame: 0,
+            return_held: false,
         }
+    }
+
+    /// Keep only the last drawn viewport while another route temporarily owns the screen.
+    /// Pins share the ordinary byte/count ceilings; they never allocate another texture.
+    pub fn hold_return(&mut self, held: bool, mut pin: impl FnMut(K, bool)) {
+        if self.return_held == held { return; }
+        self.return_held = held;
+        for (&key, entry) in &mut self.resident {
+            let keep = held && entry.drawn_frame != 0 && entry.drawn_frame == self.last_draw_frame;
+            if entry.return_pin && !held { entry.drawn_frame = self.frame; }
+            entry.return_pin = keep;
+            pin(key, keep);
+        }
+    }
+
+    /// Demand order may change while decoded pixels wait for a frame upload allowance.
+    pub fn prioritize_pending<R: Ord>(&mut self, mut rank: impl FnMut(K) -> R) {
+        self.pending.make_contiguous().sort_unstable_by_key(|(key, _)| rank(*key));
     }
 
     /// The result handler: moves pixels into the pending queue and touches no GL. A rejected
@@ -552,8 +585,8 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
     /// The class is chosen by the DECODED BYTE SIZE of the image at the head of the queue
     /// ([`RESIDENCY_BYTES`]): an ordinary poster is a `Poster` take, a backdrop or a hero logo is
     /// a `Residency` one, which the budget admits only on a frame of its own. A refusal BREAKS —
-    /// the queue is a FIFO and the head is what the frame that presents it needs, so skipping
-    /// past a refused item would upload art nobody is waiting for and leave the wait in place.
+    /// the application orders pending pixels by current demand before this step, and
+    /// skipping a refused head would spend this frame on less urgent art.
     ///
     /// Every admitted upload calls [`TexCache::evict_for`] to hold both residency ceilings — see
     /// its own doc for what a `false` return means and how the caller here reacts to it: a
@@ -611,7 +644,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
                     old.last_used = self.clock;
                 }
                 None => {
-                    self.resident.insert(key, Entry { tex, last_used: self.clock, bytes, drawn_frame: 0 });
+                    self.resident.insert(key, Entry { tex, last_used: self.clock, bytes, drawn_frame: 0, return_pin: false });
                 }
             }
             n += 1;
@@ -640,6 +673,8 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         self.pending.clear();
         self.unresident.clear();
         self.bytes = 0;
+        self.return_held = false;
+        self.last_draw_frame = 0;
     }
 
     /// The only place victim eligibility is decided: `k` (currently `e`) may be evicted unless it
@@ -647,7 +682,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
     /// last completed [`TexCache::frame`] (`drawn_frame == 0`, "never drawn since upload", is
     /// deliberately NOT protected — an entry nothing has ever resolved is not what is on screen).
     fn victim_ok(&self, k: K, e: &Entry, protect: Option<K>) -> bool {
-        Some(k) != protect && !(e.drawn_frame != 0 && e.drawn_frame + 1 >= self.frame)
+        Some(k) != protect && !e.return_pin && !(e.drawn_frame != 0 && e.drawn_frame + 1 >= self.frame)
     }
 
     /// Make `room` more slots fit under `cap` and `incoming` more bytes fit under `bytes_max` by
@@ -728,6 +763,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         self.clock += 1;
         let clock = self.clock;
         let frame = self.frame;
+        self.last_draw_frame = frame;
         self.resident.get_mut(&k).map(|e| {
             e.last_used = clock;
             e.drawn_frame = frame;

@@ -14,6 +14,19 @@ Native Bazarr search returned English provider results. The player Stats read-ou
 remained Off. New subtitle downloading and actual media deletion were not exercised on the TV.
 The app ended on Home without the Stats overlay and with zero video planes; the TV lease was
 released and LumaTV notified. No system, refresh, input or power setting changed in this window.
+
+The unshipped Stats change samples native `osd_irq` counts off the UI thread only while the overlay
+is visible, showing approximate Hz under `measured display sync`. Video-source rate and returned
+GL swaps remain separate; reset, unreadable and stale counters do not produce live readings.
+TV app-jail access and actual playback verification remain pending; no live panel raster or final
+output HDR field is inferred from video metadata, placed video rectangles or static capabilities.
+
+The same unshipped source retains the last drawn artwork viewport through playback and return,
+within the existing 64 source slots, render-scaled 44 MiB texture budget and 8 MiB decode-admission
+threshold. Current drawn demand takes upload priority. Watched-state read-back gives the visible
+detail owner the shared metadata slot and publishes terminal failures while retaining loaded data.
+Focused local consumer/cache regressions pass; actual household reproduction remains unobserved.
+
 Captures are `/tmp/lt/marquee-fce-*.png`; scrubbed logs are `/tmp/marquee-fce-scrubbed/`.
 
 Detailed stats logging retains its own explicit session-only app opt-in, off at boot. LumaTV’s
@@ -166,9 +179,9 @@ Its primary map covers scanout, complex Home load and native commit-callback con
 import is not proof of scanout compatibility. Reuse the existing LumaTV
 `perf/{ringsum.py,frametl.py,frametl_parse.py,analyse.py}` with the saved capture pair above.
 
-`Native120Pacing` remains the sole `deep-task`/`@slow` worker. Its latest reported wake failed
-with HTTP 400 before analysis; no Slow analysis is running or complete. Resume that role with
-this packet when provider access is restored; no substitute worker or device permission is implied.
+`Native120PacingRoleRetry` completed the local watched-spinner and bounded artwork-residency fixes.
+`Native120SavedTraceCausality` is the sole active `deep-task`/`@slow` worker, analysing the saved
+native trace without TV access. Normal routing must finish its configured fallback chain.
 
 The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
 path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in

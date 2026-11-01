@@ -1428,6 +1428,72 @@ mod library_publication_tests {
         drain_detail_workers(&mut rig);
     }
 
+    #[test]
+    fn watched_readback_refreshes_the_presented_copy_not_its_covered_host() {
+        let _guard = plx_base::testlock::serial();
+        use plx_screens::registry::DetailRefreshPhase::{Deferred, None as Settled, Requested};
+        for success in [true, false] {
+            let sa = plx_plex::plex::ServerId::from_raw(3);
+            let sb = plx_plex::plex::ServerId::from_raw(4);
+            let full = |sid| plx_data::metadata::Detail {
+                sid, rk: "42".into(), title: "Movie".into(), kind: "movie".into(), ..Default::default()
+            };
+            let mut pages = plx_ui::dispatch::Dispatcher::<bridge::AppHost>::new();
+            let mut rig = bridge::Bridge::for_test(|| 0);
+            let mut n = 0;
+            bridge::show_page(&mut pages, AppArg::Content(ContentArg::Detail { sid: sa, rk: "42".into() }));
+            frame(&mut pages, &mut rig, &mut n);
+            let host = pages.nav.top_page().unwrap().id;
+            let gen_a = rig.metadata_view().detail_generation();
+            assert!(land_detail_for_test(&mut rig, sa, "42", gen_a, Some(full(sa))));
+            pages.nav.next_style = plx_ui::containers::modal::Style::Opaque { snapshot: true };
+            pages.request(MachineId::Nav, NavOp::Present(AppArg::Content(ContentArg::Detail { sid: sb, rk: "42".into() })));
+            for _ in 0..40 { frame(&mut pages, &mut rig, &mut n); }
+            let copy = pages.nav.modals.top().unwrap().entry.id;
+            let gen_b = rig.metadata_view().detail_generation();
+            assert!(land_detail_for_test(&mut rig, sb, "42", gen_b, Some(full(sb))));
+            // A watched write fans out to both copies. Its read-back can land with the
+            // compact action menu still closing, so the top stacked page is not the owner.
+            let row = plx_data::pms::PmsMovie { sid: sb, rk: "42".into(), unwatched: true, ..Default::default() };
+            let menu = bridge::card_menu_arg(&row, false, false, copy, pages.focus(), None);
+            bridge::open_item_menu(&mut pages, menu);
+            for _ in 0..40 { frame(&mut pages, &mut rig, &mut n); }
+            for key in [plx_machine::machine::Key::Down, plx_machine::machine::Key::Ok] {
+                let tick = plx_ui::fixture::tick(n * 16);
+                bridge::frame(&mut pages, &mut rig, tick, bridge::script_key(key, tick));
+                n += 1;
+            }
+            let requests = rig.take_item_menu_reqs();
+            assert_eq!(requests.len(), 1);
+            assert!(matches!(&requests[0].act, plx_screens::item_menu::Action::MarkWatched(rk) if rk == "42"));
+            assert_eq!(requests[0].sid, sb);
+            reconcile_details(&mut pages, &mut rig, &[(sa, "42".into()), (sb, "42".into())]);
+            frame(&mut pages, &mut rig, &mut n);
+            assert_eq!(detail_refresh_phase(&pages, host), Deferred);
+            assert_eq!(detail_refresh_phase(&pages, copy), Requested);
+            assert_eq!(rig.metadata_view().detail_request_status(sb, "42"), Some(true));
+            let fresh = rig.metadata_view().detail_generation();
+            assert!(!land_detail_for_test(&mut rig, sa, "42", gen_a, Some(full(sa))));
+            assert!(rig.metadata_view().detail_loading(), "stale completion cannot settle current work");
+            land_detail_for_test(&mut rig, sb, "42", fresh, success.then(|| full(sb)));
+            for _ in 0..60 { frame(&mut pages, &mut rig, &mut n); }
+            assert_eq!(detail_refresh_phase(&pages, copy), Settled);
+            assert!(!rig.metadata_view().detail_loading());
+            assert_eq!(rig.metadata_view().current().map(|d| d.sid), Some(sb));
+            assert!(!bridge::item_menu_up(&pages));
+            // Closing a copy withdraws its in-flight refresh. A late read-back must not
+            // start another one for the closing surface or steal the uncovered host's slot.
+            reconcile_details(&mut pages, &mut rig, &[(sb, "42".into())]);
+            frame(&mut pages, &mut rig, &mut n);
+            let cancelled = rig.metadata_view().detail_generation();
+            pages.request(MachineId::Nav, NavOp::Dismiss(copy));
+            frame(&mut pages, &mut rig, &mut n);
+            reconcile_details(&mut pages, &mut rig, &[(sb, "42".into())]);
+            assert!(!land_detail_for_test(&mut rig, sb, "42", cancelled, Some(full(sb))));
+            assert_eq!(rig.metadata_view().detail_request_status(sb, "42"), None);
+        }
+    }
+
     /// Regression for the double-fetch bug: `registry::mount` unconditionally queues
     /// `RequestDetail` for a fresh Detail page, and `DetailScreen`'s own `Enter(Fresh)` handler
     /// used to queue a SECOND one because it read `detail_request_status`/`self.detail(meta)`
@@ -2657,8 +2723,18 @@ pub(crate) fn reconcile_details(
     landed: &[(plx_plex::plex::ServerId, String)],
 ) {
     // Collected first: starting a request borrows the Bridge, emitting borrows the pages.
-    let top = pages.nav.top_page().map(|top| top.id);
-    let owed: Vec<_> = pages.nav.tabs.stack.entries.iter().filter_map(|entry| {
+    use plx_ui::containers::modal::Phase;
+    let active = |phase| matches!(phase, Phase::Opening | Phase::Open);
+    // A presented copy owns the same Metadata slot as a stacked Detail. Compact menus
+    // do not take that slot; closed or page-covered copies can only owe a deferred read.
+    let top = pages.nav.modals.surfaces.iter().rev()
+        .find(|surface| active(surface.phase) && matches!(surface.entry.arg, AppArg::Content(_)))
+        .map(|surface| surface.entry.id).or_else(|| pages.nav.top_page().map(|top| top.id));
+    let entries = pages.nav.tabs.stack.entries.iter()
+        .chain(pages.nav.modals.surfaces.iter().filter(|surface| active(surface.phase)).map(|surface| &surface.entry))
+        .chain(pages.nav.covered_modals.iter().flat_map(|(_, modals)| modals.surfaces.iter()
+            .filter(|surface| active(surface.phase)).map(|surface| &surface.entry)));
+    let owed: Vec<_> = entries.filter_map(|entry| {
         let AppArg::Content(ContentArg::Detail { sid, rk }) = &entry.arg else { return None };
         landed.iter().any(|(s, r)| plx_plex::plex::same_item((*s, r), (*sid, rk)))
             .then_some(())?;

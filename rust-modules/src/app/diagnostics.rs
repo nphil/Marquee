@@ -145,6 +145,7 @@ pub(crate) struct Diagnostics {
     logging_label: CString,
     was_logging: bool,
     history: SweepHistory,
+    display_sync: plx_platform::display_sync::Monitor,
     /// Formatted only at the 2 Hz sampling boundary, never in the render loop, so the whole-string
     /// glyph cache sees the same held values the ordinary rows do.
     chart_values: [String; 3],
@@ -178,6 +179,7 @@ impl Default for Diagnostics {
     fn default() -> Self {
         Self {
             prev_fed: (0, 0, 0),
+            display_sync: plx_platform::display_sync::Monitor::default(),
             submit_count: 0,
             submit_at: None,
             timing: std::array::from_fn(|_| CString::new("Unknown").unwrap()),
@@ -495,8 +497,9 @@ impl Diagnostics {
     ///
     /// The panel being switched ON is its own re-sample: the rising edge of [`ON`] is what the
     /// static-era `kick()` expressed by zeroing the deadline from three modules away.
-    pub(crate) fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, player_route: bool) {
+    pub(crate) fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, player_route: bool, visible: bool) {
         let on = enabled();
+        self.display_sync.set_active(on && visible);
         let logging = logging_enabled();
         let logging_started = logging && !self.was_logging;
         let woke = (on && !self.was_on) || logging_started;
@@ -577,7 +580,12 @@ impl Diagnostics {
         let source = if !player_route { "No player".to_string() } else if idle { "Not playing".to_string() } else { source_rate(source_fps) };
         let submit = window.and_then(|ms| submit_rate(swaps, 0, ms)).map(|rate| format!("{rate:.1} swaps/s"))
             .unwrap_or_else(|| "Unknown".to_string());
-        self.timing = [source, submit, "Unverified".to_string()]
+        let output = match self.display_sync.snapshot() {
+            plx_platform::display_sync::Snapshot::Measuring => "Measuring".to_string(),
+            plx_platform::display_sync::Snapshot::Unavailable => "Unavailable".to_string(),
+            plx_platform::display_sync::Snapshot::Hz(hz) => format!("~{hz} Hz"),
+        };
+        self.timing = [source, submit, output]
             .map(|s| CString::new(s).expect("numeric diagnostic"));
         let prev = self.prev_fed;
         self.head = header(ps, &d, now);
@@ -1895,7 +1903,7 @@ pub(crate) fn draw(&self) {
     for (i, (name, detail)) in [
         (b"VIDEO SOURCE\0".as_slice(), b"file metadata\0".as_slice()),
         (b"APP UI\0".as_slice(), b"GL swaps; idle normal\0".as_slice()),
-        (b"TV OUTPUT\0".as_slice(), b"physical refresh\0".as_slice()),
+        (b"TV OUTPUT\0".as_slice(), b"measured display sync\0".as_slice()),
     ].iter().enumerate() {
         let x = inner + i as f32 * slot;
         let y = frame.y + layout.sections_y;

@@ -55,6 +55,11 @@ retain the known snapshot. The queue-window behavior is shared with automatic ad
 The D-pad option serves remotes without dedicated FF/REW keys. It can also make frequent jumps
 through filler sections in anime more convenient while preserving the ordinary D-pad default.
 
+Watched-state read-back refreshes the visible Detail owner, including a presented copy above
+another page. Covered copies defer their read until return; closing copies cannot reclaim the
+shared detail slot. Failed or refused refreshes publish completion while retaining the loaded
+item, so loading and return restoration can settle without another Back press.
+
 ## Synthetic regression
 
 Use a fresh evidence directory for each run. No household account is needed:
