@@ -60,6 +60,8 @@ pub enum Action {
     /// Guideline requires the policy to be readable *in the app* rather than only on the store
     /// listing.
     Settings,
+    ToggleStats,
+    ToggleStatsLogging,
     /// **Lab builds only** — snapshot the diagnostic ring and upload it (`crate::lab`). It is in
     /// this menu because it must be reachable with the D-PAD ALONE: the remote trigger is a colour
     /// button (BLUE, `wcode` 489 on the dev set), and an LG Cloud Test Lab virtual remote may not
@@ -79,6 +81,8 @@ impl FormId for Action {
             Action::SignOut => 3,
             Action::Settings => 4,
             Action::SendDiagnostics => 5,
+            Action::ToggleStats => 6,
+            Action::ToggleStatsLogging => 7,
         })
     }
 }
@@ -167,6 +171,8 @@ fn label(a: Action) -> &'static str {
         Action::SignIn => plx_platform::i18n::msg::settings_account_sign_in(),
         Action::SignOut => plx_platform::i18n::msg::settings_account_sign_out(),
         Action::Settings => plx_platform::i18n::msg::settings_account_settings(),
+        Action::ToggleStats => plx_platform::i18n::msg::widgets_menu_stats(),
+        Action::ToggleStatsLogging => plx_platform::i18n::msg::browse_diagnostics_detailed_stats_logging(),
         Action::SendDiagnostics => plx_platform::i18n::msg::settings_account_diagnostics(),
     }
 }
@@ -197,6 +203,8 @@ fn account_form(inputs: &AccountInputs) -> (String, Form<Action, Action, Infalli
         (Action::ChangeProfile, signed_in && inputs.can_switch),
         (Action::SignIn, !signed_in),
         (Action::Settings, true),
+        (Action::ToggleStats, true),
+        (Action::ToggleStatsLogging, true),
         (Action::SendDiagnostics, inputs.lab),
     ];
     for (action, offered) in rows {
@@ -214,9 +222,14 @@ fn account_form(inputs: &AccountInputs) -> (String, Form<Action, Action, Infalli
 /// hidden *Sign out* is the FIRST row, and a stray OK on a freshly opened menu must not sign
 /// anyone out.
 fn action_row(a: Action) -> Row {
-    Row::new(label(a))
+    let row = Row::new(label(a))
         .chevron(matches!(a, Action::ChangeProfile | Action::SignIn | Action::Settings))
-        .destructive(matches!(a, Action::SignOut))
+        .destructive(matches!(a, Action::SignOut));
+    match a {
+        Action::ToggleStats => row.toggle(plx_appkit::more_menu::stats_on()),
+        Action::ToggleStatsLogging => row.toggle(plx_appkit::more_menu::logging_on()),
+        _ => row,
+    }
 }
 
 /// Top-left popover, tucked under the profile chip.
@@ -320,6 +333,8 @@ impl AccountMenuScreen {
             Action::SignIn => LoopReq::AccountSignIn,
             Action::SignOut => LoopReq::AccountSignOut,
             Action::Settings => LoopReq::AccountSettings,
+            Action::ToggleStats => LoopReq::AccountToggleStats,
+            Action::ToggleStatsLogging => LoopReq::AccountToggleStatsLogging,
             Action::SendDiagnostics => LoopReq::AccountSendDiagnostics,
         });
         if let Some(req) = req {
@@ -700,7 +715,7 @@ mod tests {
         let s = local(Session { account_token: "acct".into(), ..Default::default() });
         let acc = s.account(None);
         assert_eq!(rows_of(&acc, true).iter().map(|a| label(*a)).collect::<Vec<_>>(),
-            vec!["Settings", "Sign out"]);
+            vec!["Settings", label(Action::ToggleStats), label(Action::ToggleStatsLogging), "Sign out"]);
         assert_eq!(rows_of(&acc, false)[0], Action::ChangeProfile);
 
         let _serial = plx_base::testlock::serial();
@@ -730,7 +745,7 @@ mod tests {
         let mut menu = AccountMenuScreen::new(EntryId(0));
         tick(&mut menu, &published(true));
         assert!(!menu_rows(&menu).contains(&Action::ChangeProfile), "rig: the roster was refused");
-        assert_eq!(menu_rows(&menu), [Action::Settings, Action::SignOut], "rig: Sign out is behind Settings");
+        assert_eq!(menu_rows(&menu), [Action::Settings, Action::ToggleStats, Action::ToggleStatsLogging, Action::SignOut], "rig: Sign out is behind Settings");
         assert_ne!(menu.form.selected_id(), Some(&Action::SignOut),
             "the menu opened focused on Sign out");
         assert_eq!(menu.form.selected_id(), Some(&Action::Settings));
@@ -819,10 +834,10 @@ mod tests {
     /// No session at all: the one honest ACCOUNT action is signing in, with Settings beside it so
     /// privacy, legal and diagnostics remain reachable without an account.
     #[test]
-    fn signed_out_profile_menu_does_not_offer_playback_diagnostics() {
+    fn signed_out_profile_menu_offers_diagnostics_switches() {
         let (name, rows) = menu(&Session::default(), None);
         assert_eq!(name, "Account");
-        assert_eq!(rows, vec!["Sign in", "Settings"]);
+        assert_eq!(rows, vec!["Sign in", "Settings", label(Action::ToggleStats), label(Action::ToggleStatsLogging)]);
     }
 
     /// THE BUG: a signed-in account with no Plex Home never gets a profile written, so the active
@@ -837,7 +852,7 @@ mod tests {
         });
         let (name, rows) = menu(&s, Some(&UserRef::default()));
         assert_eq!(name, "Gleb");
-        assert_eq!(rows, vec!["Change profile", "Settings", "Sign out"]);
+        assert_eq!(rows, vec!["Change profile", "Settings", label(Action::ToggleStats), label(Action::ToggleStatsLogging), "Sign out"]);
     }
 
     /// A picked managed profile names the header even though the roster also could.
@@ -854,7 +869,7 @@ mod tests {
         };
         let (name, rows) = menu(&s, Some(&active));
         assert_eq!(name, "Kid");
-        assert_eq!(rows, vec!["Change profile", "Settings", "Sign out"]);
+        assert_eq!(rows, vec!["Change profile", "Settings", label(Action::ToggleStats), label(Action::ToggleStatsLogging), "Sign out"]);
     }
 
     /// The roster hop looks for a NAMED entry, admin first: an admin tile that happens to carry an
@@ -880,7 +895,7 @@ mod tests {
         });
         let (name, rows) = menu(&s, Some(&UserRef::default()));
         assert_eq!(name, "Account");
-        assert_eq!(rows, vec!["Change profile", "Settings", "Sign out"]);
+        assert_eq!(rows, vec!["Change profile", "Settings", label(Action::ToggleStats), label(Action::ToggleStatsLogging), "Sign out"]);
     }
 
     /// A server-only session (no plex.tv token) is still signed IN — it is streaming — but cannot
@@ -898,7 +913,7 @@ mod tests {
         });
         let (name, rows) = menu(&s, None);
         assert_eq!(name, "Gleb");
-        assert_eq!(rows, vec!["Settings", "Sign out"]);
+        assert_eq!(rows, vec!["Settings", label(Action::ToggleStats), label(Action::ToggleStatsLogging), "Sign out"]);
     }
 
     /// The seam the mount actually uses: the crate-global active profile really does reach the
@@ -1013,12 +1028,12 @@ mod tests {
     #[test]
     fn each_account_state_offers_its_rows_in_order() {
         assert_eq!(rows_of(&Session::default().account(None), false),
-            [Action::SignIn, Action::Settings]);
+            [Action::SignIn, Action::Settings, Action::ToggleStats, Action::ToggleStatsLogging]);
         let s = local(Session { account_token: "acct".into(), ..Default::default() });
         assert_eq!(rows_of(&s.account(None), false),
-            [Action::ChangeProfile, Action::Settings, Action::SignOut]);
+            [Action::ChangeProfile, Action::Settings, Action::ToggleStats, Action::ToggleStatsLogging, Action::SignOut]);
         assert_eq!(rows_of(&local(Session::default()).account(None), false),
-            [Action::Settings, Action::SignOut]);
+            [Action::Settings, Action::ToggleStats, Action::ToggleStatsLogging, Action::SignOut]);
     }
 
     /// **The menu does not head itself with what the chip above it already says** (N-c: "DEMO" over the

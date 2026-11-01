@@ -170,6 +170,8 @@ pub enum TrackRow {
     /// The Search page's retry row, present only after a TRANSPORT failure (a refusal is not
     /// retried — a 403 retried is a 403).
     SearchRetry,
+    /// Re-check Plex without requesting the download again.
+    SearchCheckInstall,
     /// A result row: the index into the hits of the generation on screen. **The one place this
     /// alphabet carries a position**: a hit has no identity of its own beyond its index — its key is
     /// ephemeral server state, re-minted per search — and the whole list is replaced at once when the
@@ -355,6 +357,7 @@ impl FormId for TrackRow {
             TrackRow::OpenSearch => 0x000A_0000,
             TrackRow::SearchLang => 0x000B_0000,
             TrackRow::SearchRetry => 0x000B_0001,
+            TrackRow::SearchCheckInstall => 0x000B_0002,
             TrackRow::SearchHit(i) => 0x000C_0000 + (i as u32).min(0xFFFF),
             TrackRow::LangChoice(i) => 0x000D_0000 + (i as u32).min(0xFFFF),
             TrackRow::OpenFix => 0x000E_0000,
@@ -591,12 +594,9 @@ pub struct TrackMenuState {
     /// Search row. The panel never performs the search: it reads this and answers
     /// [`TrackOk::Search`] for the screen to send.
     search: Option<plx_data::subsearch::SubSearchSnapshot>,
-    /// THIS panel watched a download in flight (Sending/Waiting), so an Installed landing is its
-    /// own to auto-select. Cleared when handed over ([`Self::take_search_commit`]), so a landing
-    /// republished every frame commits once. The store keeps Installed after the panel closes;
-    /// a panel opened onto it never saw the flight and must not commit it again — doing so
-    /// dismissed every later Subtitles/Audio menu on its first tick (device, 2026-10-04).
-    search_watching: bool,
+    /// The generation this panel watched in flight; an installation is handed over once.
+    search_watching: Option<u32>,
+    search_activation: Option<(i64, plx_media::route::SubtitleActivation)>,
     /// The playing item's external subtitles as of the last open or [`SubSig`] change — what the
     /// Search page checks a hit against ([`Self::hit_on_item`]), because that page is built
     /// without the item in hand. A copy, refreshed wherever the subs list is re-read, so a
@@ -777,7 +777,8 @@ impl TrackMenuState {
             motion: PanelMotion::new(),
             background_owner: None,
             search: offer_search.then(|| plx_data::subsearch::SubSearchSnapshot::idle(0)),
-            search_watching: false,
+            search_watching: None,
+            search_activation: None,
             item_sidecars: Vec::new(),
             active_external: None,
             active_any: false,
@@ -1323,6 +1324,9 @@ impl TrackMenuState {
             TrackRow::Sub(i) => self.commit_sub(i as c_int, meta),
             TrackRow::SearchHit(i) => self.search_download(i),
             TrackRow::SearchRetry => TrackOk::Search(plx_data::subsearch::SubSearchCmd::Retry),
+            TrackRow::SearchCheckInstall => self.search.as_ref().map_or(TrackOk::Inert, |s| {
+                TrackOk::Search(plx_data::subsearch::SubSearchCmd::CheckInstall { gen: s.gen })
+            }),
             TrackRow::FixRemove => self.fix_remove(),
             TrackRow::LangChoice(i) => self.pick_search_language(i),
             _ => TrackOk::Inert,
@@ -1587,7 +1591,23 @@ impl TrackMenuState {
         let busy = ours && s.download.busy();
         let lang = if s.lang.is_empty() { String::new() } else { plx_plex::plex::languages::label(&s.lang).to_string() };
         // a language change mid-download is refused by the store, so the row is inert meanwhile
-        let mut top = FormSection::new("")
+        let mut top = FormSection::new("");
+        let search_status = if want == SubSource::Bazarr { bazarr_status(status, failure, hits.is_empty()) } else { plex_status(status, failure, hits.is_empty()) };
+        if let Some(status) = search_status {
+            top = top.note(status);
+        }
+        if ours {
+            if let Some(status) = self.download_status(s) {
+                top = top.note(status);
+            }
+            if matches!(s.download, DownloadPhase::Unconfirmed { .. }) {
+                if s.install_check_failure.is_some() {
+                    top = top.note(msg::widgets_tracks_search_check_failed());
+                }
+                top = top.item(TrackRow::SearchCheckInstall, RowKind::Button, (), Row::new(msg::widgets_tracks_search_check_plex()));
+            }
+        }
+        let mut top = top
             .item(
                 TrackRow::SearchLang,
                 RowKind::Nav(TrackPage::SearchLanguage),
@@ -1606,7 +1626,7 @@ impl TrackMenuState {
                     Some(msg::widgets_tracks_search_adding())
                 }
                 DownloadPhase::Installed { hit, .. } if *hit == i => Some(msg::widgets_tracks_search_added()),
-                DownloadPhase::Unconfirmed { hit } if *hit == i => Some(msg::widgets_tracks_search_requested()),
+                DownloadPhase::Unconfirmed { hit, .. } if *hit == i => Some(msg::widgets_tracks_search_requested()),
                 DownloadPhase::Failed { hit, .. } if *hit == i => Some(msg::widgets_tracks_search_add_failed()),
                 // not this session's install, but the item already lists it: read it the same way
                 _ if self.hit_on_item(h) => Some(msg::widgets_tracks_search_added()),
@@ -1616,7 +1636,15 @@ impl TrackMenuState {
             let detail: Vec<&str> =
                 [h.provider.as_str(), h.language.as_str()].into_iter().filter(|p| !p.is_empty()).collect();
             let mut row = Row::new(title).server_label();
-            if !detail.is_empty() {
+            let operation_hit = matches!(download,
+                DownloadPhase::Sending { hit } | DownloadPhase::Waiting { hit, .. }
+                | DownloadPhase::Installed { hit, .. } | DownloadPhase::Unconfirmed { hit, .. }
+                | DownloadPhase::Failed { hit, .. } if *hit == i);
+            if operation_hit {
+                if let Some(status) = self.download_status(s) {
+                    row = row.detail(status);
+                }
+            } else if !detail.is_empty() {
                 row = row.detail(detail.join(" \u{b7} ")).server_detail();
             }
             if h.hearing_impaired {
@@ -1633,14 +1661,28 @@ impl TrackMenuState {
             }
             results = results.item(TrackRow::SearchHit(i), RowKind::Button, (), row).disabled(busy);
         }
-        let status = if want == SubSource::Bazarr { bazarr_status(status, failure, hits.is_empty()) } else { plex_status(status, failure, hits.is_empty()) };
-        if let Some(status) = status {
-            results = results.note(status);
-        }
-        if ours && matches!(s.download, DownloadPhase::Failed { .. }) {
-            results = results.note(msg::widgets_tracks_search_add_failed_note());
-        }
         Form::new().section(top).section(results)
+    }
+
+    fn download_status(&self, s: &plx_data::subsearch::SubSearchSnapshot) -> Option<&'static str> {
+        use plx_data::subsearch::{DownloadPhase, SubSource};
+        use plx_media::route::SubtitleActivation;
+        use plx_platform::i18n::msg;
+        match &s.download {
+            DownloadPhase::None => None,
+            DownloadPhase::Sending { .. } => Some(msg::widgets_tracks_search_requesting()),
+            DownloadPhase::Waiting { .. } => Some(if s.source == SubSource::Bazarr {
+                msg::widgets_tracks_search_waiting_bazarr()
+            } else { msg::widgets_tracks_search_waiting_plex() }),
+            DownloadPhase::Unconfirmed { .. } => Some(msg::widgets_tracks_search_not_visible()),
+            DownloadPhase::Failed { failure, .. } => Some(download_failure(s.source, *failure)),
+            DownloadPhase::Installed { stream, .. } => Some(match self.search_activation {
+                Some((id, SubtitleActivation::Loading)) if id == stream.id => msg::widgets_tracks_search_loading_player(),
+                Some((id, SubtitleActivation::Active)) if id == stream.id => msg::widgets_tracks_search_active(),
+                Some((id, SubtitleActivation::Failed)) if id == stream.id => msg::widgets_tracks_search_player_failed(),
+                _ => msg::widgets_tracks_search_available(),
+            }),
+        }
     }
 
     /// The Fix page: remove the external subtitle on screen (a first OK arms the row, a second
@@ -1735,20 +1777,19 @@ impl TrackMenuState {
         Form::new().section(sec)
     }
 
-    /// OK on a result: ask the store to install it, quoting the generation on screen so a press
-    /// against a replaced result set (whose keys are dead) is refused there rather than sent.
-    /// Inert while a download is busy, and on the row already installed or requested — or already
-    /// on the item ([`Self::hit_on_item`]), which would list the subtitle twice.
+    /// A result is downloaded once; an installed result selects the existing stream instead.
     fn search_download(&self, i: usize) -> TrackOk {
         use plx_data::subsearch::DownloadPhase;
         let Some(s) = self.search.as_ref() else { return TrackOk::Inert };
-        if s.download.busy() || i >= s.hits.len() || self.hit_on_item(&s.hits[i]) {
+        if s.download.busy() || i >= s.hits.len() {
             return TrackOk::Inert;
         }
-        if let DownloadPhase::Installed { hit, .. } | DownloadPhase::Unconfirmed { hit } = &s.download {
-            if *hit == i {
-                return TrackOk::Inert;
-            }
+        if matches!(&s.download, DownloadPhase::Installed { hit, .. } if *hit == i) {
+            let Some((_, commit)) = self.installed_search_commit() else { return TrackOk::Inert };
+            return TrackOk::Commit { commit, keep_open: true };
+        }
+        if matches!(&s.download, DownloadPhase::Unconfirmed { hit, .. } if *hit == i) || self.hit_on_item(&s.hits[i]) {
+            return TrackOk::Inert;
         }
         TrackOk::Search(plx_data::subsearch::SubSearchCmd::Download { gen: s.gen, hit: i })
     }
@@ -1802,8 +1843,16 @@ impl TrackMenuState {
         if self.search.is_none() || self.search.as_ref() == Some(&search) {
             return;
         }
+        let source_changed = self.search.as_ref().is_some_and(|old| old.gen != search.gen || old.source != search.source);
+        if source_changed {
+            self.search_watching = None;
+            self.search_activation = None;
+        }
         if search.download.busy() {
-            self.search_watching = true;
+            self.search_watching = Some(search.gen);
+        } else if self.search_watching != Some(search.gen)
+            || matches!(search.download, plx_data::subsearch::DownloadPhase::None | plx_data::subsearch::DownloadPhase::Failed { .. }) {
+            self.search_watching = None;
         }
         self.search = Some(search);
         if let Some(page @ (TrackPage::Search | TrackPage::BazarrSearch | TrackPage::SearchLanguage | TrackPage::Fix)) = self.pages.top() {
@@ -1838,17 +1887,20 @@ impl TrackMenuState {
         self.pages.iter().any(|saved| saved.page == TrackPage::Fix)
     }
 
-    /// **The auto-select**, once, by the panel that watched the download in flight: the subtitle as the playing item should list
-    /// it, and the commit that makes it the active one — the SAME `TrackCommit::Subtitle` a pick on
-    /// its row would produce, so it runs the existing chain (client-drawn sidecar on direct play, a
-    /// server burn while transcoding) rather than a parallel one. The server has already selected
-    /// it on its side (`docs/pms-api.md` §8); this is what makes OUR renderer draw it.
+    /// Select a newly installed stream once, only for the generation this panel watched.
     pub fn take_search_commit(&mut self) -> Option<(metadata::Stream, TrackCommit)> {
         let s = self.search.as_ref()?;
-        let plx_data::subsearch::DownloadPhase::Installed { hit, stream } = &s.download else { return None };
-        if !std::mem::take(&mut self.search_watching) {
+        if !matches!(s.download, plx_data::subsearch::DownloadPhase::Installed { .. }) || self.search_watching != Some(s.gen) {
             return None;
         }
+        self.search_watching = None;
+        self.installed_search_commit()
+    }
+
+    /// Build the installed stream and the normal subtitle selection for an explicit pick.
+    pub fn installed_search_commit(&self) -> Option<(metadata::Stream, TrackCommit)> {
+        let s = self.search.as_ref()?;
+        let plx_data::subsearch::DownloadPhase::Installed { hit, stream } = &s.download else { return None };
         let picked = s.hits.get(*hit);
         let sub = metadata::Stream {
             id: stream.id,
@@ -1873,6 +1925,15 @@ impl TrackMenuState {
             memo: Some(plx_media::route::memo_of_subtitle(&sub)),
         };
         Some((sub, commit))
+    }
+
+    /// Publish the player's authoritative readiness for the installed stream.
+    pub fn set_search_activation(&mut self, id: i64, activation: plx_media::route::SubtitleActivation) {
+        if self.search_activation == Some((id, activation)) {
+            return;
+        }
+        self.search_activation = Some((id, activation));
+        self.refresh_top_page();
     }
 
     /// The search snapshot the panel holds — for the screen's auto-select step.
@@ -2669,6 +2730,24 @@ pub fn on_off_label(on: bool) -> &'static str {
     if on { msg::widgets_tracks_look_on() } else { msg::widgets_tracks_look_off() }
 }
 
+fn download_failure(source: plx_data::subsearch::SubSource, failure: plx_data::subsearch::SearchFailure) -> &'static str {
+    use plx_data::subsearch::{SearchFailure, SubSource};
+    use plx_platform::i18n::msg;
+    match (source, failure) {
+        (_, SearchFailure::TimedOut) => msg::widgets_tracks_search_download_timeout(),
+        (_, SearchFailure::BadCandidate) => msg::widgets_tracks_search_bad_candidate(),
+        (SubSource::Bazarr, SearchFailure::BadKey) => msg::widgets_tracks_bazarr_bad_key(),
+        (SubSource::Bazarr, SearchFailure::NotSet) => msg::widgets_tracks_bazarr_not_set(),
+        (SubSource::Bazarr, SearchFailure::NotBazarr) => msg::widgets_tracks_bazarr_not_bazarr(),
+        (SubSource::Bazarr, SearchFailure::NotInBazarr) => msg::widgets_tracks_bazarr_not_in(),
+        (SubSource::Bazarr, SearchFailure::Unreachable | SearchFailure::Transport) => msg::widgets_tracks_bazarr_unreachable(),
+        (SubSource::Bazarr, _) => msg::widgets_tracks_search_bazarr_download_failed(),
+        (SubSource::Plex, SearchFailure::Denied) => msg::widgets_tracks_search_denied(),
+        (SubSource::Plex, SearchFailure::Missing) => msg::widgets_tracks_search_missing(),
+        (SubSource::Plex, _) => msg::widgets_tracks_search_add_failed_note(),
+    }
+}
+
 /// The line under a Plex-agent search that has no rows to list: searching, none, or why not.
 fn plex_status(
     status: plx_data::subsearch::SearchStatus,
@@ -2701,6 +2780,7 @@ fn bazarr_status(
         (SearchStatus::Ready, _) if no_hits => Some(msg::widgets_tracks_bazarr_none()),
         (SearchStatus::Failed, Some(SearchFailure::NotSet)) => Some(msg::widgets_tracks_bazarr_not_set()),
         (SearchStatus::Failed, Some(SearchFailure::Unreachable | SearchFailure::Transport)) => Some(msg::widgets_tracks_bazarr_unreachable()),
+        (SearchStatus::Failed, Some(SearchFailure::TimedOut)) => Some(msg::widgets_tracks_search_download_timeout()),
         (SearchStatus::Failed, Some(SearchFailure::BadKey)) => Some(msg::widgets_tracks_bazarr_bad_key()),
         (SearchStatus::Failed, Some(SearchFailure::NotBazarr)) => Some(msg::widgets_tracks_bazarr_not_bazarr()),
         (SearchStatus::Failed, Some(SearchFailure::NotInBazarr)) => Some(msg::widgets_tracks_bazarr_not_in()),
@@ -5840,7 +5920,8 @@ mod focus_tests {
             motion: PanelMotion::new(),
             background_owner: None,
             search: None,
-            search_watching: false,
+            search_watching: None,
+            search_activation: None,
             item_sidecars: Vec::new(),
             active_external: None,
             active_any: false,
@@ -7471,7 +7552,7 @@ mod motion_tests {
     fn the_search_keys_are_distinct_from_every_other_row() {
         let mut ids = vec![TrackRow::SubOff, TrackRow::Timing, TrackRow::Style, TrackRow::Boost,
             TrackRow::Loudness, TrackRow::OpenOther, TrackRow::OpenSearch, TrackRow::SearchLang,
-            TrackRow::SearchRetry, TrackRow::OpenFix, TrackRow::FixRemove, TrackRow::FixBazarr];
+            TrackRow::SearchRetry, TrackRow::SearchCheckInstall, TrackRow::OpenFix, TrackRow::FixRemove, TrackRow::FixBazarr];
         ids.extend((0..300).flat_map(|i| [TrackRow::Sub(i), TrackRow::Audio(i), TrackRow::SearchHit(i),
             TrackRow::LangChoice(i)]));
         let keys: Vec<u32> = ids.iter().map(|i| i.key().0).collect();
@@ -7571,6 +7652,105 @@ mod motion_tests {
             menu.set_search(snap(SearchStatus::Ready, None, vec![hit("rel")], installed.clone()));
             assert!(menu.take_search_commit().is_none(), "tab {tab}: reopening must not re-commit");
         }
+    }
+
+    #[test]
+    fn only_the_watched_generation_can_auto_select() {
+        let _g = plx_base::testlock::serial();
+        let waiting = DownloadPhase::Waiting { hit: 0, before: vec![1], attempts: 0 };
+        let installed = DownloadPhase::Installed { hit: 0, stream: plx_data::subsearch::InstalledStream {
+            id: 9, key: "/library/streams/9".into(), codec: "srt".into(), language_code: "nld".into() } };
+        let (mut menu, _) = on_search_page(snap(SearchStatus::Ready, None, vec![hit("rel")], waiting));
+        let mut newer = snap(SearchStatus::Ready, None, vec![hit("rel")], installed);
+        newer.gen = 8;
+        menu.set_search(newer);
+        assert!(menu.take_search_commit().is_none());
+        assert_eq!(menu.page_path(), [TrackPage::Search]);
+    }
+
+    #[test]
+    fn unconfirmed_check_only_polls_and_preserves_focus() {
+        let _g = plx_base::testlock::serial();
+        let unconfirmed = DownloadPhase::Unconfirmed { hit: 0, before: vec![1] };
+        let (mut menu, store) = on_search_page(snap(SearchStatus::Ready, None, vec![hit("rel")], unconfirmed));
+        menu.focus_key(TrackRow::SearchHit(0).key().0);
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Inert);
+        menu.focus_key(TrackRow::SearchCheckInstall.key().0);
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Search(SubSearchCmd::CheckInstall { gen: 7 }));
+        assert_eq!(menu.page_path(), [TrackPage::Search]);
+        assert_eq!(menu.selected_id(), Some(TrackRow::SearchCheckInstall));
+    }
+
+    #[test]
+    fn installed_hit_can_be_selected_without_redownload_and_keeps_page_open() {
+        let _g = plx_base::testlock::serial();
+        let installed = DownloadPhase::Installed { hit: 0, stream: plx_data::subsearch::InstalledStream {
+            id: 9, key: "/library/streams/9".into(), codec: "srt".into(), language_code: "nld".into() } };
+        let (mut menu, store) = on_search_page(snap(SearchStatus::Ready, None, vec![hit("rel")], installed));
+        assert!(menu.take_search_commit().is_none());
+        menu.focus_key(TrackRow::SearchHit(0).key().0);
+        assert!(matches!(menu.on_ok(store.view()), TrackOk::Commit {
+            commit: TrackCommit::Subtitle { stream_id: 9, .. }, keep_open: true
+        }));
+        assert_eq!(menu.page_path(), [TrackPage::Search]);
+        assert!(menu.pop(&plx_media::route::PlaybackSession::IDLE, store.view()));
+        assert!(menu.page_path().is_empty());
+        assert_eq!(menu.selected_id(), Some(TrackRow::OpenSearch));
+    }
+
+    #[test]
+    fn installed_status_uses_only_the_matching_player_readiness() {
+        use plx_media::route::SubtitleActivation;
+        use plx_platform::i18n::msg;
+        let _g = plx_base::testlock::serial();
+        let installed = DownloadPhase::Installed { hit: 0, stream: plx_data::subsearch::InstalledStream {
+            id: 9, key: "/library/streams/9".into(), codec: "srt".into(), language_code: "nld".into() } };
+        let (mut menu, _) = on_search_page(snap(SearchStatus::Ready, None, vec![hit("rel")], installed));
+        for (id, state, expected) in [
+            (9, SubtitleActivation::Inactive, msg::widgets_tracks_search_available()),
+            (9, SubtitleActivation::Loading, msg::widgets_tracks_search_loading_player()),
+            (8, SubtitleActivation::Active, msg::widgets_tracks_search_available()),
+            (9, SubtitleActivation::Active, msg::widgets_tracks_search_active()),
+            (9, SubtitleActivation::Failed, msg::widgets_tracks_search_player_failed()),
+        ] {
+            menu.set_search_activation(id, state);
+            assert_eq!(menu.page_path(), [TrackPage::Search]);
+            assert_eq!(menu.download_status(menu.search().unwrap()), Some(expected));
+        }
+    }
+
+    #[test]
+    fn download_stage_is_findable_at_the_top_and_on_the_selected_result() {
+        use plx_data::subsearch::SubSource;
+        use plx_platform::i18n::msg;
+        let _g = plx_base::testlock::serial();
+        let phases = [
+            (DownloadPhase::Sending { hit: 1 }, msg::widgets_tracks_search_requesting()),
+            (DownloadPhase::Waiting { hit: 1, before: vec![1], attempts: 0 }, msg::widgets_tracks_search_waiting_bazarr()),
+            (DownloadPhase::Unconfirmed { hit: 1, before: vec![1] }, msg::widgets_tracks_search_not_visible()),
+            (DownloadPhase::Failed { hit: 1, failure: SearchFailure::BadKey }, msg::widgets_tracks_bazarr_bad_key()),
+            (DownloadPhase::Failed { hit: 1, failure: SearchFailure::TimedOut }, msg::widgets_tracks_search_download_timeout()),
+        ];
+        let (mut menu, _) = on_search_page(snap(SearchStatus::Ready, None, vec![hit("a"), hit("b")], DownloadPhase::None));
+        menu.pages.pop();
+        menu.pages.push(TrackPage::BazarrSearch, TrackRow::FixBazarr, 0.0);
+        for (download, status) in phases {
+            let mut snapshot = snap(SearchStatus::Ready, None, vec![hit("a"), hit("b")], download);
+            snapshot.source = SubSource::Bazarr;
+            menu.set_search(snapshot);
+            let rows: Vec<_> = menu.form.table.sections.iter().flat_map(|s| &s.rows).collect();
+            let hit = menu.form.index_of(&TrackRow::SearchHit(1)).unwrap();
+            assert!(rows[..hit].iter().any(|r| r.is_note() && r.label == status));
+            assert_eq!(rows[hit].detail, status);
+        }
+    }
+
+    #[test]
+    fn invalid_candidate_is_not_reported_as_bad_bazarr_key() {
+        use plx_data::subsearch::SubSource;
+        use plx_platform::i18n::msg;
+        assert_eq!(download_failure(SubSource::Plex, SearchFailure::BadCandidate), msg::widgets_tracks_search_bad_candidate());
+        assert_ne!(download_failure(SubSource::Plex, SearchFailure::BadCandidate), msg::widgets_tracks_bazarr_bad_key());
     }
 
     /// **Regression (ultrareview, 2026-10-05):** a result badged SDH/Forced on the Search page lost

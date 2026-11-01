@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Registro de estadísticas",
+  "browse.diagnostics.stats_logging_off": "Registro: no",
+  "browse.diagnostics.stats_logging_unavailable": "Registro: no disponible",
+  "browse.diagnostics.stats_logging_on_session": "Registro: sí (sesión)",
   "browse.action.retry": "Reintentar",
   "browse.action.retry_home": "Reintentar",
   "browse.action.sign_in": "Iniciar sesión",

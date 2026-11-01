@@ -465,10 +465,79 @@ fn the_bazarr_download_reads_before_it_sends_and_refreshes_after() {
 
     let unread = Canned::new(vec![]);
     let out = bazarr_download_with(&Bazarr::new(&link, &unread), target, &pick, || None, || panic!("no refresh"));
-    assert_eq!(out, Err(false));
+    assert_eq!(out, Err(SearchFailure::Transport));
     assert!(unread.seen.borrow().is_empty(), "nothing is sent when the item could not be read first");
 
     let refused = Canned::new(vec![("/api/providers/movies", 401, "")]);
     let out = bazarr_download_with(&Bazarr::new(&link, &refused), target, &pick, || Some(vec![]), || panic!("no refresh"));
-    assert_eq!(out, Err(true), "a wrong key is a refusal");
+    assert_eq!(out, Err(SearchFailure::BadKey));
+}
+
+#[test]
+fn checking_an_unconfirmed_bazarr_install_only_reads_metadata() {
+    let mut rig = Rig::opened("nl");
+    rig.state.set_link(&bazarr_link());
+    assert!(open_bazarr(&mut rig, "nl"));
+    let generation = rig.state.generation();
+    let target = Target::Movie { radarr_id: 7 };
+    rig.state.apply_for_test(Landing::Bazarr(Ok((target, vec![candidate("b", "nl", 95)]))));
+    assert!(rig.run(SubSearchCmd::Download { gen: generation, hit: 0 }));
+    let (job, _) = rig.one(&holding());
+    assert!(matches!(job.req.work, Work::BazarrDownload { .. }));
+    rig.adapter.land_for_test(generation, Landing::Download(Ok(vec![10])));
+    rig.pump(&holding());
+    for _ in 0..POLL_ATTEMPTS {
+        for _ in 1..POLL_FRAMES { assert!(rig.pump(&holding()).is_empty()); }
+        let (job, _) = rig.one(&holding());
+        assert_eq!(job.req.work, Work::Refresh);
+        rig.adapter.land_for_test(generation, Landing::Streams(Some(vec![])));
+        assert!(rig.pump(&holding()).is_empty());
+    }
+    assert_eq!(rig.state.view().download(), Some(&DownloadPhase::Unconfirmed { hit: 0, before: vec![10] }));
+    assert!(!rig.run(SubSearchCmd::CheckInstall { gen: generation.wrapping_sub(1) }));
+    assert!(rig.pump(&holding()).is_empty());
+    assert!(rig.run(SubSearchCmd::CheckInstall { gen: generation }));
+    assert!(!rig.run(SubSearchCmd::CheckInstall { gen: generation }));
+    let (job, _) = rig.one(&holding());
+    assert_eq!(job.req.work, Work::Refresh, "checking must not search or post another download");
+    rig.adapter.land_for_test(generation, Landing::Streams(Some(vec![StreamRow {
+        id: 10, key: "/library/streams/10".into(), codec: "srt".into(),
+        language_code: "nl".into(), title: "old".into(),
+    }])));
+    assert!(rig.pump(&holding()).is_empty());
+    assert!(matches!(rig.state.view().download(), Some(DownloadPhase::Waiting { attempts: 1, .. })),
+        "a pre-existing stream is not a newly installed subtitle");
+}
+
+#[test]
+fn bazarr_download_preserves_server_and_connection_failures() {
+    struct Broken(bazarr::TransportError);
+    impl Transport for Broken {
+        fn send(&self, _: &BazarrLink, _: &bazarr::Request) -> Result<bazarr::Reply, bazarr::TransportError> {
+            Err(self.0)
+        }
+    }
+    let link = bazarr_link();
+    let target = Target::Movie { radarr_id: 7 };
+    let pick = candidate("b", "nl", 95);
+    for (error, failure) in [
+        (bazarr::TransportError::TimedOut, SearchFailure::TimedOut),
+        (bazarr::TransportError::Unreachable, SearchFailure::Unreachable),
+    ] {
+        let http = Broken(error);
+        assert_eq!(bazarr_download_with(&Bazarr::new(&link, &http), target, &pick,
+            || Some(vec![]), || panic!("no refresh after failure")), Err(failure));
+        assert!(failure.retryable());
+    }
+    for (status, failure) in [
+        (401, SearchFailure::BadKey),
+        (404, SearchFailure::NotInBazarr),
+        (500, SearchFailure::Refused),
+        (418, SearchFailure::NotBazarr),
+    ] {
+        let http = Canned::new(vec![("/api/providers/movies", status, "")]);
+        assert_eq!(bazarr_download_with(&Bazarr::new(&link, &http), target, &pick,
+            || Some(vec![]), || panic!("no refresh after failure")), Err(failure));
+        assert!(!failure.retryable());
+    }
 }

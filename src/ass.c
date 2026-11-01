@@ -118,11 +118,25 @@ static int read_track(PlxAss *ctx, const uint8_t *data, size_t len, int script)
         if (ctx->track) ass_process_codec_private(ctx->track, (char *)data, (int)len);
     }
     if (!ctx->track || ctx->track->track_type == TRACK_TYPE_UNKNOWN ||
-        ctx->track->n_styles <= 0 || ctx->track->n_events > MAX_EVENTS ||
-        (script && ctx->track->n_events == 0)) {
+        ctx->track->n_styles <= 0 || ctx->track->n_events > MAX_EVENTS) {
         if (ctx->track) ass_free_track(ctx->track);
         ctx->track = NULL;
         return -1;
+    }
+    /* Windowed scripts may have no cues in this particular window. */
+    if (script == 1) {
+        int usable = 0;
+        for (int i = 0; i < ctx->track->n_events; ++i) {
+            if (ctx->track->events[i].Duration > 0) {
+                usable = 1;
+                break;
+            }
+        }
+        if (!usable) {
+            ass_free_track(ctx->track);
+            ctx->track = NULL;
+            return -1;
+        }
     }
     /* Matroska ReadOrder is the deduplication key, including after demux replay. */
     ass_set_check_readorder(ctx->track, 1);

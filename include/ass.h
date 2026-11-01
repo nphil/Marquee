@@ -23,8 +23,9 @@ typedef struct {
  * plx_ass_replace_track and plx_ass_stats join the 2 surface. plx_ass_load now scans the fonts
  * (ass_set_fonts) only on a context's first load.
  * ABI 4: the UI text surface, plx_ass_text_* (src/ass_text.c).
- * ABI 5: plx_ass_set_style_override. */
-#define PLX_ASS_ABI_VERSION 5
+ * ABI 5: plx_ass_set_style_override.
+ * ABI 6: whole-script usable-event validation and validated empty render windows. */
+#define PLX_ASS_ABI_VERSION 6
 
 typedef struct {
     uint32_t library_fonts; /* fonts the library holds: added through plx_ass_add_font or extracted */
@@ -36,6 +37,8 @@ unsigned plx_ass_abi_version(void);
 PlxAss *plx_ass_create(const char *default_font);
 void plx_ass_destroy(PlxAss *ctx);
 int plx_ass_add_font(PlxAss *ctx, const char *name, const uint8_t *data, size_t len);
+/* script: 0 = codec header, 1 = complete script requiring a positive-duration event,
+ * 2 = a window of a script already validated as a whole (may contain no usable events). */
 int plx_ass_load(PlxAss *ctx, const uint8_t *data, size_t len, int script);
 /* Replace the loaded track on the same library and renderer, keeping every font face the
  * renderer has opened. Fonts cannot change here: the new track's own [Fonts] section is NOT

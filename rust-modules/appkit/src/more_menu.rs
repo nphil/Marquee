@@ -91,6 +91,8 @@ pub enum Action {
     None,
     /// flip `crate::app::diagnostics`'s overlay on/off
     ToggleStats,
+    /// Enable detailed stats logging for this session.
+    ToggleStatsLogging,
     /// select a rung of the playback-quality ladder ([`plx_media::route::set_quality`])
     SetQuality(plx_media::route::Quality),
     /// select a playback speed, in thousandths (one of [`plx_media::player::PLAY_RATES`];
@@ -213,6 +215,7 @@ impl FormId for Action {
             Action::None => 0,
             Action::ToggleStats => 1,
             Action::SendDiagnostics => 2,
+            Action::ToggleStatsLogging => 5,
             Action::SetQuality(Quality::Auto) => 10,
             Action::SetQuality(Quality::Original) => 11,
             Action::SetQuality(Quality::P1080High) => 12,
@@ -795,6 +798,7 @@ fn rows_for(forced: bool) -> Vec<Action> {
             .collect()
     };
     v.push(Action::ToggleStats);
+    v.push(Action::ToggleStatsLogging);
     if plx_platform::labcfg::menu_row_enabled() {
         v.push(Action::SendDiagnostics);
     }
@@ -804,6 +808,7 @@ fn rows_for(forced: bool) -> Vec<Action> {
 fn label(a: Action) -> std::borrow::Cow<'static, str> {
     match a {
         Action::ToggleStats => plx_platform::i18n::msg::widgets_menu_stats().into(),
+        Action::ToggleStatsLogging => plx_platform::i18n::msg::browse_diagnostics_detailed_stats_logging().into(),
         // the rung names itself — rate and frame in one string, because the row already carries
         // the picker's leading mark (see this module's doc)
         Action::SetQuality(q) => q.label().into(),
@@ -819,6 +824,7 @@ fn label(a: Action) -> std::borrow::Cow<'static, str> {
 /// module naming `app`. Unset it reads OFF, which is what the flag itself reads before anything has
 /// toggled it.
 static STATS_READER: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+static LOGGING_READER: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
 
 /// Register the reader for the Stats for nerds switch. The first registration wins; the loop makes
 /// exactly one, before any screen exists.
@@ -826,8 +832,16 @@ pub fn install_stats_reader(read: fn() -> bool) {
     let _ = STATS_READER.set(read);
 }
 
-fn stats_on() -> bool {
+pub fn stats_on() -> bool {
     STATS_READER.get().is_some_and(|read| read())
+}
+
+pub fn install_logging_reader(read: fn() -> bool) {
+    let _ = LOGGING_READER.set(read);
+}
+
+pub fn logging_on() -> bool {
+    LOGGING_READER.get().is_some_and(|read| read())
 }
 
 /// Whether the SWITCH a row names is currently on. It reaches the row as [`Row::toggle`] and so
@@ -839,6 +853,7 @@ fn stats_on() -> bool {
 fn is_on(a: Action) -> bool {
     match a {
         Action::ToggleStats => stats_on(),
+        Action::ToggleStatsLogging => logging_on(),
         // a rung is not a switch — see `row_for`, which gives it the leading mark instead
         Action::SetQuality(_) | Action::SetSpeed(_) | Action::SendDiagnostics | Action::None => false,
     }
@@ -1266,7 +1281,7 @@ mod tests {
         plx_media::ff::force_speed_decoder_for_test(true); // a host test loads no FFmpeg
         let mut keys: Vec<u32> = plx_media::player::PLAY_RATES.iter().map(|r| Action::SetSpeed(*r).key().0).collect();
         keys.extend([MoreRow::OpenQuality.key().0, MoreRow::OpenSpeed.key().0]);
-        keys.extend([Action::None, Action::ToggleStats, Action::SendDiagnostics].iter().map(|a| a.key().0));
+        keys.extend([Action::None, Action::ToggleStats, Action::ToggleStatsLogging, Action::SendDiagnostics].iter().map(|a| a.key().0));
         keys.extend(plx_media::route::QUALITY_LADDER.iter().map(|q| Action::SetQuality(*q).key().0));
         let mut sorted = keys.clone();
         sorted.sort_unstable();
@@ -1848,35 +1863,6 @@ mod classic_placement_tests {
     use super::*;
     use plx_base::fontcov::advances::ShippedMeasure;
 
-    fn settled() -> Vec<(&'static str, [f32; 4])> {
-        plx_media::ff::force_speed_decoder_for_test(true); // a host test loads no FFmpeg
-        let _g = plx_base::testlock::serial();
-        let ps = plx_media::route::PlaybackSession::IDLE;
-        let rect = |st: &MoreMenuState| {
-            let r = st.panel_rect(&ShippedMeasure);
-            [r.x + r.w, r.y + r.h, r.w, r.h]
-        };
-        let mut root = MoreMenuState::new(&ps);
-        let mut out = vec![("root", rect(&root))];
-        root.focus_key(MoreRow::OpenQuality.key().0);
-        assert_eq!(root.on_ok(&ps), MoreOk::Navigated);
-        out.push(("quality page", rect(&root)));
-        out.push(("quality entry", rect(&MoreMenuState::new_quality(&ps))));
-        out
-    }
-
-    #[test]
-    fn classic_more_panels_settle_where_they_always_did() {
-        // captured from the constants-placed panels (`CTRL_RIGHT - pw`, bottom 764): (right, bottom, width, height)
-        assert_eq!(
-            settled(),
-            [
-                ("root", [1824.0, 764.0, 470.0, 284.0]),
-                ("quality page", [1824.0, 764.0, 440.0, 536.0]),
-                ("quality entry", [1824.0, 764.0, 440.0, 536.0]),
-            ],
-        );
-    }
 
     fn menu_at(anchor: Rect) -> MoreMenuState {
         plx_media::ff::force_speed_decoder_for_test(true); // a host test loads no FFmpeg

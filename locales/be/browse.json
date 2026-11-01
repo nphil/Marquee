@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Запіс статыстыкі",
+  "browse.diagnostics.stats_logging_off": "Запіс: выкл.",
+  "browse.diagnostics.stats_logging_unavailable": "Запіс: недаступны",
+  "browse.diagnostics.stats_logging_on_session": "Запіс: у сеансе",
   "browse.action.retry": "Паспрабаваць зноў",
   "browse.action.retry_home": "Паспрабаваць зноў",
   "browse.action.sign_in": "Увайсці",

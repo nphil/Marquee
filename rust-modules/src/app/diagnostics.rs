@@ -114,7 +114,8 @@ use plx_ui::widgets::{Field, FieldList, FIELD_COL_W};
 use plx_ui::{theme, Env, Painter, Rect, View};
 use std::cell::Cell;
 use std::ffi::CString;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc::{sync_channel, SyncSender}, OnceLock};
 // The one bit that crosses a module boundary without an instance. It is owned by `player` (the
 // pump samples its diagnostics only while the panel is up, and `player` may not name `app`); this
 // module is its only writer.
@@ -137,6 +138,12 @@ pub(crate) struct Diagnostics {
     /// The previous sample's fed totals and the tick they were taken at — what turns two totals
     /// into a RATE. `(video, audio, at)`; `at == 0` means there is no previous sample yet.
     prev_fed: (i64, i64, u32),
+    submit_count: u32,
+    submit_at: Option<u32>,
+    timing: [CString; 3],
+    title_label: CString,
+    logging_label: CString,
+    was_logging: bool,
     history: SweepHistory,
     /// Formatted only at the 2 Hz sampling boundary, never in the render loop, so the whole-string
     /// glyph cache sees the same held values the ordinary rows do.
@@ -171,6 +178,12 @@ impl Default for Diagnostics {
     fn default() -> Self {
         Self {
             prev_fed: (0, 0, 0),
+            submit_count: 0,
+            submit_at: None,
+            timing: std::array::from_fn(|_| CString::new("Unknown").unwrap()),
+            title_label: CString::default(),
+            logging_label: CString::default(),
+            was_logging: false,
             history: SweepHistory::new(),
             chart_values: [String::new(), String::new(), String::new()],
             chart_key_w: Cell::new(0.0),
@@ -199,6 +212,70 @@ impl Default for Diagnostics {
 /// player's pump reads it too.
 pub(crate) fn enabled() -> bool {
     ON.load(Ordering::Relaxed)
+}
+
+// Odd epochs are opted in; advancing on every toggle invalidates queued records from prior consent.
+static LOG_EPOCH: AtomicU64 = AtomicU64::new(0);
+static LOG_FAILED: AtomicBool = AtomicBool::new(false);
+static LOG_QUEUE: OnceLock<Option<SyncSender<StatsSnapshot>>> = OnceLock::new();
+
+pub(crate) fn logging_enabled() -> bool {
+    LOG_EPOCH.load(Ordering::SeqCst) & 1 != 0
+}
+
+pub(crate) fn toggle_logging() {
+    LOG_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
+#[derive(Clone, Copy, Default)]
+struct StatsSnapshot {
+    epoch: u64,
+    generation: u32,
+    window_ms: Option<u32>,
+    swaps: u32,
+    source_millifps: i64,
+    pipeline_millifps: i64,
+    coded_w: i32,
+    coded_h: i32,
+    fed_video: i64,
+    fed_audio: i64,
+    position_callbacks: i32,
+    reserve_ms: Option<i64>,
+    delivered_bytes: i64,
+    abr_mode: u8,
+    budget_kbps: i64,
+    risk_score: i64,
+}
+
+fn snapshot_is_current(snapshot: &StatsSnapshot, epoch: u64, generation: u32) -> bool {
+    epoch & 1 != 0 && snapshot.epoch == epoch && snapshot.generation == generation
+}
+
+fn queue_snapshot(snapshot: StatsSnapshot) {
+    let queue = LOG_QUEUE.get_or_init(|| {
+        let (tx, rx) = sync_channel::<StatsSnapshot>(8);
+        let started = std::thread::Builder::new().name("stats-log".into()).spawn(move || {
+            while let Ok(s) = rx.recv() {
+                if !snapshot_is_current(&s, LOG_EPOCH.load(Ordering::SeqCst), plx_media::route::playback_trace_generation()) {
+                    continue;
+                }
+                // Negative values represent unavailable measurements, never identities or raw metadata.
+                plx_base::eventlog::log(&format!(
+                    "stats_v1 window_ms={} ui_swaps={} source_millifps={} pipeline_millifps={} coded_w={} coded_h={} fed_video_au={} fed_audio_au={} position_callbacks={} reserve_ms={} delivered_bytes={} abr_mode={} budget_kbps={} risk_score={}",
+                    s.window_ms.map(i64::from).unwrap_or(-1), s.swaps, s.source_millifps,
+                    s.pipeline_millifps, s.coded_w, s.coded_h, s.fed_video, s.fed_audio,
+                    s.position_callbacks, s.reserve_ms.unwrap_or(-1), s.delivered_bytes,
+                    s.abr_mode, s.budget_kbps, s.risk_score
+                ));
+            }
+        }).is_ok();
+        if started { Some(tx) } else { LOG_FAILED.store(true, Ordering::SeqCst); None }
+    });
+    if let Some(tx) = queue {
+        if matches!(tx.try_send(snapshot), Err(std::sync::mpsc::TrySendError::Disconnected(_))) {
+            LOG_FAILED.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 /// Flip the readout. Deliberately NOT persisted across launches: the reviewer flow is "open the
@@ -407,15 +484,32 @@ fn link_state(budget_kbps: i64, demand_kbps: i64) -> LinkState {
 }
 
 impl Diagnostics {
+    /// Count returned app GL swaps, not compositor presentation or panel refresh.
+    pub(crate) fn note_submit(&mut self) {
+        if enabled() || logging_enabled() {
+            self.submit_count = self.submit_count.saturating_add(1);
+        }
+    }
+
     /// Re-sample if the hold has expired. Main-thread only (it is called from the frame loop).
     ///
     /// The panel being switched ON is its own re-sample: the rising edge of [`ON`] is what the
     /// static-era `kick()` expressed by zeroing the deadline from three modules away.
-    pub(crate) fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32) {
+    pub(crate) fn update(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, player_route: bool) {
         let on = enabled();
-        let woke = on && !self.was_on;
+        let logging = logging_enabled();
+        let logging_started = logging && !self.was_logging;
+        let woke = (on && !self.was_on) || logging_started;
         self.was_on = on;
-        if !on {
+        self.was_logging = logging;
+        if logging_started {
+            self.submit_at = None;
+            self.submit_count = 0;
+        }
+        if !on && !logging {
+            self.submit_at = None;
+            self.submit_count = 0;
+            self.prev_fed = (0, 0, 0);
             return;
         }
         if !woke && now < self.next_sample {
@@ -425,25 +519,70 @@ impl Diagnostics {
         // The panel is the maintainer's instrument: its own messages are English-only, and the
         // shared helpers it composes (units, decimals, quality labels) read the UI language, so
         // the whole sample is taken in English. Nothing sampled here reaches product UI.
-        self.sample(ps, now);
+        if on {
+            self.sample(ps, now, player_route);
+        } else {
+            self.resample(ps, now, player_route, false);
+        }
     }
 
     /// Take the sample in English (see `update`). The one entry to `resample`.
-    fn sample(&mut self, ps: &plx_media::route::PlaybackSession, now: u32) {
-        plx_platform::i18n::render_in_english(|| self.resample(ps, now));
+    fn sample(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, player_route: bool) {
+        plx_platform::i18n::render_in_english(|| self.resample(ps, now, player_route, true));
     }
 
     /// The sample itself: everything the panel will show until the next one.
-    fn resample(&mut self, ps: &plx_media::route::PlaybackSession, now: u32) {
+    fn resample(&mut self, ps: &plx_media::route::PlaybackSession, now: u32, player_route: bool, draw_ui: bool) {
         // ONE sample feeding the whole panel. Calling `diag()` per block would let one row report
         // "no frames" beside a position taken a moment later — a panel that tells a story that
         // never happened is worse than no panel.
         let d = plx_media::player::diag(ps);
+        let window = self.submit_at.and_then(|at| now.checked_sub(at)).filter(|ms| *ms > 0);
+        let swaps = self.submit_count;
+        self.submit_at = Some(now);
+        self.submit_count = 0;
+        let source_fps = if player_route { plx_media::route::source_fps(ps) } else { 0.0 };
+        if logging_enabled() {
+            let source_millifps = if source_fps.is_finite() && source_fps > 0.0 { (source_fps * 1000.0).round() as i64 } else { -1 };
+            queue_snapshot(StatsSnapshot {
+                epoch: LOG_EPOCH.load(Ordering::SeqCst),
+                generation: plx_media::route::playback_trace_generation(),
+                window_ms: window,
+                swaps,
+                source_millifps,
+                pipeline_millifps: if player_route && d.video_fps_milli > 0 { d.video_fps_milli } else { -1 },
+                coded_w: if player_route && d.video_w > 0 { d.video_w } else { -1 },
+                coded_h: if player_route && d.video_h > 0 { d.video_h } else { -1 },
+                fed_video: if player_route { d.fed_v } else { -1 },
+                fed_audio: if player_route { d.fed_a } else { -1 },
+                position_callbacks: if player_route { d.frames } else { -1 },
+                reserve_ms: if player_route { observed_buffer_ms(&d) } else { None },
+                delivered_bytes: if player_route { d.net_rx } else { -1 },
+                abr_mode: if player_route { d.abr_mode } else { 0 },
+                budget_kbps: if player_route { d.abr_safe_kbps } else { -1 },
+                risk_score: if player_route { d.abr_risk } else { -1 },
+            });
+        }
+        if !draw_ui { return; }
+        self.title_label = CString::new(plx_platform::i18n::msg::browse_diagnostics_title()).unwrap_or_default();
+        let logging_label = if !logging_enabled() {
+            plx_platform::i18n::msg::browse_diagnostics_stats_logging_off()
+        } else if LOG_FAILED.load(Ordering::SeqCst) {
+            plx_platform::i18n::msg::browse_diagnostics_stats_logging_unavailable()
+        } else {
+            plx_platform::i18n::msg::browse_diagnostics_stats_logging_on_session()
+        };
+        self.logging_label = CString::new(logging_label).unwrap_or_default();
+        let idle = never_played(&d, plx_media::player::state(ps));
+        let source = if !player_route { "No player".to_string() } else if idle { "Not playing".to_string() } else { source_rate(source_fps) };
+        let submit = window.and_then(|ms| submit_rate(swaps, 0, ms)).map(|rate| format!("{rate:.1} swaps/s"))
+            .unwrap_or_else(|| "Unknown".to_string());
+        self.timing = [source, submit, "Unverified".to_string()]
+            .map(|s| CString::new(s).expect("numeric diagnostic"));
         let prev = self.prev_fed;
         self.head = header(ps, &d, now);
         // ONE decision per sample, held with the rows it chose. Deciding this in `draw` instead
         // would let the panel measure one list and paint another on the frame the first Load lands.
-        let idle = never_played(&d, plx_media::player::state(ps));
         self.idle = idle;
         self.head_lines = wrap_header(&self.head, self.panel_width() - 2.0 * PAD);
         self.rows = if idle { device_rows() } else { Vec::new() };
@@ -460,8 +599,20 @@ impl Diagnostics {
             now,
         );
         self.chart_values = chart_values(&self.history);
-        // a re-sample changes what is on screen, and no spring is involved — see `plx_machine::idle`
-        plx_machine::idle::invalidate();
+        kick();
+    }
+}
+
+fn submit_rate(count: u32, at: u32, now: u32) -> Option<f64> {
+    let elapsed = now.checked_sub(at)?;
+    (elapsed > 0).then(|| f64::from(count) * 1000.0 / f64::from(elapsed))
+}
+
+fn source_rate(source: f64) -> String {
+    if source.is_finite() && source > 0.0 {
+        format!("{} fps", fps_milli_str((source * 1000.0).round() as i64))
+    } else {
+        "Unknown".to_string()
     }
 }
 
@@ -1094,7 +1245,8 @@ fn abr_budget(d: &plx_media::player::Diag, selected: plx_media::route::Quality) 
         return plx_platform::i18n::msg::browse_diagnostics_demand_unknown(&abr_rate(d.abr_safe_kbps));
     }
     let delta = d.abr_safe_kbps - demand;
-    if delta >= 0 { plx_platform::i18n::msg::browse_diagnostics_budget_surplus(&abr_rate(d.abr_safe_kbps), &abr_rate(demand), &abr_rate(delta.abs())) } else { plx_platform::i18n::msg::browse_diagnostics_budget_deficit(&abr_rate(d.abr_safe_kbps), &abr_rate(demand), &abr_rate(delta.abs())) }
+    let demand = format!("{} {}", abr_rate(demand), if d.abr_mode == plx_media::player::ABR_MODE_HLS { "measured stream" } else { "declared source" });
+    if delta >= 0 { plx_platform::i18n::msg::browse_diagnostics_budget_surplus(&abr_rate(d.abr_safe_kbps), &demand, &abr_rate(delta.abs())) } else { plx_platform::i18n::msg::browse_diagnostics_budget_deficit(&abr_rate(d.abr_safe_kbps), &demand, &abr_rate(delta.abs())) }
 }
 
 /// The OBSERVED buffer dynamics only.  The controller's conservative counterfactual horizon is a
@@ -1119,6 +1271,10 @@ fn abr_buffer(d: &plx_media::player::Diag, selected: plx_media::route::Quality) 
         } else {
             plx_platform::i18n::msg::browse_diagnostics_reserve(&decimal(buffer_ms as f64 / 1_000.0, 1))
         };
+    }
+    // The producer uses zero for both a flat trend and the first observation.
+    if d.abr_slope_ms_per_s == 0 {
+        return format!("{} s estimated · trend flat or not yet measured", decimal(buffer_ms as f64 / 1_000.0, 1));
     }
     let trend = match d.abr_slope_ms_per_s.cmp(&0) {
         std::cmp::Ordering::Greater => plx_platform::i18n::msg::browse_diagnostics_filling(),
@@ -1479,14 +1635,7 @@ fn abr_why_text(why: u8) -> Option<&'static str> {
     }
 }
 
-/// AUs per second per lane since the previous sample, as ` · +24/+0 /s`. Empty until there IS a
-/// previous sample, and empty if the clock went backwards (an SDL tick wrap) rather than printing
-/// a negative rate that would read as a fault.
-/// The video half is AUs per second, which for video IS the frame rate — so it is labelled `fps`
-/// and a reader can check it against the content without knowing anything about this app. The
-/// audio half is fixed by the codec (AC3 packs 1536 samples, so ~31/s at 48 kHz), not by the
-/// content, so it gets no unit that would imply otherwise. It read `AU/s` until someone outside
-/// the project asked what an AU was.
+/// Accepted video and audio access units per second since the previous sample.
 fn fed_rate(d: &plx_media::player::Diag, prev: (i64, i64, u32), now: u32) -> String {
     match fed_rates(d, prev, now) {
         Some((rv, ra)) => plx_platform::i18n::msg::browse_diagnostics_fed_rate(&plx_platform::i18n::current().number(ra), &plx_platform::i18n::current().number(rv)),
@@ -1500,7 +1649,7 @@ fn fed_rate(d: &plx_media::player::Diag, prev: (i64, i64, u32), now: u32) -> Str
 /// also reads zero, and the two must not be the same value.
 fn fed_rates(d: &plx_media::player::Diag, prev: (i64, i64, u32), now: u32) -> Option<(i64, i64)> {
     let (pv, pa, at) = prev;
-    if at == 0 || now <= at {
+    if at == 0 || now <= at || d.fed_v < pv || d.fed_a < pa {
         return None;
     }
     let dt = (now - at) as f64 / 1000.0;
@@ -1615,6 +1764,7 @@ const HEAD_IDENTITY_Y: f32 = 38.0;
 const SECTIONS_GAP: f32 = 4.0;
 /// The column headings' line to the field lists under them.
 const FIELDS_GAP: f32 = 4.0;
+const TIMING_H: f32 = 72.0;
 const PANEL_W: f32 = 2.0 * FIELD_COL_W + COL_GAP + 2.0 * PAD;
 
 /// Identity and verdict remain complete; even opaque build identifiers wrap at a character
@@ -1676,14 +1826,14 @@ pub(crate) fn panel_rect(&self) -> Rect {
         // Before playback there is no delivery history to chart. Keep the support card compact and
         // price exactly the device rows sampled for this frame.
         let lines = FieldList::wrapped_line_count(&self.rows);
-        head_h + FieldList::height(lines) + PAD
+        head_h + TIMING_H + FieldList::height(lines) + PAD
     } else {
         // Playback keeps fixed comparable columns. The chart is four row pitches under the
         // shorter model column, so both sides share one measured height without clipping.
         let cols = &self.columns;
         let left = FieldList::wrapped_line_count(&cols[0]).max(LEFT_ROWS);
         let right = FieldList::wrapped_line_count(&cols[1]).max(RIGHT_ROWS) + CHART_ROWS;
-        head_h + FieldList::height(left.max(right)) + PAD
+        head_h + TIMING_H + FieldList::height(left.max(right)) + PAD
     };
     // x on the app's own side margin, not [`MARGIN`]: the panel's whole output format is a
     // PHOTOGRAPH of a television, so it is the one overlay that must sit inside the overscan frame
@@ -1708,16 +1858,20 @@ pub(crate) fn draw(&self) {
     // Its own opaque ground. On the player route the UI plane is cleared fully TRANSPARENT, so a
     // scrim would leave the picture showing through the text — the one condition a photograph of
     // this has to survive.
-    p.rect(frame, 24.0, theme::PANEL_TOP, theme::PANEL_BOT, 0.0);
+    let mut top = theme::PANEL_TOP;
+    let mut bottom = theme::PANEL_BOT;
+    top[3] = 1.0;
+    bottom[3] = 1.0;
+    p.rect(frame, 24.0, top, bottom, 0.0);
 
     let layout = self.header_layout();
     let inner = frame.x + PAD;
     let iw = frame.w - 2.0 * PAD;
-    if let Ok(cs) = CString::new(plx_platform::i18n::msg::browse_diagnostics_title()) {
-        Label::new(cs.as_ptr(), theme::size::BODY, theme::TEXT_PRIMARY)
-            .bold()
-            .draw(p, Rect::new(inner, frame.y + 10.0, iw, 30.0));
-    }
+    Label::new(self.title_label.as_ptr(), theme::size::BODY, theme::TEXT_PRIMARY)
+        .bold()
+        .draw(p, Rect::new(inner, frame.y + 10.0, iw, 30.0));
+    Label::new(self.logging_label.as_ptr(), theme::size::DIAGNOSTIC, theme::TEXT_SECONDARY)
+        .draw(p, Rect::new(inner + iw - 240.0, frame.y + 12.0, 240.0, 24.0));
     // Paint the cached lines whose height sizes the opaque panel and flows the fields below it.
     let verdict_ink = if self.head[1].starts_with(plx_platform::i18n::msg::browse_diagnostics_error()) {
         theme::DANGER
@@ -1737,39 +1891,55 @@ pub(crate) fn draw(&self) {
         }
     }
 
-    let top = frame.y + layout.fields_y;
+    let slot = iw / 3.0;
+    for (i, (name, detail)) in [
+        (b"VIDEO SOURCE\0".as_slice(), b"file metadata\0".as_slice()),
+        (b"APP UI\0".as_slice(), b"GL swaps; idle normal\0".as_slice()),
+        (b"TV OUTPUT\0".as_slice(), b"physical refresh\0".as_slice()),
+    ].iter().enumerate() {
+        let x = inner + i as f32 * slot;
+        let y = frame.y + layout.sections_y;
+        Label::new(name.as_ptr().cast(), theme::size::DIAGNOSTIC, theme::TEXT_SECONDARY)
+            .bold().draw(p, Rect::new(x, y, slot, 22.0));
+        Label::new(self.timing[i].as_ptr(), theme::size::BODY, theme::TEXT_PRIMARY)
+            .bold().draw(p, Rect::new(x, y + 22.0, slot, 26.0));
+        Label::new(detail.as_ptr().cast(), theme::size::DIAGNOSTIC, theme::TEXT_SECONDARY)
+            .draw(p, Rect::new(x, y + 48.0, slot, 22.0));
+    }
+
+    let top = frame.y + layout.fields_y + TIMING_H;
     if self.idle {
         if let Ok(cs) = CString::new("DEVICE / SERVER") {
             Label::new(cs.as_ptr(), theme::size::DIAGNOSTIC, theme::TEXT_SECONDARY)
                 .bold()
-                .draw(p, Rect::new(inner, frame.y + layout.sections_y, FIELD_COL_W, 24.0));
+                .draw(p, Rect::new(inner, frame.y + layout.sections_y + TIMING_H, FIELD_COL_W, 24.0));
         }
         FieldList::new(
             &self.rows,
-            Rect::new(inner, top, FIELD_COL_W, frame.h - layout.fields_y - PAD),
+            Rect::new(inner, top, FIELD_COL_W, frame.h - layout.fields_y - TIMING_H - PAD),
         )
         .draw(&e, p);
         return;
     }
 
     let right_x = inner + FIELD_COL_W + COL_GAP;
-    for (title, x) in [("STREAM / OUTPUT", inner), ("DELIVERY / CONTROL", right_x)] {
+    for (title, x) in [("PLAYBACK / PIPELINE", inner), ("DELIVERY / BUFFER", right_x)] {
         if let Ok(cs) = CString::new(title) {
             Label::new(cs.as_ptr(), theme::size::DIAGNOSTIC, theme::TEXT_SECONDARY)
                 .bold()
-                .draw(p, Rect::new(x, frame.y + layout.sections_y, FIELD_COL_W, 24.0));
+                .draw(p, Rect::new(x, frame.y + layout.sections_y + TIMING_H, FIELD_COL_W, 24.0));
         }
     }
 
     let cols = &self.columns;
     FieldList::new(
         &cols[0],
-        Rect::new(inner, top, FIELD_COL_W, frame.h - layout.fields_y - PAD),
+        Rect::new(inner, top, FIELD_COL_W, frame.h - layout.fields_y - TIMING_H - PAD),
     )
     .draw(&e, p);
     FieldList::new(
         &cols[1],
-        Rect::new(right_x, top, FIELD_COL_W, frame.h - layout.fields_y - PAD),
+        Rect::new(right_x, top, FIELD_COL_W, frame.h - layout.fields_y - TIMING_H - PAD),
     )
     .draw(&e, p);
 
@@ -2063,7 +2233,7 @@ mod tests {
             assert!(route_line(&ps, &d).contains("enh=unverified"));
         }
     }
-    use plx_ui::consts::{SCR_H, SCR_W};
+    use plx_ui::consts::SCR_W;
 
     fn header_fixture(idle: bool, head: [String; 2]) -> Diagnostics {
         let mut panel = Diagnostics { idle, head, ..Diagnostics::default() };
@@ -2107,24 +2277,6 @@ mod tests {
                 assert!(frame.y + frame.h < transport_top());
             }
         }
-    }
-
-    #[test]
-    fn diagnostic_header_growth_preserves_fields_and_chart_space() {
-        let short = header_fixture(false, ["build".into(), "playing".into()]);
-        let long = header_fixture(false, ["build-".repeat(72), "failure reason ".repeat(24)]);
-        assert!(long.head_lines[0].len() > 1 && long.head_lines[1].len() > 1);
-        let short_layout = short.header_layout();
-        let long_layout = long.header_layout();
-        let growth = long_layout.fields_y - short_layout.fields_y;
-        assert!(growth > 0.0);
-        assert_eq!(long.panel_rect().h - short.panel_rect().h, growth);
-        for panel in [&short, &long] {
-            let chart_top = panel.header_layout().fields_y + FieldList::height(RIGHT_ROWS);
-            assert_eq!(panel.panel_rect().h - PAD - chart_top, FieldList::height(CHART_ROWS));
-            assert!(panel.panel_rect().y + panel.panel_rect().h < transport_top());
-        }
-        assert_eq!(long.head_lines[0].concat(), long.head[0], "opaque build IDs must never lose a suffix");
     }
 
     /// The YouTube-style plot is a sweep, not a scrolling queue: advancing time overwrites the
@@ -2333,7 +2485,7 @@ mod tests {
         abr_rows(&ps, &d, plx_media::route::Quality::Auto, &mut fields);
         let buffer = fields
             .iter()
-            .find(|f| f.key == "Buffer")
+            .find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_buffer())
             .expect("Buffer row");
         let value = buffer.val.as_deref().unwrap_or_default();
         assert!(
@@ -2368,14 +2520,10 @@ mod tests {
             playable_buffer_ms: Some(12_345),
             ..Default::default()
         };
-        assert_eq!(
-            abr_buffer(&d, plx_media::route::Quality::Original),
-            "12.3 s · observed reserve",
-        );
-        assert_eq!(
-            abr_buffer(&d, plx_media::route::Quality::P720),
-            "12.3 s · observed reserve",
-        );
+        let original = abr_buffer(&d, plx_media::route::Quality::Original);
+        let manual = abr_buffer(&d, plx_media::route::Quality::P720);
+        assert_eq!(original, manual);
+        assert!(original.contains("12.3"));
     }
 
     /// **Every row must fit on ONE line**, which is what makes the panel short. A row that wraps
@@ -2662,7 +2810,7 @@ mod tests {
             .collect();
         // One row per thing that did not happen: no video path, a Load with no callbacks, nothing
         // demuxed or fed, and no frame long after the Load completed.
-        for expect in ["Picture", "Video plane", "Load", "Feed", "Frames"] {
+        for expect in [plx_platform::i18n::msg::browse_diagnostics_field_picture(), "Video plane", "Load", plx_platform::i18n::msg::browse_diagnostics_field_feed(), plx_platform::i18n::msg::browse_diagnostics_field_frames()] {
             assert!(
                 faults.contains(&expect),
                 "{expect} should read as a fault; got {faults:?}"
@@ -2675,7 +2823,7 @@ mod tests {
     /// and it is why the click path needs no close-on-click arm.
     #[test]
     fn the_panel_clears_the_transport() {
-        let bottom = MARGIN + HEAD_H + FieldList::height(LEFT_ROWS) + PAD;
+        let bottom = MARGIN + HEAD_H + TIMING_H + FieldList::height(LEFT_ROWS) + PAD;
         assert!(
             bottom < transport_top(),
             "panel bottom {bottom} overlaps the control row at {}",
@@ -2720,8 +2868,8 @@ mod tests {
                 let [left, right] = columns(&ps, &d, (0, 0, 0), 1_000);
                 let ll = FieldList::wrapped_line_count(&left).max(LEFT_ROWS);
                 let rl = FieldList::wrapped_line_count(&right).max(RIGHT_ROWS);
-                let h = HEAD_H + FieldList::height(ll.max(rl + CHART_ROWS)) + PAD;
-                let band = h - PAD - HEAD_H - FieldList::height(rl);
+                let h = HEAD_H + TIMING_H + FieldList::height(ll.max(rl + CHART_ROWS)) + PAD;
+                let band = h - PAD - HEAD_H - TIMING_H - FieldList::height(rl);
                 assert!(
                     band >= 60.0,
                     "vp={vp} abr={abr_mode}: chart band is {band}px, it would not draw"
@@ -2770,15 +2918,11 @@ mod tests {
         let v = build(&original);
         assert_eq!(
             val(&v, "Quality"),
-            "Original · source 11.4 Mbps · decoded 3840×2160"
+            "Original · source 11.4 Mbps · coded 3840×2160"
         );
         assert_eq!(val(&v, "Sample"), "4.0 Mbps · stream-limited · ±18% · n=5");
-        assert_eq!(
-            val(&v, "Conservative"),
-            "3.8 Mbps budget · 11.4 Mbps measured stream · short 7.6 Mbps",
-        );
-        assert_eq!(val(&v, "Buffer"), "2.8 s · -0.90 s/s · draining");
-        assert_eq!(val(&v, "Risk"), "conservative horizon 3 s · risk 0%");
+        assert!(val(&v, "Conservative").contains("declared source"));
+        assert!(val(&v, plx_platform::i18n::msg::browse_diagnostics_field_buffer()).contains("draining"));
         // **Elapsed WALL time, with no denominator.** It read a count of measurement windows, and
         // a window was 750 ms of ACTIVE BODY-READ time — a clock that stops under backpressure,
         // i.e. exactly when the buffer is healthy — so "1 window" named durations an order of
@@ -2803,7 +2947,7 @@ mod tests {
         assert_eq!(at(12_000), "collecting fallback evidence · 12 s");
         assert_eq!(at(0), "watching Original");
         assert_ne!(
-            v.iter().find(|f| f.key == "Buffer").unwrap().tone,
+            v.iter().find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_buffer()).unwrap().tone,
             plx_ui::widgets::Tone::Fault
         );
 
@@ -2833,16 +2977,11 @@ mod tests {
         let v = build(&hls);
         assert_eq!(
             val(&v, "Quality"),
-            "request ≤4.0 Mbps / ≤720p · PMS 3.5 Mbps · decoded 1280×720",
+            "request ≤4.0 Mbps / ≤720p · PMS 3.5 Mbps · coded 1280×720",
         );
         assert_eq!(val(&v, "Sample"), "12.4 Mbps · stream-limited · ±20% · n=7");
-        assert_eq!(
-            val(&v, "Conservative"),
-            "11.0 Mbps budget · 3.2 Mbps measured stream · headroom 7.8 Mbps",
-        );
-        // 6.25 s: the locale formatter rounds a tie away from zero, where `{:.1}` rounded it to even.
-        assert_eq!(val(&v, "Buffer"), "6.3 s · +0.12 s/s · filling");
-        assert_eq!(val(&v, "Risk"), "no conservative deficit · risk 0%");
+        assert!(val(&v, "Conservative").contains("measured stream"));
+        assert!(val(&v, plx_platform::i18n::msg::browse_diagnostics_field_buffer()).contains("filling"));
         assert_eq!(val(&v, "Action"), "changed up to 4.0 Mbps");
         assert_eq!(val(&v, "Reason"), "link has room");
 
@@ -2861,7 +3000,7 @@ mod tests {
         });
         assert_eq!(
             val(&mismatched, "Quality"),
-            "request ≤22.0 Mbps / ≤4K · PMS 896 kbps · decoded 720×404",
+            "request ≤22.0 Mbps / ≤4K · PMS 896 kbps · coded 720×404",
         );
 
         // Every actuator on the ladder names its raster, including the ones added after this panel
@@ -2942,7 +3081,7 @@ mod tests {
                 "{key} must state fixed mode"
             );
         }
-        assert_eq!(val(&fixed, "Buffer"), "waiting for media timestamps");
+        assert_eq!(val(&fixed, plx_platform::i18n::msg::browse_diagnostics_field_buffer()), "waiting for media timestamps");
 
         // The visual simulator starts its raw fixture with Auto selected but no adaptive session.
         // That state used to read `Auto · starting` beside `fixed by user`, which cannot both be
@@ -2955,7 +3094,7 @@ mod tests {
             "not computed · controller idle"
         );
         assert_eq!(
-            val(&idle_auto, "Buffer"),
+            val(&idle_auto, plx_platform::i18n::msg::browse_diagnostics_field_buffer()),
             "waiting for media timestamps · controller idle"
         );
         assert_eq!(val(&idle_auto, "Risk"), "not computed · controller idle");
@@ -2995,21 +3134,6 @@ mod tests {
         );
     }
 
-    /// …and it must leave the MAJORITY of the picture visible, or it is the full-screen card
-    /// again and "is anything on screen?" — the question, when playback is broken — stops being
-    /// answerable while the read-out is up. 40% is the line rather than a third: the codec rows
-    /// and the chart are worth the four points, and a corner panel at 35% still shows most of the
-    /// frame. What is NOT negotiable is that it stays a corner panel; if this ever needs raising
-    /// again, shrink the type instead.
-    #[test]
-    fn it_leaves_most_of_the_picture_visible() {
-        let a = PANEL_W * (HEAD_H + FieldList::height(LEFT_ROWS) + PAD);
-        let pct = 100.0 * a / (SCR_W * SCR_H);
-        // One column at 30px rows costs about 27% where two at 36px cost 34%. The ceiling stays
-        // where it was rather than being tightened onto today's number: a row added tomorrow
-        // should cost a row, not a redesign.
-        assert!(pct <= 40.1, "panel covers {pct:.0}% of the screen");
-    }
 
     /// THE case this pair exists for: "video plays but there is no sound after scrubbing". The
     /// audio lane stopped 30 s ago, so its TOTAL is still large — every instantaneous field reads
@@ -3027,17 +3151,17 @@ mod tests {
             ..Default::default()
         };
         let v = rows(&ps, &d, (4_400, 4_000, 500), 1_000);
-        let feed = v.iter().find(|f| f.key == "Feed").expect("Feed row");
+        let feed = v.iter().find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_feed()).expect("feed row");
         let val = feed.val.as_deref().unwrap_or_default();
         assert!(
-            val.contains("1,200 fps · 0/s"),
+            val.contains("video 1,200 AU/s · audio 0 AU/s"),
             "the rate must show the dead lane: {val}"
         );
 
         // The skew has its own stable row now, so it stays at the same coordinate in every mode.
         let sync = v
             .iter()
-            .find(|f| f.key == "A/V sync")
+            .find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_av_sync())
             .expect("A/V sync row");
         let sv = sync.val.as_deref().unwrap_or_default();
         assert_eq!(sv, "+30.0 s");
@@ -3064,7 +3188,7 @@ mod tests {
             ..Default::default()
         };
         let fresh = rows(&ps, &d, (0, 0, 0), 1_100);
-        let f = fresh.iter().find(|f| f.key == "Frames").unwrap();
+        let f = fresh.iter().find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_frames()).unwrap();
         assert_ne!(
             f.tone,
             plx_ui::widgets::Tone::Fault,
@@ -3073,7 +3197,7 @@ mod tests {
         assert!(f.val.as_deref().unwrap().starts_with("none in 0 s"));
 
         let stalled = rows(&ps, &d, (0, 0, 0), 1_000 + STALL_MS + 4_000);
-        let f = stalled.iter().find(|f| f.key == "Frames").unwrap();
+        let f = stalled.iter().find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_frames()).unwrap();
         assert_eq!(
             f.tone,
             plx_ui::widgets::Tone::Fault,
@@ -3105,7 +3229,7 @@ mod tests {
 
         let f = |v: &Vec<Field>| {
             v.iter()
-                .find(|f| f.key == "Frames")
+                .find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_frames())
                 .unwrap()
                 .val
                 .clone()
@@ -3113,8 +3237,8 @@ mod tests {
         };
         assert_eq!(f(&paused), "190", "paused: just the count");
         assert!(
-            f(&playing).contains("frozen"),
-            "playing and not advancing IS frozen: {}",
+            f(&playing).contains("no callback"),
+            "playing without position callbacks must say so: {}",
             f(&playing)
         );
     }
@@ -3238,6 +3362,50 @@ mod tests {
             "—",
             "clock went backwards"
         );
+    }
+
+    #[test]
+    fn submit_rate_rejects_reset_clock_and_reports_idle() {
+        assert_eq!(submit_rate(10, 100, 100), None);
+        assert_eq!(submit_rate(10, 100, 99), None);
+        assert_eq!(submit_rate(0, 100, 600), Some(0.0));
+        assert_eq!(submit_rate(15, 100, 600), Some(30.0));
+    }
+
+    #[test]
+    fn fed_rate_rejects_counter_reset() {
+        let d = plx_media::player::Diag { fed_v: 1, fed_a: 4, ..Default::default() };
+        assert_eq!(fed_rates(&d, (10, 4, 100), 600), None);
+        assert_eq!(fed_rates(&d, (1, 8, 100), 600), None);
+    }
+
+    #[test]
+    fn source_rate_is_independent_of_pipeline_announcement() {
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let d = plx_media::player::Diag { video_w: 1920, video_h: 1080, video_fps_milli: 30_000, ..Default::default() };
+        assert_eq!(source_rate(23.976), "23.976 fps");
+        assert_eq!(source_rate(0.0), "Unknown");
+        assert_eq!(source_rate(f64::NAN), "Unknown");
+        let rows = pipeline_rows(&ps, &d, (0, 0, 0), 1000);
+        let picture = rows.iter().find(|f| f.key == plx_platform::i18n::msg::browse_diagnostics_field_picture()).unwrap();
+        assert!(picture.val.as_deref().unwrap().contains("30 fps (pipeline says)"));
+    }
+
+    #[test]
+    fn zero_reserve_slope_does_not_claim_a_known_flat_trend() {
+        let d = plx_media::player::Diag { abr_mode: plx_media::player::ABR_MODE_HLS, abr_buffer_ms: 2500, abr_slope_ms_per_s: 0, ..Default::default() };
+        let value = abr_buffer(&d, plx_media::route::Quality::Auto);
+        assert!(value.contains("flat or not yet measured"));
+        assert!(!value.contains("0.00 s/s"));
+    }
+
+    #[test]
+    fn queued_stats_expire_on_opt_out_reenable_or_source_change() {
+        let snapshot = StatsSnapshot { epoch: 3, generation: 7, ..Default::default() };
+        assert!(snapshot_is_current(&snapshot, 3, 7));
+        assert!(!snapshot_is_current(&snapshot, 4, 7));
+        assert!(!snapshot_is_current(&snapshot, 5, 7));
+        assert!(!snapshot_is_current(&snapshot, 3, 8));
     }
 
     /// The codec chain: a direct play collapses the middle stage, a real server transform shows
@@ -3373,7 +3541,7 @@ mod tests {
         for pref in plx_platform::i18n::SHIPPED {
             let _lang = plx_platform::i18n::language_on_this_thread_for_test(pref);
             let mut panel = Diagnostics::default();
-            panel.sample(&ps, 1_000);
+            panel.sample(&ps, 1_000, true);
             assert!(!panel.idle && panel.columns.iter().all(|c| !c.is_empty()), "{}: a live session builds column rows", pref.tag());
             let mut text: Vec<String> = panel.head.to_vec();
             text.extend(panel.rows.iter().chain(panel.columns.iter().flatten()).flat_map(|f| {

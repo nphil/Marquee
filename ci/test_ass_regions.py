@@ -19,7 +19,9 @@ HEADER = r'''
 #include <stdarg.h>
 typedef struct { int unused; } ASS_Library;
 typedef struct { int unused; } ASS_Renderer;
-typedef struct { int track_type, n_styles, n_events; } ASS_Track;
+typedef struct { long long Duration; } ASS_Event;
+typedef struct { int track_type, n_styles, n_events; ASS_Event *events; } ASS_Track;
+static ASS_Track *parsed_track;
 typedef struct ass_image {
     int w, h, stride;
     unsigned char *bitmap;
@@ -33,7 +35,7 @@ static ASS_Image *ass_render_frame(ASS_Renderer *, ASS_Track *, long long, int *
 static ASS_Library *ass_library_init(void) { return NULL; }
 static ASS_Renderer *ass_renderer_init(ASS_Library *l) { return NULL; }
 static ASS_Track *ass_new_track(ASS_Library *l) { return NULL; }
-static ASS_Track *ass_read_memory(ASS_Library *l, char *d, size_t n, char *e) { return NULL; }
+static ASS_Track *ass_read_memory(ASS_Library *l, char *d, size_t n, char *e) { return parsed_track; }
 static void ass_free_track(ASS_Track *t) {}
 static void ass_renderer_done(ASS_Renderer *r) {}
 static void ass_library_done(ASS_Library *l) {}
@@ -78,7 +80,7 @@ static ASS_Image *ass_render_frame(ASS_Renderer *r, ASS_Track *t, long long ms, 
     return input;
 }
 static PlxAss *context(void) {
-    static ASS_Track track = {1, 1, 1};
+    static ASS_Track track = {1, 1, 1, NULL};
     static ASS_Renderer renderer;
     PlxAss *ctx = calloc(1, sizeof(*ctx));
     assert(ctx);
@@ -114,6 +116,18 @@ static unsigned check(PlxAss *ctx, int width) {
     return cached;
 }
 int main(void) {
+    ASS_Event events[] = {{0}, {-1000}, {1000}};
+    ASS_Track track = {1, 1, 2, events};
+    PlxAss loaded = {0};
+    parsed_track = &track;
+    assert(read_track(&loaded, (const uint8_t *)"x", 1, 1) == -1);
+    assert(!loaded.track);
+    track.n_events = 0;
+    assert(read_track(&loaded, (const uint8_t *)"x", 1, 2) == 0);
+    assert(loaded.track == &track);
+    track.n_events = 3;
+    assert(read_track(&loaded, (const uint8_t *)"x", 1, 1) == 0);
+    assert(loaded.track == &track);
     uint8_t masks[2][256];
     for (int i = 0; i < 256; ++i) {
         masks[0][i] = (uint8_t)(40 + i % 170);

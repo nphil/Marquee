@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Dziennik statystyk",
+  "browse.diagnostics.stats_logging_off": "Zapis: wył.",
+  "browse.diagnostics.stats_logging_unavailable": "Zapis: niedostępny",
+  "browse.diagnostics.stats_logging_on_session": "Zapis: wł. (sesja)",
   "browse.action.retry": "Spróbuj ponownie",
   "browse.action.retry_home": "Spróbuj ponownie",
   "browse.action.sign_in": "Zaloguj się",

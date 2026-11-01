@@ -123,6 +123,21 @@ impl ScriptIndex {
         self.lines.len() > WINDOW_EVENTS || self.raw.len() > WINDOW_BYTES
     }
 
+    /// Bounded batches for libass to validate the complete script once, independent of playhead.
+    pub fn validation_batch(&self, cursor: &mut usize) -> Option<Vec<u8>> {
+        let mut text = self.header.clone();
+        let mut count = 0;
+        while let Some(line) = self.lines.get(*cursor) {
+            let end = text.len().saturating_add(line.len as usize);
+            if count > 0 && (count == WINDOW_EVENTS || end > WINDOW_BYTES) { break; }
+            *cursor += 1;
+            if end > WINDOW_BYTES { continue; }
+            text.extend_from_slice(&self.raw[line.off as usize..(line.off + line.len) as usize]);
+            count += 1;
+        }
+        (count > 0).then_some(text)
+    }
+
     pub fn len(&self) -> usize {
         self.lines.len()
     }

@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Statistikprotokoll",
+  "browse.diagnostics.stats_logging_off": "Protokoll: aus",
+  "browse.diagnostics.stats_logging_unavailable": "Protokoll: nicht möglich",
+  "browse.diagnostics.stats_logging_on_session": "Protokoll: an (Sitzung)",
   "browse.action.retry": "Erneut versuchen",
   "browse.action.retry_home": "Erneut versuchen",
   "browse.action.sign_in": "Anmelden",

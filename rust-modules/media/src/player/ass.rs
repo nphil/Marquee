@@ -208,6 +208,7 @@ struct Key {
 pub struct Runtime {
     source_id: AtomicU64,
     epoch: AtomicU64,
+    readiness: AtomicU64,
     started: OnceLock<bool>,
     worker: OnceLock<std::thread::Thread>,
     mailbox: Mutex<Mailbox>,
@@ -218,6 +219,7 @@ impl Runtime {
         Self {
             source_id: AtomicU64::new(0),
             epoch: AtomicU64::new(1),
+            readiness: AtomicU64::new(0),
             started: OnceLock::new(),
             worker: OnceLock::new(),
             mailbox: Mutex::new(Mailbox::new()),
@@ -295,9 +297,12 @@ pub fn request_styled(
         .get_or_init(|| plx_base::task::spawn("ass-render", worker).is_some());
     let mut mailbox = runtime().mailbox.try_lock().ok()?;
     if !started {
-        return Some(mailbox.publish_error(key, error_frame(key, Fault::StartFailed)));
+        let frame = mailbox.publish_error(key, error_frame(key, Fault::StartFailed));
+        project_readiness(runtime(), &mailbox);
+        return Some(frame);
     }
     let requested = mailbox.request(key, now_ms, &source);
+    if requested.promoted { project_readiness(runtime(), &mailbox); }
     if requested.promoted {
         super::ass_perf::note_ahead_hit();
     }
@@ -315,6 +320,42 @@ pub fn request_styled(
 pub fn published_aligns(serial: u64) -> Option<AlignSet> {
     let mailbox = runtime().mailbox.try_lock().ok()?;
     mailbox.aligns_of(serial)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceReadiness { Pending, Ready, Failed }
+
+/// The current renderer's published result for this source and cancellation epoch.
+pub(crate) fn source_readiness(source_id: u64) -> SourceReadiness {
+    source_readiness_in(runtime(), source_id)
+}
+
+fn project_readiness(runtime: &Runtime, mailbox: &Mailbox) {
+    let value = mailbox.published.as_ref().and_then(|published| {
+        let key = published.key;
+        if published.epoch != key.epoch || published.frame.source_id != key.source_id
+            || runtime.source_id.load(Ordering::Acquire) != key.source_id
+            || runtime.epoch.load(Ordering::Acquire) != key.epoch
+        {
+            return None;
+        }
+        // Reserve zero for no publication; refuse rather than alias on epoch overflow.
+        key.epoch.checked_mul(2)?.checked_add(u64::from(published.frame.error.is_some()))
+    }).unwrap_or(0);
+    runtime.readiness.store(value, Ordering::Release);
+}
+
+fn source_readiness_in(runtime: &Runtime, source_id: u64) -> SourceReadiness {
+    use SourceReadiness::{Failed, Pending, Ready};
+    if source_id == 0 || runtime.source_id.load(Ordering::Acquire) != source_id { return Pending; }
+    let epoch = runtime.epoch.load(Ordering::Acquire);
+    let value = runtime.readiness.load(Ordering::Acquire);
+    if runtime.source_id.load(Ordering::Acquire) != source_id
+        || runtime.epoch.load(Ordering::Acquire) != epoch || value == 0 || value / 2 != epoch
+    {
+        return Pending;
+    }
+    if value & 1 == 0 { Ready } else { Failed }
 }
 
 /// MAIN THREAD: cancellation is immediate even while libass is rendering.
@@ -408,6 +449,7 @@ fn worker() {
             let outcome = rendered.filter(|_| live());
             let ran = outcome.is_some();
             let finished = mailbox.finish(&job, outcome);
+            project_readiness(runtime(), &mailbox);
             ran.then_some(finished)
         };
         let Some(finished) = finished else { continue };
@@ -565,6 +607,14 @@ impl Engine {
             && self.error.is_none()
     }
 
+    fn validate_windowed(native: &mut Native, index: &super::ass_script::ScriptIndex) -> Result<(), Fault> {
+        let mut cursor = 0;
+        while let Some(batch) = index.validation_batch(&mut cursor) {
+            if native.replace_track(&batch, 1).is_ok() { return Ok(()); }
+        }
+        Err(Fault::Unreadable)
+    }
+
     /// Load `source` fresh. A sidecar script with more lines than one window holds is fed the lines
     /// around `now_ms` only; any other source goes in whole.
     fn open(&mut self, source: &Source, now_ms: i64) -> Result<(), Fault> {
@@ -575,7 +625,10 @@ impl Engine {
             if let Some(index) = super::ass_script::ScriptIndex::parse(bytes) {
                 if index.windowed() {
                     let window = index.window(now_ms);
-                    windowed = Some(Native::open_data(fonts, &window.text, 1)?);
+                    let mut native = Native::open_data(fonts, &window.text, 2)?;
+                    Self::validate_windowed(&mut native, &index)?;
+                    native.replace_track(&window.text, 2)?;
+                    windowed = Some(native);
                     self.script = Some(Scripted { index, window: Some((window.lo_ms, window.hi_ms)) });
                 } else {
                     self.script = Some(Scripted { index, window: None });
@@ -648,7 +701,8 @@ impl Engine {
                 match super::ass_script::ScriptIndex::parse(bytes) {
                     Some(index) if index.windowed() => {
                         let window = index.window(now_ms);
-                        native.replace_track(&window.text, 1)?;
+                        Self::validate_windowed(native, &index)?;
+                        native.replace_track(&window.text, 2)?;
                         self.script = Some(Scripted { index, window: Some((window.lo_ms, window.hi_ms)) });
                     }
                     parsed => {
@@ -683,9 +737,9 @@ impl Engine {
         // Every window repeats the script's header, `[Fonts]` included, so the held renderer
         // already has the fonts: swap the track in place rather than reopening every face.
         match self.native.as_mut() {
-            Some(native) => native.replace_track(&window.text, 1),
+            Some(native) => native.replace_track(&window.text, 2),
             None => {
-                self.native = Some(Native::open_data(fonts, &window.text, 1)?);
+                self.native = Some(Native::open_data(fonts, &window.text, 2)?);
                 Ok(())
             }
         }
@@ -913,8 +967,8 @@ struct NativeStyleOverride {
 
 /// The facade ABI this file is written against (`PLX_ASS_ABI_VERSION` in `include/ass.h`); a
 /// library reporting any other number is not loaded. ABI 4 added the UI text surface
-/// (`plx_ass_text_*`, bound by `plx_gfx::rtl`); ABI 5 added `plx_ass_set_style_override`.
-const NATIVE_ABI: u32 = 5;
+/// (`plx_ass_text_*`); ABI 6 requires whole-script validation before empty render windows.
+const NATIVE_ABI: u32 = 6;
 
 /// libass's glyph-count and bitmap-MiB cache bounds for every renderer.
 const CACHE_GLYPHS: i32 = 1000;

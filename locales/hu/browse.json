@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Statisztikai naplózás",
+  "browse.diagnostics.stats_logging_off": "Naplózás: ki",
+  "browse.diagnostics.stats_logging_unavailable": "Naplózás: nem elérhető",
+  "browse.diagnostics.stats_logging_on_session": "Naplózás: be (munkamenet)",
   "browse.action.retry": "Újra",
   "browse.action.retry_home": "Újra",
   "browse.action.sign_in": "Bejelentkezés",

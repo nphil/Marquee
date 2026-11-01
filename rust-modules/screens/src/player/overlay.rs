@@ -537,6 +537,22 @@ impl PlayerOverlayScreen {
         match &mut self.panel {
             Panel::Tracks(p) => match p.on_ok(H::metadata(cx)) {
                 TrackOk::Commit { commit, keep_open } => {
+                    if keep_open {
+                        if let plx_appkit::track_menu::TrackCommit::Subtitle { stream_id, .. } = &commit {
+                            if let Some((stream, _)) = p.installed_search_commit() {
+                                if *stream_id == stream.id {
+                                    let sid = plx_media::route::cur_sid(ps);
+                                    let rk = plx_media::route::cur_rk(ps);
+                                    fx.push(Fx::App(AppFx::Store(
+                                        plx_data::stores::StoreId::Metadata,
+                                        plx_data::stores::StoreCmd::Metadata(
+                                            plx_data::stores::metadata::MetadataCmd::AppendPlayingSub { sid, rk, stream },
+                                        ),
+                                    )));
+                                }
+                            }
+                        }
+                    }
                     fx.push(Fx::App(AppFx::Player(PlayerReq::CommitTrack(commit))));
                     if keep_open {
                         // a Style pick (or an audio toggle): the viewer is watching the change, so
@@ -868,7 +884,6 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Machine<H> 
             }
             ScreenEvent::Tick(tick) => {
                 let dt = tick.dt();
-                let mut installed = false;
                 match &mut self.panel {
                     Panel::Tracks(p) => {
                         if let Some(view) = H::subtitle_search(cx) {
@@ -909,6 +924,10 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Machine<H> 
                             // is pumped, and this panel is what pumps it
                             fx.push(Fx::App(AppFx::StoreWork(plx_data::stores::StoreWork::SubtitleSearch)));
                             p.set_search(view.snapshot_for(sid, &rk));
+                            if let Some(plx_data::subsearch::DownloadPhase::Installed { stream, .. }) = p.search().map(|s| &s.download) {
+                                let id = stream.id;
+                                p.set_search_activation(id, plx_media::route::subtitle_activation(ps, id));
+                            }
                             // the server deleted the subtitle on screen: stop drawing it and drop it
                             // from the item's list; the menu stays open for what comes next
                             if let Some((stream_id, commit)) = p.take_removal_commit(H::metadata(cx)) {
@@ -920,8 +939,7 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Machine<H> 
                                 )));
                                 Self::ask(fx, PlayerReq::CommitTrack(commit));
                             }
-                            // the download landed: list it on the playing item, then select it by
-                            // the same request a pick on its row makes, and close like any pick
+                            // List the installed stream and select it, keeping the search visible.
                             if let Some((stream, commit)) = p.take_search_commit() {
                                 fx.push(Fx::App(AppFx::Store(
                                     plx_data::stores::StoreId::Metadata,
@@ -930,7 +948,6 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Machine<H> 
                                     ),
                                 )));
                                 Self::ask(fx, PlayerReq::CommitTrack(commit));
-                                installed = true;
                             }
                         }
                         p.update(dt, cx.measure, ps, H::metadata(cx))
@@ -944,10 +961,7 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Machine<H> 
                 // the rule `app/run.rs` kept as "keep the HUD alive while the track menu / Info
                 // card / Chapters strip is open", stated once here by the surface that IS open.
                 // A panel that HIDES the HUD (the Timing capsule) does not share its read time.
-                if installed {
-                    self.dismiss(fx);
-                    self.closing(fx);
-                } else if self.kind.extends_hud() {
+                if self.kind.extends_hud() {
                     Self::ask(fx, PlayerReq::ExtendHud(HUD_LINGER_MS));
                 }
                 Handled::Yes

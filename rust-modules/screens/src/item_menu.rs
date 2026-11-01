@@ -464,7 +464,7 @@ fn build_card(
 
 fn delete_row(sec: FormSection<ItemRow, Action, Infallible>, rk: &str) -> FormSection<ItemRow, Action, Infallible> {
     sec.item(ItemRow::DeleteMedia, RowKind::Button, Action::DeleteMedia(rk.to_owned()),
-        Row::new("Delete").licon(Icon::Close).destructive(true))
+        Row::new(plx_platform::i18n::msg::settings_delete()).licon(Icon::Close).destructive(true))
 }
 
 /// The state group every menu ends with: the watch-state row (or ROWS), then (for a leaf) Play from

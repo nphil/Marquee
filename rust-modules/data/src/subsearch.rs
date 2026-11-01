@@ -91,12 +91,16 @@ pub enum SearchFailure {
     Transport,
     Denied,
     Missing,
+    /// Plex rejected the candidate path locally; nothing was sent.
+    BadCandidate,
     /// No 2-letter code exists for the language, so nothing was sent (module doc).
     BadLanguage,
     /// Bazarr: its address and key are not both set.
     NotSet,
-    /// Bazarr: it did not answer (no route, a refused connection, a timeout).
+    /// Bazarr: it did not answer (no route or a refused connection).
     Unreachable,
+    /// Bazarr did not answer before the request timed out.
+    TimedOut,
     /// Bazarr: it answered `401`. The address is right and the key is not.
     BadKey,
     /// Bazarr: the address answers, but not like Bazarr.
@@ -110,7 +114,7 @@ pub enum SearchFailure {
 impl SearchFailure {
     /// Is another try worth offering? Only when the source could not be reached.
     pub fn retryable(self) -> bool {
-        matches!(self, SearchFailure::Transport | SearchFailure::Unreachable)
+        matches!(self, SearchFailure::Transport | SearchFailure::Unreachable | SearchFailure::TimedOut)
     }
 }
 
@@ -135,10 +139,9 @@ pub enum DownloadPhase {
     Waiting { hit: usize, before: Vec<i64>, attempts: u32 },
     Installed { hit: usize, stream: InstalledStream },
     /// Accepted, but no new stream showed within [`POLL_ATTEMPTS`] reads.
-    Unconfirmed { hit: usize },
-    /// Refused (`denied`) or never delivered. The hits stay on screen — one bad file is not a
-    /// failed search.
-    Failed { hit: usize, denied: bool },
+    Unconfirmed { hit: usize, before: Vec<i64> },
+    /// The request failed; the hits stay on screen.
+    Failed { hit: usize, failure: SearchFailure },
 }
 
 impl DownloadPhase {
@@ -197,6 +200,8 @@ pub enum SubSearchCmd {
     /// Install hit `hit` of the result set published under generation `gen`. Refused when that set
     /// has been replaced — its keys are dead (module doc).
     Download { gen: u32, hit: usize },
+    /// Check an unconfirmed install again without submitting the download a second time.
+    CheckInstall { gen: u32 },
     /// Delete the external subtitle `stream` (delivered at `key`) from the open item on the server.
     Remove { stream: i64, key: String },
     /// Search again after a failure to REACH the source ([`SearchFailure::retryable`]). Nothing
@@ -223,6 +228,7 @@ struct Open {
     /// Where Bazarr holds the item, once a search resolved it.
     target: Option<Target>,
     download: DownloadPhase,
+    install_check_failure: Option<SearchFailure>,
     removal: RemovePhase,
 }
 
@@ -231,7 +237,7 @@ impl Open {
     fn idle(sid: ServerId, rk: String) -> Self {
         Open { sid, rk, source: SubSource::Plex, lang: String::new(), status: SearchStatus::Idle,
             failure: None, hits: Vec::new(), candidates: Vec::new(), target: None,
-            download: DownloadPhase::None, removal: RemovePhase::None }
+            download: DownloadPhase::None, install_check_failure: None, removal: RemovePhase::None }
     }
 
     fn new(sid: ServerId, rk: String, lang: &str, source: SubSource) -> Self {
@@ -248,6 +254,7 @@ impl Open {
         self.candidates.clear();
         self.target = None;
         self.download = DownloadPhase::None;
+        self.install_check_failure = None;
         match fold_language(lang) {
             Some(code) => {
                 self.lang = code;
@@ -301,6 +308,8 @@ impl<'a> SubSearchView<'a> {
     /// The folded 2-letter code being searched; empty when nothing is open or the fold failed.
     pub fn lang(self) -> &'a str { self.open.map_or("", |o| &o.lang) }
     pub fn download(self) -> Option<&'a DownloadPhase> { self.open.map(|o| &o.download) }
+    /// Failure of the most recent metadata check, distinct from a successful check with no stream.
+    pub fn install_check_failure(self) -> Option<SearchFailure> { self.open.and_then(|o| o.install_check_failure) }
     pub fn removal(self) -> Option<&'a RemovePhase> { self.open.map(|o| &o.removal) }
     pub fn source(self) -> SubSource { self.open.map_or(SubSource::Plex, |o| o.source) }
     pub fn item(self) -> Option<(ServerId, &'a str)> { self.open.map(|o| (o.sid, o.rk.as_str())) }
@@ -322,7 +331,7 @@ impl<'a> SubSearchView<'a> {
             None => SubSearchSnapshot::idle(self.gen),
             Some(o) => SubSearchSnapshot {
                 status: o.status, failure: o.failure, hits: o.hits.clone(), lang: o.lang.clone(),
-                download: o.download.clone(), gen: self.gen, source: o.source,
+                download: o.download.clone(), install_check_failure: o.install_check_failure, gen: self.gen, source: o.source,
                 removal: o.removal.clone(), bazarr_host: String::new(),
             },
         };
@@ -340,6 +349,8 @@ pub struct SubSearchSnapshot {
     pub hits: Vec<SubHit>,
     pub lang: String,
     pub download: DownloadPhase,
+    /// Failure of the latest install metadata read, not a download failure.
+    pub install_check_failure: Option<SearchFailure>,
     pub gen: u32,
     /// Which source `hits` came from: a page for one source shows nothing of the other's.
     pub source: SubSource,
@@ -351,7 +362,7 @@ pub struct SubSearchSnapshot {
 impl SubSearchSnapshot {
     pub fn idle(gen: u32) -> Self {
         SubSearchSnapshot { status: SearchStatus::Idle, failure: None, hits: Vec::new(),
-            lang: String::new(), download: DownloadPhase::None, gen, source: SubSource::Plex,
+            lang: String::new(), download: DownloadPhase::None, install_check_failure: None, gen, source: SubSource::Plex,
             removal: RemovePhase::None, bazarr_host: String::new() }
     }
 }
@@ -425,6 +436,18 @@ impl SubSearchState {
                     return false;
                 }
                 open.download = DownloadPhase::Sending { hit };
+                open.install_check_failure = None;
+                self.retry_cd = 0;
+                true
+            }
+            SubSearchCmd::CheckInstall { gen } => {
+                let Some(open) = self.open.as_mut() else { return false };
+                if gen != self.generation || open.removal.busy() { return false; }
+                let DownloadPhase::Unconfirmed { hit, before } = &mut open.download else { return false };
+                let hit = *hit;
+                let before = std::mem::take(before);
+                open.download = DownloadPhase::Waiting { hit, before, attempts: 0 };
+                open.install_check_failure = None;
                 self.retry_cd = 0;
                 true
             }
@@ -582,7 +605,7 @@ impl SubSearchState {
                         self.retry_cd = POLL_FRAMES;
                         DownloadPhase::Waiting { hit, before, attempts: 0 }
                     }
-                    Err(denied) => DownloadPhase::Failed { hit, denied },
+                    Err(failure) => DownloadPhase::Failed { hit, failure },
                 };
                 true
             }
@@ -591,17 +614,18 @@ impl SubSearchState {
                     return false;
                 };
                 let (hit, attempts) = (*hit, *attempts + 1);
+                open.install_check_failure = rows.is_none().then_some(SearchFailure::Transport);
                 let title = open.hits.get(hit).map_or("", |h| h.title.as_str());
                 let found = rows.as_deref().and_then(|rows| identify(rows, before, title));
+                let before = std::mem::take(match &mut open.download {
+                    DownloadPhase::Waiting { before, .. } => before,
+                    _ => unreachable!(),
+                });
                 open.download = match found {
                     Some(stream) => DownloadPhase::Installed { hit, stream },
-                    None if attempts >= POLL_ATTEMPTS => DownloadPhase::Unconfirmed { hit },
+                    None if attempts >= POLL_ATTEMPTS => DownloadPhase::Unconfirmed { hit, before },
                     None => {
                         self.retry_cd = POLL_FRAMES;
-                        let before = std::mem::take(match &mut open.download {
-                            DownloadPhase::Waiting { before, .. } => before,
-                            _ => unreachable!(),
-                        });
                         DownloadPhase::Waiting { hit, before, attempts }
                     }
                 };
@@ -693,7 +717,7 @@ impl Work {
     fn failure(&self) -> Landing {
         match self {
             Work::Search { .. } => Landing::Search(Err(SearchFailure::Transport)),
-            Work::Download { .. } | Work::BazarrDownload { .. } => Landing::Download(Err(false)),
+            Work::Download { .. } | Work::BazarrDownload { .. } => Landing::Download(Err(SearchFailure::Transport)),
             Work::Refresh => Landing::Streams(None),
             Work::BazarrSearch { .. } => Landing::Bazarr(Err(SearchFailure::Unreachable)),
             Work::Remove { .. } => Landing::Removed(Err(false)),
@@ -780,9 +804,9 @@ pub fn finish_subsearch_job(port: &SubSearchPort, addr: Addr, client: &'static C
 #[derive(Debug, PartialEq, Eq)]
 pub enum Landing {
     Search(Result<Vec<SubHit>, SearchFailure>),
-    /// `Ok` = accepted, carrying the item's subtitle stream ids read before the PUT. `Err(denied)`.
-    Download(Result<Vec<i64>, bool>),
-    /// One re-read of the item's subtitle streams; `None` = the read failed (counts as a miss).
+    /// `Ok` = accepted, carrying the item's subtitle stream ids read before the request.
+    Download(Result<Vec<i64>, SearchFailure>),
+    /// One re-read of the item's subtitle streams; `None` = the read failed.
     Streams(Option<Vec<StreamRow>>),
     /// Bazarr's answer: where it holds the item and what its providers offer.
     Bazarr(Result<(Target, Vec<Candidate>), SearchFailure>),
@@ -805,14 +829,9 @@ fn run_job(client: &'static Client, rk: &str, work: Work, link: Option<&BazarrLi
         }
         Work::Download { key } => {
             // the BEFORE read: without it a new stream could never be told from an old one
-            let Some(before) = subtitle_rows(client, rk) else { return Landing::Download(Err(false)) };
+            let Some(before) = subtitle_rows(client, rk) else { return Landing::Download(Err(SearchFailure::Transport)) };
             let before = before.iter().map(|r| r.id).collect();
-            Landing::Download(match client.add_subtitle(rk, &key) {
-                SubtitleAddOutcome::Ok => Ok(before),
-                SubtitleAddOutcome::Denied => Err(true),
-                SubtitleAddOutcome::Missing | SubtitleAddOutcome::BadKey
-                | SubtitleAddOutcome::Transport => Err(false),
-            })
+            Landing::Download(plex_download_result(client.add_subtitle(rk, &key), before))
         }
         Work::Refresh => Landing::Streams(subtitle_rows(client, rk)),
         Work::BazarrSearch { lang } => Landing::Bazarr(match link {
@@ -820,7 +839,7 @@ fn run_job(client: &'static Client, rk: &str, work: Work, link: Option<&BazarrLi
             Some(link) => bazarr_search(client, rk, link, &lang),
         }),
         Work::BazarrDownload { target, candidate } => Landing::Download(match link {
-            None => Err(false),
+            None => Err(SearchFailure::NotSet),
             Some(link) => {
                 let http = CurlTransport;
                 bazarr_download_with(
@@ -843,11 +862,22 @@ fn run_job(client: &'static Client, rk: &str, work: Work, link: Option<&BazarrLi
     }
 }
 
+fn plex_download_result(outcome: SubtitleAddOutcome, before: Vec<i64>) -> Result<Vec<i64>, SearchFailure> {
+    match outcome {
+        SubtitleAddOutcome::Ok => Ok(before),
+        SubtitleAddOutcome::Denied => Err(SearchFailure::Denied),
+        SubtitleAddOutcome::Missing => Err(SearchFailure::Missing),
+        SubtitleAddOutcome::BadKey => Err(SearchFailure::BadCandidate),
+        SubtitleAddOutcome::Transport => Err(SearchFailure::Transport),
+    }
+}
+
 /// A Bazarr fault as the page words it.
 fn failure_of(error: BazarrError) -> SearchFailure {
     match error {
         BazarrError::NotSet => SearchFailure::NotSet,
-        BazarrError::Unreachable | BazarrError::TimedOut => SearchFailure::Unreachable,
+        BazarrError::Unreachable => SearchFailure::Unreachable,
+        BazarrError::TimedOut => SearchFailure::TimedOut,
         BazarrError::BadKey => SearchFailure::BadKey,
         BazarrError::NotBazarr => SearchFailure::NotBazarr,
         BazarrError::NotInBazarr => SearchFailure::NotInBazarr,
@@ -878,17 +908,16 @@ fn bazarr_search_with<T: Transport>(bazarr: &Bazarr<'_, T>, facts: &ItemFacts, l
 /// The download half. `before` reads the item's subtitle stream ids (without it a new stream could
 /// never be told from an old one); `refresh` asks the server to re-read the item, which is how the
 /// file Bazarr writes beside the video becomes a stream. Its answer changes nothing here: the poll
-/// that follows finds the stream, and a server that scans by itself finds it too. `Err(denied)`:
-/// Bazarr refused the key.
+/// that follows finds the stream, and a server that scans by itself finds it too.
 fn bazarr_download_with<T: Transport>(
     bazarr: &Bazarr<'_, T>,
     target: Target,
     candidate: &Candidate,
     before: impl FnOnce() -> Option<Vec<i64>>,
     refresh: impl FnOnce(),
-) -> Result<Vec<i64>, bool> {
-    let before = before().ok_or(false)?;
-    bazarr.download(target, candidate).map_err(|e| e == BazarrError::BadKey)?;
+) -> Result<Vec<i64>, SearchFailure> {
+    let before = before().ok_or(SearchFailure::Transport)?;
+    bazarr.download(target, candidate).map_err(failure_of)?;
     refresh();
     Ok(before)
 }
@@ -1002,6 +1031,40 @@ mod tests {
         let (mut state, adapter) = opened("nl");
         state.apply_for_test(Landing::Search(Ok(hits)));
         (state, adapter)
+    }
+
+    #[test]
+    fn plex_download_outcomes_keep_their_distinct_meanings() {
+        assert_eq!(plex_download_result(SubtitleAddOutcome::Ok, vec![3]), Ok(vec![3]));
+        for (outcome, failure) in [
+            (SubtitleAddOutcome::Denied, SearchFailure::Denied),
+            (SubtitleAddOutcome::Missing, SearchFailure::Missing),
+            (SubtitleAddOutcome::BadKey, SearchFailure::BadCandidate),
+            (SubtitleAddOutcome::Transport, SearchFailure::Transport),
+        ] {
+            assert_eq!(plex_download_result(outcome, vec![]), Err(failure));
+        }
+    }
+
+    #[test]
+    fn metadata_read_failure_is_not_a_clean_absence_or_download_failure() {
+        let (mut state, adapter) = ready(vec![hit("/library/streams/1", "a", 5)]);
+        let gen = state.generation();
+        assert!(state.run(&adapter, SubSearchCmd::Download { gen, hit: 0 }));
+        state.apply_for_test(Landing::Download(Ok(vec![10])));
+        state.apply_for_test(Landing::Streams(None));
+        assert_eq!(state.view().install_check_failure(), Some(SearchFailure::Transport));
+        state.apply_for_test(Landing::Streams(Some(vec![row(10, "")])));
+        assert_eq!(state.view().install_check_failure(), None);
+        for _ in 2..POLL_ATTEMPTS { state.apply_for_test(Landing::Streams(None)); }
+        assert_eq!(state.view().download(), Some(&DownloadPhase::Unconfirmed { hit: 0, before: vec![10] }));
+        assert_eq!(state.view().install_check_failure(), Some(SearchFailure::Transport));
+        assert_eq!(state.view().snapshot_for(ServerId::from_raw(1), "506548").install_check_failure,
+            Some(SearchFailure::Transport));
+        assert!(state.run(&adapter, SubSearchCmd::CheckInstall { gen }));
+        assert_eq!(state.view().install_check_failure(), None);
+        state.apply_for_test(Landing::Streams(Some(vec![row(10, ""), row(11, "a")])));
+        assert!(matches!(state.view().download(), Some(DownloadPhase::Installed { stream, .. }) if stream.id == 11));
     }
 
     /// The server 500s on a 3-letter code, and a subtitle stream reports itself as one — so the
@@ -1191,7 +1254,7 @@ mod tests {
         for _ in 0..POLL_ATTEMPTS {
             state.apply_for_test(Landing::Streams(Some(vec![row(10, "")])));
         }
-        assert_eq!(state.view().download(), Some(&DownloadPhase::Unconfirmed { hit: 0 }));
+        assert_eq!(state.view().download(), Some(&DownloadPhase::Unconfirmed { hit: 0, before: vec![10] }));
         assert_eq!(state.work_for_test(), None, "the poll stops");
     }
 
@@ -1200,8 +1263,8 @@ mod tests {
     fn a_denied_download_keeps_the_results() {
         let (mut state, adapter) = ready(vec![hit("/library/streams/1", "a", 5)]);
         state.run(&adapter, SubSearchCmd::Download { gen: state.generation(), hit: 0 });
-        state.apply_for_test(Landing::Download(Err(true)));
-        assert_eq!(state.view().download(), Some(&DownloadPhase::Failed { hit: 0, denied: true }));
+        state.apply_for_test(Landing::Download(Err(SearchFailure::Denied)));
+        assert_eq!(state.view().download(), Some(&DownloadPhase::Failed { hit: 0, failure: SearchFailure::Denied }));
         assert_eq!(state.view().status(), SearchStatus::Ready);
         assert_eq!(state.view().hits().len(), 1);
     }

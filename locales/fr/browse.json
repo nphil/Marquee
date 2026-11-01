@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Journal des statistiques",
+  "browse.diagnostics.stats_logging_off": "Journal : désactivé",
+  "browse.diagnostics.stats_logging_unavailable": "Journal : indisponible",
+  "browse.diagnostics.stats_logging_on_session": "Journal : actif (session)",
   "browse.action.retry": "Réessayer",
   "browse.action.retry_home": "Réessayer",
   "browse.action.sign_in": "Se connecter",

@@ -662,6 +662,7 @@ unsafe fn present_and_swap(
             plx_platform::tv::window::frame_probe_request();
             SDL_GL_SwapWindow(app.win);
         }
+        app.diagnostics.note_submit();
         app.window_activity.presented(fr.player);
         // dev diagnostic, OFF unless `/tmp/plxnative-eglage` was present at boot: re-ask EGL for
         // the back buffer's AGE after real presents have happened (the boot reading is 0 by
@@ -2431,6 +2432,8 @@ fn loop_requests(app: &mut App) {
             plx_screens::registry::LoopReq::AccountSettings => {
                 super::bridge::open_settings(&mut app.pages);
             }
+            plx_screens::registry::LoopReq::AccountToggleStats => crate::app::diagnostics::toggle(),
+            plx_screens::registry::LoopReq::AccountToggleStatsLogging => crate::app::diagnostics::toggle_logging(),
             // `ps` is threaded rather than read from a global (lane D's lab gate: `player::diag`
             // has taken a `&PlaybackSession` since phase 9, and `lab::request_upload` with it).
             plx_screens::registry::LoopReq::AccountSendDiagnostics => {
@@ -2597,7 +2600,7 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
         // panel is a surface now and the dispatcher ticks it, containers before pages, once per
         // frame: `PlayerOverlayScreen::step`'s `Tick` arm.)
         // Re-samples on its own 2 Hz hold; a no-op when the panel is off.
-        app.diagnostics.update(&app.player.session, fr.now);
+        app.diagnostics.update(&app.player.session, fr.now, fr.player);
         // …and the lab upload's toast, which expires on a clock rather than a spring.
         crate::lab::update(fr.now);
         #[cfg(feature = "threadcheck")]

@@ -1,4 +1,8 @@
 {
+  "browse.diagnostics.detailed_stats_logging": "Запись статистики",
+  "browse.diagnostics.stats_logging_off": "Запись: выкл.",
+  "browse.diagnostics.stats_logging_unavailable": "Запись: недоступна",
+  "browse.diagnostics.stats_logging_on_session": "Запись: вкл. (сеанс)",
   "browse.action.retry": "Повторить",
   "browse.action.retry_home": "Повторить",
   "browse.action.sign_in": "Войти",

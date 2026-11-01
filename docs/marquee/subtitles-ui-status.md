@@ -40,6 +40,19 @@ contained one 16.7 ms interval near the motion-to-idle boundary. This is not pro
 Idle-to-active gaps and lifetime-average flip counts are not animation FPS. The client frame callback
 is acknowledged at commit; its FPS counter does not prove unique pictures reached the display.
 
+The 2026-11-01 read-only window captured 6.003157 seconds with zero scheduler overruns: 718 draws,
+717 flips and two 16.7 ms flip intervals among continuous 8.3 ms output. Compositor render p50/p90/max
+was 422/460/2900 microseconds; draw-to-GPU-fence was 5.4/5.6/8.0 ms. The pre-capture divider read
+120 Hz and one video plane existed. No mode, input, power, deployment or restart command was sent.
+The ring and trace are `/tmp/marquee-readonly-20261101-ring.json` and
+`/tmp/marquee-readonly-20261101-sched.gz`; the lease was released and LumaTV notified.
+
+Both long intervals had zero late/lost/missed counters; those counters assess landed-frame timing,
+not every display refresh. One gap overlaps distributed runnable-off-CPU time, the other a poll
+sleep with an unresolved wake source. Neither proves a particular GPU job or callback caused it.
+The next causal capture needs matching app-buffer, commit and flip identities. Do not infer GPU
+durations from overlapping Mali slot starts/ends, change callback policy or promise zero stutter.
+
 Automatic foreground-only 120 Hz is not installed. The single approved R2 platform attempt stopped
 in read-only preflight before mutation; R2 and its consumed approval must not be replayed. Its
 observed dispatcher SHA-256 `7631005064da542f26f644ae1b636597e729884c4288d996c027b60185f366cf` matches
@@ -48,11 +61,13 @@ The corrected packet is `/data/home/tmp/lumatv-f5-renderer-packet-r3/renderer-en
 `e3f1642c10f513f53e0e05406af2cb3b8dad41b82a2c2578b18e87de2f42e666`. Its only entry change is that
 one dispatcher pin; actual local `--inspect` returned `ok: true`. One corrected Face ID request
 was subsequently permitted but remains unsent; this is not a standing grant or authority to change
-the packet. The TV lease is released for human use; no controls or restarts until a fresh window.
+the packet. The later coordinated read-only capture completed and the TV lease was released again.
+No platform request is pending; the disconnected HomeLabber gate and live compatibility guards remain.
 
 The read-only TV baseline matched all six dispatcher dependencies and all 35 renderer members.
 R3 still rejects the observed supervisor argv `/usr/bin/surface-manager -platform eglfs_webos`
-and nonempty `LD_PRELOAD`/`LD_LIBRARY_PATH`; loader-environment provenance is unestablished. Home
+and nonempty `LD_PRELOAD`/`LD_LIBRARY_PATH`. Historical LG startup uses those argv flags; exact
+loader-environment provenance is still unestablished. Home
 retains HDMI2 TV/avconnector records, including six resources. The no-media guard permits only
 empty `vtclient` records, not empty records of any type. Home foreground does not establish idle.
 Space and remaining runtime predicates are unestablished. Do not weaken guards, close input
@@ -66,7 +81,7 @@ No platform mutation occurred; runtime 120 Hz remains temporary rather than pers
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
 A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
 the shell job alone is not established as the cause. Do not change callback policy or force GPU
-synchronization to diagnose it: the existing scheduler trace and compositor ring are sufficient first.
+synchronization. The bounded ring and scheduler trace do not yet link app buffers to display flips.
 
 The native video engine supplies rational source rates to LG’s separate video plane. Preserve that
 path rather than writing panel-rate controls. The fastest OSD divider is approximately 120 Hz in

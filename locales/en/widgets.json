@@ -1301,13 +1301,65 @@
     "value": "Set up Bazarr in Settings, Integrations",
     "description": "Wrong subtitles page of the player's subtitle menu. Line under the Bazarr row when Bazarr is not set up."
   },
+  "widgets.tracks.search.requesting": {
+    "value": "Requesting download…",
+    "description": "Subtitle search page: Requesting download"
+  },
+  "widgets.tracks.search.waiting_bazarr": {
+    "value": "Waiting for Bazarr and Plex…",
+    "description": "Subtitle search page: Waiting for Bazarr and Plex"
+  },
+  "widgets.tracks.search.waiting_plex": {
+    "value": "Waiting for Plex…",
+    "description": "Subtitle search page: Waiting for Plex"
+  },
+  "widgets.tracks.search.not_visible": {
+    "value": "Not yet visible in Plex.",
+    "description": "Subtitle search page: Not yet visible in Plex"
+  },
+  "widgets.tracks.search.check_plex": {
+    "value": "Check Plex again",
+    "description": "Subtitle search page: Check Plex again"
+  },
+  "widgets.tracks.search.loading_player": {
+    "value": "Loading in player…",
+    "description": "Subtitle search page: Loading in player"
+  },
+  "widgets.tracks.search.active": {
+    "value": "Active in player",
+    "description": "Subtitle search page: Active in player"
+  },
+  "widgets.tracks.search.player_failed": {
+    "value": "The player could not load this subtitle. Try another.",
+    "description": "Subtitle search page: The player could not load this subtitle Try another"
+  },
+  "widgets.tracks.search.available": {
+    "value": "Available in Plex",
+    "description": "Subtitle search page: Available in Plex"
+  },
+  "widgets.tracks.search.download_timeout": {
+    "value": "The request timed out.",
+    "description": "Subtitle search page: The request timed out"
+  },
+  "widgets.tracks.search.bad_candidate": {
+    "value": "This subtitle cannot be added. Try another.",
+    "description": "A Plex subtitle candidate has an invalid path; no download was sent."
+  },
+  "widgets.tracks.search.bazarr_download_failed": {
+    "value": "Bazarr could not download this subtitle. Try another.",
+    "description": "Subtitle search page: Bazarr could not download this subtitle Try another"
+  },
+  "widgets.tracks.search.check_failed": {
+    "value": "Could not check Plex. Check again.",
+    "description": "Subtitle search page: Could not check Plex Check again"
+  },
   "widgets.tracks.bazarr_title": {
     "value": "Bazarr",
     "description": "Bazarr search page of the player's subtitle menu. Page title; a product name, keep it."
   },
   "widgets.tracks.bazarr_searching": {
-    "value": "Asking Bazarr's providers. This can take a minute.",
-    "description": "Bazarr search page of the player's subtitle menu. Shown while Bazarr asks its subtitle providers."
+    "value": "Searching Bazarr…",
+    "description": "Subtitle search page while a Bazarr search is in progress."
   },
   "widgets.tracks.bazarr_none": {
     "value": "Bazarr found nothing in this language.",

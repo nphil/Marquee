@@ -215,3 +215,41 @@ fn a_new_item_request_carries_no_selection() {
     assert_eq!(current_retry_context(&ps, 0).selection, None);
     reset_session(&mut ps);
 }
+
+#[test]
+fn external_burn_requires_the_applied_stream_and_a_presented_frame() {
+    use std::sync::atomic::Ordering::Relaxed;
+    use SubtitleActivation::{Active, Inactive, Loading};
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let sid = ServerId::from_raw(40);
+    ps.cur_sid = sid;
+    ps.url = "http://fixture.invalid/video".into();
+    ps.tsession = "encoder".into();
+    ps.cur_sub_sid = 77;
+    ps.cur_sub_sidecar = true;
+    ps.cur_sub_client_drawable = true;
+    reset_player_control_for_test(&ps);
+    let old_state = crate::player::SHARED.pb_state.swap(crate::player::PlaybackState::Playing as u8, Relaxed);
+    let old_frames = crate::player::SHARED.frames.swap(0, Relaxed);
+    let old_paused = crate::player::TX.paused.swap(true, Relaxed);
+    let old_seeking = crate::player::SHARED.seeking.swap(false, Relaxed);
+    let old_queued = crate::player::SHARED.start_queued.swap(false, Relaxed);
+
+    assert_eq!(subtitle_activation(&ps, 77), Loading, "native playback has no new frame yet");
+    crate::player::SHARED.frames.store(1, Relaxed);
+    assert_eq!(subtitle_activation(&ps, 77), Active, "a paused picture may still have subtitles");
+    assert_eq!(subtitle_activation(&ps, 88), Inactive);
+    ps.cur_sub_sid = 88;
+    assert_eq!(subtitle_activation(&ps, 88), Loading, "a desired selection is not the applied burn");
+    ps.cur_sub_sid = 77;
+    ps.cur_sid = ServerId::from_raw(41);
+    assert_eq!(subtitle_activation(&ps, 77), Loading, "another server cannot inherit the applied route");
+
+    crate::player::SHARED.pb_state.store(old_state, Relaxed);
+    crate::player::SHARED.frames.store(old_frames, Relaxed);
+    crate::player::TX.paused.store(old_paused, Relaxed);
+    crate::player::SHARED.seeking.store(old_seeking, Relaxed);
+    crate::player::SHARED.start_queued.store(old_queued, Relaxed);
+    reset_session(&mut ps);
+}

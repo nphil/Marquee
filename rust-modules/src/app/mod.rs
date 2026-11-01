@@ -583,6 +583,7 @@ fn enter_application(pms_host: *const c_char, pms_port: c_int) -> Result<App,c_i
     // this layer owns and `appkit` cannot name, so it is handed the reader on EVERY boot (a
     // controlled replay builds the same menu) and before any screen exists.
     plx_appkit::more_menu::install_stats_reader(crate::app::diagnostics::enabled);
+    plx_appkit::more_menu::install_logging_reader(crate::app::diagnostics::logging_enabled);
     // Replay preflight and typed decoding precede identity mint, telemetry and bootstrap work.
     let telemetry_guard = (!preflight.controlled()).then(pre_boot_diagnostics);
     // Unlike the capability worker, these existing diagnostic latches are needed by controlled

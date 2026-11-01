@@ -152,11 +152,16 @@ fn select_with_fetch(
     let selection = Selection { server, stream_id, key, codec: codec.to_ascii_lowercase() };
     {
         let mut st = state();
+        let selection_changed = st.want.as_ref() != Some(&selection);
         st.generation = st.generation.wrapping_add(1);
         st.want = Some(selection.clone());
         st.failed = None;
         st.pending = None;
         if matches!(&st.loaded, Some((source, _)) if *source == selection) {
+            if selection_changed {
+                // A cached script retains its source ID; retire the old selection's frame.
+                super::ass::clear();
+            }
             return;
         }
         st.loaded = None;
@@ -224,6 +229,26 @@ pub fn deselect() {
 /// `player::subtitle_offset_range_ms`), not whether a cue is ready.
 pub fn selected() -> bool {
     state().want.is_some()
+}
+
+/// Read the selected file and its renderer publication without starting any work.
+pub(crate) fn activation(server: plx_plex::plex::ServerId, stream_id: i64) -> crate::route::SubtitleActivation {
+    use crate::route::SubtitleActivation;
+    let st = state();
+    let Some(want) = st.want.as_ref() else { return SubtitleActivation::Inactive };
+    if want.server != server || want.stream_id != stream_id {
+        return SubtitleActivation::Inactive;
+    }
+    if st.failed.as_ref().is_some_and(|(selection, _, _)| selection == want) {
+        return SubtitleActivation::Failed;
+    }
+    let Some((selection, content)) = st.loaded.as_ref() else { return SubtitleActivation::Loading };
+    if selection != want { return SubtitleActivation::Loading; }
+    match super::ass::source_readiness(content.source.id) {
+        super::ass::SourceReadiness::Pending => SubtitleActivation::Loading,
+        super::ass::SourceReadiness::Ready => SubtitleActivation::Active,
+        super::ass::SourceReadiness::Failed => SubtitleActivation::Failed,
+    }
 }
 
 /// Mark `stream_id` as the selected sidecar without fetching anything — for tests of what the
@@ -650,8 +675,12 @@ mod tests {
         let sid = plx_plex::plex::ServerId::from_raw(0);
         select_with_fetch(sid, 1, "old".into(), "srt".into(), fetch.clone());
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(activation(sid, 1), crate::route::SubtitleActivation::Loading);
+        assert_eq!(activation(sid, 2), crate::route::SubtitleActivation::Inactive);
+        assert_eq!(activation(plx_plex::plex::ServerId::from_raw(1), 1), crate::route::SubtitleActivation::Inactive);
         reset();
         select_with_fetch(sid, 1, "new".into(), "srt".into(), fetch);
+        assert_eq!(activation(sid, 1), crate::route::SubtitleActivation::Loading);
         let parallel = started_rx.recv_timeout(Duration::from_millis(100)).is_ok();
         release_tx.send(()).unwrap();
         let text_of = || ass_source(false).map(|s| {
@@ -662,6 +691,7 @@ mod tests {
         let script = text_of().expect("the latest pick landed");
         assert!(script.ends_with(",new\n"), "{script}");
         assert!(!script.contains(",old\n"));
+        assert_eq!(activation(sid, 1), crate::route::SubtitleActivation::Loading, "a downloaded file is not a rendered frame");
         reset();
         assert!(!parallel, "an abandoned fetch must finish before another worker is started");
     }
@@ -932,6 +962,7 @@ mod tests {
         select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 9, "/library/streams/9".into(), "srt".into(),
             |_, _, _| Some(b"<html>not a subtitle</html>".to_vec()));
         finish_download();
+        assert_eq!(activation(plx_plex::plex::ServerId::from_raw(0), 9), crate::route::SubtitleActivation::Failed);
         let message = plx_platform::i18n::msg::widgets_sidecar_empty();
         assert_eq!(notice(), Some(message));
         assert!(notice_shown());
@@ -943,10 +974,12 @@ mod tests {
             *at = Instant::now().checked_sub(FAILURE_SHOWN + Duration::from_millis(1)).unwrap();
         }
         assert_eq!((notice(), notice_shown()), (None, false));
+        assert_eq!(activation(plx_plex::plex::ServerId::from_raw(0), 9), crate::route::SubtitleActivation::Failed, "failure outlives the notice");
         // a fetch failure says its own thing
         select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 10, "/library/streams/10".into(), "srt".into(),
             |_, _, _| None);
         finish_download();
+        assert_eq!(activation(plx_plex::plex::ServerId::from_raw(0), 10), crate::route::SubtitleActivation::Failed);
         assert_eq!(notice(), Some(plx_platform::i18n::msg::widgets_sidecar_fetch_failed()));
         deselect();
         assert_eq!(notice(), None, "off clears it");

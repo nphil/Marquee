@@ -77,6 +77,49 @@ fn request_key(source: &Source) -> Key {
 }
 
 #[test]
+fn readiness_follows_only_the_current_rendered_source_and_epoch() {
+    use SourceReadiness::{Failed, Pending, Ready};
+    let runtime = Runtime::new();
+    let source = Arc::new(source(vec![event(0, 0, 2000)]));
+    let key = request_key(&source);
+    runtime.source_id.store(source.id, Ordering::Release);
+    assert_eq!(source_readiness_in(&runtime, source.id), Pending);
+    {
+        let mut mailbox = runtime.mailbox.lock().unwrap();
+        mailbox.request(key, 3000, &source);
+        let job = mailbox.take().unwrap();
+        let quiet_frame = Arc::new(Frame {
+            source_id: source.id, serial: 1, width: key.width, height: key.height,
+            rects: Vec::new(), error: None,
+        });
+        mailbox.finish(&job, Some(mailbox::Rendered {
+            frame: quiet_frame, validity: crate::player::ass_timing::Validity::ALWAYS, aligns: None,
+        }));
+        project_readiness(&runtime, &mailbox);
+        assert_eq!(source_readiness_in(&runtime, source.id), Ready, "mailbox contention must not hide a publication");
+    }
+    assert_eq!(source_readiness_in(&runtime, source.id), Ready);
+    assert_eq!(source_readiness_in(&runtime, source.id + 1), Pending);
+    clear_runtime(&runtime);
+    assert_eq!(source_readiness_in(&runtime, source.id), Pending);
+    runtime.source_id.store(source.id, Ordering::Release);
+    assert_eq!(source_readiness_in(&runtime, source.id), Pending, "an old epoch cannot prove a repick");
+    let new_key = Key { epoch: runtime.epoch.load(Ordering::Acquire), ..key };
+    {
+        let mut mailbox = runtime.mailbox.lock().unwrap();
+        mailbox.publish_error(new_key, error_frame(new_key, Fault::InvalidFile));
+        project_readiness(&runtime, &mailbox);
+        assert_eq!(source_readiness_in(&runtime, source.id), Failed, "failure survives mailbox contention");
+        runtime.epoch.fetch_add(1, Ordering::AcqRel);
+        runtime.source_id.store(source.id + 1, Ordering::Release);
+        assert_eq!(source_readiness_in(&runtime, source.id), Pending);
+        assert_eq!(source_readiness_in(&runtime, source.id + 1), Pending);
+    }
+    clear_runtime(&runtime);
+    assert_eq!(source_readiness_in(&runtime, source.id + 1), Pending);
+}
+
+#[test]
 fn off_retires_a_racing_publication_and_pending_source_outside_the_mailbox_lock() {
     let runtime = Runtime::new();
     let source = Arc::new(source(vec![event(0, 0, 2000)]));
@@ -254,6 +297,67 @@ fn pixel(frame: &Frame, x: i32, y: i32) -> [u8; 4] {
     };
     let start = ((y - r.y) * r.width + x - r.x) as usize * 4;
     r.rgba[start..start + 4].try_into().unwrap()
+}
+
+#[test]
+#[ignore = "requires the pinned native host libass artifact and packaged fonts"]
+fn native_script_readiness_rejects_nonpositive_events_but_keeps_quiet_gaps() {
+    fn publish(source: &Arc<Source>, now_ms: i64) -> (SourceReadiness, Arc<Frame>) {
+        let runtime = Runtime::new();
+        runtime.source_id.store(source.id, Ordering::Release);
+        let key = request_key(source);
+        let mut mailbox = runtime.mailbox.lock().unwrap();
+        mailbox.request(key, now_ms, source);
+        let job = mailbox.take().unwrap();
+        let rendered = Engine::default().render(&job);
+        let frame = rendered.frame.clone();
+        mailbox.finish(&job, Some(rendered));
+        project_readiness(&runtime, &mailbox);
+        drop(mailbox);
+        (source_readiness_in(&runtime, source.id), frame)
+    }
+
+    let invalid = script(concat!(
+        "Dialogue: 0,0:00:01.00,0:00:01.00,Default,,0,0,0,,zero\n",
+        "Dialogue: 0,0:00:02.00,0:00:01.00,Default,,0,0,0,,backwards\n",
+    ));
+    let (readiness, frame) = publish(&invalid, 1500);
+    assert_eq!(frame.error, Some(Fault::Unreadable));
+    assert_eq!(readiness, SourceReadiness::Failed);
+
+    let mixed = script(concat!(
+        "Dialogue: 0,0:00:01.00,0:00:01.00,Default,,0,0,0,,zero\n",
+        "Dialogue: 0,0:00:02.00,0:00:03.00,Default,,0,0,0,,{\\an7\\pos(20,20)\\p1}m 0 0 l 20 0 20 20 0 20\n",
+    ));
+    for now in [0, 4000] {
+        let (readiness, frame) = publish(&mixed, now);
+        assert_eq!(frame.error, None);
+        assert!(frame.rects.is_empty());
+        assert_eq!(readiness, SourceReadiness::Ready);
+    }
+    let (readiness, frame) = publish(&mixed, 2500);
+    assert_eq!(readiness, SourceReadiness::Ready);
+    assert_ne!(pixel(&frame, 25, 25)[3], 0);
+
+    let zeros = "Dialogue: 0,0:00:01.00,0:00:01.00,Default,,0,0,0,,zero\n"
+        .repeat(super::super::ass_script::WINDOW_EVENTS);
+    let (readiness, frame) = publish(&script(&(zeros.clone() + "Dialogue: 0,0:00:02.00,0:00:01.00,Default,,0,0,0,,backwards\n")), 100_000);
+    assert_eq!(frame.error, Some(Fault::Unreadable));
+    assert_eq!(readiness, SourceReadiness::Failed);
+
+    let long = script(&(zeros + "Dialogue: 0,0:01:00.00,0:01:01.00,Default,,0,0,0,,{\\an7\\pos(20,20)\\p1}m 0 0 l 20 0 20 20 0 20\n"));
+    for now in [0, 30_000, 100_000] {
+        let (readiness, frame) = publish(&long, now);
+        assert_eq!(frame.error, None);
+        assert!(frame.rects.is_empty());
+        assert_eq!(readiness, SourceReadiness::Ready);
+    }
+    let mut engine = Engine::default();
+    for now in [0, 30_000, 60_500, 100_000] {
+        let frame = engine.render(&job(&long, now, 320, 180, 320, 180)).frame;
+        assert_eq!(frame.error, None);
+        assert_eq!(pixel(&frame, 25, 25)[3] != 0, now == 60_500);
+    }
 }
 
 /// An actual pixel contract against the same pinned library shipped to the TV.
@@ -669,10 +773,9 @@ fn faces_script(lines: &str) -> String {
 
 #[test]
 #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
-fn native_the_facade_is_abi_five() {
+fn native_the_facade_matches_required_abi() {
     assert!(native_ass::load(Some(asset_dir())).ok());
-    assert_eq!(unsafe { plx_ass_abi_version() }, 5);
-    assert_eq!(NATIVE_ABI, 5);
+    assert_eq!(unsafe { plx_ass_abi_version() }, NATIVE_ABI);
 }
 
 /// The bundled libass was built without libunibreak until the ABI 3 bump, so a CJK line with no

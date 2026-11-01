@@ -1097,6 +1097,7 @@ pub enum RouteApplyResult {
 /// has to remember which neighbouring fields form one decoder/server contract.
 #[derive(Clone)]
 pub(super) struct AppliedRouteProjection {
+    sid: ServerId,
     url: String,
     tsession: String,
     contract: plx_plex::plex::EncodeContract,
@@ -1129,6 +1130,7 @@ pub(super) struct AppliedRouteProjection {
 fn route_projection(ps: &PlaybackSession) -> AppliedRouteProjection {
     let s = &*ps;
     AppliedRouteProjection {
+        sid: s.cur_sid,
         url: s.url.clone(),
         tsession: s.tsession.clone(),
         contract: s.cur_contract,
@@ -5758,6 +5760,11 @@ pub fn stream_video(ps: &PlaybackSession) -> Option<crate::player::recovery::Str
         height: u32::try_from(height).unwrap_or(0),
     })
 }
+/// Original file frame rate from metadata, independent of the selected route.
+pub fn source_fps(ps: &PlaybackSession) -> f64 {
+    ps.src_fps
+}
+
 /// direct-play source video fps for the Load esInfo (0 = unknown/transcode → omit)
 pub fn stream_fps(ps: &PlaybackSession) -> f64 {
     ps.stream_fps
@@ -10356,6 +10363,50 @@ pub fn subtitles_burned(ps: &PlaybackSession) -> bool {
         // `ClientOverRemux`). A selected subtitle is the presenter's alone to answer, so a refused
         // or failed reader (`ServerBurn`) is never silenced by a reader that is still shutting down.
         && !(ps.cur_sub_sid == 0 && crate::player::subside::active())
+}
+
+/// Whether the requested stream has reached the playback path, not merely the menu selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtitleActivation {
+    Inactive,
+    Loading,
+    Active,
+    Failed,
+}
+
+/// Activation of a newly downloaded external stream, without starting work. Embedded tracks are
+/// outside this query's scope and return `Inactive`.
+pub fn subtitle_activation(ps: &PlaybackSession, stream_id: i64) -> SubtitleActivation {
+    use SubtitleActivation::{Active, Failed, Inactive, Loading};
+    if stream_id <= 0 || ps.cur_sub_sid != stream_id || !ps.cur_sid.is_set() || !ps.cur_sub_sidecar {
+        return Inactive;
+    }
+    let playback = crate::player::state(ps);
+    if playback == crate::player::PlaybackState::Error { return Failed; }
+    let burned = subtitles_burned(ps);
+    if !burned && !ps.cur_sub_client_drawable { return Inactive; }
+    let sidecar = if !burned {
+        crate::player::sidecar::activation(ps.cur_sid, stream_id)
+    } else {
+        Loading
+    };
+    if sidecar == Failed { return Failed; }
+    let applied = {
+        let control = PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner());
+        control.phase == ControlPhase::Stable
+            && control.pending_user.is_none()
+            && control.applied_projection.as_ref().is_some_and(|route| {
+                route.sid == ps.cur_sid && route.subtitle_sid == stream_id
+                    && route.url == ps.url && route.tsession == ps.tsession
+                    && route.subtitle_sidecar == ps.cur_sub_sidecar
+                    && route.subtitle_client_drawable == ps.cur_sub_client_drawable
+                    && route.contract == ps.cur_contract
+            })
+    };
+    if !applied || playback != crate::player::PlaybackState::Playing || crate::player::frames() <= 0 {
+        return Loading;
+    }
+    if burned { Active } else { sidecar }
 }
 
 /// Make the side reader match the live route: start it for an admitted embedded pick, switch its

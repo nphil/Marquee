@@ -1,4 +1,20 @@
 {
+  "browse.diagnostics.detailed_stats_logging": {
+    "value": "Detailed stats logging",
+    "description": "Session-only opt-in for writing technical playback statistics to the local event log."
+  },
+  "browse.diagnostics.stats_logging_off": {
+    "value": "Logging off",
+    "description": "Optional app-local detailed playback statistics logging is off."
+  },
+  "browse.diagnostics.stats_logging_unavailable": {
+    "value": "Logging unavailable",
+    "description": "Optional app-local detailed playback statistics logging is unavailable."
+  },
+  "browse.diagnostics.stats_logging_on_session": {
+    "value": "Logging on (session)",
+    "description": "Optional app-local detailed playback statistics logging is enabled for this session."
+  },
   "browse.action.retry": {
     "value": "Try again",
     "description": "browse action retry"
@@ -698,7 +714,7 @@
     "description": "Diagnostics panel: the playback state with a paused marker."
   },
   "browse.diagnostics.stalled": {
-    "value": "{state} (stalled {seconds} s)",
+    "value": "{state} (no position callback for {seconds} s)",
     "args": {
       "seconds": "i64",
       "state": "str"
@@ -1054,7 +1070,7 @@
     "description": "Diagnostics panel: unknown raster"
   },
   "browse.diagnostics.awaiting_frames": {
-    "value": "awaiting frames",
+    "value": "awaiting stream dimensions",
     "translate": false,
     "description": "Diagnostics panel: awaiting frames"
   },
@@ -1277,7 +1293,7 @@
     "description": "Diagnostics panel: callback error"
   },
   "browse.diagnostics.queues": {
-    "value": "video {video}/{video_cap} MB · audio {audio}/{audio_cap} MB",
+    "value": "video {video}/{video_cap} MiB · audio {audio}/{audio_cap} MiB",
     "args": {
       "video": "str",
       "video_cap": "str",
@@ -1300,7 +1316,7 @@
     "description": "Diagnostics panel: frames none"
   },
   "browse.diagnostics.frames_frozen": {
-    "value": "{frames} · frozen {seconds} s",
+    "value": "{frames} · no callback for {seconds} s",
     "args": {
       "frames": "str",
       "seconds": "str"
@@ -1333,7 +1349,7 @@
     "description": "Diagnostics panel: stream limited"
   },
   "browse.diagnostics.demand_unknown": {
-    "value": "{budget} budget · demand unknown",
+    "value": "{budget} estimated budget · demand unknown",
     "args": {
       "budget": "str"
     },
@@ -1341,7 +1357,7 @@
     "description": "Diagnostics panel: demand unknown"
   },
   "browse.diagnostics.budget_surplus": {
-    "value": "{budget} budget · {demand} measured stream · headroom {margin}",
+    "value": "{budget} estimated budget · {demand} · headroom {margin}",
     "args": {
       "budget": "str",
       "demand": "str",
@@ -1351,7 +1367,7 @@
     "description": "Diagnostics panel: budget surplus"
   },
   "browse.diagnostics.budget_deficit": {
-    "value": "{budget} budget · {demand} measured stream · short {margin}",
+    "value": "{budget} estimated budget · {demand} · short {margin}",
     "args": {
       "budget": "str",
       "demand": "str",
@@ -1361,7 +1377,7 @@
     "description": "Diagnostics panel: budget deficit"
   },
   "browse.diagnostics.reserve_idle": {
-    "value": "{seconds} s · observed reserve · controller idle",
+    "value": "{seconds} s · estimated reserve · controller idle",
     "args": {
       "seconds": "str"
     },
@@ -1369,7 +1385,7 @@
     "description": "Diagnostics panel: reserve idle"
   },
   "browse.diagnostics.reserve": {
-    "value": "{seconds} s · observed reserve",
+    "value": "{seconds} s · estimated reserve",
     "args": {
       "seconds": "str"
     },
@@ -1377,7 +1393,7 @@
     "description": "Diagnostics panel: reserve"
   },
   "browse.diagnostics.buffer_trend": {
-    "value": "{seconds} s · {slope} s/s · {trend}",
+    "value": "{seconds} s estimated · {slope} s/s · {trend}",
     "args": {
       "seconds": "str",
       "slope": "str",
@@ -1395,7 +1411,7 @@
     "description": "Diagnostics panel: horizon"
   },
   "browse.diagnostics.risk_percent": {
-    "value": " · risk {percent}%",
+    "value": " · model score {percent}%",
     "args": {
       "percent": "str"
     },
@@ -1446,7 +1462,7 @@
     "description": "Diagnostics panel: network mean"
   },
   "browse.diagnostics.quality_original": {
-    "value": "Original · source {rate} · decoded {raster}",
+    "value": "Original · source {rate} · coded {raster}",
     "args": {
       "rate": "str",
       "raster": "str"
@@ -1464,7 +1480,7 @@
     "description": "Diagnostics panel: quality request"
   },
   "browse.diagnostics.decoded": {
-    "value": " · decoded {raster}",
+    "value": " · coded {raster}",
     "args": {
       "raster": "str"
     },
@@ -1472,7 +1488,7 @@
     "description": "Diagnostics panel: decoded"
   },
   "browse.diagnostics.quality_decoded": {
-    "value": "{quality} · decoded {raster}",
+    "value": "{quality} · coded {raster}",
     "args": {
       "quality": "str",
       "raster": "str"
@@ -1912,7 +1928,7 @@
     "description": "Row label in the playback diagnostics read-out (how the app reaches the server). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
   },
   "browse.diagnostics.field.route": {
-    "value": "AppArg",
+    "value": "Route",
     "translate": false,
     "description": "Row label in the playback diagnostics read-out (the delivery route: streaming transport and whether the server converts the file). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
   },
@@ -1922,9 +1938,9 @@
     "description": "Row label in the playback diagnostics read-out (the video codec chain). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
   },
   "browse.diagnostics.field.picture": {
-    "value": "Picture",
+    "value": "Coded video",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (the decoded picture size and frame rate). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "Coded dimensions and pipeline-reported or Load-declared rate."
   },
   "browse.diagnostics.field.timeline": {
     "value": "Timeline",
@@ -1932,9 +1948,9 @@
     "description": "Row label in the playback diagnostics read-out (playback position and duration). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
   },
   "browse.diagnostics.field.av_sync": {
-    "value": "A/V sync",
+    "value": "Fed PTS skew",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (how far audio trails video). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "Difference between the latest video and audio input timestamps, not output sync."
   },
   "browse.diagnostics.field.video_plane": {
     "value": "Video plane",
@@ -1952,19 +1968,19 @@
     "description": "Row label in the playback diagnostics read-out (whether the television's media pipeline accepted the stream). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
   },
   "browse.diagnostics.field.feed": {
-    "value": "Feed",
+    "value": "Input feed",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (how fast data is being fed to the decoder). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "Accepted video and audio access units per second."
   },
   "browse.diagnostics.field.queues": {
-    "value": "Queues",
+    "value": "App queues",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (decoder queue fill). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "App-side input queue fill, not decoder queues."
   },
   "browse.diagnostics.field.frames": {
-    "value": "Frames",
+    "value": "Position cb",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (decoded frame count). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "Position callback count and liveness, not decoded frames."
   },
   "browse.diagnostics.field.mode": {
     "value": "Mode",
@@ -1974,7 +1990,7 @@
   "browse.diagnostics.field.quality": {
     "value": "Quality",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (the requested and decoded quality). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "Requested quality and coded stream dimensions."
   },
   "browse.diagnostics.field.sample": {
     "value": "Sample",
@@ -1987,9 +2003,9 @@
     "description": "Row label in the playback diagnostics read-out (the conservative bandwidth budget). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
   },
   "browse.diagnostics.field.buffer": {
-    "value": "Buffer",
+    "value": "App reserve",
     "translate": false,
-    "description": "Row label in the playback diagnostics read-out (how much playable media is buffered). Right-aligned into a narrow gutter, so the wording must stay within 12 characters."
+    "description": "App-side estimated media-time reserve, not the TV decoder buffer."
   },
   "browse.diagnostics.field.risk": {
     "value": "Risk",
@@ -2116,7 +2132,7 @@
     "description": "Diagnostics: nothing has been fed to the decoder yet."
   },
   "browse.diagnostics.fed_rate": {
-    "value": "{video} fps · {audio}/s",
+    "value": "video {video} AU/s · audio {audio} AU/s",
     "args": {
       "audio": "str",
       "video": "str"

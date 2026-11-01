@@ -107,6 +107,7 @@ pub(crate) fn is_started() -> bool {
 pub(crate) fn apply_more_action(ps: &mut plx_media::route::PlaybackSession, pa: &mut plx_media::player::adapter::PlayerAdapter, bridge: &mut super::bridge::Bridge, a: plx_appkit::more_menu::Action) {
     match a {
         plx_appkit::more_menu::Action::ToggleStats => crate::app::diagnostics::toggle(),
+        plx_appkit::more_menu::Action::ToggleStatsLogging => crate::app::diagnostics::toggle_logging(),
         // A rung of the playback-quality ladder — a routing POLICY, not a number handed to a
         // running stream. Not deferred either: `route::set_quality` re-asks the routing question
         // for the playback on screen and reloads only when the answer changed.
