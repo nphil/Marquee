@@ -46,9 +46,19 @@ observed dispatcher SHA-256 `7631005064da542f26f644ae1b636597e729884c4288d996c02
 the accepted wrapper-package verification record and the review-only dispatcher reference.
 The corrected packet is `/data/home/tmp/lumatv-f5-renderer-packet-r3/renderer-entry-r3.py`, SHA-256
 `e3f1642c10f513f53e0e05406af2cb3b8dad41b82a2c2578b18e87de2f42e666`. Its only entry change is that
-one dispatcher pin; actual local `--inspect` returned `ok: true`. New direct permission is required
-before another Face ID request. Other live dependencies and runtime guards remain unobserved and
-may still abort safely. The current runtime 120 Hz setting is not a persistent application preference.
+one dispatcher pin; actual local `--inspect` returned `ok: true`. One corrected Face ID request
+was subsequently permitted but remains unsent; this is not a standing grant or authority to change
+the packet. The TV lease is released for human use; no controls or restarts until a fresh window.
+
+The read-only TV baseline matched all six dispatcher dependencies and all 35 renderer members.
+R3 still rejects the observed supervisor argv `/usr/bin/surface-manager -platform eglfs_webos`
+and nonempty `LD_PRELOAD`/`LD_LIBRARY_PATH`; loader-environment provenance is unestablished. Home
+retains HDMI2 TV/avconnector records, including six resources. The no-media guard permits only
+empty `vtclient` records, not empty records of any type. Home foreground does not establish idle.
+Space and remaining runtime predicates are unestablished. Do not weaken guards, close input
+resources or replay the broader wake installer to force this update. Reuse an already-proven
+renderer-only route within the approved scope. No platform mutation occurred; runtime 120 Hz
+remains temporary rather than a persistent application preference.
 
 Rendering already uses GLES and reused textures; two bounded workers fetch and decode posters.
 A measured late frame combined native GPU work with a preceding 4.1 ms hidden-shell GPU job;
