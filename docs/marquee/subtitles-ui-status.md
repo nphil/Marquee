@@ -266,9 +266,12 @@ must clear earlier alignment. Changed-source validation returns `estimated`, `wo
 source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
 `/data/home/tmp/speechdock-alignment-production`. TV activation still requires a quiet-safe app window.
 
-The backend requires its independent speech transcript to match the cue exactly; the dominant
-sample rejection is `independent_lexical_mismatch`, not a connection failure. Playback acceptance
-on the TV is separate from this backend coverage problem.
+All 19 sampled cues passed source verification: 17 failed independent exact greedy lexical
+equality, one failed the acoustic score, and one aligned. Repeated-word rejection accounts for
+none of these samples. Retained two-second versus four-second context evidence produced the same
+16-character prefix of a 20-character target from both same-support 99-frame crops; extra context
+alone did not resolve acceptance. These are backend coverage limits, not connection failures or
+evidence that playback on the TV is required to diagnose them.
 
 ABI 6 epoch-fenced renderer readiness, truthful player activation, visual modes and authored ASS
 karaoke remain required. Embedded alignment capture and publication require the exact displayed
