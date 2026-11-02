@@ -51,22 +51,26 @@ distinguishes display Scale from Limit, Power On Level and Mute Level; Scale doe
 not change half-unit increments. The popup and read-only Sound volume row rounded
 those readings; Quick Settings already displayed fractional `volumeText`.
 
-Installed native UI `bd31db80cdee3169615c0aee592ce5ff4aa1585b23de4df1dd164285345c9c9f`
-preserves half units in both readouts and reserves decimal width at 100% and 200% text.
-Actual TV Sound and popup both showed 47.5; a volume-key pair produced 47.5 → 48 → 47.5
-with mute unchanged. Dolby Audio and PCM · Dolby Surround remain visible. Broader receiver
-controls remain read-only. Native-host renders, the freshness/precision regression
-and selected-source archive are retained under
+Earlier native UI `bd31db80` established half-unit Sound and popup readings at
+100% and 200% text. Actual TV readings and a volume-key round trip preserved
+47.5 exactly; Dolby Audio and PCM · Dolby Surround remained visible. Evidence:
 `/data/home/tmp/marquee-denon-half-volume-proof/`.
 
-Broader Settings > Sound > Receiver controls lack the helper’s `controls`
-capability and authenticated `POST /v1/receiver/set`; volume and ARC power
-synchronization already have writable paths. Completion needs typed setters
-and confirmed readback, per-setting model/mode capabilities, consistent power
-types and existing six-second freshness gating. Main-zone controls precede
-model-dependent Audyssey, levels/tone, ECO, Quick Select and Zone 2. Generic mode
-lists and UI fixtures are not evidence that the S760H supports every control.
-This assessment does not enable controls or change receiver settings.
+Receiver UI `0a8467e6770f2483edb24bab892f09e78e41284fc19d093d66c3900a71e97537`
+and helper `94ebaded8807b691a63875261c007b2d2ffdf8ea045a72f714ab901b6f2af504`
+are installed. Authenticated typed settings writes require a current session and
+new matching receiver readback; queued is not applied. The actual AVR-S760H
+advertises six main inputs plus qualified power, dialogue and Eco controls.
+Audyssey, Zone 2 and other controls remain disabled where current prerequisites
+are unqualified; sound-mode selection requires a recognized current signal.
+Hardware setting writes remain unexercised. Manual receiver volume was untouched.
+
+The owner-approved canonical bundle registration preserved core `6dab7dcd`,
+SM and smart-home bytes and regenerated the native manifest. The final helper-only
+discovery correction preserved that manifest. Actual native Receiver rendering
+and fresh readback are retained in `/data/home/tmp/lumatv-denon-live-20261102-mvzhuzzf/`.
+Owned Settings closed, final Active Standby confirmed, stage removed and own
+mutex released with local mirror and remote owner absent.
 
 ### Native volume popup
 
