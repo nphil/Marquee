@@ -9,21 +9,81 @@
 - [ ] Search and select manual releases, with quality and rejection reasons visible.
 - [ ] Delete movies, episodes and shows with explicit confirmation and clear file/library scope.
 
-This backlog is separate from the current playback aspect-ratio fix.
+These integration requests remain a separate backlog; the scaling and volume-popup fixes do not implement them.
 
-## Marquee / device follow-through
+## Marquee work list
 
-- [ ] Complete the foreground-only 120 Hz platform cutover through a newly approved exact packet.
-  R4 is uninstalled and needs its own occupied-input/audio scope; the app-only update is not authority.
-- [ ] Attribute the two remaining 16.7 ms intervals with matching app-buffer, commit, GPU-fence and
-  display-flip identities. Reuse the saved ring/scheduler capture and a separately authorized TV window;
-  the current evidence does not justify changing callback policy or promising zero stutter.
-- [ ] Integrate the separate server speech-alignment effort without replacing the current sidecar
-  lifecycle or ABI 6 readiness. Installed Reveal as spoken is still estimated from cue duration.
+### Measure
 
-Alignment and platform preparation can proceed in isolated worktrees; live TV checks remain
-exclusive. The existing trailer-completion state-machine item below is an independent local slice,
-but remains P3 rather than displacing the measured pacing work.
+- [x] Measure Marquee rendering and TV presentation frame rates
+- [x] Identify the sources of visible UI hitches
+- [x] Collect the already-authorized read-only compositor ring and six-second scheduler trace
+- [x] Engage the Native120Pacing slow-role helper for the remaining smooth-120 goal
+- [x] Review existing graphics and hardware-layer notes before choosing a pacing fix
+- [ ] Establish the authoritative main-display resolution, refresh and HDR source during video playback
+  Measured display-sync ~120 Hz and source metadata work; physical output raster/final HDR and exact119.88 vs120.00 remain unverified. No additional display experiment in this surgical update.
+- [x] Coordinate the shared display-output contract and aesthetic quick-settings info pill with LumaTV
+- [x] Map the existing poster/image cache, playback-return residency and fast-scroll prefetch behavior
+
+### Improve
+
+- [ ] Remove measured UI frame stalls
+  Two saved16.7ms intervals lack causal app-buffer/commit/draw/fence/flip attribution; zero-stutter acceptance remains unproven. Requires a separately scoped measurement window.
+- [x] Enable 120 fps UI if the TV presentation path supports it
+- [x] Remove remaining legacy Plx Native branding and old project links from the app UI
+- [x] Fix cold-start dialogue enhancement and preserve playback on enhancement failure
+- [x] Fix hitching while Home banners transition and settle
+- [x] Match video cadence without extra flashing and restore the fastest supported UI refresh
+- [x] Use the TV GPU and background CPU workers without blocking UI frames
+- [x] Show confirmed Bazarr search stages without inventing measurable progress
+- [x] Report Bazarr no-results and provider, connection or download failures clearly
+- [x] Track real subtitle download, installation and activation progress through completion
+- [x] Audit Stats for Nerds metric sources and logging behavior
+- [x] Reorganize Stats for Nerds into an intuitive Lucent overlay
+- [x] Keep Stats for Nerds diagnostics accurate and tied to the logging setting
+- [x] Coordinate any necessary 120 Hz TV OS and menu changes with the LumaTV session
+- [x] Review and integrate the isolated SpeechDock audio-informed subtitle alignment source return
+- [x] Implement authoritative main-display output in Marquee Stats without confusing source or overlay rates
+- [x] Fix poster pop-in using the existing bounded preload, pinning and eviction paths
+- [x] Fix the stuck loading spinner after marking a title watched from the long-press menu
+- [x] Review LumaTV’s native-menu 120 fps source with the existing sole Slow-role helper
+- [x] Resolve actionable offline SpeechDock integration gaps without waiting for TV access
+- [x] Verify subtitle offsets are applied once and consistently across SpeechDock requests and rendering
+- [x] Fix default aspect-ratio preservation for non-standard-resolution video
+- [x] Expose the existing video scaling choices in the player controls
+
+### Verify and deploy
+
+- [x] Run focused TV performance checks and deploy improvements
+- [x] Record verified performance limits and proven measurement paths
+- [x] Send compositor-side evidence and release the TV window to the LumaTV session
+- [x] Deploy and smoke-check the subtitle progress changes through the proven Marquee lane
+- [x] Recommend useful next tasks and safe parallel work from the existing project backlog
+- [x] Deploy and smoke-check the updated Stats for Nerds overlay through the proven Marquee lane
+- [x] Report the current Marquee source, build and runtime ownership to SpeechDock
+- [x] Reserve the alignment-owned player, subtitle settings and client seams until integration handoff
+- [x] Send the explicit isolated alignment-source handoff to SpeechDock without TV authority
+- [x] Record the source-only menu pacing and graphics packet for the sole Slow worker
+- [x] Verify main-display telemetry during playback with overlays and deploy the Stats output change through the proven app lane
+- [x] Exercise long-playback-return and rapid-scroll image residency through the existing native smoke path
+- [x] Verify mark-watched completion clears the loading state without extra Back presses
+- [ ] Activate and verify production SpeechDock alignment through the existing native settings flow
+  SpeechDock settings and alignment client are installed. Real TV consumption of verified aligned word times is unproven; untimestamped HTTP200 receipts do not prove it.
+- [x] Synchronize the verified c5199 app payload to the standby TV without waking or launching it
+- [x] Confirm Marquee’s cached file-only lane ownership from local completed-command evidence
+- [x] Recover and live-relay the existing cached-lane mutex path and safe file-only recipe
+- [x] Record and relay the verified standby-only file-lease release while preserving the failed quiet-screen guard
+- [x] Build and package the three SpeechDock client fixes through the proven cached ARM lane
+- [x] Synchronize the verified 2b12924e app payload to the standby TV without waking or launching it
+- [x] Report the actual SpeechDock transcription-model comparison and best subtitle model
+- [x] Build and deploy the targeted aspect-ratio and scaling-menu fix through the existing cached lane
+
+### Targeted volume-popup fix
+
+- [x] Locate the missing DTS/Dolby logo path and its playback-safe update mechanism
+- [x] Fix the audio-format logo without changing playback or audio settings
+- [x] Apply the popup-only update with the now-authorized UI refresh and verify the live logo
+- [x] Restore the complete previous Todo list from saved records after the volume-popup update
 
 ## Player / trailer preview
 

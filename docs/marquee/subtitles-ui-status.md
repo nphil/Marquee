@@ -2,6 +2,24 @@
 
 ## Resume here
 
+### Native volume popup
+
+PCM with Dolby Surround or DTS Neural:X processing displays the original processing-brand glyph
+and an explicit PCM carrier label. Encoded Dolby/DTS inputs retain their existing glyphs; plain
+PCM, direct/stereo modes, unknown input and mute do not acquire an invented encoded format.
+
+Native UI `346f43accb3fb6312b9e7c575d57972b8e5efb5ce6dca12f1bb2962a2085c0dc` is installed.
+Only the UI client was refreshed through the existing `ctl shell restart`; the compositor and
+Marquee executable were unchanged. Actual Marquee playback shows the Dolby Audio glyph with
+`PCM · Dolby Surround`. A native volume-key pair restored the exact starting level, 55.5; mute
+remained false. Final power Active, foreground Marquee, native UI ready. Own mutex was released
+with local mirror and remote owner absent. Proof: `/data/home/tmp/marquee-volume-popup-proof/`.
+
+The unchanged `/tmp/lt/tv.py` transport opens a fresh SSH connection for each command; it avoids
+the observed channel closure after reusing a connection for SFTP and execution. Native popup
+smoke reuses the Smart Remote input functions from `docs/research/perf/kb.py`, without tracing.
+Helper receiver reads are supported; volume POSTs require their supported native-client authority.
+
 ### Picture scaling
 
 Native placement and authored subtitle geometry share the decoded raster and pixel aspect ratio.
