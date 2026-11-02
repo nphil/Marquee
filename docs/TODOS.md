@@ -4,7 +4,7 @@
 
 - [x] Set a clear preferred audio language with robust track-language matching.
 - [x] Remember manual audio-language choices per show or movie without changing the global preference.
-- [ ] Verify and deploy audio-language preferences and title memory through the established Marquee lane.
+- [x] Verify and deploy audio-language preferences and title memory through the established Marquee lane.
 
 ## Intro and credits controls
 
@@ -12,13 +12,13 @@
 - [x] Provide Skip intro and Watch intro buttons with default skip focus.
 - [x] Provide credits countdown, Watch credits cancellation and persistent manual next-episode action.
 - [x] Explain missing Plex intro or credits markers without blocking playback.
-- [ ] Verify and deploy intro and credits skipping through the established Marquee lane.
+- [x] Verify and deploy intro and credits skipping through the established Marquee lane.
 
 ## Denon volume precision and controls assessment
 
 - [x] Assess Denon control capabilities and whether master volume supports configurable whole-number steps.
-- [ ] Display actual half-step receiver volume consistently in the native TV UI when whole-step AVR operation is unavailable.
-- [ ] Verify focused volume behavior and document the full AVR-settings integration requirements.
+- [x] Display actual half-step receiver volume consistently in the native TV UI when whole-step AVR operation is unavailable.
+- [x] Verify focused volume behavior and document the full AVR-settings integration requirements.
 
 ## Sonarr and Radarr integration backlog
 

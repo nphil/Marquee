@@ -2,6 +2,18 @@
 
 ## Resume here
 
+### Audio and skip-settings update
+
+Stable 0.10.0 source `c2f01107` is installed, with all 54 payload hashes matching.
+The running release executable matches SHA-256
+`2ee10cb5add80f979cf050d5172d6d10af1020de92a8fe5301b85d4ad8e88c62`.
+Actual TV preferences retain English audio, audio memory On, manual intro skipping
+and a five-second credits countdown. Audio memory completed an On/Off/On round trip;
+both timer pickers expose 3/5/10/15/30 seconds. Marker-boundary player cancellation
+has focused local regression coverage, not a new TV playback acceptance.
+Final power Active, foreground Marquee Video & playback; own lease explicitly released.
+Proof: `/data/home/tmp/marquee-audio-skip-proof/installed-final.json` and adjacent PNGs.
+
 ### Receiver volume precision and broader controls
 
 The recorded Denon AVR-S760H has no documented whole-unit master-volume step
@@ -10,10 +22,11 @@ distinguishes display Scale from Limit, Power On Level and Mute Level; Scale doe
 not change half-unit increments. The popup and read-only Sound volume row rounded
 those readings; Quick Settings already displayed fractional `volumeText`.
 
-Final UI candidate `bd31db80cdee3169615c0aee592ce5ff4aa1585b23de4df1dd164285345c9c9f`
+Installed native UI `bd31db80cdee3169615c0aee592ce5ff4aa1585b23de4df1dd164285345c9c9f`
 preserves half units in both readouts and reserves decimal width at 100% and 200% text.
-It is built, not installed; broader receiver controls remain read-only. The PCM/upmixer
-badge remains intact. Native-host renders, the focused freshness/precision regression
+Actual TV Sound and popup both showed 47.5; a volume-key pair produced 47.5 → 48 → 47.5
+with mute unchanged. Dolby Audio and PCM · Dolby Surround remain visible. Broader receiver
+controls remain read-only. Native-host renders, the freshness/precision regression
 and selected-source archive are retained under
 `/data/home/tmp/marquee-denon-half-volume-proof/`.
 
@@ -32,8 +45,9 @@ PCM with Dolby Surround or DTS Neural:X processing displays the original process
 and an explicit PCM carrier label. Encoded Dolby/DTS inputs retain their existing glyphs; plain
 PCM, direct/stereo modes, unknown input and mute do not acquire an invented encoded format.
 
-Native UI `346f43accb3fb6312b9e7c575d57972b8e5efb5ce6dca12f1bb2962a2085c0dc` is installed.
-Only the UI client was refreshed through the existing `ctl shell restart`; the compositor and
+Earlier UI `346f43accb3fb6312b9e7c575d57972b8e5efb5ce6dca12f1bb2962a2085c0dc`
+established the badge behavior; the half-step update above supersedes it.
+That update refreshed only the UI client through existing `ctl shell restart`; the compositor and
 Marquee executable were unchanged. Actual Marquee playback shows the Dolby Audio glyph with
 `PCM · Dolby Surround`. A native volume-key pair restored the exact starting level, 55.5; mute
 remained false. Final power Active, foreground Marquee, native UI ready. Own mutex was released
