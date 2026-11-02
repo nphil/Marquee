@@ -9,6 +9,23 @@
 - [ ] Search and select manual releases, with quality and rejection reasons visible.
 - [ ] Delete movies, episodes and shows with explicit confirmation and clear file/library scope.
 
+### Torsher reference and playback during download
+
+Reference: [Torsher](https://github.com/torsher-app/torsher). Its published features include ranked
+releases, audio/language preferences, series following, playback during download, read-ahead
+buffering, temporary storage with Keep, and title-level progress across release changes.
+
+- [ ] Review Torsher’s TV-first request, ranked-release, language/audio, follow-series and future-movie workflows for the existing Sonarr/Radarr integration.
+- [ ] Design a Torsher-inspired play-while-downloading backend compatible with Unraid and the existing download client, without replacing Sonarr/Radarr/Plex.
+- [ ] Play supported downloads before completion with prioritized fetching, bounded read-ahead, truthful buffering/progress, and seeking limited to available or fetchable ranges.
+- [ ] Add temporary-cache/Keep/cancel handling, safe completed-download import, and title-level resume across release changes without duplicate files or broken seeding.
+- [ ] Review Torsher’s AGPL-3.0 license and dependencies before copying or adapting upstream code.
+
+Torsher bundles its own torrent engine based on anacrolix/torrent. Sonarr and Radarr manage
+acquisition and import; they do not themselves supply a playable partial-file stream. Backend,
+download-client and webOS format/seek compatibility need verification before implementation.
+Upstream code is AGPL-3.0; feature inspiration is separate from copying its implementation.
+
 These integration requests remain a separate backlog; the scaling and volume-popup fixes do not implement them.
 
 ## Marquee work list
