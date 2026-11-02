@@ -326,6 +326,40 @@ fn pixel(frame: &Frame, x: i32, y: i32) -> [u8; 4] {
 
 #[test]
 #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
+fn native_aligned_first_word_waits_for_captured_onset_and_survives_seek() {
+    use super::super::reveal::{self, AlignedWord, Params};
+    use plx_plex::plex::session::Reveal;
+    let words = [
+        AlignedWord { start_byte: 0, end_byte: 5, start_ms: 421, end_ms: 601 },
+        AlignedWord { start_byte: 6, end_byte: 11, start_ms: 681, end_ms: 861 },
+        AlignedWord { start_byte: 12, end_byte: 21, start_ms: 901, end_ms: 1301 },
+    ];
+    let text = "first words ninechars"; // Same byte spans, with private text replaced.
+    let body = reveal::reveal_aligned_body(text, text, 1600,
+        Params { mode: Reveal::Word, outline_alpha: 0, back_alpha: 0 }, &words);
+    let source = script(&format!("Dialogue: 0,1:21:44.61,1:21:46.21,Default,,0,0,0,,{body}\n"));
+    let mut engine = Engine::default();
+    let alpha = |frame: &Frame| -> u64 {
+        frame.rects.iter().flat_map(|r| r.rgba.chunks_exact(4)).map(|p| u64::from(p[3])).sum()
+    };
+    let samples: Vec<_> = [4_905_030, 4_905_031, 4_905_111, 4_905_191,
+        4_905_290, 4_905_291, 4_905_451, 4_905_510, 4_905_511, 4_905_671,
+        4_905_030, 4_905_191].into_iter().map(|t| alpha(&render(&mut engine, &source, t))).collect();
+    assert_eq!(samples[0], 0);
+    assert_eq!(samples[1], 0);
+    assert!(samples[2] > 0 && samples[3] > samples[2]);
+    assert_eq!(samples[3], samples[4]);
+    assert_eq!(samples[4], samples[5]);
+    assert!(samples[6] > samples[5]);
+    assert_eq!(samples[6], samples[7]);
+    assert_eq!(samples[7], samples[8]);
+    assert!(samples[9] > samples[8]);
+    assert_eq!(samples[10], samples[0]);
+    assert_eq!(samples[11], samples[3]);
+}
+
+#[test]
+#[ignore = "requires the pinned native host libass artifact and packaged fonts"]
 fn native_script_readiness_rejects_nonpositive_events_but_keeps_quiet_gaps() {
     fn publish(source: &Arc<Source>, now_ms: i64) -> (SourceReadiness, Arc<Frame>) {
         let runtime = Runtime::new();

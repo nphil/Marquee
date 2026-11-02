@@ -9,8 +9,8 @@
 //!
 //! The reveal is written into the cue itself as ASS override tags, so libass lays the line out
 //! whole (nothing shifts as words appear) and the player's existing "animated cue" handling
-//! re-renders it while it plays: each unit after the first opens invisible (`\1a`, `\3a`, `\4a`
-//! at `FF`) and fades in over [`FADE_MS`] to the style's own alphas ([`Params`]).
+//! re-renders it while it plays: estimated units after the first and audio-aligned words with a
+//! delayed onset open invisible and fade over [`FADE_MS`] to the style's own alphas ([`Params`]).
 //!
 //! Cues that already carry animation (a `\t`, `\fad` or a karaoke tag) are left exactly as they
 //! are: their timing is exact. Authored ASS/SSA is never passed through here at all; its karaoke
@@ -319,7 +319,7 @@ fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, wo
     }
 
     let units = units(body, &segs, params.mode);
-    if units.len() < 2 {
+    if units.is_empty() || (params.mode != Reveal::Word && units.len() < 2) {
         return Some(body.to_string());
     }
     // Reject spans cutting a normal word in half, but allow CJK/Thai subunits.
@@ -351,7 +351,7 @@ fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, wo
     for (unit, &(index, start)) in units.iter().zip(&timings) {
         out.push_str(&body[cursor..unit.at]);
         cursor = unit.at;
-        if index > 0 {
+        if index > 0 || (params.mode == Reveal::Word && start > 0) {
             let end = start + fade.min(duration_ms - start);
             out.push_str(&format!("{{{open}\\t({start},{end},{closed})}}"));
         }
@@ -475,12 +475,25 @@ mod tests {
     }
 
     #[test]
+    fn aligned_first_word_waits_for_captured_acoustic_onset() {
+        // Captured cue: 4,904,610–4,906,210 ms; starts 4,905,031 / 291 / 511.
+        let text = "first words ninechars"; // Same byte spans, with private text replaced.
+        let words = [aligned(0, 5, 421, 601), aligned(6, 11, 681, 861), aligned(12, 21, 901, 1301)];
+        let out = reveal_aligned_body(text, text, 1600, WORDS, &words);
+        assert_eq!(starts(&out), [421, 681, 901]);
+        assert!(out.starts_with("{\\1a&HFF&\\3a&HFF&\\4a&HFF&\\t(421,581,"), "{out}");
+        assert_eq!(reveal_aligned_body(text, text, 1600, WORDS, &[]), reveal_body(text, 1600, WORDS));
+        let single = [aligned(0, 3, 421, 600)];
+        assert_eq!(starts(&reveal_aligned_body("one", "one", 1600, WORDS, &single)), [421]);
+    }
+
+    #[test]
     fn aligned_words_use_exact_starts_and_keep_tags_and_style() {
         let words = [aligned(0, 5, 100, 300), aligned(6, 11, 1250, 1500), aligned(12, 17, 2900, 2990)];
         let body = "{\\i1}hello world{\\i0}\\Nagain";
         let out = reveal_aligned_body(body, "hello world\nagain", 3000, WORDS, &words);
-        assert_eq!(starts(&out), [1250, 2900]);
-        assert!(out.starts_with("{\\i1}hello {"));
+        assert_eq!(starts(&out), [100, 1250, 2900]);
+        assert!(out.starts_with("{\\i1}{\\1a&HFF&"));
         assert!(out.contains("{\\i0}\\N{"));
         assert!(out.contains("\\t(2900,3000,\\1a&H00&\\3a&H26&\\4a&HFF&)"));
         let line_out = reveal_aligned_body(body, "hello world\nagain", 3000, LINES, &words);
