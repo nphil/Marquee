@@ -2,6 +2,30 @@
 
 ## Resume here
 
+### Receiver volume precision and broader controls
+
+The recorded Denon AVR-S760H has no documented whole-unit master-volume step
+setting. Its [Volume manual](https://manuals.denon.com/avrs760h/NA/EN/GFNFSYwrfimgdw.php)
+distinguishes display Scale from Limit, Power On Level and Mute Level; Scale does
+not change half-unit increments. The popup and read-only Sound volume row rounded
+those readings; Quick Settings already displayed fractional `volumeText`.
+
+Final UI candidate `bd31db80cdee3169615c0aee592ce5ff4aa1585b23de4df1dd164285345c9c9f`
+preserves half units in both readouts and reserves decimal width at 100% and 200% text.
+It is built, not installed; broader receiver controls remain read-only. The PCM/upmixer
+badge remains intact. Native-host renders, the focused freshness/precision regression
+and selected-source archive are retained under
+`/data/home/tmp/marquee-denon-half-volume-proof/`.
+
+Broader Settings > Sound > Receiver controls lack the helper’s `controls`
+capability and authenticated `POST /v1/receiver/set`; volume and ARC power
+synchronization already have writable paths. Completion needs typed setters
+and confirmed readback, per-setting model/mode capabilities, consistent power
+types and existing six-second freshness gating. Main-zone controls precede
+model-dependent Audyssey, levels/tone, ECO, Quick Select and Zone 2. Generic mode
+lists and UI fixtures are not evidence that the S760H supports every control.
+This assessment does not enable controls or change receiver settings.
+
 ### Native volume popup
 
 PCM with Dolby Surround or DTS Neural:X processing displays the original processing-brand glyph
