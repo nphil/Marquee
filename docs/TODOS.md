@@ -20,6 +20,17 @@
 - [x] Display actual half-step receiver volume consistently in the native TV UI when whole-step AVR operation is unavailable.
 - [x] Verify focused volume behavior and document the full AVR-settings integration requirements.
 
+## Subtitle-safe volume popup
+
+- [ ] Make bottom-positioned volume popup avoid subtitles using the existing native layout path.
+- [ ] Verify subtitle-safe popup placement with focused native renders and preserve deployment notes.
+- [ ] Coordinate other TV sessions and put the TV in standby after the update and brief check.
+
+Marquee should publish only changed rendered subtitle geometry through its existing Wayland
+connection. The OS popup must avoid the current painted bounds without screen scanning,
+media logging or polling; unknown geometry needs a conservative safe area. Playback remains
+untouched during source preparation.
+
 ## Sonarr and Radarr integration backlog
 
 - [ ] Add clean native Sonarr/Radarr connection settings and connection checks.

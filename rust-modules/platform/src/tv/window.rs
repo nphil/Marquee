@@ -20,6 +20,11 @@ pub fn release() -> bool {
     (super::port().release_surface)()
 }
 
+/// Report framebuffer-local subtitle bounds; `None` means a known empty region.
+pub fn subtitle_bounds(canvas_width: i32, canvas_height: i32, rect: Option<(i32, i32, i32, i32)>) {
+    (super::port().subtitle_bounds)(canvas_width, canvas_height, rect)
+}
+
 /// Arm the opaque-region hint at boot.
 pub fn arm_opaque_region() {
     (super::port().arm_opaque_region)()

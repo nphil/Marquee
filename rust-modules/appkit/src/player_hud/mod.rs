@@ -263,7 +263,8 @@ fn overhangs(r: Rect, band: HudBand) -> bool {
 /// frame by frame without re-uploading. Main-thread only (GL). This is the image counterpart to
 /// the text path (libass) — a selected track is either text or image, so at most one of the two draws a
 /// cue at a time.
-pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: HudBand, model: &HudModel) {
+pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: HudBand, model: &HudModel) -> Option<Rect> {
+    let mut bounds = None;
     let set = &mut cache.set;
     let sel = model.sub_sel;
     if sel < 0 {
@@ -273,7 +274,7 @@ pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: Hud
         cache.bytes = 0;
         cache.key = i64::MIN;
         cache.sel = i32::MIN; // reset BOTH halves of the key — neither should prop the other up
-        return;
+        return None;
     }
     match model.bitmap_key {
         None => cache.key = i64::MIN, // gap between cues — draw nothing this frame
@@ -281,7 +282,7 @@ pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: Hud
             if k != cache.key || sel != cache.sel {
                 let (cw, ch, rects) = match (model.bitmap_by_key)(k) {
                     Some(v) => v,
-                    None => return, // cue evicted between key lookup and fetch
+                    None => return None, // cue evicted between key lookup and fetch
                 };
                 // retire the surplus first, then re-spec the ids we keep: upload_rgba reuses
                 // a non-zero id, so a steady 1-rect stream never allocates a texture twice.
@@ -316,10 +317,36 @@ pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: Hud
             let p = Painter::root();
             for (tex, r) in set.iter() {
                 let dy = if overhangs(*r, band) { lift } else { 0.0 };
-                p.tex(*tex, Rect::new(r.x, r.y - dy, r.w, r.h), 0.0, tint);
+                let painted = Rect::new(r.x, r.y - dy, r.w, r.h);
+                p.tex(*tex, painted, 0.0, tint);
+                if *tex != 0 && tint[3] > 0.0 {
+                    union_subtitle_rect(&mut bounds, painted);
+                }
             }
         }
     }
+    bounds
+}
+
+/// Union non-empty painted rectangles in logical screen coordinates.
+pub fn union_subtitle_rect(bounds: &mut Option<Rect>, rect: Rect) {
+    if rect.w <= 0.0 || rect.h <= 0.0 || ![rect.x, rect.y, rect.w, rect.h].iter().all(|v| v.is_finite()) {
+        return;
+    }
+    let x = rect.x.max(0.0);
+    let y = rect.y.max(0.0);
+    let right = (rect.x + rect.w).min(SCR_W);
+    let bottom = (rect.y + rect.h).min(SCR_H);
+    if right <= x || bottom <= y { return; }
+    let rect = Rect::new(x, y, right - x, bottom - y);
+    *bounds = Some(match *bounds {
+        None => rect,
+        Some(old) => {
+            let x = old.x.min(rect.x);
+            let y = old.y.min(rect.y);
+            Rect::new(x, y, (old.x + old.w).max(rect.x + rect.w) - x, (old.y + old.h).max(rect.y + rect.h) - y)
+        }
+    });
 }
 
 /// **The image-subtitle display set on screen, and the two halves of its cache key** — a RENDER

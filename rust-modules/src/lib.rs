@@ -27,6 +27,7 @@ mod remote; // dev/testing remote-control channel: a FIFO the loop drains into s
 #[cfg(feature = "hostsim")]
 mod shot; // simulator screenshots: read the frame back and write a PNG (see the module doc)
 mod system;
+mod subtitle_wayland;
 
 mod textinput; // the TV's own on-screen keyboard, via plain SDL_StartTextInput (see the module doc)
 

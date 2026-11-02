@@ -87,6 +87,7 @@ pub struct PlayerRender {
     /// The decoded image-subtitle display set and its cache key (`player_hud`'s `SET`/`KEY`/`SEL`).
     pub subs: SubtitleBitmaps,
     pub ass: ass_subtitles::AssSubtitles,
+    subtitle_bounds: Option<Rect>,
 }
 
 /// **What the surfaces over the player page do to the transport this frame** — one value
@@ -107,6 +108,48 @@ pub enum HudPolicy {
     /// `OverlayKind::hud_policy`): the transport, the caption lift and the pointer/D-pad stops
     /// under it are all withheld. Outranks `Lifted` when both kinds of surface are up.
     Hidden,
+}
+
+fn subtitle_pixel_bounds(rect: Rect, (dw, dh): (i32, i32), (vx, vy, vw, vh): (i32, i32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    if dw <= 0 || dh <= 0 || vw <= 0 || vh <= 0 { return None; }
+    let sx = vw as f32 / plx_base::surface::LOGICAL_W;
+    let sy = vh as f32 / plx_base::surface::LOGICAL_H;
+    let top = dh - vy - vh;
+    let left = rect.x.max(0.0);
+    let upper = rect.y.max(0.0);
+    let right = (rect.x + rect.w).min(plx_base::surface::LOGICAL_W);
+    let lower = (rect.y + rect.h).min(plx_base::surface::LOGICAL_H);
+    if right <= left || lower <= upper { return None; }
+    let x0 = ((vx as f32 + left * sx).floor() as i32).clamp(0, dw);
+    let y0 = ((top as f32 + upper * sy).floor() as i32).clamp(0, dh);
+    let x1 = ((vx as f32 + right * sx).ceil() as i32).clamp(0, dw);
+    let y1 = ((top as f32 + lower * sy).ceil() as i32).clamp(0, dh);
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
+}
+
+#[cfg(test)]
+mod subtitle_bounds_tests {
+    use super::*;
+
+    #[test]
+    fn framebuffer_bounds_round_outward_and_respect_letterbox() {
+        let viewport = (40, 10, 960, 540);
+        assert_eq!(subtitle_pixel_bounds(Rect::new(10.2, 20.2, 5.2, 7.2), (1041, 561), viewport), Some((45, 21, 3, 4)));
+        assert_eq!(subtitle_pixel_bounds(Rect::new(-40.0, -30.0, 100.0, 60.0), (1041, 561), viewport), Some((40, 11, 30, 15)));
+        assert_eq!(subtitle_pixel_bounds(Rect::new(-50.0, 0.0, 10.0, 10.0), (1041, 561), viewport), None);
+        assert_eq!(subtitle_pixel_bounds(Rect::new(1.0, 1.0, 1.0, 1.0), (0, 0), viewport), None);
+    }
+
+    #[test]
+    fn reset_retires_last_drawn_bounds() {
+        let mut page = PlayerScreen::new(EntryId(9));
+        page.render.subtitle_bounds = Some(Rect::new(1.0, 2.0, 3.0, 4.0));
+        page.clear_last_drawn_subtitle_bounds();
+        assert!(page.last_drawn_subtitle_bounds().is_none());
+        page.render.subtitle_bounds = Some(Rect::new(1.0, 2.0, 3.0, 4.0));
+        page.transport_reset(true);
+        assert!(page.last_drawn_subtitle_bounds().is_none());
+    }
 }
 
 pub struct PlayerScreen {
@@ -233,6 +276,7 @@ impl PlayerScreen {
     /// while a relative tap burst keeps its requested target. A real stop ends the session, so the
     /// burst, HUD timer, dismissal and Up Next countdown go with it.
     pub fn transport_reset(&mut self, for_reload: bool) {
+        self.render.subtitle_bounds = None;
         self.transport_tap = false;
         self.scrub.cancel();
         self.row.reset_title();
@@ -249,7 +293,20 @@ impl PlayerScreen {
 
     /// Draw the image-subtitle display set — the render half this screen owns.
     pub fn draw_subtitle_bitmap(&mut self, hud_up: bool, band: plx_appkit::player_hud::HudBand) {
-        plx_appkit::player_hud::draw_subtitle_bitmap(&mut self.render.subs, hud_up, band, &self.model);
+        if let Some(rect) = plx_appkit::player_hud::draw_subtitle_bitmap(&mut self.render.subs, hud_up, band, &self.model) {
+            player_hud::union_subtitle_rect(&mut self.render.subtitle_bounds, rect);
+        }
+    }
+
+    /// Bounds painted on the last player draw, in top-left drawable pixels.
+    pub fn last_drawn_subtitle_bounds(&self) -> Option<(i32, i32, i32, i32)> {
+        let (dw, dh) = plx_base::surface::drawable();
+        subtitle_pixel_bounds(self.render.subtitle_bounds?, (dw, dh), plx_base::surface::viewport())
+    }
+
+    /// Retire bounds when the displayed subtitle is cleared outside a player draw.
+    pub fn clear_last_drawn_subtitle_bounds(&mut self) {
+        self.render.subtitle_bounds = None;
     }
 
     /// The transport, with this instance's own springs, memo and countdown. Paint only: what a
@@ -682,6 +739,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 // playback had ended; an instance is told exactly once.
                 self.render.subs.release();
                 self.render.ass.release();
+                self.render.subtitle_bounds = None;
                 Handled::Yes
             }
             ScreenEvent::Input(input) => {
@@ -1731,6 +1789,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Screen<H> for PlayerScreen {
         }
     }
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
+        self.render.subtitle_bounds = None;
         // The frame's publication of the playback session (spec §2.3) — see `AppViews::session`.
         let ps = H::session(f.cx);
         let now = f.cx.tick.ms;
@@ -1743,7 +1802,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Screen<H> for PlayerScreen {
         let subs_lift = self.subs_lift(ps, now);
         // The band the layout occupies, a value from its geometry this frame, not a constant.
         let band = player_hud::classic::frame_geometry().band();
-        self.render.ass.draw(subs_lift, band, &self.model);
+        self.render.subtitle_bounds = self.render.ass.draw(subs_lift, band, &self.model);
         if let Some(message) = self.render.ass.error() {
             plx_appkit::player_hud::draw_subtitle_message(message, subs_lift, band, &self.model, f.cx.measure);
         }

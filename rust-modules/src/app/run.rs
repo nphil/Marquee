@@ -693,6 +693,14 @@ unsafe fn present_and_swap(
                 plx_gfx::gfx::clip_clear();
                 plx_base::surface::present_supersampled();
             }
+            let bounds = if fr.player {
+                super::bridge::player_mut(&mut app.pages)
+                    .and_then(|player| player.last_drawn_subtitle_bounds())
+            } else {
+                None
+            };
+            let (canvas_width, canvas_height) = plx_base::surface::drawable();
+            plx_platform::tv::window::subtitle_bounds(canvas_width, canvas_height, bounds);
             // dev (`/tmp/plxnative-framecb`): this frame's compositor callback, requested before
             // the swap that commits it. One latched bool unarmed.
             plx_platform::tv::window::frame_probe_request();

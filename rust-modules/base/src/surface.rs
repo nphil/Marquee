@@ -65,10 +65,9 @@ static VH: AtomicI32 = AtomicI32::new(LOGICAL_H as i32);
 /// `scale()` as f32 bits — `AtomicF32` does not exist.
 static SCALE_BITS: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
 
-/// The GL drawable size in pixels. Private: outside this module the interesting things are
-/// [`viewport`], [`scale`] and the two pointer transforms.
+/// The GL drawable size in pixels.
 #[inline]
-fn drawable() -> (i32, i32) {
+pub fn drawable() -> (i32, i32) {
     (
         DRAWABLE_W.load(Ordering::Relaxed),
         DRAWABLE_H.load(Ordering::Relaxed),

@@ -32,6 +32,7 @@ pub struct Port {
     pub grab_surface: fn(*mut c_void),
     /// Answers whether a surface was held (and so actually let go of).
     pub release_surface: fn() -> bool,
+    pub subtitle_bounds: fn(i32, i32, Option<(i32, i32, i32, i32)>),
     pub arm_opaque_region: fn(),
     pub opaque_route: fn(bool),
     pub clear_opaque_region: fn(),
@@ -67,6 +68,7 @@ static ABSENT: Port = Port {
     bind_window: |_| {},
     grab_surface: |_| {},
     release_surface: || false,
+    subtitle_bounds: |_, _, _| {},
     arm_opaque_region: nothing,
     opaque_route: |_| {},
     clear_opaque_region: nothing,

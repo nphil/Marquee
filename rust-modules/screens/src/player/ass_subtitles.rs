@@ -227,14 +227,14 @@ impl AssSubtitles {
     /// distance a bottom region moves is the band's `lift`. It moves a text subtitle's bottom regions
     /// and nothing else: an authored script keeps its own placement. `model` is the frame's HUD
     /// snapshot, which the caption ink's tone is read from.
-    pub fn draw(&mut self, lift: bool, band: HudBand, model: &plx_appkit::player_hud::model::HudModel) {
-        self.draw_ink(lift, band, plx_appkit::player_hud::subtitle_ink(model));
+    pub fn draw(&mut self, lift: bool, band: HudBand, model: &plx_appkit::player_hud::model::HudModel) -> Option<Rect> {
+        self.draw_ink(lift, band, plx_appkit::player_hud::subtitle_ink(model))
     }
 
     /// [`AssSubtitles::draw`] with the tone ladder's tint (`base_ink`) given directly: what the
     /// Settings preview draws with.
-    pub fn draw_ink(&mut self, lift: bool, band: HudBand, base_ink: [f32; 4]) {
-        self.draw_look(lift, band, base_ink, &plx_media::route::subtitle_look(), Mapping::SCREEN);
+    pub fn draw_ink(&mut self, lift: bool, band: HudBand, base_ink: [f32; 4]) -> Option<Rect> {
+        self.draw_look(lift, band, base_ink, &plx_media::route::subtitle_look(), Mapping::SCREEN)
     }
 
     /// [`AssSubtitles::draw_ink`] with the look given directly rather than read from the live
@@ -247,14 +247,15 @@ impl AssSubtitles {
         base_ink: [f32; 4],
         look: &plx_plex::plex::session::SubtitleLook,
         map: Mapping,
-    ) {
+    ) -> Option<Rect> {
+        let mut bounds = None;
         self.retire_stale_alignment();
         let Some(frame) = self.frame.clone() else {
             if self.source == 0 {
                 clear_textures(&mut self.textures);
                 self.uploaded = 0;
             }
-            return;
+            return None;
         };
         if self.uploaded != frame.serial {
             plx_base::diag::spans::span("assup", || {
@@ -320,46 +321,44 @@ impl AssSubtitles {
             for bx in paint::boxes(&self.bands, look, k) {
                 let dy = self.dys.get(bx.region).copied().unwrap_or(0.0);
                 let radius = bx.radius * map.s;
-                Painter::root().rrect(
-                    map.rect((self.viewport.x as f32) + bx.x, (self.viewport.y as f32) + bx.y + dy, bx.w, bx.h),
-                    radius,
-                    radius,
-                    fill,
-                );
+                let painted = map.rect((self.viewport.x as f32) + bx.x, (self.viewport.y as f32) + bx.y + dy, bx.w, bx.h);
+                Painter::root().rrect(painted, radius, radius, fill);
+                if fill[3] > 0.0 {
+                    plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
+                }
             }
         }
         if styled && paint::wants_soft_shadow(look) {
             for tap in paint::soft_taps(look.edge_w, k) {
                 for (i, (texture, rect)) in self.textures.iter().zip(&frame.rects).enumerate() {
                     let dy = self.dys[i];
-                    Painter::root().tex(
-                        texture.id,
-                        map.rect(
-                            (self.viewport.x + rect.x) as f32 + tap.dx,
-                            (self.viewport.y + rect.y) as f32 + dy + tap.dy,
-                            rect.width as f32,
-                            rect.height as f32,
-                        ),
-                        0.0,
-                        [0.0, 0.0, 0.0, tap.alpha],
+                    let painted = map.rect(
+                        (self.viewport.x + rect.x) as f32 + tap.dx,
+                        (self.viewport.y + rect.y) as f32 + dy + tap.dy,
+                        rect.width as f32,
+                        rect.height as f32,
                     );
+                    Painter::root().tex(texture.id, painted, 0.0, [0.0, 0.0, 0.0, tap.alpha]);
+                    if texture.id != 0 && tap.alpha > 0.0 {
+                        plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
+                    }
                 }
             }
         }
         for (i, (texture, rect)) in self.textures.iter().zip(&frame.rects).enumerate() {
             let dy = self.dys[i];
-            Painter::root().tex(
-                texture.id,
-                map.rect(
-                    (self.viewport.x + rect.x) as f32,
-                    (self.viewport.y + rect.y) as f32 + dy,
-                    rect.width as f32,
-                    rect.height as f32,
-                ),
-                0.0,
-                ink,
+            let painted = map.rect(
+                (self.viewport.x + rect.x) as f32,
+                (self.viewport.y + rect.y) as f32 + dy,
+                rect.width as f32,
+                rect.height as f32,
             );
+            Painter::root().tex(texture.id, painted, 0.0, ink);
+            if texture.id != 0 && ink[3] > 0.0 {
+                plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
+            }
         }
+        bounds
     }
 
     /// Is the Blend follower still easing toward its level? The preview keeps repainting until it is
@@ -559,6 +558,21 @@ mod tests {
 
     const BOTTOM: ass::AlignSet = ass::AlignSet { bottom: true, middle: false, top: false };
     const TOP_AND_BOTTOM: ass::AlignSet = ass::AlignSet { bottom: true, middle: false, top: true };
+
+    #[test]
+    fn mapped_paint_union_keeps_viewport_lift_box_and_shadow() {
+        let map = Mapping { x: 10.0, y: 20.0, s: 0.5 };
+        let mut bounds = None;
+        // Glyph at a video viewport origin after a 40px HUD lift.
+        let glyph = map.rect(100.0 + 20.0, 50.0 + 200.0 - 40.0, 80.0, 30.0);
+        let shadow = map.rect(118.0, 207.0, 80.0, 30.0);
+        let background = map.rect(110.0, 205.0, 100.0, 40.0);
+        for painted in [glyph, shadow, background] {
+            plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
+        }
+        let r = bounds.unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (65.0, 122.5, 50.0, 20.0));
+    }
 
     #[test]
     fn busy_selection_only_keeps_the_same_embedded_track() {

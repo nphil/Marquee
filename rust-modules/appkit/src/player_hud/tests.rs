@@ -761,6 +761,25 @@ fn image_sub_lift_spans_only_the_rects_that_overhang() {
     );
 }
 
+#[test]
+fn painted_image_union_includes_lifted_dialogue_and_unmoved_sign() {
+    let sign = sub_screen_rect((75, 40, 150, 40), 720, 480);
+    let dialogue = sub_screen_rect((180, 400, 360, 60), 720, 480);
+    let lift = hud_lift([sign, dialogue].into_iter(), true, HudBand::CLASSIC);
+    let mut bounds = None;
+    for r in [sign, dialogue] {
+        let dy = if overhangs(r, HudBand::CLASSIC) { lift } else { 0.0 };
+        union_subtitle_rect(&mut bounds, Rect::new(r.x, r.y - dy, r.w, r.h));
+    }
+    let r = bounds.unwrap();
+    assert!(close(r.x, sign.x));
+    assert!(close(r.y, sign.y));
+    assert!(close(r.x + r.w, dialogue.x + dialogue.w));
+    assert!(close(r.y + r.h, HudBand::CLASSIC.ceil_y));
+    union_subtitle_rect(&mut bounds, Rect::new(0.0, 0.0, 0.0, 100.0));
+    assert_rect(bounds.unwrap(), r.x, r.y, r.w, r.h);
+}
+
 // ---- who owns the "the pipeline is working" signal -----------------------------------------
 
 use plx_media::player::PlaybackState as S;

@@ -2,6 +2,18 @@
 
 ## Resume here
 
+### Subtitle-safe volume popup
+
+The pending app/OS update reports the union of painted subtitle bounds with the same
+Wayland surface commit as its picture. Unchanged bounds send no message; there is no
+screen scan, media capture, polling loop or additional surface commit. Old compositors
+without the optional protocol retain normal playback.
+
+The bottom popup snaps above a collision and retains that height through cue gaps while
+visible. Unknown bounds use the conventional subtitle band. Native frame planning also
+needs a popup-only collision guard before activation; asynchronous relocation alone can
+lag the first frame of a new cue. This source update is not installed yet.
+
 ### Audio and skip-settings update
 
 Stable 0.10.0 source `c2f01107` is installed, with all 54 payload hashes matching.

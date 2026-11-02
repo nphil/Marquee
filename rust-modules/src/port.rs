@@ -28,6 +28,7 @@ static PORT: plx_platform::tv::Port = plx_platform::tv::Port {
     bind_window: plx_platform::webos::bind_window,
     grab_surface: crate::system::sys_grab_wayland,
     release_surface: crate::system::sys_release_wayland,
+    subtitle_bounds: crate::subtitle_wayland::set,
     arm_opaque_region: crate::system::opaque_region_init,
     opaque_route: crate::system::opaque_route,
     clear_opaque_region: crate::system::clear_opaque_region,

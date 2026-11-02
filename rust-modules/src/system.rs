@@ -72,6 +72,7 @@ pub(crate) fn clear_opaque_region() {
 /// opaque-region cache so a replacement surface receives its own request. Answers whether a
 /// surface was held.
 pub(crate) fn sys_release_wayland() -> bool {
+    crate::subtitle_wayland::release();
     unsafe {
         let had_surface = !G_WL_SURFACE.is_null();
         G_WL_SURFACE = std::ptr::null_mut();
@@ -103,6 +104,7 @@ pub(crate) fn ls2_pump() {
 }
 
 pub(crate) fn sys_grab_wayland(winp: *mut c_void) {
+    crate::subtitle_wayland::release();
     plx_telemetry::telemetry::window::record(plx_telemetry::telemetry::window::Observation::step(
         plx_telemetry::telemetry::window::Stage::WmQuery, None));
     unsafe {
@@ -177,6 +179,7 @@ pub(crate) fn sys_grab_wayland(winp: *mut c_void) {
                  decode invisibly beneath it. Check the SDL_SysWMinfo version handshake.",
             );
         }
+        crate::subtitle_wayland::init(disp, surf);
         clear_opaque_region();
     }
 }
@@ -252,7 +255,7 @@ struct RegistryListener {
 /// A libwayland symbol from the process's own scope. `libwayland-client` is linked normally, so it
 /// is already mapped; this only avoids naming these particular symbols in `DT_NEEDED`.
 #[cfg(not(feature = "hostsim"))]
-fn wl_sym(name: &str) -> Option<*mut c_void> {
+pub(crate) fn wl_sym(name: &str) -> Option<*mut c_void> {
     plx_base::dynlib::Handle::self_handle()
         .sym(name)
         .filter(|p| !p.is_null())
