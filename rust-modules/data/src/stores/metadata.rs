@@ -26,13 +26,8 @@
 //! - `detail_loading() -> bool`, `season_loading() -> bool` — status flags for a spinner/read-out.
 //! - `detail_request_status(sid, rk) -> Option<bool>` — the addressed detail request: `None` for
 //!   another target, `Some(true)` while pending, `Some(false)` after success or failure settles.
-//! - `active_marker(head: Playhead) -> Option<Marker>`,
-//!   `synthesized_tail_marker(head: Playhead, has_next: bool) -> Option<Marker>` — the
-//!   skip-segment/Up-Next window logic; both take the playhead (`is_playing`, `playpos_ns`,
-//!   `duration_ns`, sampled by the caller — this layer reads no player state). Two free-function neighbours,
-//!   `tail_marker(pos_ms: i64, dur_ms: i64) -> Option<Marker>` and `marker_at(markers: &[Marker],
-//!   pos_ms: i64) -> Option<Marker>`, take their state explicitly and stay plain `crate::metadata`
-//!   functions — no owner to borrow from.
+//! - active_marker locates a Plex marker using the caller's sampled playback position.
+//!   marker_at is the pure slice-based counterpart.
 //! - `audio_ordinal(audio: &[Stream], i: usize) -> i32`, `sub_render_ordinal(subs: &[Stream], i:
 //!   usize) -> i32` — container-ordinal projections for the track picker; free functions, no state.
 //! - `resume_ns(resume_ms: i64, dur_ms: i64) -> i64`, `friendly_codec(codec: &str) -> String` —

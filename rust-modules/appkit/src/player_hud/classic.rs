@@ -163,10 +163,7 @@ impl ControlSlot {
         }
         Some(match self {
             ControlSlot::Discs(controls) => controls.rect(idx)?,
-            ControlSlot::Skip(pr) => {
-                let w = ctrl_slot_w(row, pr.label(), measure);
-                Rect::new(CTRL_RIGHT - w, CTRL_Y, w, CTRL_H)
-            }
+            ControlSlot::Skip(pr) => crate::skip_pill::item_rect_peek(row, pr, idx, measure),
             ControlSlot::UpNext(_) => {
                 let l = crate::up_next::layout_peek(row, measure);
                 if idx == crate::up_next::BTN_NEXT { l.next } else { l.credits }
@@ -878,7 +875,7 @@ pub fn draw_hud(
                     crate::up_next::draw(ps, row, up, pc, focus == GROUP_ROW, btn, now, measure);
                 }
                 ControlSlot::Skip(pr) => {
-                    crate::skip_pill::draw(row, pc, pr, focus == GROUP_ROW, measure);
+                    crate::skip_pill::draw(row, pc, pr, (focus == GROUP_ROW).then_some(btn), up.progress(now), measure);
                 }
                 ControlSlot::Discs(controls) => {
                     for i in 0..BTN_N {

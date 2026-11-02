@@ -39,6 +39,8 @@ use plx_plex::plex::session::{
     InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
     ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitleLook, SubtitleLookPref, SubtitlePosition,
+    RememberAudioChoices, RememberAudioChoicesPref,
+    AutoSkipDelay, CreditsCountdownDelay, IntroSkipDelayPref, CreditsSkipDelayPref,
     SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TrailerAutoplayPref, UnderPosters,
     UnderPostersPref,
 };
@@ -149,7 +151,13 @@ macro_rules! packed_by_index {
         }
     )*};
 }
-packed_by_index!(InstantDpadSeeking = 0; NextEpisodeMode = 0; SkipInterval = 1; DeckPress = 0; SubtitleSize = 1, alignment = true; SubtitlePosition = 0, alignment = true; SubtitleTone = 0, alignment = true; HdrOverlayBrightness = 1);
+packed_by_index!(AutoSkipDelay = 0; CreditsCountdownDelay = 1; InstantDpadSeeking = 0; NextEpisodeMode = 0; SkipInterval = 1; DeckPress = 0; SubtitleSize = 1, alignment = true; SubtitlePosition = 0, alignment = true; SubtitleTone = 0, alignment = true; HdrOverlayBrightness = 1);
+
+impl Packed for RememberAudioChoices {
+    const SEED: u8 = 1;
+    fn to_u8(self) -> u8 { if self == Self::On { 1 } else { 0 } }
+    fn from_u8(value: u8) -> Self { if value == 0 { Self::Off } else { Self::On } }
+}
 
 impl Packed for DirectPlayMode {
     const SEED: u8 = 0;
@@ -254,6 +262,9 @@ live_cell!(
     /// by `appkit::player_hud::scrub_step_ns`.
     pub(super) SKIP_INTERVAL: SkipInterval, "skip interval preference"
 );
+live_cell!(pub(super) REMEMBER_AUDIO_CHOICES: RememberAudioChoices, "remember audio choices");
+live_cell!(pub(super) INTRO_SKIP_DELAY: AutoSkipDelay, "intro skip delay");
+live_cell!(pub(super) CREDITS_SKIP_DELAY: CreditsCountdownDelay, "credits skip delay");
 live_cell!(
     /// What OK does on a Continue Watching card: play, or open its page (a movie's own; an
     /// episode's SHOW, on the card's season). Read by every deck's press and draw (Home's and
@@ -384,6 +395,9 @@ macro_rules! live_setting {
 
 live_setting!(DirectPlayModePref, DIRECT_PLAY_MODE, "direct play mode");
 live_setting!(InstantDpadSeekingPref, INSTANT_DPAD_SEEKING, "instant D-pad seeking");
+live_setting!(RememberAudioChoicesPref, REMEMBER_AUDIO_CHOICES, "remember audio choices");
+live_setting!(IntroSkipDelayPref, INTRO_SKIP_DELAY, "intro skip delay");
+live_setting!(CreditsSkipDelayPref, CREDITS_SKIP_DELAY, "credits skip delay");
 live_setting!(DeckPressPref, DECK_PRESS, "deck press");
 live_setting!(UnderPostersPref, UNDER_POSTERS, "under posters");
 live_setting!(SubtitleSizePref, SUBTITLE_SIZE, "subtitle size");
@@ -445,6 +459,9 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<HdrOverlayBrightnessPref>(),
     LiveRow::of::<NextEpisodeModePref>(),
     LiveRow::of::<SkipIntervalPref>(),
+    LiveRow::of::<RememberAudioChoicesPref>(),
+    LiveRow::of::<IntroSkipDelayPref>(),
+    LiveRow::of::<CreditsSkipDelayPref>(),
     LiveRow::of::<InstantDpadSeekingPref>(),
     LiveRow::of::<DeckPressPref>(),
     LiveRow::of::<UnderPostersPref>(),
@@ -829,6 +846,9 @@ choices! {
     DirectPlay => DirectPlayModePref,
     NextEpisode => NextEpisodeModePref,
     SkipInterval => SkipIntervalPref,
+    RememberAudioChoices => RememberAudioChoicesPref,
+    IntroSkipDelay => IntroSkipDelayPref,
+    CreditsSkipDelay => CreditsSkipDelayPref,
     InstantDpadSeeking => InstantDpadSeekingPref,
     DeckPress => DeckPressPref,
     UnderPosters => UnderPostersPref,
@@ -957,6 +977,13 @@ pub fn skip_interval() -> SkipInterval { SkipIntervalPref::live() }
 pub fn restore_skip_interval(interval: SkipInterval) { restore_live::<SkipIntervalPref>(interval) }
 /// Blocking persistence seam, as [`set_next_episode_mode`].
 pub fn set_skip_interval(interval: SkipInterval) -> bool { confirm::<SkipIntervalPref>(interval) }
+
+pub fn remember_audio_choices() -> RememberAudioChoices { RememberAudioChoicesPref::live() }
+pub fn restore_remember_audio_choices(value: RememberAudioChoices) { restore_live::<RememberAudioChoicesPref>(value) }
+pub fn set_remember_audio_choices(value: RememberAudioChoices) -> bool { confirm::<RememberAudioChoicesPref>(value) }
+
+pub fn intro_skip_delay() -> AutoSkipDelay { IntroSkipDelayPref::live() }
+pub fn credits_skip_delay() -> CreditsCountdownDelay { CreditsSkipDelayPref::live() }
 
 pub fn deck_press() -> DeckPress { DeckPressPref::live() }
 pub fn restore_deck_press(mode: DeckPress) { restore_live::<DeckPressPref>(mode) }

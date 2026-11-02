@@ -56,6 +56,7 @@ pub struct PickerPage {
     copy: String,
     txn: Txn,
     alert: DecisionPrompt,
+    profile_generation: u32,
 }
 
 /// The picker's rows as a [`Form`], from plain inputs: one `Choice` per option (checked when it is
@@ -78,7 +79,8 @@ impl PickerPage {
                 quality: plx_media::route::quality(), direct_play: plx_media::route::direct_play_mode(),
                 checked: u32::MAX, confirming: false, affirmative: false, alert_scroll: 0 },
             copy: String::new(), txn: Txn::new(true),
-            alert: DecisionPrompt::new(ALERT_GROUP, ALERT, ALERT + 1, plx_platform::i18n::msg::settings_cancel_c(), plx_platform::i18n::msg::settings_playback_enable_force_c()) };
+            alert: DecisionPrompt::new(ALERT_GROUP, ALERT, ALERT + 1, plx_platform::i18n::msg::settings_cancel_c(), plx_platform::i18n::msg::settings_playback_enable_force_c()),
+            profile_generation: plx_plex::plex::session::current_gen() };
         s.rebuild(true);
         s
     }
@@ -117,7 +119,7 @@ impl PickerPage {
                 FocusTarget::Elem(FocusKey { entry: self.entry, elem: self.state.selected })
             } else { FocusTarget::ContainerGroup(group) } }))));
     }
-    fn account(&self) -> bool { self.state.field.kind() == Some(Kind::AudioSubtitles) }
+    fn account(&self) -> bool { self.state.field.kind() == Some(Kind::AudioSubtitles) && self.state.field != PickerKind::RememberAudioChoices }
     fn start_initial_load(&mut self, fx: &mut Effects<'_, InnerHost>) -> bool {
         if self.account() && self.txn.request.is_none() && self.txn.snapshot.is_none()
             && self.txn.pending.is_none() && self.state.io.status.is_empty() {
@@ -149,6 +151,10 @@ impl PickerPage {
     }
     fn activate(&mut self, key: u32, fx: &mut Effects<'_, InnerHost>) {
         if self.state.io.busy { return; }
+        if matches!(self.state.field, PickerKind::RememberAudioChoices | PickerKind::IntroSkipDelay | PickerKind::CreditsSkipDelay) && self.profile_generation != plx_plex::plex::session::current_gen() {
+            self.pop(fx);
+            return;
+        }
         match form_activate(&self.form, key, fx) {
             Some(PickAction::Pick(value)) => self.pick(value, fx),
             Some(PickAction::Retry) => {
@@ -178,7 +184,7 @@ impl PickerPage {
     }
     fn commit(&mut self, value: Value, fx: &mut Effects<'_, InnerHost>) {
         match value {
-            Value::InstantDpadSeeking(_) | Value::Quality(_) | Value::DirectPlay(_) | Value::NextEpisode(_) | Value::DeckPress(_) | Value::SkipInterval(_) | Value::UiResolution(_) | Value::SubtitleSize(_) | Value::SubtitlePosition(_) | Value::HdrOverlay(_) => self.txn.save_local(&mut self.state.io, value, fx),
+            Value::IntroSkipDelay(_) | Value::CreditsSkipDelay(_) | Value::RememberAudioChoices(_) | Value::InstantDpadSeeking(_) | Value::Quality(_) | Value::DirectPlay(_) | Value::NextEpisode(_) | Value::DeckPress(_) | Value::SkipInterval(_) | Value::UiResolution(_) | Value::SubtitleSize(_) | Value::SubtitlePosition(_) | Value::HdrOverlay(_) => self.txn.save_local(&mut self.state.io, value, fx),
             value => {
                 let mut update = PreferenceUpdate::default();
                 match (self.state.field, value) {
@@ -231,7 +237,7 @@ impl Machine<InnerHost> for PickerPage {
             ScreenEvent::Tick(t) => {
                 self.alert.update(t.dt());
                 let started = self.start_initial_load(fx);
-                if self.txn.stale() {
+                if (self.account() && self.txn.stale()) || (matches!(self.state.field, PickerKind::RememberAudioChoices | PickerKind::IntroSkipDelay | PickerKind::CreditsSkipDelay) && self.profile_generation != plx_plex::plex::session::current_gen()) {
                     // The profile changed under the list: nothing here can be saved any more. Leave;
                     // the field list beneath sees the same staleness and reloads.
                     self.txn.snapshot = None; self.txn.pending = None; self.state.io.busy = false;

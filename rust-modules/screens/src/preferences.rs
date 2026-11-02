@@ -18,7 +18,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver};
-use plx_plex::plex::session::{UiResolution, InstantDpadSeeking};
+use plx_plex::plex::session::{UiResolution, InstantDpadSeeking, RememberAudioChoices, AutoSkipDelay, CreditsCountdownDelay};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
 use plx_media::route::{Choice, DeckPress, DirectPlayMode, NextEpisodeMode, Quality, SkipInterval, SubtitlePosition, SubtitleSize, HdrOverlayBrightness};
 use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
@@ -49,7 +49,10 @@ impl PickerKind {
         Self::NextEpisode => plx_platform::i18n::msg::settings_playback_next_episode(),
         Self::DeckPress => plx_platform::i18n::msg::settings_playback_deck_press(),
         Self::SkipInterval => plx_platform::i18n::msg::settings_playback_skip_interval(),
+        Self::IntroSkipDelay => plx_platform::i18n::msg::settings_playback_intro_skip(),
+        Self::CreditsSkipDelay => plx_platform::i18n::msg::settings_playback_credits_skip(),
         Self::InstantDpadSeeking => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking(),
+        Self::RememberAudioChoices => plx_platform::i18n::msg::settings_audio_remember_choices(),
         Self::UiResolution => plx_platform::i18n::msg::settings_resolution_title(),
         Self::AudioLanguage => plx_platform::i18n::msg::settings_audio_language(), Self::SubtitleMode => plx_platform::i18n::msg::settings_audio_subtitles(),
         Self::SubtitleLanguage => plx_platform::i18n::msg::settings_audio_subtitle_language(), Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_forced_subtitles(),
@@ -65,15 +68,18 @@ impl PickerKind {
         Self::NextEpisode => plx_platform::i18n::msg::settings_playback_next_episode_copy(),
         Self::DeckPress => plx_platform::i18n::msg::settings_playback_deck_press_copy(),
         Self::SkipInterval => plx_platform::i18n::msg::settings_playback_skip_interval_copy(),
+        Self::IntroSkipDelay => plx_platform::i18n::msg::settings_playback_intro_skip_copy(),
+        Self::CreditsSkipDelay => plx_platform::i18n::msg::settings_playback_credits_skip_copy(),
         Self::InstantDpadSeeking => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking_copy(),
+        Self::RememberAudioChoices => plx_platform::i18n::msg::settings_audio_remember_choices_copy(),
         Self::UiResolution => plx_platform::i18n::msg::settings_resolution_detail(),
         Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_account_note(),
     }}
     /// The field-list page this field belongs to; `None` for a field the Settings root lists itself.
     fn kind(self) -> Option<Kind> {
         match self {
-            Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::HdrOverlay | Self::NextEpisode | Self::DeckPress | Self::SkipInterval | Self::InstantDpadSeeking => Some(Kind::Playback),
-            Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => Some(Kind::AudioSubtitles),
+            Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::HdrOverlay | Self::NextEpisode | Self::DeckPress | Self::SkipInterval | Self::InstantDpadSeeking | Self::IntroSkipDelay | Self::CreditsSkipDelay => Some(Kind::Playback),
+            Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles | Self::RememberAudioChoices => Some(Kind::AudioSubtitles),
             Self::UiResolution => None,
         }
     }
@@ -93,7 +99,7 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Value { InstantDpadSeeking(InstantDpadSeeking), Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), HdrOverlay(HdrOverlayBrightness), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), UiResolution(UiResolution), Language(String), Mode(i64), Forced(i64) }
+enum Value { IntroSkipDelay(AutoSkipDelay), CreditsSkipDelay(CreditsCountdownDelay), RememberAudioChoices(RememberAudioChoices), InstantDpadSeeking(InstantDpadSeeking), Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), HdrOverlay(HdrOverlayBrightness), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), UiResolution(UiResolution), Language(String), Mode(i64), Forced(i64) }
 
 /// The hashed half of a transaction: what the page shows while a load or save is in flight.
 struct Io { busy: bool, status: String }
@@ -131,7 +137,7 @@ impl Whose {
         (profile.generation, Self::Profile(name))
     }
     /// The Playback list's Profile rows cannot be changed.
-    fn read_only(&self, kind: Kind) -> bool { kind == Kind::Playback && *self == Self::Nobody }
+    fn read_only(&self, _kind: Kind) -> bool { *self == Self::Nobody }
 }
 
 /// The copy under the title: the failure / progress status (with the Force note while Forced is
@@ -160,7 +166,7 @@ fn copy_text<'a>(subject: Subject, status: &'a str, direct_play: DirectPlayMode,
     }
     if forced { return Cow::Borrowed(plx_platform::i18n::msg::settings_playback_force_note()); }
     Cow::Borrowed(match subject {
-        Subject::Page(_) => plx_platform::i18n::msg::settings_audio_account_note(),
+        Subject::Page(_) => plx_platform::i18n::msg::settings_audio_page_note(),
         Subject::Picker(field) => field.copy(),
     })
 }
@@ -261,6 +267,9 @@ impl Txn {
             Value::NextEpisode(mode) => PreferenceCmd::Choose(Choice::NextEpisode(mode), reply),
             Value::DeckPress(mode) => PreferenceCmd::Choose(Choice::DeckPress(mode), reply),
             Value::InstantDpadSeeking(seeking) => PreferenceCmd::Choose(Choice::InstantDpadSeeking(seeking), reply),
+            Value::RememberAudioChoices(mode) => PreferenceCmd::Choose(Choice::RememberAudioChoices(mode), reply),
+            Value::IntroSkipDelay(delay) => PreferenceCmd::Choose(Choice::IntroSkipDelay(delay), reply),
+            Value::CreditsSkipDelay(delay) => PreferenceCmd::Choose(Choice::CreditsSkipDelay(delay), reply),
             Value::SkipInterval(interval) => PreferenceCmd::Choose(Choice::SkipInterval(interval), reply),
             // Install-wide, not a seated profile's live setting, so it has no `Choice`.
             Value::UiResolution(mode) => PreferenceCmd::UiResolution { mode, reply },
@@ -341,6 +350,9 @@ impl FormId for RowId {
             // Listed on the Settings root, never on a field list; the number only keeps the match total.
             Self::Field(PickerKind::UiResolution) => 9,
             Self::Field(PickerKind::InstantDpadSeeking) => 10,
+            Self::Field(PickerKind::RememberAudioChoices) => 4,
+            Self::Field(PickerKind::IntroSkipDelay) => 11,
+            Self::Field(PickerKind::CreditsSkipDelay) => 12,
             Self::Retry => 6,
         })
     }
@@ -379,6 +391,8 @@ pub struct PreferencesPage {
     deck_press: DeckPress,
     skip_interval: SkipInterval,
     instant_dpad_seeking: InstantDpadSeeking,
+    remember_audio_choices: RememberAudioChoices,
+    skip_delays: (AutoSkipDelay, CreditsCountdownDelay),
     /// Whose settings the list was last built for, with the profile publication it read that from
     /// (not canonical state, like `look`: the copy and the rows' dimming are not hashed either).
     whose: (u32, Whose),
@@ -391,7 +405,9 @@ impl PreferencesPage {
             copy: String::new(), txn: Txn::new(false),
             look: (plx_media::route::subtitle_size(), plx_media::route::subtitle_position(), plx_media::route::hdr_overlay_brightness()),
             next_episode: plx_media::route::next_episode_mode(), deck_press: plx_media::route::deck_press(),
-            skip_interval: plx_media::route::skip_interval(), instant_dpad_seeking: plx_media::route::instant_dpad_seeking(), whose: Whose::now() };
+            skip_interval: plx_media::route::skip_interval(), instant_dpad_seeking: plx_media::route::instant_dpad_seeking(),
+            remember_audio_choices: plx_media::route::remember_audio_choices(),
+            skip_delays: (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay()), whose: Whose::now() };
         s.rebuild(None);
         s
     }
@@ -420,10 +436,13 @@ impl PreferencesPage {
         self.deck_press = plx_media::route::deck_press();
         self.skip_interval = plx_media::route::skip_interval();
         self.instant_dpad_seeking = plx_media::route::instant_dpad_seeking();
+        self.remember_audio_choices = plx_media::route::remember_audio_choices();
+        self.skip_delays = (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay());
         self.whose = Whose::now();
         self.copy = copy_text(Subject::Page(self.state.kind), &self.state.io.status, self.state.direct_play, &self.whose.1).into_owned();
         let inputs = FieldListInputs {
             kind: self.state.kind, quality: self.state.quality, direct_play: self.state.direct_play,
+            next_episode: self.next_episode,
             prefs: self.txn.prefs(), busy: self.state.io.busy, show_retry: !self.state.io.status.is_empty(),
             read_only: self.whose.1.read_only(self.state.kind),
         };
@@ -454,9 +473,9 @@ impl PreferencesPage {
 /// Which fields `kind`'s list shows: Audio & Subtitles has none until a snapshot has loaded.
 fn fields_of(inputs: &FieldListInputs<'_>) -> &'static [PickerKind] {
     match inputs.kind {
-        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::HdrOverlay, PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking],
-        Kind::AudioSubtitles if inputs.prefs.is_some() => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles],
-        _ => &[],
+        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::HdrOverlay, PickerKind::NextEpisode, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking],
+        Kind::AudioSubtitles if inputs.prefs.is_some() => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::RememberAudioChoices],
+        Kind::AudioSubtitles => &[PickerKind::RememberAudioChoices],
     }
 }
 /// `PickerKind`'s current [`Value`] from the two locally-saved settings plus the account preferences, if
@@ -472,6 +491,9 @@ fn resolve_value(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
         PickerKind::DeckPress => Value::DeckPress(plx_media::route::deck_press()),
         PickerKind::SkipInterval => Value::SkipInterval(plx_media::route::skip_interval()),
         PickerKind::InstantDpadSeeking => Value::InstantDpadSeeking(plx_media::route::instant_dpad_seeking()),
+        PickerKind::RememberAudioChoices => Value::RememberAudioChoices(plx_media::route::remember_audio_choices()),
+        PickerKind::IntroSkipDelay => Value::IntroSkipDelay(plx_media::route::intro_skip_delay()),
+        PickerKind::CreditsSkipDelay => Value::CreditsSkipDelay(plx_media::route::credits_skip_delay()),
         PickerKind::UiResolution => Value::UiResolution(plx_plex::plex::session::peek().ui_resolution()),
         // A deprecated code (`pb`) resolves to its replacement so the picker checks that entry.
         PickerKind::AudioLanguage => Value::Language(prefs.and_then(|p| p.stated_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
@@ -499,6 +521,10 @@ fn field_options(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
             .map(|m| (deck_press_label(m).into(), Value::DeckPress(m))).collect(),
         PickerKind::InstantDpadSeeking => InstantDpadSeeking::LADDER.into_iter()
             .map(|m| (instant_dpad_seeking_label(m).into(), Value::InstantDpadSeeking(m))).collect(),
+        PickerKind::RememberAudioChoices => RememberAudioChoices::LADDER.into_iter()
+            .map(|m| (instant_dpad_seeking_label(if m == RememberAudioChoices::On { InstantDpadSeeking::On } else { InstantDpadSeeking::Off }).into(), Value::RememberAudioChoices(m))).collect(),
+        PickerKind::IntroSkipDelay => AutoSkipDelay::LADDER.into_iter().map(|d| (skip_delay_label(d).into(), Value::IntroSkipDelay(d))).collect(),
+        PickerKind::CreditsSkipDelay => CreditsCountdownDelay::LADDER.into_iter().map(|d| (skip_delay_label(AutoSkipDelay::from_index(d.index() + 1)).into(), Value::CreditsSkipDelay(d))).collect(),
         PickerKind::SkipInterval => SkipInterval::LADDER.into_iter()
             .map(|i| (skip_interval_label(i), Value::SkipInterval(i))).collect(),
         PickerKind::UiResolution => UiResolution::LADDER.into_iter()
@@ -546,6 +572,7 @@ struct FieldListInputs<'a> {
     kind: Kind,
     quality: Quality,
     direct_play: DirectPlayMode,
+    next_episode: NextEpisodeMode,
     /// The signed-in account's audio/subtitle preferences, once a snapshot has loaded.
     prefs: Option<&'a AudioPreferences>,
     busy: bool,
@@ -561,6 +588,8 @@ fn field_form(inputs: &FieldListInputs<'_>) -> Form<RowId, Action, SettingsPage>
     for &field in fields_of(inputs) {
         let value = field_readout(field, inputs.quality, inputs.direct_play, inputs.prefs);
         let mut row = Row::new(field.title()).value(&value).chevron(true).dim(inputs.busy);
+        let credits_disabled = field == PickerKind::CreditsSkipDelay && inputs.next_episode != NextEpisodeMode::Countdown;
+        if credits_disabled { row = row.detail(plx_platform::i18n::msg::settings_playback_credits_countdown_requires()); }
         if field == PickerKind::Quality && inputs.direct_play == DirectPlayMode::Forced {
             row = row.detail(plx_platform::i18n::msg::settings_playback_overridden());
         }
@@ -568,7 +597,7 @@ fn field_form(inputs: &FieldListInputs<'_>) -> Form<RowId, Action, SettingsPage>
             row = row.detail(plx_platform::i18n::msg::settings_audio_selection_off());
         }
         section = section.item(RowId::Field(field), RowKind::Nav(SettingsPage::Picker(field)), Action::Open, row)
-            .disabled(inputs.read_only);
+            .disabled(inputs.read_only || credits_disabled);
     }
     section = section.item_if(inputs.kind == Kind::AudioSubtitles && !inputs.busy && inputs.show_retry,
         RowId::Retry, RowKind::Button, Action::Retry,
@@ -593,6 +622,17 @@ fn next_episode_label(mode: NextEpisodeMode) -> &'static str {
         NextEpisodeMode::Off => plx_platform::i18n::msg::settings_playback_next_episode_off(),
     }
 }
+fn skip_delay_label(delay: AutoSkipDelay) -> &'static str {
+    match delay {
+        AutoSkipDelay::Manual => plx_platform::i18n::msg::settings_playback_skip_delay_manual(),
+        AutoSkipDelay::Seconds3 => plx_platform::i18n::msg::settings_playback_skip_delay_seconds3(),
+        AutoSkipDelay::Seconds5 => plx_platform::i18n::msg::settings_playback_skip_delay_seconds5(),
+        AutoSkipDelay::Seconds10 => plx_platform::i18n::msg::settings_playback_skip_delay_seconds10(),
+        AutoSkipDelay::Seconds15 => plx_platform::i18n::msg::settings_playback_skip_delay_seconds15(),
+        AutoSkipDelay::Seconds30 => plx_platform::i18n::msg::settings_playback_skip_delay_seconds30(),
+    }
+}
+
 fn deck_press_label(mode: DeckPress) -> &'static str {
     match mode {
         DeckPress::Details => plx_platform::i18n::msg::settings_playback_deck_press_details(),
@@ -661,6 +701,8 @@ impl Machine<InnerHost> for PreferencesPage {
                     || self.deck_press != plx_media::route::deck_press()
                     || self.skip_interval != plx_media::route::skip_interval()
                     || self.instant_dpad_seeking != plx_media::route::instant_dpad_seeking()
+                    || self.remember_audio_choices != plx_media::route::remember_audio_choices()
+                    || self.skip_delays != (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay())
                     || self.whose.0 != plx_plex::plex::session::current_gen() {
                     self.rebuild_keeping();
                     // An empty loading table had no engine seat. Give its first landing (or
@@ -722,7 +764,7 @@ impl Screen<InnerHost> for PreferencesPage {
 pub fn nav_items_for_test(kind: Kind, prefs: Option<&AudioPreferences>) -> Vec<(u32, SettingsPage)> {
     let mut form: FormTable<RowId, Action, SettingsPage> = FormTable::new(BAND);
     form.set(field_form(&FieldListInputs { kind, quality: Quality::Original, direct_play: DirectPlayMode::Auto,
-        prefs, busy: false, show_retry: false, read_only: false }), None);
+        next_episode: NextEpisodeMode::Countdown, prefs, busy: false, show_retry: false, read_only: false }), None);
     (0..form.table.n_rows() as usize).filter_map(|i| match form.binding_at(i)?.kind.clone() {
         RowKind::Nav(dest) => Some((form.key_at(i)?.0, dest)),
         _ => None,

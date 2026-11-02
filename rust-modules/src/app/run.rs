@@ -124,6 +124,40 @@ pub(crate) unsafe fn run(app: &mut App) {
         // the restructure moves this loop onto (spec §3.3/§8.4); on THIS loop navcommit
         // precedes tick_drain, and the FRAMEDROP line prints them in the algorithm's order.
         let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
+        if fr.ctrl.is_discs() && plx_media::route::up_next(&app.player.session).is_some() {
+            if let Some(marker) = super::bridge::player(&app.pages).and_then(|p|
+                p.up_next.credits_offer(plx_media::player::playpos_ns() / 1_000_000)) {
+                fr.ctrl = plx_appkit::player_hud::ControlSlot::UpNext(marker);
+            }
+        }
+        if super::bridge::player(&app.pages).is_some_and(|p| !p.marker_notice_shown) {
+            let checked = {
+                let meta = app.bridge.metadata_view();
+                meta.playing().filter(|p| p.markers_known && p.kind == "episode"
+                    && p.rk == plx_media::route::cur_rk(&app.player.session)
+                    && p.sid == plx_media::route::cur_sid(&app.player.session)).map(|p| {
+                        use plx_data::metadata::MarkerKind;
+                        let intro = p.markers.iter().any(|m| m.kind == MarkerKind::Intro);
+                        let credits = p.markers.iter().any(|m| m.kind == MarkerKind::Credits);
+                        match (intro, credits) {
+                            (false, false) => Some(plx_platform::i18n::msg::widgets_skip_missing_both()),
+                            (false, true) => Some(plx_platform::i18n::msg::widgets_skip_missing_intro()),
+                            (true, false) => Some(plx_platform::i18n::msg::widgets_skip_missing_credits()),
+                            _ => None,
+                        }
+                    })
+            };
+            if let Some(missing) = checked {
+                if let Some(player) = super::bridge::player_mut(&mut app.pages) {
+                    player.marker_notice_shown = true;
+                    if let Some(text) = missing {
+                        plx_base::task::spawn_small("missing Plex markers", move || {
+                            let _ = plx_platform::tv::toast::toast(text);
+                        });
+                    }
+                }
+            }
+        }
         let first_controlled_frame = app.boot_initial.is_some() && app.prev == 0;
         let fr = &mut fr;
         app.instr.mark(plx_base::diag::heartbeat::Phase::Top); // also starts the visit's hang interval
@@ -1943,21 +1977,25 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             log("EOS: stopping an off-route engine nothing owns");
             plx_media::player::stop_bufferfeed(&mut app.player.session, &mut app.adapters.player);
         }
-        // Up Next countdown elapsed → start the queued episode on its own. Beside the EOS
-        // handoff so the whole auto-advance chain reads in one place.
-        if playback_may_run(app)
-            && super::bridge::player(&app.pages).is_some_and(|p| p.up_next.expired(fr.now))
-        {
-            if !play_up_next(&mut app.player.session,
-                &mut app.adapters.player,
-                HUD_LINGER_MS,
-                &mut app.pages,
-                &mut app.bridge,
-            ) {
-                if let Some(player) = super::bridge::player_mut(&mut app.pages) {
-                    player.up_next.cancel(); // nothing queued after all — don't re-fire
-                }
+        // An elapsed countdown may only act while its visible primary control still owns focus.
+        let meta = app.bridge.metadata_view();
+        let head = plx_data::metadata::Playhead { playing: plx_media::player::is_playing(&app.player.session),
+            pos_ns: plx_media::player::playpos_ns() };
+        let real_offer = meta.playing_markers_known() && meta.active_marker(head)
+            .is_some_and(|m| fr.ctrl.offer() == Some((m.kind, m.start_ms)));
+        if !app.inputs.is_empty() {
+            if let Some(player) = super::bridge::player_mut(&mut app.pages) {
+                player.up_next.cancel_expired_for_input(fr.ctrl, fr.now, true);
             }
+        }
+        let skip_safe = playback_may_run(app) && real_offer && app.inputs.is_empty() && !app.pages.surface_up() && !paused()
+            && super::bridge::player(&app.pages).is_some_and(|p|
+                p.up_next.expired_for(fr.ctrl, fr.now) && p.hud.visible(&app.player.session, fr.now, false)
+                    && p.hud.nav.focus == GROUP_ROW && p.hud.nav.btn == fr.ctrl.primary_btn());
+        if skip_safe {
+            let _ = activate_ctrl_row(&mut app.player, &mut app.adapters.player,
+                &mut app.repause_at, fr.ctrl, &mut app.refresh_hubs, fr.ctrl.primary_btn(),
+                &mut app.pages, &mut app.bridge);
         }
         // The return hold (`playback::ReturnHold`): armed for an exit that reported a stop, ended
         // by a fresh key press or click. That press is NOT delivered this frame: the page that
@@ -2049,10 +2087,10 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             let mut parked = false;
             if let Some(player) = super::bridge::player_mut(&mut app.pages) {
                 if player.up_next.armed() {
-                    if plx_appkit::up_next::countdown_may_run(
-                        bare,
+                    if !paused_now && plx_appkit::up_next::countdown_may_run(
+                        bare && !player.hud.dismissed,
                         player.hud.nav.focus == GROUP_ROW,
-                        player.hud.nav.btn == plx_appkit::up_next::BTN_NEXT,
+                        player.hud.nav.btn == fr.ctrl.primary_btn(),
                     ) {
                         player.hud.dismissed = false;
                         player.hud.extend(fr.now, HUD_LINGER_MS);
@@ -5178,9 +5216,10 @@ mod lifecycle_regression_tests {
                     final_seg: true,
                 }),
                 20,
+                true,
             );
             let mut fr = Frame::begin(&self.app.player.session, self.app.bridge.metadata_view());
-            fr.now = 20 + plx_appkit::up_next::COUNTDOWN_MS;
+            fr.now = 20 + 5_000;
             assert!(player.up_next.expired(fr.now));
             fr
         }
@@ -8555,8 +8594,8 @@ mod lifecycle_regression_tests {
         let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::AfterCredits);
         let mut t = playing_inside_final_credits(&mut rig);
         let fr = Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view());
-        assert!(fr.ctrl.is_discs(), "inside the credits the row keeps the discs");
-        t += plx_appkit::up_next::COUNTDOWN_MS;
+        assert!(matches!(fr.ctrl, plx_appkit::player_hud::ControlSlot::UpNext(_)), "manual next remains available");
+        t += 5_000;
         step(&mut rig.app, &mut t, vec![]);
         let player = super::super::bridge::player(&rig.app.pages).unwrap();
         assert!(!player.up_next.expired(t), "no countdown was armed for the credits");
@@ -8590,8 +8629,10 @@ mod lifecycle_regression_tests {
             "inside the credits the tile takes over",
         );
         assert!(!plx_media::route::play_pending(), "the countdown is still running");
-        t += plx_appkit::up_next::COUNTDOWN_MS;
-        step(&mut rig.app, &mut t, vec![]);
+        for _ in 0..5 {
+            t += 984;
+            step(&mut rig.app, &mut t, vec![]);
+        }
         assert!(plx_media::route::play_pending(), "the countdown requests the successor");
     }
 

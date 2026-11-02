@@ -1,4 +1,48 @@
 {
+  "settings.playback.credits_countdown.requires": {
+    "value": "Set Next episode to Countdown.",
+    "description": "Credits countdown requires Next episode Countdown mode."
+  },
+  "settings.playback.intro_skip": {
+    "value": "Intro skipping",
+    "description": "Playback marker control: settings.playback.intro_skip"
+  },
+  "settings.playback.credits_skip": {
+    "value": "Credits countdown",
+    "description": "Playback marker control: settings.playback.credits_skip"
+  },
+  "settings.playback.intro_skip.copy": {
+    "value": "Choose whether to skip an intro automatically after the marker begins. Watch intro cancels the countdown.",
+    "description": "Playback marker control: settings.playback.intro_skip.copy"
+  },
+  "settings.playback.credits_skip.copy": {
+    "value": "Countdown length when Next episode is set to Countdown. Watch credits cancels the early countdown.",
+    "description": "Playback marker control: settings.playback.credits_skip.copy"
+  },
+  "settings.playback.skip_delay.manual": {
+    "value": "Manual",
+    "description": "Playback marker control: settings.playback.skip_delay.manual"
+  },
+  "settings.playback.skip_delay.seconds3": {
+    "value": "After 3 s",
+    "description": "Playback marker control: settings.playback.skip_delay.3"
+  },
+  "settings.playback.skip_delay.seconds5": {
+    "value": "After 5 s",
+    "description": "Playback marker control: settings.playback.skip_delay.5"
+  },
+  "settings.playback.skip_delay.seconds10": {
+    "value": "After 10 s",
+    "description": "Playback marker control: settings.playback.skip_delay.10"
+  },
+  "settings.playback.skip_delay.seconds15": {
+    "value": "After 15 s",
+    "description": "Playback marker control: settings.playback.skip_delay.15"
+  },
+  "settings.playback.skip_delay.seconds30": {
+    "value": "After 30 s",
+    "description": "Playback marker control: settings.playback.skip_delay.30"
+  },
   "settings.title": {
     "value": "Settings",
     "description": "Settings, account, onboarding or privacy UI: settings.title"
@@ -744,6 +788,18 @@
     "args": {
       "count": "i64"
     }
+  },
+  "settings.audio.remember_choices": {
+    "value": "Remember audio choices",
+    "description": "Audio choice memory: settings.audio.remember_choices"
+  },
+  "settings.audio.remember_choices.copy": {
+    "value": "Manual audio choices are remembered separately for each show or movie on this TV and profile. Automatic and fallback choices are never saved.",
+    "description": "Audio choice memory: settings.audio.remember_choices.copy"
+  },
+  "settings.audio.page_note": {
+    "value": "Language preferences are shared with other Plex apps. Audio choice memory stays on this TV and profile.",
+    "description": "Audio choice memory: settings.audio.page_note"
   },
   "settings.audio.language": {
     "value": "Preferred audio language",

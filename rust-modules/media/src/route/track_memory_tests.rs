@@ -35,6 +35,19 @@ fn no_commentary(_: usize) -> bool {
 }
 
 #[test]
+fn audio_memory_scopes_movies_and_uses_language_not_stream_id() {
+    assert_eq!(audio_memory_key("episode", "show", "ep"), Some("show"));
+    assert_eq!(audio_memory_key("movie", "", "film"), Some("film"));
+    assert_eq!(audio_memory_key("clip", "", "trailer"), None);
+    let mut first = audio(1, "", "ac3", 2, "");
+    first.lang = "Japanese".into();
+    let memo = memo_of_audio(&[first], 0).unwrap();
+    let mut later = audio(99, "", "eac3", 6, "");
+    later.language_tag = "ja-JP".into();
+    assert_eq!(match_audio(&[later], &memo, no_commentary), Ok(0));
+}
+
+#[test]
 fn audio_matches_the_remembered_language_over_the_file_default() {
     let mut tracks = vec![audio(1, "eng", "eac3", 6, ""), audio(2, "jpn", "eac3", 6, "")];
     tracks[0].default = true;

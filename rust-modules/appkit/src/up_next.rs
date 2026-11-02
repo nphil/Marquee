@@ -1,8 +1,5 @@
-//! **Up Next** — the next-episode tile in the transport HUD (`Player Screen.dc.html`, the control
-//! row's third occupant). It appears when the playing episode reaches a FINAL credits marker (one
-//! that runs to the end of the item) and the PlayQueue has another episode behind it, under the
-//! default Next episode preference (Up Next countdown): the next episode's still, its address and
-//! name, and a countdown that starts it on its own.
+//! Up Next occupies the transport row from the first Plex credits marker while a successor exists.
+//! Next and Watch remain available in every mode; only Countdown starts the successor automatically.
 //!
 //! The data is `route::up_next()` — lifted from the `continuous=1` PlayQueue that every playback
 //! already creates, so nothing here asks the server what plays next.
@@ -43,9 +40,6 @@ use plx_ui::{Env, Painter, Rect, View};
 use std::ffi::CString;
 use std::os::raw::c_int;
 
-/// How long the tile holds before starting the next episode by itself. Long enough to read the
-/// title and reach for the remote, short enough that "always the next episode" stays automatic.
-pub const COUNTDOWN_MS: u32 = 10_000;
 
 /// The row's two items, in the order they are DRAWN — so `hud_nav.btn` and the arrow keys agree
 /// without a translation table (LEFT lands on 0 because 0 is the left one).
@@ -61,25 +55,14 @@ pub const BTN_NEXT: c_int = 1;
 /// `app.rs` stays one line for every occupant.
 pub const PRIMARY_BTN: c_int = BTN_NEXT;
 
-/// **The auto-advance countdown, owned by the player's instance** (`PlayerScreen::up_next`,
-/// restructure spec §9). Two `static mut`s until phase 9, and the reason they had to move is the
-/// reason every other piece of this route's state did: the countdown belongs to ONE playback, and a
-/// module global cannot be told that a playback has ended — `reset` was called by hand from four
-/// places to stand in for that.
+/// Countdown and cancellation choices for one playback.
 #[derive(Default)]
 pub struct Countdown {
-    /// `SDL_GetTicks` deadline at which the next episode auto-starts. 0 = not armed (the tile is
-    /// not up, or the countdown was cancelled).
-    ///
-    /// It stays a stored INSTANT rather than becoming a `Fx::Timer` alone, because the tile's
-    /// primary button IS the countdown: its fill sweeps off the REMAINING milliseconds every frame
-    /// ([`draw`]), so the deadline has to be readable, not merely scheduled. A timer beside it
-    /// would be a second representation of one instant and a second thing to keep in step.
-    deadline: u32,
-    /// The user cancelled the auto-advance for THIS segment (they took hold of the row). Latched,
-    /// because `tick` runs every frame and would otherwise re-arm the countdown the very next one.
-    /// Cleared when the segment ends, so the next episode's credits get their own chance.
-    cancelled: bool,
+    current: Option<crate::player_hud::ControlSlot>,
+    timer: Option<(u32, u32)>, // deadline and configured duration
+    intro_cancelled: bool,
+    credits_cancelled: bool,
+    first_credits: Option<plx_data::metadata::Marker>,
 }
 
 /// Whether this owns the control row this frame. The precedence itself lives in ONE place —
@@ -88,24 +71,6 @@ pub fn is_shown(slot: crate::player_hud::ControlSlot) -> bool {
     matches!(slot, crate::player_hud::ControlSlot::UpNext(_))
 }
 
-/// Per-frame tick: arm the countdown the moment the tile appears, and forget everything about it
-/// once the segment is over. Idempotent — an already-running countdown is never pushed forward.
-///
-/// It arms on APPEARANCE, never on focus: the tile's whole promise is that it starts the next
-/// episode on its own. Focus only ever [`cancel`]s it.
-impl Countdown {
-pub fn tick(&mut self, slot: crate::player_hud::ControlSlot, now: u32) {
-    if !is_shown(slot) {
-        // segment over (or the queue emptied): drop the deadline AND the cancel latch, so the
-        // next episode's credits arm normally instead of inheriting this one's refusal
-        self.reset();
-        return;
-    }
-    if self.deadline == 0 && !self.cancelled {
-        self.deadline = now.wrapping_add(COUNTDOWN_MS).max(1);
-    }
-}
-}
 
 /// PURE — may the countdown keep running, the transport standing this way?
 ///
@@ -114,7 +79,7 @@ pub fn tick(&mut self, slot: crate::player_hud::ControlSlot, now: u32) {
 /// focus on *Watch Credits* means they have reached for the alternative. Either way, engaging the
 /// transport is not consent to be pulled into the next episode. Arrowing back to *Next Episode*
 /// does not re-arm — [`cancel`] latches — so a countdown, once refused, stays refused for the
-/// segment.
+/// episode.
 ///
 /// `bare_transport` is the third way and the one that reads as an omission until it bites: an
 /// OVERLAY — a track menu, the Info card, the Chapters strip — is the only way of taking hold
@@ -133,63 +98,115 @@ pub fn countdown_may_run(bare_transport: bool, row_focused: bool, play_next_focu
 }
 
 impl Countdown {
-/// Stop the auto-advance without hiding the tile — the user took hold of the row, or is leaving.
-/// The tile stays up as a plain "OK to play" target; only the clock is off.
-pub fn cancel(&mut self) {
-    self.deadline = 0;
-    self.cancelled = true;
-}
-
-/// True while the countdown is running (drives holding the HUD up, so the timer is never invisible).
-pub fn armed(&self) -> bool {
-    self.deadline != 0
-}
-
-/// Milliseconds left (0 when disarmed or elapsed).
-///
-/// `SDL_GetTicks` wraps every ~49 days, so the comparison is the codebase's wrapping idiom
-/// (`wrapping_sub` against the 0x8000_0000 half-range), not `now < deadline` — the same guard
-/// `app.rs` uses for its deferred-refresh deadline.
-///
-/// While the screenshot pipeline holds the free-running clocks (`stillclock`,
-/// [`plx_machine::motion::held_clock_ms`]) the countdown holds with them, at that much elapsed: its
-/// fill then draws one fixed picture and it never runs out. Never in a build without
-/// `devtriggers`.
-fn remaining_ms(&self, now: u32) -> u32 {
-    let d = self.deadline;
-    if d == 0 {
-        return 0;
+    /// Update the visible slot. Synthetic continuity offers must pass `false`.
+    pub fn tick(&mut self, slot: crate::player_hud::ControlSlot, now: u32, authoritative: bool) {
+        self.tick_with(slot, now, authoritative, plx_media::route::intro_skip_delay(),
+            plx_media::route::credits_skip_delay(), plx_media::route::next_episode_mode());
     }
-    if let Some(held) = plx_machine::motion::held_clock_ms() {
-        return COUNTDOWN_MS.saturating_sub(held).max(1);
+
+    fn tick_with(&mut self, slot: crate::player_hud::ControlSlot, now: u32, authoritative: bool,
+        intro: plx_plex::plex::session::AutoSkipDelay, credits: plx_plex::plex::session::CreditsCountdownDelay,
+        next: plx_media::route::NextEpisodeMode) {
+        use crate::player_hud::ControlSlot;
+        use plx_data::metadata::MarkerKind;
+        let (kind, marker, delay) = match slot {
+            ControlSlot::Skip(p) => (Some(p.kind), Some(p.marker), match p.kind {
+                MarkerKind::Intro => intro.milliseconds(),
+                MarkerKind::Credits => None,
+            }),
+            ControlSlot::UpNext(m) => (Some(MarkerKind::Credits), Some(m),
+                if next == plx_media::route::NextEpisodeMode::Countdown { Some(credits.milliseconds()) } else { None }),
+            ControlSlot::Discs(_) => (None, None, None),
+        };
+        if authoritative && kind == Some(MarkerKind::Credits) && self.first_credits.is_none() {
+            self.first_credits = marker;
+        }
+        let changed = self.current != Some(slot);
+        self.current = kind.map(|_| slot);
+        let cancelled = match kind {
+            Some(MarkerKind::Intro) => self.intro_cancelled,
+            Some(MarkerKind::Credits) => self.credits_cancelled,
+            None => false,
+        };
+        let duration = if authoritative && !cancelled { delay.map(|ms| ms as u32) } else { None };
+        match duration {
+            None => self.timer = None,
+            Some(ms) if changed || self.timer.map(|(_, duration)| duration) != Some(ms) => {
+                self.timer = Some((now.wrapping_add(ms), ms));
+            }
+            Some(_) => {}
+        }
     }
-    let left = d.wrapping_sub(now);
-    if left == 0 || left >= 0x8000_0000 {
-        0
-    } else {
-        left
+
+    /// The first real credits offer remains available after its marker has ended.
+    pub fn credits_offer(&self, pos_ms: i64) -> Option<plx_data::metadata::Marker> {
+        self.first_credits.filter(|marker| pos_ms >= marker.start_ms)
     }
-}
 
-/// True once the countdown has run out — `app.rs` polls this and starts the next episode.
-pub fn expired(&self, now: u32) -> bool {
-    self.armed() && self.remaining_ms(now) == 0
-}
+    /// Refuse automatic action for this marker kind for the rest of the episode.
+    pub fn cancel_kind(&mut self, kind: plx_data::metadata::MarkerKind) {
+        use plx_data::metadata::MarkerKind;
+        match kind {
+            MarkerKind::Intro => self.intro_cancelled = true,
+            MarkerKind::Credits => self.credits_cancelled = true,
+        }
+        if self.current.map(|slot| match slot {
+            crate::player_hud::ControlSlot::Skip(p) => p.kind == kind,
+            crate::player_hud::ControlSlot::UpNext(_) => kind == MarkerKind::Credits,
+            crate::player_hud::ControlSlot::Discs(_) => false,
+        }).unwrap_or(false) {
+            self.timer = None;
+        }
+    }
 
-/// The descriptor to start, cloned off the `&'static` store. Cloning is mandatory, not tidiness:
-/// `route::request_play_queue_item` clears `UP_NEXT` as its first act, so handing it a borrow of the
-/// static would be a use-after-free the borrow checker cannot see through a `'static` lifetime.
-pub fn take(&mut self, ps: &plx_media::route::PlaybackSession) -> Option<UpNext> {
-    self.cancel();
-    plx_media::route::up_next(ps).cloned()
-}
+    /// Refuse automatic action for the currently displayed marker kind.
+    pub fn cancel(&mut self) {
+        let kind = match self.current {
+            Some(crate::player_hud::ControlSlot::Skip(p)) => Some(p.kind),
+            Some(crate::player_hud::ControlSlot::UpNext(_)) => Some(plx_data::metadata::MarkerKind::Credits),
+            _ => None,
+        };
+        if let Some(kind) = kind { self.cancel_kind(kind); }
+    }
 
-/// Per-session reset — a new playback must not inherit the previous episode's countdown OR its
-/// cancel latch.
-pub fn reset(&mut self) {
-    self.deadline = 0;
-    self.cancelled = false;
-}
+    pub fn armed(&self) -> bool { self.timer.is_some() }
+
+    fn remaining_ms(&self, now: u32) -> u32 {
+        let Some((deadline, duration)) = self.timer else { return 0; };
+        if let Some(held) = plx_machine::motion::held_clock_ms() {
+            return duration.saturating_sub(held).max(1);
+        }
+        let left = deadline.wrapping_sub(now);
+        if left == 0 || left >= 0x8000_0000 { 0 } else { left.min(duration) }
+    }
+
+    /// Elapsed fraction of the configured delay, or None when disarmed.
+    pub fn progress(&self, now: u32) -> Option<f32> {
+        self.timer.map(|(_, duration)| 1.0 - self.remaining_ms(now) as f32 / duration as f32)
+    }
+
+    pub fn expired(&self, now: u32) -> bool {
+        self.armed() && self.remaining_ms(now) == 0
+    }
+
+    /// An expiry belongs only to the exact marker that armed it.
+    pub fn expired_for(&self, slot: crate::player_hud::ControlSlot, now: u32) -> bool {
+        self.current == Some(slot) && self.expired(now)
+    }
+
+    /// A remote action in the expiration frame wins over automatic playback.
+    pub fn cancel_expired_for_input(&mut self, slot: crate::player_hud::ControlSlot, now: u32, pending: bool) {
+        if pending && self.expired_for(slot, now) { self.cancel(); }
+    }
+
+    /// Clone before the playback queue is replaced.
+    pub fn take(&mut self, ps: &plx_media::route::PlaybackSession) -> Option<UpNext> {
+        self.cancel_kind(plx_data::metadata::MarkerKind::Credits);
+        plx_media::route::up_next(ps).cloned()
+    }
+
+    /// Start a new episode without carrying its predecessor's choices.
+    pub fn reset(&mut self) { *self = Self::default(); }
 }
 
 // ---- geometry: the control row's slot, with the next episode's still stacked above it. The still
@@ -379,7 +396,7 @@ pub fn draw(
         if !plx_machine::motion::phase_clocks_held() {
             plx_machine::idle::invalidate();
         }
-        b = b.progress(1.0 - (up.remaining_ms(now) as f32 / COUNTDOWN_MS as f32).clamp(0.0, 1.0));
+        b = b.progress(up.progress(now).unwrap_or(0.0));
     }
     b.draw(&e, p);
 }
@@ -387,6 +404,153 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::player_hud::{ControlSlot, Controls};
+    use plx_data::metadata::{Marker, MarkerKind};
+    use plx_plex::plex::session::{AutoSkipDelay as IntroDelay, CreditsCountdownDelay as CreditsDelay};
+    use plx_media::route::NextEpisodeMode as Mode;
+
+    fn marker(kind: MarkerKind, start_ms: i64, final_seg: bool) -> Marker {
+        Marker { kind, start_ms, end_ms: start_ms + 1_000, final_seg }
+    }
+
+    fn skip(kind: MarkerKind, start: i64, final_seg: bool) -> ControlSlot {
+        ControlSlot::Skip(crate::skip_pill::prompt_for(marker(kind, start, final_seg)))
+    }
+
+    fn tick(c: &mut Countdown, slot: ControlSlot, now: u32, authoritative: bool,
+        intro: IntroDelay, credits: CreditsDelay, mode: Mode) {
+        c.tick_with(slot, now, authoritative, intro, credits, mode);
+    }
+
+    #[test]
+    fn expired_timer_cannot_activate_a_different_marker() {
+        let mut c = Countdown::default();
+        let intro = skip(MarkerKind::Intro, 100, false);
+        let credits = ControlSlot::UpNext(marker(MarkerKind::Credits, 900, true));
+        tick(&mut c, intro, 10, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(c.expired_for(intro, 3010));
+        assert!(!c.expired_for(credits, 3010));
+        c.cancel_expired_for_input(intro, 3010, true);
+        assert!(!c.expired_for(intro, 3010));
+        tick(&mut c, intro, 3011, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(!c.armed(), "remote input must not re-arm on the next frame");
+    }
+
+    #[test]
+    fn intro_delays_and_progress_follow_each_setting_and_wrap() {
+        for delay in IntroDelay::LADDER {
+            let mut c = Countdown::default();
+            let start = u32::MAX - 1_000;
+            let slot = skip(MarkerKind::Intro, 100, false);
+            tick(&mut c, slot, start, true, delay, CreditsDelay::default(), Mode::Countdown);
+            if let Some(ms) = delay.milliseconds() {
+                let ms = ms as u32;
+                assert_eq!(c.progress(start), Some(0.0));
+                assert_eq!(c.progress(start.wrapping_add(ms / 2)), Some(0.5));
+                tick(&mut c, slot, start.wrapping_add(1_000), true, delay, CreditsDelay::default(), Mode::Countdown);
+                assert!(!c.expired(start.wrapping_add(ms - 1)));
+                assert!(c.expired(start.wrapping_add(ms)));
+                assert_eq!(c.progress(start.wrapping_add(ms)), Some(1.0));
+            } else {
+                assert!(!c.armed());
+                assert_eq!(c.progress(start), None);
+            }
+        }
+    }
+
+    #[test]
+    fn credits_only_auto_advance_a_real_offer_with_a_successor_in_countdown_mode() {
+        let m = marker(MarkerKind::Credits, 10_000, true);
+        for mode in [Mode::Countdown, Mode::AfterCredits, Mode::Off] {
+            for authoritative in [false, true] {
+                let mut c = Countdown::default();
+                tick(&mut c, ControlSlot::UpNext(m), 100, authoritative, IntroDelay::Manual, CreditsDelay::default(), mode);
+                assert_eq!(c.armed(), authoritative && mode == Mode::Countdown);
+                if c.armed() {
+                    assert!(!c.expired(5_099));
+                    assert!(c.expired(5_100));
+                }
+            }
+        }
+        for final_seg in [false, true] {
+            let mut c = Countdown::default();
+            tick(&mut c, skip(MarkerKind::Credits, 10_000, final_seg), 100, true,
+                IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+            assert!(!c.armed());
+        }
+    }
+
+    #[test]
+    fn credits_delay_controls_timing_and_setting_changes_restart_the_timer() {
+        let slot = ControlSlot::UpNext(marker(MarkerKind::Credits, 10_000, false));
+        for delay in CreditsDelay::LADDER {
+            let mut c = Countdown::default();
+            let ms = delay.milliseconds() as u32;
+            tick(&mut c, slot, 0, true, IntroDelay::Manual, delay, Mode::Countdown);
+            assert_eq!(c.progress(ms / 2), Some(0.5));
+            assert!(!c.expired(ms - 1));
+            assert!(c.expired(ms));
+        }
+        let mut c = Countdown::default();
+        tick(&mut c, slot, 0, true, IntroDelay::Manual, CreditsDelay::Seconds3, Mode::Countdown);
+        tick(&mut c, slot, 2_000, true, IntroDelay::Manual, CreditsDelay::Seconds10, Mode::Countdown);
+        assert_eq!(c.progress(2_000), Some(0.0));
+        assert!(c.expired(12_000));
+        tick(&mut c, slot, 13_000, false, IntroDelay::Manual, CreditsDelay::Seconds10, Mode::Countdown);
+        assert!(!c.armed());
+        tick(&mut c, slot, 14_000, true, IntroDelay::Manual, CreditsDelay::Seconds10, Mode::Countdown);
+        assert_eq!(c.progress(14_000), Some(0.0));
+    }
+
+    #[test]
+    fn disappearance_restarts_a_timer_but_cancellation_survives_seeks_and_new_markers() {
+        let mut c = Countdown::default();
+        let intro = skip(MarkerKind::Intro, 100, false);
+        let discs = ControlSlot::Discs(Controls::NONE);
+        let credit = ControlSlot::UpNext(marker(MarkerKind::Credits, 10_000, true));
+        tick(&mut c, intro, 0, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        tick(&mut c, discs, 2_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(!c.armed());
+        tick(&mut c, intro, 4_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(!c.expired(6_999));
+        assert!(c.expired(7_000));
+        c.cancel();
+        tick(&mut c, discs, 8_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        tick(&mut c, skip(MarkerKind::Intro, 200, false), 9_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(!c.armed());
+        tick(&mut c, credit, 10_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(c.armed());
+        c.cancel_kind(MarkerKind::Credits);
+        tick(&mut c, discs, 11_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        tick(&mut c, ControlSlot::UpNext(marker(MarkerKind::Credits, 20_000, true)), 12_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(!c.armed());
+        c.reset();
+        tick(&mut c, intro, 13_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(c.armed());
+        tick(&mut c, credit, 14_000, true, IntroDelay::Seconds3, CreditsDelay::default(), Mode::Countdown);
+        assert!(c.armed());
+    }
+
+    #[test]
+    fn credits_continuity_is_authoritative_episode_scoped_and_never_arms_on_its_own() {
+        let mut c = Countdown::default();
+        let first = marker(MarkerKind::Credits, 10_000, false);
+        let later = marker(MarkerKind::Credits, 20_000, true);
+        tick(&mut c, ControlSlot::UpNext(first), 0, false, IntroDelay::Manual, CreditsDelay::default(), Mode::Countdown);
+        assert_eq!(c.credits_offer(15_000), None);
+        tick(&mut c, skip(MarkerKind::Credits, 10_000, false), 1, true, IntroDelay::Manual, CreditsDelay::default(), Mode::Off);
+        c.cancel_kind(MarkerKind::Credits);
+        tick(&mut c, ControlSlot::Discs(Controls::NONE), 2, true, IntroDelay::Manual, CreditsDelay::default(), Mode::Off);
+        assert_eq!(c.credits_offer(9_999), None);
+        assert_eq!(c.credits_offer(10_000), Some(first));
+        tick(&mut c, ControlSlot::UpNext(later), 3, true, IntroDelay::Manual, CreditsDelay::default(), Mode::Countdown);
+        assert!(!c.armed());
+        assert_eq!(c.credits_offer(30_000), Some(first));
+        c.reset();
+        assert_eq!(c.credits_offer(30_000), None);
+    }
+
 
     /// The one cancel rule, exhaustively. It is a STEADY STATE, so it has to answer for every
     /// (row focused × which button) pair rather than for a transition: the countdown survives only

@@ -5,6 +5,8 @@ use plx_media::route::{choose, Choice, How};
 use plx_plex::plex::account::{PreferenceError, PreferenceRequest};
 use plx_plex::plex::session::{InstantDpadSeekingPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref,
     SkipIntervalPref, SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, TrailerAutoplayPref, UnderPostersPref};
+use plx_plex::plex::session::RememberAudioChoicesPref;
+use plx_plex::plex::session::{IntroSkipDelayPref, CreditsSkipDelayPref};
 use plx_screens::registry::{AccountPreferenceReply, PreferenceCmd};
 use std::sync::mpsc::Sender;
 
@@ -17,6 +19,9 @@ fn choose_setting(choice: Choice, reply: Sender<bool>) {
         Choice::NextEpisode(v) => choose::<NextEpisodeModePref>(v, How::settings::<NextEpisodeModePref>(reply)),
         Choice::InstantDpadSeeking(v) => choose::<InstantDpadSeekingPref>(v, How::settings::<InstantDpadSeekingPref>(reply)),
         Choice::SkipInterval(v) => choose::<SkipIntervalPref>(v, How::settings::<SkipIntervalPref>(reply)),
+        Choice::RememberAudioChoices(v) => choose::<RememberAudioChoicesPref>(v, How::settings::<RememberAudioChoicesPref>(reply)),
+        Choice::IntroSkipDelay(v) => choose::<IntroSkipDelayPref>(v, How::settings::<IntroSkipDelayPref>(reply)),
+        Choice::CreditsSkipDelay(v) => choose::<CreditsSkipDelayPref>(v, How::settings::<CreditsSkipDelayPref>(reply)),
         Choice::DeckPress(v) => choose::<DeckPressPref>(v, How::settings::<DeckPressPref>(reply)),
         Choice::UnderPosters(v) => choose::<UnderPostersPref>(v, How::settings::<UnderPostersPref>(reply)),
         Choice::TrailerAutoplay(v) => choose::<TrailerAutoplayPref>(v, How::settings::<TrailerAutoplayPref>(reply)),

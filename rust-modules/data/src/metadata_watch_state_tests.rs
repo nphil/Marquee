@@ -313,6 +313,7 @@ fn the_playing_item_cache_hits_only_for_the_same_item_on_the_same_server() {
         "the store records where it came from"
     );
     assert_eq!(hit.audio.first().map(|s| s.id), Some(7));
+    assert!(!hit.markers_known, "cached detail does not establish marker provenance");
 
     assert!(
         cached_playing(test_state(), SRV_B, "42").is_none(),

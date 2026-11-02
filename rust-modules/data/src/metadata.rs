@@ -67,6 +67,10 @@ impl<'a> MetadataView<'a> {
     pub fn playing_markers(&self) -> &'a [Marker] {
         self.playing().map(|p| p.markers.as_slice()).unwrap_or(&[])
     }
+    /// Whether a marker-inclusive item fetch confirmed the playing marker list.
+    pub fn playing_markers_known(&self) -> bool {
+        self.playing().is_some_and(|p| p.markers_known)
+    }
     #[allow(dead_code)]
     pub fn playing_chapters(&self) -> &'a [Chapter] {
         self.playing().map(|p| p.chapters.as_slice()).unwrap_or(&[])
@@ -101,17 +105,6 @@ impl<'a> MetadataView<'a> {
         let m = marker_at(self.playing_markers(), head.pos_ns / 1_000_000)?;
         (!self.state.skipped.contains(&(m.kind, m.start_ms))).then_some(m)
     }
-    pub fn synthesized_tail_marker(&self, head: Playhead, has_next: bool) -> Option<Marker> {
-        if !has_next || !head.playing {
-            return None;
-        }
-        if self.playing_markers().iter().any(|m| m.kind == MarkerKind::Credits) {
-            return None;
-        }
-        let dur_ms = head.dur_ns / 1_000_000;
-        let pos_ms = head.pos_ns / 1_000_000;
-        tail_marker(pos_ms, dur_ms)
-    }
     pub fn alt_copies(&self, sid: plx_plex::plex::ServerId, rk: &str) -> &'a [AltCopy] {
         alt_copies(self.state, sid, rk)
     }
@@ -120,10 +113,7 @@ impl<'a> MetadataView<'a> {
     }
 }
 
-/// The playhead facts [`MetadataView::active_marker`] and [`MetadataView::synthesized_tail_marker`]
-/// window the skip-segment and Up Next offers against. The data layer does not read the player: the
-/// caller samples `player::is_playing(ps)`, `player::playpos_ns()` and `player::duration_ns()` once
-/// per frame (the HUD's `slot`) and passes them in.
+/// The sampled playhead facts used to locate an actual Plex marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Playhead {
     /// The pipeline is presenting frames — not resolving, connecting, buffering or seeking
@@ -131,8 +121,6 @@ pub struct Playhead {
     pub playing: bool,
     /// The playback position, nanoseconds (`player::playpos_ns`).
     pub pos_ns: i64,
-    /// The media duration, nanoseconds (`player::duration_ns`).
-    pub dur_ns: i64,
 }
 
 /// One Metadata owner's main-thread-only logical state (`docs/stores-as-machines.md`). Production
@@ -1351,35 +1339,6 @@ fn mark_skipped(state: &mut MetadataState, m: Marker) {
     }
 }
 
-/// The last stretch of an episode counts as its credits when the server never said where the
-/// credits are. Credits DETECTION is a Plex Pass feature: on a server without one, no item ever
-/// carries a credits marker, so the Up Next tile — armed exclusively off that marker — could
-/// never appear, and binge-watching ended every episode by dropping the user back to the detail
-/// page (found by the Plex Pass dependency audit after issue #22). Synthesizing the segment
-/// reuses the entire existing chain — tile, countdown, cancel latch, HUD hold — instead of
-/// growing a parallel EOS path. It exists only to feed that tile, so `player_hud::slot` asks for
-/// it only under the Up Next countdown preference; the segment counts as `final`.
-///
-/// Deliberately narrow: only when a successor EXISTS (a movie's tail must not grow a Skip
-/// Credits pill pointing nowhere), only when the item carries no credits marker AT ALL (a server
-/// that said "credits start at 41:03" must not be second-guessed at 30s-before-end), and only
-/// when the item is long enough that its tail is clearly an ending (> 3x the window, so a short
-/// clip does not spend a third of its runtime offering the next one).
-pub const TAIL_WINDOW_MS: i64 = 30_000;
-
-/// The pure half of [`MetadataView::synthesized_tail_marker`] — the window geometry alone, host-testable.
-pub fn tail_marker(pos_ms: i64, dur_ms: i64) -> Option<Marker> {
-    if dur_ms < TAIL_WINDOW_MS * 3 {
-        return None;
-    }
-    let start_ms = dur_ms - TAIL_WINDOW_MS;
-    (pos_ms >= start_ms).then_some(Marker {
-        kind: MarkerKind::Credits,
-        start_ms,
-        end_ms: dur_ms,
-        final_seg: true,
-    })
-}
 
 /// The marker containing `pos_ms`, if any — the ONE "am I inside a skippable segment" rule, shared
 /// by the skip prompt and the end-of-episode handoff so they can never disagree about where a segment
@@ -2109,7 +2068,7 @@ pub fn edit_current_for_test(state: &mut MetadataState, f: impl FnOnce(&mut Deta
 #[cfg(all(any(test, feature = "test-support"), feature = "hostsim"))]
 pub fn set_playing_markers_for_test(state: &mut MetadataState, markers: Vec<Marker>) {
     plx_base::testlock::assert_held("the playing store (set_playing_markers_for_test)");
-    state.playing = Some(PlayingItem { markers, ..PlayingItem::with_subs(Vec::new()) });
+    state.playing = Some(PlayingItem { markers, markers_known: true, ..PlayingItem::with_subs(Vec::new()) });
 }
 
 /// A compact descriptor of the item currently *playing*, for the in-player Info card. Unlike
@@ -2634,6 +2593,8 @@ pub struct PlayingItem {
     /// wrong colours. See [`Dovi`].
     pub dovi: Dovi,
     pub markers: Vec<Marker>, // intro / credits segments — the in-player Skip prompt
+    /// False when the marker list has not been confirmed by an item fetch.
+    pub markers_known: bool,
     pub chapters: Vec<Chapter>, // chapter boundaries — the in-player Chapters tab/strip
     /// The played leaf's video stream is HDR: a PQ or HLG transfer, or Dolby Vision
     /// (`convert_streams`' `hdr`). The SOURCE's fact, not the picture's: a server re-encode to SDR
@@ -2661,6 +2622,7 @@ impl PlayingItem {
             bitrate: 0,
             dovi: Default::default(),
             markers: Vec::new(),
+            markers_known: false,
             chapters: Vec::new(),
             hdr: false,
         }
@@ -2711,6 +2673,7 @@ fn cached_playing(state: &MetadataState, sid: plx_plex::plex::ServerId, rk: &str
             bitrate: d.bitrate,
             dovi: d.dovi,
             markers: d.markers.clone(),
+            markers_known: false,
             chapters: d.chapters.clone(),
             hdr: d.hdr,
         })
@@ -2736,7 +2699,18 @@ pub fn fetch_playing_item(
         return None;
     }
     let it = client.metadata(rk);
-    Some(playing_version_from(sid, rk, it.as_ref(), want))
+    Some(playing_fetched_version_from(sid, rk, it.as_ref(), want))
+}
+
+fn playing_fetched_version_from(
+    sid: plx_plex::plex::ServerId,
+    rk: &str,
+    it: Option<&plx_plex::plex::Metadata>,
+    want: Option<plx_plex::plex::MediaId>,
+) -> (PlayingItem, Option<PlayedVersion>) {
+    let mut result = playing_version_from(sid, rk, it, want);
+    result.0.markers_known = it.is_some();
+    result
 }
 
 /// The version a play resolved to: its position in `Media[]` (the transcoder's `mediaIndex`), its
@@ -2823,6 +2797,7 @@ fn playing_item_of(
         bitrate,
         dovi,
         markers,
+        markers_known: false,
         chapters,
         hdr,
     }
@@ -3181,15 +3156,29 @@ pub fn two_letter_code(tag: &str) -> Option<String> {
 /// groups many tracks computes this ONCE per track and buckets by it, rather than asking
 /// `lang_matches` pairwise.
 pub fn lang_key(tag: &str) -> Option<std::borrow::Cow<'static, str>> {
+    let tag = if tag.trim().len() > 3 {
+        plx_plex::plex::languages::LANGUAGES.iter()
+            .find(|language| language.name.eq_ignore_ascii_case(tag.trim()))
+            .map_or(tag, |language| language.code)
+    } else {
+        tag
+    };
     let primary = tag.trim().split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
     if primary.is_empty() {
         return None;
     }
+    // Plex display titles commonly use English names while the catalog uses autonyms.
+    let alias = match primary.as_str() {
+        "japanese" => "ja", "french" => "fr", "german" => "de", "spanish" => "es",
+        "italian" => "it", "portuguese" => "pt", "chinese" => "zh", "korean" => "ko",
+        "hindi" => "hi", "russian" => "ru", "dutch" => "nl", "arabic" => "ar",
+        "hungarian" => "hu", "polish" => "pl", _ => primary.as_str(),
+    };
     // The smallest spelling over EVERY row that lists it, not the first row's head: Norwegian is
     // listed both as `nb`/`nob` and as `no`/`nor`/`nb`/`nob`, and all four must share one key.
     let canonical = LANG_SPELLINGS
         .iter()
-        .filter(|spellings| spellings.contains(&primary.as_str()))
+        .filter(|spellings| spellings.contains(&alias))
         .flat_map(|spellings| spellings.iter().copied())
         .min();
     Some(match canonical {
@@ -3206,6 +3195,23 @@ pub fn lang_key(tag: &str) -> Option<std::borrow::Cow<'static, str>> {
 /// language.
 pub fn lang_matches(a: &str, b: &str) -> bool {
     matches!((lang_key(a), lang_key(b)), (Some(a), Some(b)) if a == b)
+}
+
+/// Structured metadata wins; a title is used only when it is an exact recognized language.
+pub fn audio_language(stream: &Stream) -> &str {
+    for value in [&stream.lang_code, &stream.language_tag, &stream.lang] {
+        let primary = value.trim().split(['-', '_']).next().unwrap_or("");
+        if !primary.is_empty() && !["und", "unknown", "undefined"].iter().any(|v| primary.eq_ignore_ascii_case(v)) {
+            return value;
+        }
+    }
+    let title = stream.title.trim();
+    let subtags_valid = title.split(['-', '_']).skip(1).all(|part|
+        (2..=8).contains(&part.len()) && part.bytes().all(|b| b.is_ascii_alphanumeric()));
+    if subtags_valid && matches!(lang_key(title), Some(std::borrow::Cow::Borrowed(_))) {
+        return title;
+    }
+    ""
 }
 
 #[cfg(test)]
@@ -3251,6 +3257,34 @@ mod same_subtitle_tests {
 #[cfg(test)]
 mod lang_matches_tests {
     use super::lang_matches;
+
+    #[test]
+    fn audio_names_and_structured_metadata() {
+        use super::{audio_language, Stream};
+        assert!(lang_matches("English", "ENG-us"));
+        assert!(lang_matches("Japanese", "ja-JP"));
+        let mut stream = Stream { lang: "English".into(), language_tag: "ja-JP".into(), ..Default::default() };
+        assert!(lang_matches(audio_language(&stream), "jpn"));
+        stream.lang_code = "spa".into();
+        assert!(lang_matches(audio_language(&stream), "es"));
+        assert!(!lang_matches(audio_language(&stream), "en"));
+        stream.lang_code.clear();
+        stream.language_tag.clear();
+        assert!(lang_matches(audio_language(&stream), "en"));
+        stream.lang_code = "unknown".into();
+        assert!(lang_matches(audio_language(&stream), "en"), "unknown code does not hide the display name");
+        stream.lang = "undefined".into();
+        stream.title = "ENG".into();
+        assert!(lang_matches(audio_language(&stream), "en"), "exact language title is a fallback");
+        stream.title = "en-US".into();
+        assert!(lang_matches(audio_language(&stream), "en"), "regional title is a fallback");
+        stream.lang_code = "ja".into();
+        stream.title = "English".into();
+        assert!(lang_matches(audio_language(&stream), "ja"), "known code beats title");
+        stream.lang_code = "unknown".into();
+        stream.title = "Adventure".into();
+        assert_eq!(audio_language(&stream), "", "arbitrary titles are not languages");
+    }
 
     #[test]
     fn a_regional_bcp47_tag_matches_the_iso_639_2_bibliographic_and_terminology_forms() {
@@ -5909,6 +5943,45 @@ mod marker_tests {
     }
 
     #[test]
+    fn only_marker_inclusive_item_fetches_confirm_marker_absence() {
+        let sid = plx_plex::plex::ServerId::UNSET;
+        let empty: plx_plex::plex::Metadata = serde_json::from_value(serde_json::json!({
+            "type": "episode", "Media": [{"Part": [{"key": "/part"}]}]
+        })).unwrap();
+        let marked: plx_plex::plex::Metadata = serde_json::from_value(serde_json::json!({
+            "type": "episode", "Marker": [
+                {"type": "intro", "startTimeOffset": 1000, "endTimeOffset": 2000},
+                {"type": "credits", "startTimeOffset": 90000, "endTimeOffset": 100000}
+            ]
+        })).unwrap();
+        let fetched = playing_fetched_version_from(sid, "42", Some(&empty), None).0;
+        assert!(fetched.markers_known);
+        assert!(fetched.markers.is_empty());
+        let with_markers = playing_fetched_version_from(sid, "42", Some(&marked), None).0;
+        assert!(with_markers.markers_known);
+        assert_eq!(with_markers.markers.len(), 2);
+        assert!(!playing_fetched_version_from(sid, "42", None, None).0.markers_known);
+        assert!(!playing_version_from(sid, "42", Some(&empty), None).0.markers_known);
+        assert!(!playing_item_of(sid, "42", None, empty.media.first()).markers_known);
+        assert!(!PlayingItem::with_subs(Vec::new()).markers_known);
+
+        let mut state = MetadataState::default();
+        let adapter = MetadataAdapter::default();
+        let view = MetadataView { state: &state, adapter: &adapter };
+        assert!(!view.playing_markers_known());
+        state.playing = Some(fetched);
+        let view = MetadataView { state: &state, adapter: &adapter };
+        assert!(view.playing_markers_known());
+        assert!(view.playing_markers().is_empty());
+        let head = Playhead { playing: true, pos_ns: 95_000_000_000 };
+        assert!(view.active_marker(head).is_none());
+        assert!(view.playing_markers().is_empty());
+        state.playing = Some(with_markers);
+        let view = MetadataView { state: &state, adapter: &adapter };
+        assert_eq!(view.active_marker(head).unwrap().kind, MarkerKind::Credits);
+    }
+
+    #[test]
     fn only_the_kinds_the_player_acts_on_survive_parsing() {
         let m = episode_markers();
         assert_eq!(m.len(), 2);
@@ -5956,38 +6029,8 @@ mod marker_tests {
         assert!(marker_at(&[], 1234).is_none());
     }
 
-    /// The Plex-Pass-free tail: a server without credits detection ships no markers, so the last
-    /// [`TAIL_WINDOW_MS`] of an episode stands in as the credits segment (final, ending at the
-    /// duration) — the geometry Up Next arms from. Short items never grow one: a 60s clip
-    /// offering "next" for half its runtime is worse than no offer.
-    #[test]
-    fn the_tail_window_stands_in_for_undetected_credits() {
-        let dur = 22 * 60 * 1000; // a 22-minute episode
-        assert!(tail_marker(0, dur).is_none(), "the open");
-        assert!(
-            tail_marker(dur - TAIL_WINDOW_MS - 1, dur).is_none(),
-            "one ms before the window"
-        );
-        let m = tail_marker(dur - TAIL_WINDOW_MS, dur).expect("inclusive at the window edge");
-        assert_eq!((m.kind, m.final_seg), (MarkerKind::Credits, true));
-        assert_eq!((m.start_ms, m.end_ms), (dur - TAIL_WINDOW_MS, dur));
-        assert!(
-            tail_marker(dur - 1, dur).is_some(),
-            "the last frame still offers it"
-        );
-        assert!(
-            tail_marker(80_000, 89_999).is_none(),
-            "short items never grow a tail"
-        );
-        assert!(
-            tail_marker(0, 0).is_none(),
-            "no duration published (a transcode mid-probe)"
-        );
-    }
 
-    /// A credits marker without PMS's `final` flag still counts as final when it ends at (or within
-    /// [`FINAL_SLACK_MS`] of) the item's duration, so Up Next is not lost to a marker that stops
-    /// a moment short of the end; a mid-episode one (a scene follows) stays a plain Skip.
+    /// A marker near the item's end is final even if PMS omits the flag.
     #[test]
     fn a_credits_marker_ending_at_the_duration_is_final_without_the_flag() {
         let dur = 3_000_000;

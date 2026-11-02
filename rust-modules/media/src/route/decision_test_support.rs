@@ -433,6 +433,7 @@ pub(super) fn fourk_item_with_subs(
         bitrate: 48_000,
         dovi: plx_data::metadata::Dovi::NONE,
         markers: Vec::new(),
+        markers_known: false,
         chapters: Vec::new(),
         hdr: false,
     }

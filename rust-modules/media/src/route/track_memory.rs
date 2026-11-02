@@ -58,6 +58,10 @@ pub(super) fn memory_show<'a>(kind: &str, show_rk: &'a str) -> Option<&'a str> {
     (kind == "episode" && !show_rk.is_empty()).then_some(show_rk)
 }
 
+pub(super) fn audio_memory_key<'a>(kind: &str, show_rk: &'a str, rk: &'a str) -> Option<&'a str> {
+    memory_show(kind, show_rk).or_else(|| (kind == "movie" && !rk.is_empty()).then_some(rk))
+}
+
 /// **Did a subtitle pick change what is shown?** The one rule of the menu's memo gate and the
 /// route's memory write: a pick is a change when it names another track than the one shown, and
 /// ALSO when the mode being left is Forced only, whatever it lands on (the forced track's own row,
@@ -74,8 +78,15 @@ pub fn subtitle_pick_changed<T: PartialEq>(shown: T, picked: T, forced_only: boo
 /// titled one AND not the only track of its language), the same one [`match_audio`] is handed.
 pub fn memo_of_audio(tracks: &[Stream], i: usize) -> Option<AudioMemo> {
     let s = tracks.get(i)?;
+    let language = plx_data::metadata::audio_language(s);
+    let primary = language.split(['-', '_']).next().unwrap_or("").trim();
+    let language = if primary.len() > 3 {
+        plx_data::metadata::lang_key(primary).map(|key| key.into_owned()).unwrap_or_default()
+    } else {
+        primary.to_string()
+    };
     Some(AudioMemo {
-        lang: s.lang_code.clone(),
+        lang: language,
         tag: s.language_tag.clone(),
         commentary: super::plan::audio_is_commentary(tracks, i),
         ad: s.ad,
@@ -159,8 +170,9 @@ fn best_by<T, K: PartialOrd>(candidates: impl Iterator<Item = T>, key: impl Fn(&
 pub(super) fn match_audio(
     tracks: &[Stream], memo: &AudioMemo, commentary_of: impl Fn(usize) -> bool,
 ) -> Result<usize, Miss> {
-    let language: Vec<usize> =
-        (0..tracks.len()).filter(|&i| same_language(&memo.lang, &memo.tag, &tracks[i].lang_code)).collect();
+    let language: Vec<usize> = (0..tracks.len())
+        .filter(|&i| same_language(&memo.lang, &memo.tag, plx_data::metadata::audio_language(&tracks[i])))
+        .collect();
     if language.is_empty() {
         return Err("language");
     }

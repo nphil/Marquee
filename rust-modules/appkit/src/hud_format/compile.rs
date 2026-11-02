@@ -91,6 +91,10 @@ pub struct AppLabels {
     pub next_episode: String,
     /// the Up Next secondary (`widgets_next_credits`)
     pub watch_credits: String,
+    /// the Skip offer's Watch Intro button
+    pub skip_watch_intro: String,
+    /// the Skip offer's Watch Credits button
+    pub skip_watch_credits: String,
     /// the Skip pill over an intro
     pub skip_intro: String,
     /// the Skip pill over credits
@@ -254,8 +258,8 @@ pub struct Standin {
     pub row: Rect,
     pub anchor: RowAnchor,
     pub up_next: Option<UpNextRects>,
-    /// The Skip pill per [`SkipKind`] (index `SkipKind as usize`).
-    pub skip: Option<[Rect; 2]>,
+    /// The Watch and Skip rects per [`SkipKind`], in focus order.
+    pub skip: Option<[[Rect; 2]; 2]>,
 }
 
 /// One thing to draw, in draw order. Coordinates are the logical 1920 x 1080 canvas.
@@ -307,8 +311,8 @@ pub enum DrawOp {
     Control(ControlRect),
     /// The Up Next offer (slot UpNext only); its inside is app-drawn.
     UpNext { rects: UpNextRects, credits_rest: Rest, next_rest: Rest },
-    /// The Skip pill (slot Skip only), at both widths.
-    SkipPill { rects: [Rect; 2] },
+    /// The Watch and Skip pair for each marker kind (slot Skip only).
+    SkipPill { rects: [[Rect; 2]; 2] },
 }
 
 /// One op of a strip card's template and whether THIS card draws it: the card's `item.*` conditions
@@ -334,9 +338,9 @@ pub struct Contributor {
 ///
 /// - `draw_ops`: one per op, except a strip (its cards' ops: `visible` x the template, plus the focus
 ///   ring; an upper bound where a card's `item.*` condition would drop an op) and the Up Next offer (two
-///   pills, plus the still and the caption it draws).
+///   pills, plus the still and the caption it draws), and the Skip offer (two pills).
 /// - `glyph_runs`: one per text; the playbar's two clocks; a facts row's chips; a pill's or button's
-///   label; the Up Next offer's two labels and caption; the Skip pill's label.
+///   label; the Up Next offer's two labels and caption; the Skip offer's two labels.
 /// - `texture_bytes`: 4 bytes per pixel of every image (a strip's per visible card, Up Next's still) and
 ///   every glyph a disc or an icon cell draws (`size` squared).
 /// - `blended_px`: the area, rounded per rect, of every translucent fill: the scrim, a ground or rule
@@ -405,7 +409,7 @@ impl CompiledState {
     /// **This state as the report the player's consumers read** ([`HudGeometry`]): the grab band, the
     /// bar, the row at its floor width and its anchor, item `i` of whatever occupies the row at the
     /// rect it is drawn at (the first [`BTN_N`] controls of the replaced row's segments in declared
-    /// order for the package's own controls, `[credits, next]` for Up Next, `[pill]` for Skip), the tab
+    /// order for the package's own controls, `[credits, next]` for Up Next, `[watch, skip]` for Skip), the tab
     /// row's and the title's origins, and the two section tabs' pills.
     pub fn geometry(&self, skip: SkipKind) -> HudGeometry {
         let shown = self.skip_variant(skip);
@@ -441,7 +445,13 @@ impl CompiledState {
                     g.items[up_next::BTN_NEXT as usize] = Some(u.next);
                 }
             }
-            Slot::Skip => g.items[0] = self.standin.skip.map(|s| s[skip as usize]),
+            Slot::Skip => {
+                if let Some(pairs) = self.standin.skip {
+                    for (item, rect) in g.items.iter_mut().zip(pairs[skip as usize]) {
+                        *item = Some(rect);
+                    }
+                }
+            }
         }
         g
     }
@@ -464,7 +474,7 @@ impl CompiledState {
                 ys.extend(u.caption.map(|r| r.y));
             }
         }
-        ys.extend(self.standin.skip.into_iter().flatten().map(|r| r.y));
+        ys.extend(self.standin.skip.into_iter().flatten().flatten().map(|r| r.y));
         if block {
             for op in &self.ops {
                 match op {
@@ -1592,8 +1602,8 @@ impl<'e, 'p> Env<'e, 'p> {
                         .flatten()
                         .fold(f32::MAX, f32::min)
                 }),
-                // the pill actually shown: a start-aligned fill stops at ITS edge, as `classic::title_right` does
-                _ => standin.skip.map(|s| s[skip as usize].scaled(CTRL_FOCUS_SCALE).x),
+                // Reserve the focused extent of either button in the pair actually shown.
+                _ => standin.skip.map(|s| s[skip as usize].into_iter().map(|r| r.scaled(CTRL_FOCUS_SCALE).x).fold(f32::MAX, f32::min)),
             };
             self.fill_bands(&bands, &boxes, &Mode { replaces: &replaces, hide: true, standin_left: left, host })
         };
@@ -1701,14 +1711,16 @@ impl<'e, 'p> Env<'e, 'p> {
         let still = (up.get("still").and_then(Val::as_bool) == Some(true)).then_some(l.still);
         let caption = (up.get("caption").and_then(Val::as_bool) == Some(true)).then_some(l.caption);
         let up_next = UpNextRects { still, caption, credits: l.credits, next: l.next };
-        let skip = [&self.labels.skip_intro, &self.labels.skip_credits].map(|label| {
-            let w = stand_in_w(self.measure.width_str(label, theme::size::BODY, true), floor.unwrap_or(0.0));
-            let x = match align {
-                "start" => union.x,
-                "center" => union.x + union.w * 0.5 - w * 0.5,
-                _ => union.x + union.w - w,
-            };
-            Rect::new(x, union.y, w, union.h)
+        let skip = [
+            (&self.labels.skip_watch_intro, &self.labels.skip_intro),
+            (&self.labels.skip_watch_credits, &self.labels.skip_credits),
+        ].map(|(watch_label, skip_label)| {
+            let w = stand_in_w(self.measure.width_str(skip_label, theme::size::BODY, true), floor.unwrap_or(0.0));
+            let watch_w = Button::pill_w_measured(&cstring(watch_label), theme::size::BODY, false, None, self.measure);
+            let run = watch_w + theme::space::SM + w;
+            let primary = Rect::new(edge(run) - w, union.y, w, union.h);
+            let watch = Rect::new(primary.x - theme::space::SM - watch_w, primary.y, watch_w, primary.h);
+            [watch, primary]
         });
         let row = match (floor, align) {
             (Some(f), "start") => Rect::new(union.x, union.y, f, union.h),
@@ -1822,8 +1834,9 @@ fn weigh(op: &DrawOp) -> Contributor {
             c.blended_px = plate_rest(*credits_rest, rects.credits) + plate_rest(*next_rest, rects.next);
         }
         DrawOp::SkipPill { rects } => {
-            c.glyph_runs = 1;
-            c.blended_px = rects.iter().map(|r| area(*r)).max().unwrap_or(0);
+            c.draw_ops = 2;
+            c.glyph_runs = 2;
+            c.blended_px = rects.iter().map(|pair| pair.iter().map(|r| area(*r)).sum()).max().unwrap_or(0);
         }
     }
     c

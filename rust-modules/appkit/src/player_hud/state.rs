@@ -112,9 +112,8 @@ impl ControlSlot {
     pub fn items(self) -> c_int {
         match self {
             ControlSlot::Discs(_) => BTN_N,
-            // Watch Credits + Next Episode — the one stand-in with a pair
-            ControlSlot::UpNext(_) => 2,
-            ControlSlot::Skip(_) => 1,
+            // Both marker offers pair Watch with the primary action.
+            ControlSlot::UpNext(_) | ControlSlot::Skip(_) => 2,
         }
     }
     /// Where the focus ring parks when this row APPEARS. The discs prefer an enabled Next, then
@@ -124,8 +123,8 @@ impl ControlSlot {
     pub fn primary_btn(self) -> c_int {
         match self {
             ControlSlot::UpNext(_) => crate::up_next::PRIMARY_BTN,
+            ControlSlot::Skip(_) => crate::skip_pill::PRIMARY_BTN,
             ControlSlot::Discs(controls) => controls.primary(),
-            _ => 0,
         }
     }
     pub fn enabled(self, idx: i32) -> bool {
@@ -157,24 +156,14 @@ impl ControlSlot {
 
 /// PURE precedence: given the segment under the playhead and whether the queue has a successor,
 /// which control owns the row. Host-testable, and the ONLY place the ordering is written down.
-///
-/// Up Next outranks Skip Credits deliberately: with somewhere to go, "next episode" is the better
-/// offer, and Skip Credits stays for the last episode of a show, where there is nowhere to go.
-/// Only a `final` credits marker (one that runs to the end of the item) qualifies: a mid-item
-/// credits segment is followed by more of the episode, so it keeps the Skip Credits pill.
-///
-/// The Next episode preference only changes the offer for that final-credits-with-a-successor
-/// case: `AfterCredits` and `Off` offer nothing there (the discs stay), because the successor is
-/// not announced until the stream ends, if then. The last episode and films keep Skip Credits.
-pub fn slot_for(marker: Option<plx_data::metadata::Marker>, has_next: bool, mode: plx_media::route::NextEpisodeMode) -> ControlSlot {
+/// With a queued successor, credits offer Next and Watch in every mode. The mode only controls
+/// automatic advance. Without a successor, the existing manual Skip Credits behavior remains.
+pub fn slot_for(marker: Option<plx_data::metadata::Marker>, has_next: bool, _mode: plx_media::route::NextEpisodeMode) -> ControlSlot {
     match marker {
         Some(m) => {
             let pr = crate::skip_pill::prompt_for(m);
-            if has_next && m.kind == plx_data::metadata::MarkerKind::Credits && m.final_seg {
-                match mode {
-                    plx_media::route::NextEpisodeMode::Countdown => ControlSlot::UpNext(m),
-                    plx_media::route::NextEpisodeMode::AfterCredits | plx_media::route::NextEpisodeMode::Off => ControlSlot::Discs(Controls::NONE),
-                }
+            if has_next && m.kind == plx_data::metadata::MarkerKind::Credits {
+                ControlSlot::UpNext(m)
             } else {
                 ControlSlot::Skip(pr)
             }
@@ -194,16 +183,9 @@ pub fn slot(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::Me
     let head = plx_data::metadata::Playhead {
         playing: plx_media::player::is_playing(ps),
         pos_ns: plx_media::player::playpos_ns(),
-        dur_ns: plx_media::player::duration_ns(),
     };
-    // Server marker first; the synthesized tail only exists where credits DETECTION does not
-    // (a Plex Pass server feature) — see `metadata::synthesized_tail_marker` — and only to feed
-    // the Up Next countdown, so it is not even computed in the other modes.
-    let m = meta.active_marker(head).or_else(|| {
-        (mode == plx_media::route::NextEpisodeMode::Countdown)
-            .then(|| meta.synthesized_tail_marker(head, has_next))
-            .flatten()
-    });
+    // A duration estimate is not a Plex credits marker and must not offer Watch Credits.
+    let m = meta.active_marker(head);
     let slot = slot_for(m, has_next, mode);
     if slot.is_discs() { ControlSlot::Discs(Controls::now(ps)) } else { slot }
 }

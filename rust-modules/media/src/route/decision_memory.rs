@@ -19,7 +19,8 @@
 use super::*;
 use plx_plex::plex::session::prefs::{AudioMemo, SubtitleMemo, TrackMemoryEntry};
 use plx_plex::plex::session::SubtitleOffsetEntry;
-use super::super::track_memory::{forced_only_shown, memory_show, rematch_with_names, subtitle_pick_changed};
+use plx_plex::plex::session::RememberAudioChoices;
+use super::super::track_memory::{audio_memory_key, forced_only_shown, memory_show, rematch_with_names, subtitle_pick_changed};
 
 /// **Whose memory this is**: the active profile's key and the machine id of `sid`'s server, the two
 /// halves of every key of the memory door. `None` until the server is registered and has said its
@@ -41,9 +42,14 @@ pub(super) fn recalled_track_memory(sid: ServerId) -> Vec<TrackMemoryEntry> {
     let Some((profile, machine_id)) = memory_scope(sid) else {
         return Vec::new();
     };
+    let audio_enabled = remember_audio_choices() == RememberAudioChoices::On;
     recall_all::<TrackMemoryEntry>(&profile)
         .into_iter()
         .filter(|e| e.machine_id == machine_id)
+        .map(|mut entry| {
+            if !audio_enabled { entry.audio = None; }
+            entry
+        })
         .collect()
 }
 
@@ -293,18 +299,21 @@ enum TrackPick {
     Subtitle(SubtitleMemo),
 }
 
-/// **Remember a track pick for the playing show: the track memory's one write.** Gated by the
-/// same predicate the read side applies ([`memory_show`]: an `episode` with a known show),
-/// so what is written is exactly what a later resolve can read; a movie, a trailer or an item the
-/// server did not place in a show writes nothing. The seat and the tenure are `remember`'s to
-/// refuse: nothing is written for a run that seated nobody (a dev token), and a refused write
+/// Remember a track pick for a show, or audio for a movie, using the same keys as the read side.
+/// The memory door enforces the active seat and tenure:
+/// nothing is written for a run that seated nobody (a dev token), and a refused write
 /// leaves the mirror as it was.
 ///
 /// The closure keeps the OTHER half of the entry as it is when it runs (against the mirror now,
 /// and against the file's entry when the queued write runs): an audio pick must not erase the
 /// subtitle the viewer chose a minute ago, nor the other way round.
 fn remember_track_pick(ps: &PlaybackSession, pick: TrackPick) -> bool {
-    let Some(show) = memory_show(cur_kind(ps), cur_show_rk(ps)) else {
+    let rk = cur_rk(ps);
+    let key = match &pick {
+        TrackPick::Audio(_) => audio_memory_key(cur_kind(ps), cur_show_rk(ps), &rk),
+        TrackPick::Subtitle(_) => memory_show(cur_kind(ps), cur_show_rk(ps)),
+    };
+    let Some(show) = key else {
         return false;
     };
     let Some((user, machine_id)) = memory_scope(cur_sid(ps)) else {
@@ -321,6 +330,28 @@ fn remember_track_pick(ps: &PlaybackSession, pick: TrackPick) -> bool {
     })
 }
 
+/// Whether this title has a locally remembered audio choice.
+pub fn audio_memory_present(ps: &PlaybackSession) -> bool {
+    let rk = cur_rk(ps);
+    let Some(key) = audio_memory_key(cur_kind(ps), cur_show_rk(ps), &rk) else { return false };
+    let Some((profile, machine)) = memory_scope(cur_sid(ps)) else { return false };
+    recall::<TrackMemoryEntry>(&profile, &(machine, key.to_string())).is_some_and(|entry| entry.audio.is_some())
+}
+
+/// Save or forget only the audio half; playback and Plex's item selection are left alone.
+pub fn set_audio_memory(ps: &PlaybackSession, memo: Option<AudioMemo>) -> bool {
+    if memo.is_some() && remember_audio_choices() == RememberAudioChoices::Off { return false; }
+    let rk = cur_rk(ps);
+    let Some(key) = audio_memory_key(cur_kind(ps), cur_show_rk(ps), &rk) else { return false };
+    let Some((profile, machine)) = memory_scope(cur_sid(ps)) else { return false };
+    let key = key.to_string();
+    remember::<TrackMemoryEntry>(&profile, (machine.clone(), key.clone()), move |current| {
+        let mut entry = current.cloned().unwrap_or_else(|| TrackMemoryEntry::new(&machine, &key, None, None));
+        entry.audio = memo.clone();
+        (entry.audio.is_some() || entry.subtitle.is_some()).then_some(entry)
+    })
+}
+
 /// **The track menu's audio pick: commit it, and remember it if the route took it.** `memo` is the
 /// descriptor of the picked row ([`memo_of_audio`](super::super::memo_of_audio)); `None` is a commit that is
 /// not a viewer's choice and remembers nothing. The write is made only when
@@ -333,7 +364,7 @@ fn remember_track_pick(ps: &PlaybackSession, pick: TrackPick) -> bool {
 /// viewer made it; [`apply_deferred_original_effects`] only replays it and writes nothing.
 pub fn commit_audio_pick(ps: &mut PlaybackSession, audio: CarriedAudio, memo: Option<AudioMemo>) -> bool {
     let accepted = commit_audio_selection(ps, audio);
-    if accepted {
+    if accepted && remember_audio_choices() == RememberAudioChoices::On {
         if let Some(memo) = memo {
             remember_track_pick(ps, TrackPick::Audio(memo));
         }

@@ -1,4 +1,28 @@
 {
+  "widgets.skip.watch_intro": {
+    "value": "Watch intro",
+    "description": "Playback marker control: widgets.skip.watch_intro"
+  },
+  "widgets.skip.watch_credits": {
+    "value": "Watch credits",
+    "description": "Playback marker control: widgets.skip.watch_credits"
+  },
+  "widgets.skip.next_episode": {
+    "value": "Next episode",
+    "description": "Playback marker control: widgets.skip.next_episode"
+  },
+  "widgets.skip.missing_intro": {
+    "value": "Plex intro marker missing. Check Plex Analyze and intro detection.",
+    "description": "Playback marker control: widgets.skip.missing_intro"
+  },
+  "widgets.skip.missing_credits": {
+    "value": "Plex credits marker missing. Check Plex Analyze and credits detection.",
+    "description": "Playback marker control: widgets.skip.missing_credits"
+  },
+  "widgets.skip.missing_both": {
+    "value": "Plex intro and credits markers missing. Check Plex Analyze and detection.",
+    "description": "Playback marker control: widgets.skip.missing_both"
+  },
   "widgets.menu.scaling": {
     "value": "Video scaling",
     "description": "Opens the current picture scaling choices."
@@ -81,6 +105,26 @@
   "widgets.toggle.off": {
     "value": "Off",
     "description": "Trailing value of an on/off settings switch."
+  },
+  "widgets.tracks.audio_remember_disabled": {
+    "value": "Enable Remember audio choices in Settings.",
+    "description": "Audio choice memory: widgets.tracks.audio_remember_disabled"
+  },
+  "widgets.tracks.audio_remember_current": {
+    "value": "Remember current audio",
+    "description": "Save the current audio choice for this title without switching tracks."
+  },
+  "widgets.tracks.audio_forget": {
+    "value": "Forget saved audio",
+    "description": "Forget the locally saved audio choice for this title; Plex item selection is unchanged."
+  },
+  "widgets.tracks.audio_remember_show": {
+    "value": "For this show. Plex may keep its own selection.",
+    "description": "Audio track selector note: an explicit choice applies to the whole series and another choice replaces it."
+  },
+  "widgets.tracks.audio_remember_movie": {
+    "value": "For this movie. Plex may keep its own selection.",
+    "description": "Audio track selector note: an explicit choice applies to this movie and another choice replaces it."
   },
   "widgets.tracks.audio": {
     "value": "Audio",

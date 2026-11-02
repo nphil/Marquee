@@ -1860,11 +1860,14 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
             if let Some(forced) = env.account_subtitles.clone() {
                 account_subtitles = Some(forced);
             }
-            // **What this profile remembered for the show** (track memory, the read path): only an episode
-            // of a known show has any, and the env of a known retry carries none (`apply_retry`).
+            // A retry carries its own choices and receives no captured memory.
             let memory_entry = plan.playing.as_ref().and_then(|p| show_memory(&env.memory, p));
             let memory_sub = memory_entry.and_then(|e| e.subtitle.as_ref());
-            let audio_memory = memory_entry
+            let audio_entry = plan.playing.as_ref().and_then(|p| {
+                super::track_memory::audio_memory_key(&p.kind, &p.show_rk, &p.rk)
+                    .and_then(|key| env.memory.iter().find(|e| e.show_rk == key))
+            });
+            let audio_memory = audio_entry
                 .and_then(|e| e.audio.as_ref())
                 .map(|memo| match_audio(tracks, memo, |i| audio_is_commentary(tracks, i)));
             // every audio pick below (direct play, remux, re-encode) ranks against these same prefs
@@ -1938,12 +1941,12 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     .as_ref()
                     .and_then(|(i, _, _)| usize::try_from(*i).ok())
                     .and_then(|i| tracks.get(i))
-                    .is_some_and(|s| lang_matches(lang, &s.lang_code));
+                    .is_some_and(|s| lang_matches(lang, plx_data::metadata::audio_language(s)));
                 crate::player::log(&format!(
                     "route: show prefers audio {lang} — {}",
                     if hit {
                         "playing that track"
-                    } else if tracks.iter().any(|s| lang_matches(lang, &s.lang_code)) {
+                    } else if tracks.iter().any(|s| lang_matches(lang, plx_data::metadata::audio_language(s))) {
                         if copy_blocked {
                             "a track in it exists but is not direct-playable; using the usual order"
                         } else {
@@ -2954,9 +2957,9 @@ fn account_audio_language_log(
             let picked_language = audio_sel
                 .and_then(|(i, _, _)| usize::try_from(*i).ok())
                 .and_then(|i| tracks.get(i))
-                .is_some_and(|track| lang_matches(lang, &track.lang_code));
+                .is_some_and(|track| lang_matches(lang, plx_data::metadata::audio_language(track)));
             let matching_track = |track: &plx_data::metadata::Stream| {
-                lang_matches(lang, &track.lang_code)
+                lang_matches(lang, plx_data::metadata::audio_language(track))
             };
             let direct_playable_match = tracks.iter().any(|track| {
                 matching_track(track) && plx_plex::plex::is_dp_audio_track_with(caps, &track.codec, track.channels, track.sampling_rate)
@@ -3050,7 +3053,7 @@ fn audio_intents<'a>(
         .map(AudioIntent::Selection);
     let langs = prefs
         .in_order()
-        .filter(|l| tracks.iter().any(|s| lang_matches(l, &s.lang_code)))
+        .filter(|l| tracks.iter().any(|s| lang_matches(l, plx_data::metadata::audio_language(s))))
         .map(AudioIntent::Language);
     session.into_iter().chain(remembered).chain(selection).chain(langs)
         .chain(std::iter::once(AudioIntent::FileDefault)).collect()
@@ -3158,7 +3161,7 @@ fn refused_audio_codec(
 ) -> String {
     let index = audio_intents(tracks, prefs, session_pick).into_iter().find_map(|intent| match intent {
         AudioIntent::Selection(i) => Some(i),
-        AudioIntent::Language(l) => tracks.iter().position(|s| lang_matches(l, &s.lang_code)),
+        AudioIntent::Language(l) => tracks.iter().position(|s| lang_matches(l, plx_data::metadata::audio_language(s))),
         AudioIntent::FileDefault => tracks.iter().position(|s| s.default),
     });
     match index.or((!tracks.is_empty()).then_some(0)) {
@@ -3190,10 +3193,11 @@ fn pick_dp_audio_eligible(
         AudioIntent::Selection(i) if dp_at(&tracks[i]) => Some(i),
         AudioIntent::Selection(i) => tracks
             .iter()
-            .position(|s| dp_at(s) && lang_matches(&tracks[i].lang_code, &s.lang_code)),
+            .position(|s| dp_at(s) && lang_matches(plx_data::metadata::audio_language(&tracks[i]), plx_data::metadata::audio_language(s))),
         AudioIntent::Language(l) => tracks
             .iter()
-            .position(|s| dp_at(s) && lang_matches(l, &s.lang_code)),
+            .enumerate().filter(|(_, s)| dp_at(s) && lang_matches(l, plx_data::metadata::audio_language(s)))
+            .min_by_key(|(i, _)| audio_is_commentary(tracks, *i)).map(|(i, _)| i),
         // the file's flagged default track, if direct-playable (explicit index)
         AudioIntent::FileDefault => tracks.iter().position(|s| s.default && dp_at(s)),
     });
@@ -3227,7 +3231,7 @@ pub(super) fn audio_is_commentary(tracks: &[plx_data::metadata::Stream], i: usiz
     plx_data::metadata::track_label::is_commentary(&tracks[i].title)
         && tracks.iter().enumerate().any(|(j, s)| {
             j != i
-                && same_audio_language(&tracks[i].lang_code, &s.lang_code)
+                && same_audio_language(plx_data::metadata::audio_language(&tracks[i]), plx_data::metadata::audio_language(s))
                 && !plx_data::metadata::track_label::is_commentary(&s.title)
         })
 }
@@ -3239,7 +3243,7 @@ fn dp_sibling(
     let commentary = audio_is_commentary(tracks, target);
     (0..tracks.len()).find(|&j| {
         dp_at(&tracks[j])
-            && same_audio_language(&tracks[target].lang_code, &tracks[j].lang_code)
+            && same_audio_language(plx_data::metadata::audio_language(&tracks[target]), plx_data::metadata::audio_language(&tracks[j]))
             && audio_is_commentary(tracks, j) == commentary
     })
 }
@@ -3256,7 +3260,7 @@ fn same_kind_pick(
             AudioIntent::Selection(i) => return carry(i),
             AudioIntent::Language(l) => {
                 let mains: Vec<usize> = (0..tracks.len())
-                    .filter(|&i| lang_matches(l, &tracks[i].lang_code) && !audio_is_commentary(tracks, i))
+                    .filter(|&i| lang_matches(l, plx_data::metadata::audio_language(&tracks[i])) && !audio_is_commentary(tracks, i))
                     .collect();
                 // a language holding only commentary names no track to play: next intent
                 if !mains.is_empty() {
@@ -3309,12 +3313,12 @@ fn encode_audio_id(
         .find_map(|intent| match intent {
             AudioIntent::Selection(i) => Some(tracks[i].id).filter(|&id| id > 0),
             AudioIntent::Language(l)
-                if tracks.iter().any(|s| s.id == dp_audio_id && lang_matches(l, &s.lang_code)) =>
+                if tracks.iter().any(|s| s.id == dp_audio_id && lang_matches(l, plx_data::metadata::audio_language(s))) =>
             {
                 Some(dp_audio_id)
             }
             AudioIntent::Language(l) => (0..tracks.len())
-                .filter(|&i| tracks[i].id > 0 && lang_matches(l, &tracks[i].lang_code))
+                .filter(|&i| tracks[i].id > 0 && lang_matches(l, plx_data::metadata::audio_language(&tracks[i])))
                 .min_by_key(|&i| audio_is_commentary(tracks, i))
                 .map(|i| tracks[i].id),
             AudioIntent::FileDefault if dp_audio_id > 0 => Some(dp_audio_id),
@@ -3376,7 +3380,7 @@ fn reference_default(tracks: &[plx_data::metadata::Stream], default_acodec: &str
     Some(match tracks.iter().position(|s| s.default) {
         Some(d) if audio_is_commentary(tracks, d) => (0..tracks.len())
             .find(|&j| {
-                same_audio_language(&tracks[d].lang_code, &tracks[j].lang_code) && !audio_is_commentary(tracks, j)
+                same_audio_language(plx_data::metadata::audio_language(&tracks[d]), plx_data::metadata::audio_language(&tracks[j])) && !audio_is_commentary(tracks, j)
             })
             .unwrap_or(d),
         Some(d) => d,

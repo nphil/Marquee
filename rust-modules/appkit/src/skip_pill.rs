@@ -1,19 +1,14 @@
-//! The **Skip Intro / Skip Credits** control. While the playhead sits inside one of the playing
-//! leaf's server markers (`metadata::playing_markers`, fetched with `?includeMarkers=1`) this
-//! button TAKES THE PLACE of the transport's Subtitles/Audio discs — same row, same right edge,
-//! same height — and the discs return the moment the segment ends.
-//!
-//! Replacing them rather than joining them is the design call: one wide unmissable target in the
-//! spot the eye already goes for transport controls. The cost is that CC/Audio are unreachable for
-//! the length of the segment, and that the button only exists while the HUD is up — which is why
-//! `app.rs` RAISES the HUD once when a segment begins and parks focus here, so a bare OK still
-//! skips in one press instead of three.
+//! Watch and Skip controls replace the transport discs during a marked segment, keeping the
+//! control row's height and right edge.
 #![allow(dead_code)]
 use plx_data::metadata::{self, MarkerKind};
 use plx_ui::theme;
 use plx_ui::widgets::{Button, ControlGround};
 use plx_ui::{Env, Painter, Rect, View};
-use std::ffi::CString;
+
+pub const BTN_WATCH: i32 = 0;
+pub const BTN_SKIP: i32 = 1;
+pub const PRIMARY_BTN: i32 = BTN_SKIP;
 
 /// What pressing the button does. The distinction is the `final` flag on a credits marker: an
 /// ordinary segment is a seek and playback continues past it, but a `final` one runs to the end of
@@ -49,6 +44,21 @@ impl Prompt {
     }
 }
 
+impl Prompt {
+    fn watch_label_c(&self) -> &'static std::ffi::CStr {
+        match self.kind {
+            MarkerKind::Intro => plx_platform::i18n::msg::widgets_skip_watch_intro_c(),
+            MarkerKind::Credits => plx_platform::i18n::msg::widgets_skip_watch_credits_c(),
+        }
+    }
+    fn label_c(&self) -> &'static std::ffi::CStr {
+        match self.kind {
+            MarkerKind::Intro => plx_platform::i18n::msg::widgets_skip_intro_c(),
+            MarkerKind::Credits => plx_platform::i18n::msg::widgets_skip_credits_c(),
+        }
+    }
+}
+
 /// PURE: the offer a given segment makes. Takes the marker rather than reading the playhead, so
 /// the precedence it feeds ([`crate::player_hud::slot_for`]) is host-testable and the whole frame
 /// decides from ONE playhead sample — `playpos_ns` is written by LG's media thread, and re-reading
@@ -70,31 +80,91 @@ pub fn prompt_for(m: metadata::Marker) -> Prompt {
     }
 }
 
-/// The button's rect — the SHARED control-row slot, so it and Up Next cannot drift apart.
-///
-/// `row` is the player instance's own [`crate::player_hud::motion::HudMotion`] (restructure phase
-/// 9): it carries both the label-width memo this measurement is cached in and the control row's
-/// focus springs. It was a module `static mut` on the other side of `ctrl_slot` until then.
-pub fn rect(row: &mut crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> Rect {
-    crate::player_hud::classic::ctrl_slot(row, pr.label(), measure)
+// The primary retains the stand-in slot's floor; Watch only needs its intrinsic width,
+// matching Up Next's unequal pair and keeping Skip at the original right edge.
+fn pair(primary: Rect, watch_w: f32) -> (Rect, Rect) {
+    let watch = Rect::new(primary.x - theme::space::SM - watch_w, primary.y, watch_w, primary.h);
+    (watch, primary)
 }
 
-/// Draw the button in the control row. Called by `player_hud` INSTEAD of the two discs.
-pub fn draw(row: &mut crate::player_hud::motion::HudMotion, p: Painter, pr: Prompt, focused: bool, measure: &dyn plx_machine::machine::Measure) {
-    let Ok(label) = CString::new(pr.label()) else {
-        return;
-    };
-    // No leading icon: the label alone carries it, and a chevron on a control that does not
-    // navigate anywhere was reading as "more" rather than "skip".
-    // Its slot's only item, so index 0 — the pop is the control ROW's (`HudMotion::scale`),
-    // shared with the transport discs this pill stands in for.
-    let slot = rect(row, pr, measure);
-    let pop = row.scale(0);
-    Button::new(label.as_ptr(), theme::size::BODY, slot)
-        .scale(pop)
-        .focused(focused)
-        // It stands in the transport discs' own slot, over the video plane and on the HUD's ramp,
-        // so it wears their ground as well as their pop — see `ControlGround`.
+fn watch_width(pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> f32 {
+    Button::pill_w_measured(pr.watch_label_c(), theme::size::BODY, false, None, measure)
+}
+
+fn bounds(watch: Rect, skip: Rect) -> Rect {
+    Rect::new(watch.x, skip.y, skip.x + skip.w - watch.x, skip.h)
+}
+
+fn choose(watch: Rect, skip: Rect, idx: i32) -> Rect {
+    if idx == BTN_WATCH { watch } else { skip }
+}
+
+pub fn rect(row: &mut crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> Rect {
+    let primary = crate::player_hud::classic::ctrl_slot(row, pr.label(), measure);
+    let (watch, skip) = pair(primary, watch_width(pr, measure));
+    bounds(watch, skip)
+}
+
+pub fn item_rect(row: &mut crate::player_hud::motion::HudMotion, pr: Prompt, idx: i32, measure: &dyn plx_machine::machine::Measure) -> Rect {
+    let primary = crate::player_hud::classic::ctrl_slot(row, pr.label(), measure);
+    let (watch, skip) = pair(primary, watch_width(pr, measure));
+    choose(watch, skip, idx)
+}
+
+fn pair_peek(row: &crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> (Rect, Rect) {
+    let anchor = crate::player_hud::classic::frame_geometry().row_anchor;
+    let width = crate::player_hud::classic::ctrl_slot_w(row, pr.label(), measure);
+    pair(Rect::new(anchor.right - width, anchor.top, width, anchor.h), watch_width(pr, measure))
+}
+
+pub fn rect_peek(row: &crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> Rect {
+    let (watch, skip) = pair_peek(row, pr, measure);
+    bounds(watch, skip)
+}
+
+pub fn item_rect_peek(row: &crate::player_hud::motion::HudMotion, pr: Prompt, idx: i32, measure: &dyn plx_machine::machine::Measure) -> Rect {
+    let (watch, skip) = pair_peek(row, pr, measure);
+    choose(watch, skip, idx)
+}
+
+pub fn draw(row: &mut crate::player_hud::motion::HudMotion, p: Painter, pr: Prompt, focused: Option<i32>, progress: Option<f32>, measure: &dyn plx_machine::machine::Measure) {
+    let (watch_label, skip_label) = (pr.watch_label_c(), pr.label_c());
+    let primary = crate::player_hud::classic::ctrl_slot(row, pr.label(), measure);
+    let watch_w = Button::pill_w_measured(watch_label, theme::size::BODY, false, None, measure);
+    let (watch, skip) = pair(primary, watch_w);
+    let e = Env::inert();
+    Button::new(watch_label.as_ptr(), theme::size::BODY, watch)
+        .scale(row.scale(BTN_WATCH))
+        .focused(focused == Some(BTN_WATCH))
         .ground(ControlGround::Unkeyed)
-        .draw(&Env::inert(), p);
+        .draw(&e, p);
+    let mut button = Button::new(skip_label.as_ptr(), theme::size::BODY, skip)
+        .scale(row.scale(BTN_SKIP))
+        .focused(focused == Some(BTN_SKIP))
+        .ground(ControlGround::Unkeyed);
+    if let Some(progress) = progress {
+        if !plx_machine::motion::phase_clocks_held() { plx_machine::idle::invalidate(); }
+        button = button.progress(progress);
+    }
+    button.draw(&e, p);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pair_preserves_primary_and_right_edge() {
+        let primary = Rect::new(800.0, 900.0, 240.0, 60.0);
+        let (watch, skip) = pair(primary, 160.0);
+        assert_eq!(skip, primary);
+        assert_eq!(watch.x + watch.w + theme::space::SM, skip.x);
+        assert_eq!((watch.y, watch.h), (skip.y, skip.h));
+        let union = bounds(watch, skip);
+        assert_eq!(union.x, watch.x);
+        assert_eq!(union.x + union.w, primary.x + primary.w);
+        assert_eq!(choose(watch, skip, BTN_WATCH), watch);
+        assert_eq!(choose(watch, skip, BTN_SKIP), skip);
+        assert_eq!(PRIMARY_BTN, BTN_SKIP);
+    }
 }

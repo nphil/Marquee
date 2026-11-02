@@ -31,7 +31,7 @@ use super::track_memory::{SubMode, TrackContext};
 #[path = "decision_memory.rs"]
 mod memory;
 pub use memory::{
-    commit_audio_pick, commit_forced_only_and_sidecar, commit_forced_only_pick, commit_subtitle_and_sidecar, commit_subtitle_pick,
+    audio_memory_present, set_audio_memory, commit_audio_pick, commit_forced_only_and_sidecar, commit_forced_only_pick, commit_subtitle_and_sidecar, commit_subtitle_pick,
     on_decoded_frame, persist_subtitle_offset, rematch_subtitle_with_names, repoint_parked_subtitle, send_parked_write_back,
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -382,7 +382,7 @@ pub struct PlaybackSession {
     cur_sub_pref_lang: Option<String>,
     /// The show the playing item belongs to (`PlayingItem::show_rk`, empty for anything but an
     /// episode) and its Plex type (`PlayingItem::kind`), carried from the landing: the key and the
-    /// gate of the track memory, which remembers a pick per SHOW and only for an episode.
+    /// gate of the track memory: show-scoped for episodes, item-scoped for movie audio.
     cur_show_rk: String,
     cur_kind: String,
     /// A remembered subtitle was chosen for this play but the route shows none of it
@@ -5718,7 +5718,7 @@ pub fn cur_show_rk(ps: &PlaybackSession) -> &str {
     &ps.cur_show_rk
 }
 /// The playing item's Plex type (`episode`, `movie`, ...), empty when the server sent none. Track
-/// memory is written for `episode` only.
+/// memory uses it to distinguish episode choices from movie audio.
 pub fn cur_kind(ps: &PlaybackSession) -> &str {
     &ps.cur_kind
 }

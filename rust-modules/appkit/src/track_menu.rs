@@ -131,6 +131,8 @@ pub enum TrackRow {
     /// An Audio-tab track row — the index into the playing item's audio list
     /// ([`plx_data::metadata::PlayingItem::audio`]).
     Audio(usize),
+    AudioRemember,
+    AudioForget,
     /// The Boost dialog toggle row (issue #266) — present whenever [`TrackMenuState::enhance_shown`]
     /// is `Some` (offered) OR [`TrackMenuState::enhance_disabled`] is (dim, with a reason),
     /// immediately after the last [`Self::Audio`].
@@ -343,6 +345,8 @@ impl FormId for TrackRow {
         let rung = |f: StyleField, i: usize| 0x0007_0000 + f.ordinal() * 0x100 + (i as u32).min(0xFF);
         RowKey(match *self {
             TrackRow::Audio(i) => 0x0001_0000 + i as u32,
+            TrackRow::AudioRemember => 0x0002_0002,
+            TrackRow::AudioForget => 0x0002_0003,
             TrackRow::Boost => 0x0002_0000,
             TrackRow::Loudness => 0x0002_0001,
             TrackRow::SubOff => 0x0003_0000,
@@ -639,6 +643,7 @@ pub enum TrackCommit {
     /// The frozen `CarriedAudio` snapshot for the picked row (issue #266), built via
     /// `CarriedAudio::from_stream` from the exact `metadata::Stream` the row was drawn from.
     Audio { carried: plx_media::route::CarriedAudio, memo: Option<plx_plex::plex::session::prefs::AudioMemo> },
+    AudioMemory(Option<plx_plex::plex::session::prefs::AudioMemo>),
     /// The Audio tab's Boost dialog / Normalize loudness toggle rows (issue #266): the full
     /// preference after the flip, so the loop's `player::request_audio_enhancement` has both
     /// bits regardless of which row was pressed. Built from [`TrackMenuState::enhance_shown`],
@@ -1270,6 +1275,14 @@ impl TrackMenuState {
                     });
                     TrackOk::Commit { commit: TrackCommit::AudioEnhancement(a), keep_open: true }
                 }
+                Some(TrackRow::AudioRemember) => {
+                    if self.form.activate(sel.max(0) as usize).is_none() || plx_media::route::remember_audio_choices() == plx_plex::plex::session::RememberAudioChoices::Off {
+                        return TrackOk::Inert;
+                    }
+                    let memo = tracks(meta).and_then(|t| usize::try_from(self.active_audio).ok().and_then(|i| plx_media::route::memo_of_audio(&t.audio, i)));
+                    memo.map_or(TrackOk::Inert, |memo| TrackOk::Commit { commit: TrackCommit::AudioMemory(Some(memo)), keep_open: false })
+                }
+                Some(TrackRow::AudioForget) => TrackOk::Commit { commit: TrackCommit::AudioMemory(None), keep_open: false },
                 Some(TrackRow::Audio(i)) => {
                     let pick = i as c_int;
                     let changed = self.active_audio != pick;
@@ -2185,6 +2198,24 @@ impl TrackMenuState {
                 row = row.badge(Badge::Ad);
             }
             sec = sec.item(TrackRow::Audio(i), RowKind::Choice, (), row);
+        }
+        if !d.audio.is_empty() {
+            let note = match plx_media::route::cur_kind(ps) {
+                "episode" if !plx_media::route::cur_show_rk(ps).is_empty() => Some(plx_platform::i18n::msg::widgets_tracks_audio_remember_show()),
+                "movie" if !plx_media::route::cur_rk(ps).is_empty() => Some(plx_platform::i18n::msg::widgets_tracks_audio_remember_movie()),
+                _ => None,
+            };
+            if let Some(note) = note {
+                let off = plx_media::route::remember_audio_choices() == plx_plex::plex::session::RememberAudioChoices::Off;
+                let sid = plx_media::route::cur_audio_sid(ps);
+                let known = sid > 0 && d.audio.iter().any(|track| track.id == sid);
+                sec = sec.item(TrackRow::AudioRemember, RowKind::Button, (), Row::new(plx_platform::i18n::msg::widgets_tracks_audio_remember_current())).disabled(off || !known);
+                if plx_media::route::audio_memory_present(ps) {
+                    sec = sec.item(TrackRow::AudioForget, RowKind::Button, (), Row::new(plx_platform::i18n::msg::widgets_tracks_audio_forget()));
+                }
+                if off { sec = sec.note(plx_platform::i18n::msg::widgets_tracks_audio_remember_disabled()); }
+                sec = sec.note(note);
+            }
         }
         let mut form = Form::new().section(sec);
         if let Some(shown) = enhance_shown {
@@ -3767,6 +3798,33 @@ mod tests {
         let mut menu = TrackMenuState::new(&ps, store.view(), 0, Vec::new());
         menu.focus_row(0);
         assert_eq!(menu.on_ok(store.view()), TrackOk::Dismiss);
+    }
+
+    #[test]
+    fn remember_and_forget_actions_do_not_switch_audio() {
+        let _guard = plx_base::testlock::serial();
+        let previous = plx_media::route::remember_audio_choices();
+        plx_media::route::restore_remember_audio_choices(plx_plex::plex::session::RememberAudioChoices::On);
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let store = store_with_audio(vec![plx_data::metadata::Stream {
+            id: 10, index: 0, lang_code: "eng".into(), codec: "aac".into(), channels: 2,
+            default: true, ..Default::default()
+        }]);
+        let mut menu = TrackMenuState::new(&ps, store.view(), 0, Vec::new());
+        let form = TrackForm::new().section(FormSection::new("")
+            .item(TrackRow::AudioRemember, RowKind::Button, (), Row::new("Remember"))
+            .item(TrackRow::AudioForget, RowKind::Button, (), Row::new("Forget")));
+        menu.form.set(form, None);
+        assert!(menu.focus_id(TrackRow::AudioRemember));
+        assert!(matches!(menu.on_ok(store.view()), TrackOk::Commit { commit: TrackCommit::AudioMemory(Some(_)), .. }));
+        assert!(menu.focus_id(TrackRow::AudioForget));
+        assert!(matches!(menu.on_ok(store.view()), TrackOk::Commit { commit: TrackCommit::AudioMemory(None), .. }));
+        plx_media::route::restore_remember_audio_choices(plx_plex::plex::session::RememberAudioChoices::Off);
+        assert!(menu.focus_id(TrackRow::AudioRemember));
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Inert);
+        assert!(menu.focus_id(TrackRow::AudioForget));
+        assert!(matches!(menu.on_ok(store.view()), TrackOk::Commit { commit: TrackCommit::AudioMemory(None), .. }));
+        plx_media::route::restore_remember_audio_choices(previous);
     }
 
     /// [`TrackRow`]'s Audio-tab identities, with no enhancement offered: one [`TrackRow::Audio`]

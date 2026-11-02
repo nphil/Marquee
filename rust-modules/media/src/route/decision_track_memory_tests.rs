@@ -15,6 +15,7 @@ use crate::route::{memo_of_audio, memo_of_subtitle};
 use plx_plex::plex::session::prefs::ProfileList;
 use plx_plex::plex::session::{self as session, Preferences, Session};
 
+use plx_plex::plex::session::RememberAudioChoices;
 const MACHINE: &str = "machine-tm";
 /// A plain numeric ratingKey: the one shape the show-preferences read accepts, so a resolve under
 /// test makes the same requests a real episode's does.
@@ -367,6 +368,18 @@ fn a_remembered_audio_track_is_the_one_direct_play_feeds() {
 }
 
 // ---- the gate: episodes only ------------------------------------------------------------------
+
+#[test]
+#[cfg(feature = "devtriggers")]
+fn movie_audio_memory_is_recalled_without_movie_subtitle_memory() {
+    let entry = TrackMemoryEntry::new(MACHINE, "rk-4k", Some(japanese_eac3()), Some(SubtitleMemo::Off));
+    let mut case = Case::episode(vec![srt(55001, 3, "eng", false, true)], vec![entry]);
+    case.kind = "movie";
+    case.show_rk = "";
+    let (plan, _) = resolve(case);
+    assert_eq!(plan.audio.as_ref().map(|a| a.sid), Some(36015));
+    assert_eq!(plan.sub_sid, 55001);
+}
 
 /// Music and movies get nothing, and so does an episode that names no show.
 #[test]
@@ -1137,6 +1150,41 @@ fn a_menu_pick_is_remembered_for_the_show_and_each_half_keeps_the_other() {
         Some(TrackMemoryEntry::new(MACHINE, SHOW, Some(spanish), Some(english_track()))),
         "and a second audio pick replaced the audio half and kept the subtitle"
     );
+    let tracks = audio_pair();
+    assert!(audio_memory_present(&ps));
+    let english = memo_of_audio(&tracks, 0).unwrap();
+    let playing = cur_audio_sid(&ps);
+    assert!(set_audio_memory(&ps, Some(english.clone())));
+    assert_eq!(cur_audio_sid(&ps), playing, "remembering does not switch playback");
+    assert_eq!(remembered("").unwrap().audio, Some(english));
+    assert!(audio_memory_present(&ps));
+    assert!(set_audio_memory(&ps, None));
+    assert!(!audio_memory_present(&ps));
+    assert_eq!(remembered("").unwrap().subtitle, Some(english_track()), "forgetting audio preserves subtitles");
+    assert_eq!(cur_audio_sid(&ps), playing, "forgetting does not switch playback");
+    tidy_write(&mut ps);
+}
+
+#[test]
+fn audio_memory_off_preserves_subtitle_memory_and_forget() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let session = session::TempSession::new("track-memory-off");
+    sign_in_and_seat(&session, "");
+    let sid = land_playing(&mut ps, "episode", SHOW);
+    restore_remember_audio_choices(RememberAudioChoices::On);
+    assert!(set_audio_memory(&ps, Some(japanese_eac3())));
+    commit_subtitle_pick(&mut ps, 0, 55001, true, Some(english_track()));
+    restore_remember_audio_choices(RememberAudioChoices::Off);
+    let snapshot = recalled_track_memory(sid);
+    assert_eq!(snapshot[0].audio, None);
+    assert_eq!(snapshot[0].subtitle, Some(english_track()));
+    assert!(!set_audio_memory(&ps, Some(japanese_eac3())));
+    assert!(commit_audio_pick(&mut ps, CarriedAudio::named(36014, 0), Some(AudioMemo { lang: "eng".into(), ..japanese_eac3() })));
+    assert_eq!(remembered("").unwrap().audio, Some(japanese_eac3()));
+    assert!(set_audio_memory(&ps, None));
+    assert_eq!(remembered("").unwrap().subtitle, Some(english_track()));
+    restore_remember_audio_choices(RememberAudioChoices::On);
     tidy_write(&mut ps);
 }
 
@@ -1278,23 +1326,26 @@ fn a_menu_off_is_stored_as_off_and_beats_the_accounts_rule() {
     tidy_write(&mut ps);
 }
 
-/// **Episodes only.** A movie, an item no show claims, a track and an item of no kind write nothing;
-/// the control (an episode of a known show) writes.
+/// Movies remember audio only; unknown kinds and episodes without a show remember nothing.
 #[test]
 fn only_an_episode_of_a_known_show_is_remembered() {
     let mut ps = PlaybackSession::IDLE;
     let _g = fresh_registry(&mut ps);
     let session = session::TempSession::new("track-memory-kinds");
     sign_in_and_seat(&session, "");
-    for (kind, show_rk) in [("movie", SHOW), ("episode", ""), ("track", SHOW), ("", SHOW)] {
+    for (kind, show_rk) in [("episode", ""), ("track", SHOW), ("", SHOW)] {
         land_playing(&mut ps, kind, show_rk);
         commit_audio_pick(&mut ps, CarriedAudio::named(36015, 1), Some(japanese_eac3()));
         commit_subtitle_pick(&mut ps, 0, 55001, true, Some(english_track()));
         assert_eq!(remembered_anything(""), Vec::<TrackMemoryEntry>::new(), "{kind:?}/{show_rk:?} wrote nothing");
     }
+    land_playing(&mut ps, "movie", "");
+    commit_audio_pick(&mut ps, CarriedAudio::named(36015, 1), Some(japanese_eac3()));
+    commit_subtitle_pick(&mut ps, 0, 55001, true, Some(english_track()));
+    assert_eq!(remembered_anything(""), vec![TrackMemoryEntry::new(MACHINE, "rk-ep", Some(japanese_eac3()), None)]);
     land_playing(&mut ps, "episode", SHOW);
     commit_audio_pick(&mut ps, CarriedAudio::named(36015, 1), Some(japanese_eac3()));
-    assert_eq!(remembered_anything("").len(), 1, "control: an episode of a known show is remembered");
+    assert_eq!(remembered_anything("").len(), 2, "the episode has its own show entry");
     tidy_write(&mut ps);
 }
 

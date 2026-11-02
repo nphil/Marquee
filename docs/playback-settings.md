@@ -35,6 +35,24 @@ Disabled needs no confirmation.
 
 Audio passthrough remains the television's Digital Sound Output setting.
 
+## Intro and credits
+
+Intro skipping defaults to Manual, with optional 3, 5, 10, 15 or 30 second countdowns.
+Skip intro is initially focused; Watch intro cancels automatic skipping for that episode.
+
+Credits countdown uses the existing Next episode mode. Countdown starts at a real Plex
+credits marker with a queued successor, using a configurable 3, 5, 10, 15 or 30 second delay
+(default 5). After credits waits for the stream to end; Off disables automatic next-episode
+playback. Both retain the explicit Next episode action. Watch credits stops the early
+countdown for the entire episode, including later credit segments and intervening scenes;
+the manual next action remains available without a filling bar.
+
+Countdowns require the same real marker and visible, focused controls. Pause, buffering,
+menus and input interrupt automatic action. Duration-based tail estimates are not Plex
+markers and no longer create a credits prompt. Confirmed missing intro or credits markers
+produce one nonblocking episode notice directing attention to Plex detection settings and
+Analyze; cached, loading or failed metadata does not establish that markers are missing.
+
 ## Plex account preferences
 
 The screen loads and saves the active profile using its own plex.tv credential. A save sends
@@ -52,11 +70,17 @@ nothing (never a full track), and switching the audio switches
 the forced track with it. It sits in the order below exactly where a remembered Off does, and it is
 not remembered again by an OK on the row that already holds it.
 Order: this playback's own pick, then (subtitles only) a subtitle file the
-server has already selected, then what the profile remembered for the show (episodes only), then
-existing PMS item selections, then explicit show preferences, then account defaults. The remembered
-pick is written by the track menu: choosing an audio or subtitle track (or Off) while an episode
-plays remembers it for that show under the seated profile, and the next episode of the show starts on
-the same pick, matched by language, forced/SDH and the like rather than by stream id. A remembered
+server has already selected, then the profile's remembered choice for the show (or, for audio,
+the movie), then existing PMS item selections, explicit show preferences, and account defaults.
+With **Remember audio choices** enabled in Audio & subtitles, choosing an audio track remembers
+it for the show or movie under the seated profile and server; choosing another replaces it.
+This local option defaults to On. Off suspends both remembering and recall without deleting saved
+choices. The Audio menu can remember the current track without changing playback, or forget the
+saved choice without changing Plex's own item selection; forgetting remains available while Off.
+Subtitle choices remain per show. English names, ISO language codes and regional tags match the
+same language; structured track metadata takes precedence over display names, and a normal
+language track is preferred over commentary when available. The next episode matches the
+descriptor, not the stream ID. A remembered
 external subtitle (a sidecar or downloaded file) cannot be reused as that file: the next episode has
 its own, so the pick means that episode's text sidecar of the same language and forced-ness, drawn by
 the app wherever it can draw a sidecar and burned on a video re-encode. With no such sidecar the
@@ -70,7 +94,8 @@ transcode write nothing, a Part with a
 downloaded subtitle gets no subtitle write (a forced track found on that frame included), and a
 pick the viewer makes first carries its own write (after an audio pick, the forced track found on that
 frame is then written on its own, as any subtitle change during playback is, unless the Part carries a
-downloaded subtitle; a subtitle pick has no track left to find and writes nothing more). A movie's pick, a pick the route refused (Force Direct Play), an automatic choice and an OK on the subtitle already
+downloaded subtitle; a subtitle pick has no track left to find and writes nothing more). A movie's
+subtitle pick, a pick the route refused (Force Direct Play), an automatic choice and an OK on the subtitle already
 showing are not remembered. A remembered Off and a remembered Forced only beat the account's rule
 and the server's embedded selection, and unlike a remembered track neither falls through to them
 (Forced only with no forced track shows nothing). A subtitle file the server has selected for the

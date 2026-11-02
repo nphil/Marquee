@@ -565,6 +565,7 @@ pub(crate) fn commit_track(
         TrackCommit::Audio { carried, memo } => {
             plx_media::route::commit_audio_pick(ps, carried, memo);
         }
+        TrackCommit::AudioMemory(memo) => { plx_media::route::set_audio_memory(ps, memo); }
         TrackCommit::AudioEnhancement(a) => plx_media::player::request_audio_enhancement(ps, a),
         // The route commits the pick and performs the sidecar half of it too
         // (`route::commit_subtitle_and_sidecar`): the sidecar policy lives beside the track memory's.
@@ -949,12 +950,18 @@ pub(crate) fn activate_ctrl_row(
                 play_up_next(&mut player.session, pa, HUD_LINGER_MS, pages, bridge)
             } else {
                 if let Some(player) = super::bridge::player_mut(pages) {
-                    player.up_next.cancel();
+                    player.up_next.cancel_kind(plx_data::metadata::MarkerKind::Credits);
                 }
                 false
             }
         }
         ControlSlot::Skip(pr) => {
+            if btn == plx_appkit::skip_pill::BTN_WATCH {
+                if let Some(player) = super::bridge::player_mut(pages) {
+                    player.up_next.cancel_kind(pr.kind);
+                }
+                return false;
+            }
             plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
                 feature: match pr.kind {
                     plx_data::metadata::MarkerKind::Intro => plx_telemetry::diag::schema::Feature::SkipIntro,

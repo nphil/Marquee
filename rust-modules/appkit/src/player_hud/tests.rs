@@ -485,11 +485,11 @@ fn the_control_row_picks_the_most_specific_occupant() {
     for has_next in [false, true] {
         let slot = slot_for(Some(marker(MarkerKind::Intro, false)), has_next, NextEpisodeMode::Countdown);
         assert!(matches!(slot, ControlSlot::Skip(p) if p.kind == MarkerKind::Intro));
-        assert_eq!(slot.items(), 1, "a Skip pill is the row's only item");
+        assert_eq!(slot.items(), 2, "Watch intro and Skip intro");
         assert_eq!(
             slot.primary_btn(),
-            0,
-            "…so it is also the one focus lands on"
+            crate::skip_pill::BTN_SKIP,
+            "focus lands on Skip intro"
         );
     }
 
@@ -510,37 +510,26 @@ fn the_control_row_picks_the_most_specific_occupant() {
     ));
 }
 
-/// Up Next is only offered for a credits marker that runs to the end of the item (`final`).
-/// A mid-item credits segment with a successor queued (a post-credits scene follows) is a
-/// plain Skip Credits pill that seeks past it, not a countdown into the next episode.
+/// Up Next remains available from the first credits segment when a successor is queued.
 #[test]
-fn up_next_needs_a_final_credits_marker() {
+fn up_next_is_offered_from_the_first_credits_marker() {
     let mid = slot_for(Some(marker(MarkerKind::Credits, false)), true, NextEpisodeMode::Countdown);
-    assert!(
-        matches!(mid, ControlSlot::Skip(p) if p.kind == MarkerKind::Credits
-            && p.action == SkipAction::Seek(2_000 * 1_000_000)),
-        "a non-final credits marker offers Skip Credits even with a successor queued"
-    );
+    assert!(matches!(mid, ControlSlot::UpNext(_)));
     assert!(matches!(slot_for(Some(marker(MarkerKind::Credits, true)), true, NextEpisodeMode::Countdown), ControlSlot::UpNext(_)));
 }
 
-/// **Next episode: After credits / Off.** During the credits of an episode with a successor the
-/// control row offers nothing — no Up Next tile (so no countdown and no HUD raise, both of
-/// which key off the slot), and no Skip Credits pill. Everything else keeps its occupant.
+/// After credits and Off retain manual next while suppressing automatic advance.
 #[test]
-fn after_credits_and_off_offer_nothing_during_the_credits() {
+fn after_credits_and_off_keep_manual_next_during_credits() {
     for mode in [NextEpisodeMode::AfterCredits, NextEpisodeMode::Off] {
-        assert!(slot_for(Some(marker(MarkerKind::Credits, true)), true, mode).is_discs(), "{mode:?}");
+        assert!(matches!(slot_for(Some(marker(MarkerKind::Credits, true)), true, mode), ControlSlot::UpNext(_)), "{mode:?}");
         // a show's last episode and a movie keep the Skip Credits pill, which finishes the item
         assert!(matches!(
             slot_for(Some(marker(MarkerKind::Credits, true)), false, mode),
             ControlSlot::Skip(p) if p.action == SkipAction::Finish
         ));
         // a mid-item credits segment and an intro are skippable as ever
-        assert!(matches!(
-            slot_for(Some(marker(MarkerKind::Credits, false)), true, mode),
-            ControlSlot::Skip(p) if p.action == SkipAction::Seek(2_000 * 1_000_000)
-        ));
+        assert!(matches!(slot_for(Some(marker(MarkerKind::Credits, false)), true, mode), ControlSlot::UpNext(_)));
         assert!(matches!(slot_for(Some(marker(MarkerKind::Intro, false)), true, mode), ControlSlot::Skip(_)));
     }
     assert!(matches!(

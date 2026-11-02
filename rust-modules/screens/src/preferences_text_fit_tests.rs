@@ -18,13 +18,13 @@ fn frame_w() -> f32 {
 }
 
 fn playback(quality: Quality, direct_play: DirectPlayMode) -> FieldListInputs<'static> {
-    FieldListInputs { kind: Kind::Playback, quality, direct_play, prefs: None, busy: false, show_retry: false, read_only: false }
+    FieldListInputs { kind: Kind::Playback, quality, direct_play, next_episode: NextEpisodeMode::Countdown, prefs: None, busy: false, show_retry: false, read_only: false }
 }
 
 fn audio(prefs: Option<&AudioPreferences>) -> FieldListInputs<'_> {
     FieldListInputs {
         kind: Kind::AudioSubtitles, quality: Quality::Original, direct_play: DirectPlayMode::Auto,
-        prefs, busy: false, show_retry: false, read_only: false,
+        next_episode: NextEpisodeMode::Countdown, prefs, busy: false, show_retry: false, read_only: false,
     }
 }
 
@@ -137,8 +137,8 @@ fn every_picker_level_fits_its_column_in_every_language() {
         for kind in [Kind::Playback, Kind::AudioSubtitles] {
             let prefs = AudioPreferences::default();
             let fields: &[PickerKind] = match kind {
-                Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking],
-                Kind::AudioSubtitles => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles],
+                Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::NextEpisode, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking],
+                Kind::AudioSubtitles => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::RememberAudioChoices],
             };
             // The Interface resolution picker is opened from the Settings root, not a field list.
             let fields: Vec<PickerKind> = fields.iter().copied()
@@ -250,7 +250,7 @@ fn every_explanation_under_a_title_fits_the_column_in_every_language() {
     let layout = RouteLayout::screen();
     let all_fields = [PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition,
         PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking, PickerKind::UiResolution, PickerKind::AudioLanguage, PickerKind::SubtitleMode,
-        PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles];
+        PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::RememberAudioChoices, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay];
     let mut out = Vec::new();
     for language in SHIPPED {
         let _guard = language_on_this_thread_for_test(language);

@@ -133,6 +133,7 @@ pub struct PlayerScreen {
     pub row: HudMotion,
     /// The Up Next auto-advance countdown (`up_next`'s `DEADLINE`/`CANCELLED`).
     pub up_next: Countdown,
+    pub marker_notice_shown: bool,
     /// This frame's control-row occupant, sampled ONCE by the loop and pushed here (`slot()`'s own
     /// doc: `playpos_ns` is written by LG's media thread and `player::pump` runs between the input
     /// handlers and the draw, so re-deriving it per call site let a keypress dispatch to a control
@@ -178,6 +179,7 @@ impl PlayerScreen {
             transport_tap: false,
             row: HudMotion::new(),
             up_next: Countdown::default(),
+            marker_notice_shown: false,
             slot: ControlSlot::Discs(player_hud::Controls::NONE),
             busy: plx_appkit::player_hud::Busy::None,
             transport: true,
@@ -240,6 +242,7 @@ impl PlayerScreen {
             self.hud.dismissed = false;
             self.hud.last_offer = None;
             self.up_next.reset();
+            self.marker_notice_shown = false;
         }
         self.publish();
     }
@@ -659,7 +662,12 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 // …and the Up Next countdown, which arms on APPEARANCE and is dropped with the
                 // segment. Stepped for the whole route, not per-overlay: the countdown must keep
                 // running whichever panel is up (`up_next::tick`).
-                self.up_next.tick(self.slot, tick.ms);
+                let meta = H::metadata(cx);
+                let head = plx_data::metadata::Playhead { playing: plx_media::player::is_playing(H::session(cx)),
+                    pos_ns: plx_media::player::playpos_ns() };
+                let authoritative = meta.playing_markers_known() && meta.active_marker(head).is_some_and(|m|
+                    self.slot.offer() == Some((m.kind, m.start_ms)));
+                self.up_next.tick(self.slot, tick.ms, authoritative);
                 // The scrub gesture's whole per-frame half — `app/run.rs`'s old
                 // per-loop-iteration block, now on this screen's own Tick: the continuous
                 // accelerating advance with its lost-keyup net. Neither it nor anything else on

@@ -109,8 +109,8 @@ fn every_field_row_pushes_its_picker_and_nothing_else() {
     let mut playback = PreferencesPage::new(EntryId(0), Kind::Playback);
     let mut audio = loaded_audio_page(&account);
     for (page, fields) in [
-        (&mut playback, vec![PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking]),
-        (&mut audio, vec![PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles]),
+        (&mut playback, vec![PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::NextEpisode, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking]),
+        (&mut audio, vec![PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::RememberAudioChoices]),
     ] {
         for field in fields {
             let key = RowId::Field(field).key().0;
@@ -192,14 +192,64 @@ fn every_field_reports_the_page_whose_list_shows_it() {
     let prefs = AudioPreferences::default();
     for kind in [Kind::Playback, Kind::AudioSubtitles] {
         let inputs = FieldListInputs { kind, quality: Quality::Original, direct_play: DirectPlayMode::Auto,
-            prefs: Some(&prefs), busy: false, show_retry: false, read_only: false };
+            next_episode: NextEpisodeMode::Countdown, prefs: Some(&prefs), busy: false, show_retry: false, read_only: false };
         for &field in fields_of(&inputs) {
             assert_eq!(field.kind(), Some(kind), "{field:?} is listed by {kind:?}");
         }
     }
     let audio = FieldListInputs { kind: Kind::AudioSubtitles, quality: Quality::Original, direct_play: DirectPlayMode::Auto,
-        prefs: Some(&prefs), busy: false, show_retry: false, read_only: false };
-    assert_eq!(fields_of(&audio), &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles]);
+        next_episode: NextEpisodeMode::Countdown, prefs: Some(&prefs), busy: false, show_retry: false, read_only: false };
+    assert_eq!(fields_of(&audio), &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::RememberAudioChoices]);
+}
+
+#[test]
+fn credits_countdown_requires_countdown_mode_without_changing_it() {
+    let _serial = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("pref-credits-countdown");
+    seat_named(&session, "credits-countdown", "Maya");
+    let prior = plx_media::route::next_episode_mode();
+    let key = RowId::Field(PickerKind::CreditsSkipDelay).key().0;
+    for mode in [NextEpisodeMode::Off, NextEpisodeMode::AfterCredits, NextEpisodeMode::Countdown] {
+        plx_media::route::restore_next_episode_mode(mode);
+        let mut page = PreferencesPage::new(EntryId(0), Kind::Playback);
+        let opened = pushed(&drive(&mut page, ScreenEvent::Activate(key), key));
+        if mode == NextEpisodeMode::Countdown {
+            assert_eq!(opened, vec![SettingsPage::Picker(PickerKind::CreditsSkipDelay)]);
+        } else { assert!(opened.is_empty()); }
+        assert_eq!(plx_media::route::next_episode_mode(), mode);
+    }
+    plx_media::route::restore_next_episode_mode(prior);
+}
+
+#[test]
+fn skip_pickers_offer_expected_delays() {
+    let intro = field_options(PickerKind::IntroSkipDelay, Quality::Original, DirectPlayMode::Auto, None);
+    let credits = field_options(PickerKind::CreditsSkipDelay, Quality::Original, DirectPlayMode::Auto, None);
+    assert_eq!(intro.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(), AutoSkipDelay::LADDER.map(Value::IntroSkipDelay));
+    assert_eq!(credits.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(), CreditsCountdownDelay::LADDER.map(Value::CreditsSkipDelay));
+}
+
+#[test]
+fn local_audio_memory_remains_available_after_account_failure() {
+    let _serial = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("pref-audio-local-failure");
+    seat_named(&session, "audio-local-failure", "Maya");
+    let mut page = PreferencesPage::new(EntryId(0), Kind::AudioSubtitles);
+    page.state.io.status = "Account load failed".into();
+    page.rebuild(None);
+    let key = RowId::Field(PickerKind::RememberAudioChoices).key().0;
+    assert_eq!(pushed(&drive(&mut page, ScreenEvent::Activate(key), key)), vec![SettingsPage::Picker(PickerKind::RememberAudioChoices)]);
+    let mut picker = PickerPage::new(EntryId(0), PickerKind::RememberAudioChoices);
+    let current = plx_media::route::remember_audio_choices();
+    let target = if current == RememberAudioChoices::On { 0 } else { 1 };
+    let emitted = drive(&mut picker, ScreenEvent::Activate(target), target);
+    let reply = emitted.into_iter().find_map(|e| match e.fx {
+        Fx::App(AppFx::Preferences(PreferenceCmd::Choose(Choice::RememberAudioChoices(_), reply))) => Some(reply),
+        _ => None,
+    }).expect("local choice must use the confirmed settings door");
+    reply.send(false).unwrap();
+    assert!(!popped(&drive(&mut picker, tick(), target)));
+    assert_eq!(plx_media::route::remember_audio_choices(), current);
 }
 
 /// The Continue Watching row: shipped default is Open details, the picker lists the two options
@@ -263,7 +313,7 @@ fn playback_rows_are_read_only_while_no_profile_is_seated() {
     let mut page = PreferencesPage::new(EntryId(0), Kind::Playback);
     assert_eq!(page.copy, plx_platform::i18n::msg::settings_playback_unseated(), "the page says to choose a profile");
     for field in [PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition,
-        PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking] {
+        PickerKind::NextEpisode, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking] {
         let key = RowId::Field(field).key().0;
         let row = page.form.index_of(&RowId::Field(field)).expect("the row is still listed");
         assert!(dims(&page)[row], "{field:?}: dimmed");
@@ -272,16 +322,16 @@ fn playback_rows_are_read_only_while_no_profile_is_seated() {
         assert!(pushed(&ok).is_empty() && pushed(&right).is_empty(), "{field:?}: OK and RIGHT open nothing");
         assert_eq!(preference_commands(&ok) + preference_commands(&right), 0, "{field:?}: and write nothing");
     }
-    let account = Account::new("pref-read-only-audio", 31, AudioPreferences::default());
-    let audio = loaded_audio_page(&account);
-    assert!(!dims(&audio).is_empty() && dims(&audio).iter().all(|dim| !dim),
-        "the account fields are not read-only");
+    let mut audio = PreferencesPage::new(EntryId(0), Kind::AudioSubtitles);
+    let key = RowId::Field(PickerKind::RememberAudioChoices).key().0;
+    let row = audio.form.index_of(&RowId::Field(PickerKind::RememberAudioChoices)).unwrap();
+    assert!(dims(&audio)[row]);
+    assert!(pushed(&drive(&mut audio, ScreenEvent::Activate(key), key)).is_empty());
 }
 
 /// **The Playback page names the profile whose settings it shows, and follows a seat change.** The
 /// name is the profile chip's (the active profile's title). A change of the published profile moves
-/// its generation, which rebuilds the copy and the rows on the next tick: the page never says "for
-/// Maya" over Noah's values, a seated profile's rows open, and nobody seated is read-only again.
+/// its generation, which rebuilds the copy and the rows on the next tick.
 #[test]
 fn the_playback_page_names_the_seated_profile_and_follows_the_seat() {
     let _serial = plx_base::testlock::serial();

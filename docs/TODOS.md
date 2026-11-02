@@ -1,5 +1,25 @@
 # TODOS
 
+## Audio language preferences
+
+- [x] Set a clear preferred audio language with robust track-language matching.
+- [x] Remember manual audio-language choices per show or movie without changing the global preference.
+- [ ] Verify and deploy audio-language preferences and title memory through the established Marquee lane.
+
+## Intro and credits controls
+
+- [ ] Add intro and credits auto-skip preferences with configurable countdowns.
+- [ ] Provide Skip intro and Watch intro buttons with default skip focus.
+- [ ] Provide credits countdown, Watch credits cancellation and persistent manual next-episode action.
+- [ ] Explain missing Plex intro or credits markers without blocking playback.
+- [ ] Verify and deploy intro and credits skipping through the established Marquee lane.
+
+## Denon volume precision and controls assessment
+
+- [x] Assess Denon control capabilities and whether master volume supports configurable whole-number steps.
+- [ ] Display actual half-step receiver volume consistently in the native TV UI when whole-step AVR operation is unavailable.
+- [ ] Verify focused volume behavior and document the full AVR-settings integration requirements.
+
 ## Sonarr and Radarr integration backlog
 
 - [ ] Add clean native Sonarr/Radarr connection settings and connection checks.

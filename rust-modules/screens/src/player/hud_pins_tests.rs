@@ -402,6 +402,7 @@ impl Chaptered {
                 bitrate: 0,
                 dovi: Default::default(),
                 markers: Vec::new(),
+                markers_known: false,
                 chapters: vec![chapter(1), chapter(2)],
                 hdr: false,
             }

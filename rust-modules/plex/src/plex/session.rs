@@ -53,7 +53,7 @@
 use super::origin::Origin;
 use super::probe::Location;
 mod playback_options;
-pub use playback_options::InstantDpadSeeking;
+pub use playback_options::{AutoSkipDelay, CreditsCountdownDelay, InstantDpadSeeking, RememberAudioChoices};
 mod bazarr_link;
 pub use bazarr_link::{BazarrChange, BazarrLink, UrlProblem};
 mod bazarr_import;
@@ -63,7 +63,7 @@ pub use subtitle_look::{
     AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, COLORS, SIZE_STEPS,
 };
 
-pub use prefs::{InstantDpadSeekingPref, HoldHintTaughtPref, effective, own_prefs, persist_profile_pref, put_own, stored_effective, tenure, AudioEnhancementsPref,
+pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, InstantDpadSeekingPref, RememberAudioChoicesPref, HoldHintTaughtPref, effective, own_prefs, persist_profile_pref, put_own, stored_effective, tenure, AudioEnhancementsPref,
     DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsPref,
     ProfilePrefsRecord, ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipIntervalPref,
     SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};

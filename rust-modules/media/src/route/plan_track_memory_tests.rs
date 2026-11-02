@@ -324,6 +324,19 @@ fn audio(id: i64, lang: &str, codec: &str, selected: bool, default: bool) -> Str
 /// Audio rung 2 sits right after this playback's own pick and above PMS's selection, the show's
 /// language and the account's.
 #[test]
+fn preferred_audio_uses_tags_and_display_names_and_avoids_commentary() {
+    let mut commentary = audio(1, "", "eac3", false, false);
+    commentary.lang = "English".into();
+    commentary.title = "Director Commentary".into();
+    let mut main = audio(2, "", "eac3", false, false);
+    main.language_tag = "EN-us".into();
+    let tracks = [commentary, main];
+    let prefs = AudioLangPrefs::new(None, Some("eng"));
+    assert_eq!(pick_dp_audio_pref(&plx_platform::devcaps::caps(), &tracks, "eac3", prefs), Some((1, "eac3".into(), 2)));
+    assert_eq!(encode_audio_id(false, 0, 0, &tracks, prefs), 2);
+}
+
+#[test]
 fn a_remembered_audio_track_outranks_pms_and_the_language_rules() {
     let tracks = [audio(1, "eng", "eac3", false, true), audio(2, "jpn", "eac3", false, false), audio(3, "fra", "eac3", true, false)];
     let prefs = AudioLangPrefs { remembered: Some(1), ..AudioLangPrefs::new(Some("fr"), Some("fr")) };

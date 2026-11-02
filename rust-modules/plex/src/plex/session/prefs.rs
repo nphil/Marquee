@@ -36,7 +36,7 @@
 //! assignment. `subtitle_offsets` is the other tenant of the door and is declared the same way
 //! ([`SubtitleOffsetsPref`]).
 use super::{
-    InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
+    AutoSkipDelay, CreditsCountdownDelay, InstantDpadSeeking, RememberAudioChoices, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
     PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
     SubtitleLook, SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
@@ -131,6 +131,13 @@ pub struct Preferences {
     /// Hidden-HUD D-pad jumps; off by default.
     #[serde(default, deserialize_with = "de_soft_instant_dpad_seeking", skip_serializing_if = "InstantDpadSeeking::is_default")]
     pub instant_dpad_seeking: InstantDpadSeeking,
+    /// Whether explicit audio selections are remembered for this profile.
+    #[serde(default, deserialize_with = "de_soft_remember_audio_choices", skip_serializing_if = "RememberAudioChoices::is_default")]
+    pub remember_audio_choices: RememberAudioChoices,
+    #[serde(default, deserialize_with = "de_soft_auto_skip_delay", skip_serializing_if = "AutoSkipDelay::is_default")]
+    pub intro_skip_delay: AutoSkipDelay,
+    #[serde(default, deserialize_with = "de_soft_credits_countdown_delay", skip_serializing_if = "CreditsCountdownDelay::is_default")]
+    pub credits_skip_delay: CreditsCountdownDelay,
     /// **What OK does on a Continue Watching card** — see [`DeckPress`]. A frozen fallback like
     /// [`Preferences::playback_quality`]: each profile keeps its own pick in `profile_prefs`, and a
     /// profile that has not picked reads this top-level key. Absence is Details, so a session written
@@ -514,6 +521,12 @@ setting!(NextEpisodeModePref: NextEpisodeMode = next_episode_mode, "next_episode
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(InstantDpadSeekingPref: InstantDpadSeeking = instant_dpad_seeking, "instant_dpad_seeking", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(RememberAudioChoicesPref: RememberAudioChoices = remember_audio_choices, "remember_audio_choices", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(IntroSkipDelayPref: AutoSkipDelay = intro_skip_delay, "intro_skip_delay", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(CreditsSkipDelayPref: CreditsCountdownDelay = credits_skip_delay, "credits_skip_delay", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(SkipIntervalPref: SkipInterval = skip_interval, "skip_interval", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(DeckPressPref: DeckPress = deck_press, "deck_press", Profile fallback LegacyInstallKey,
@@ -633,6 +646,9 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<NextEpisodeModePref>(),
     Descriptor::of::<SkipIntervalPref>(),
     Descriptor::of::<InstantDpadSeekingPref>(),
+    Descriptor::of::<RememberAudioChoicesPref>(),
+    Descriptor::of::<IntroSkipDelayPref>(),
+    Descriptor::of::<CreditsSkipDelayPref>(),
     Descriptor::of::<DeckPressPref>(),
     Descriptor::of::<UnderPostersPref>(),
     Descriptor::of::<AudioEnhancementsPref>(),
@@ -1352,6 +1368,24 @@ where
 /// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
 fn is_default_skip_interval(interval: &SkipInterval) -> bool {
     *interval == SkipInterval::default()
+}
+
+fn de_soft_credits_countdown_delay<'de, D>(d: D) -> Result<CreditsCountdownDelay, D::Error>
+where D: Deserializer<'de> {
+    let Ok(v) = serde_json::Value::deserialize(d) else { return Ok(CreditsCountdownDelay::default()); };
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
+fn de_soft_auto_skip_delay<'de, D>(d: D) -> Result<AutoSkipDelay, D::Error>
+where D: Deserializer<'de> {
+    let Ok(v) = serde_json::Value::deserialize(d) else { return Ok(AutoSkipDelay::default()); };
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
+fn de_soft_remember_audio_choices<'de, D>(d: D) -> Result<RememberAudioChoices, D::Error>
+where D: Deserializer<'de> {
+    let Ok(v) = serde_json::Value::deserialize(d) else { return Ok(RememberAudioChoices::default()); };
+    Ok(serde_json::from_value(v).unwrap_or_default())
 }
 
 /// Instant D-pad seeking is a preference too: a spelling this build does not know degrades to Off.

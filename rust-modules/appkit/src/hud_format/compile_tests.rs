@@ -49,6 +49,8 @@ fn labels() -> AppLabels {
         tab_chapters: msg::widgets_player_chapters().to_owned(),
         next_episode: msg::widgets_next_episode().to_owned(),
         watch_credits: msg::widgets_next_credits().to_owned(),
+        skip_watch_intro: msg::widgets_skip_watch_intro().to_owned(),
+        skip_watch_credits: msg::widgets_skip_watch_credits().to_owned(),
         skip_intro: msg::widgets_skip_intro().to_owned(),
         skip_credits: msg::widgets_skip_credits().to_owned(),
         from_beginning: msg::widgets_info_from_beginning().to_owned(),
@@ -152,8 +154,7 @@ fn compiled_classic_title_stops_where_the_hand_written_title_does() {
 
 #[test]
 fn compiled_classic_title_yields_to_the_skip_pill_actually_shown() {
-    // Two labels, two widths: the title's fill stops short of the pill that is on the screen, as the
-    // hand-written title does, in every language and under both measurers.
+    // Both marker kinds reserve the actual focused pair in every language and under both measurers.
     let title_right = |s: &CompiledState| {
         s.ops.iter().find_map(|op| match op {
             DrawOp::Text { bind, rect, .. } if bind == "title.main" => Some(rect.x + rect.w),
@@ -353,6 +354,21 @@ fn classic_compact_cost_is_pinned() {
 }
 
 #[test]
+fn skip_cost_counts_both_buttons_and_the_larger_pair() {
+    let mut strings = labels();
+    strings.skip_watch_intro = "W".repeat(300);
+    let compiled = compile(&package(CLASSIC), &FM, CompileCtx { labels: strings });
+    let state = compiled.lookup(0, Slot::Skip, true, true, false).unwrap();
+    let pairs = state.standin.skip.unwrap();
+    let expected_area = pairs.into_iter().map(|pair| {
+        pair.into_iter().map(|r| (r.w * r.h).max(0.0).round() as u64).sum::<u64>()
+    }).max().unwrap();
+    let contributor = state.cost.top.iter().find(|c| matches!(state.ops[c.op], DrawOp::SkipPill { .. })).expect("skip cost contributor");
+    assert_eq!((contributor.draw_ops, contributor.glyph_runs, contributor.blended_px), (2, 2, expected_area));
+    assert_eq!(state.cost.draw_ops, state.ops.len() + 1);
+}
+
+#[test]
 fn classic_cost_of_the_chapters_strip_counts_its_visible_cards() {
     let compiled = build(CLASSIC, &FM);
     let state = compiled.lookup(OPEN_CHAPTERS, Slot::Discs, true, true, false).unwrap();
@@ -438,17 +454,26 @@ fn a_state_the_package_cannot_reach_has_no_geometry() {
 }
 
 #[test]
-fn the_skip_pill_is_end_anchored_at_both_widths() {
+fn the_skip_pair_is_end_anchored_for_both_markers() {
     for language in SHIPPED {
         let _language = language_on_this_thread_for_test(language);
         for measure in [&FM as &dyn Measure, &ShippedMeasure] {
             let compiled = build(CLASSIC, measure);
             let state = compiled.lookup(0, Slot::Skip, true, false, false).unwrap();
-            let [intro, credits] = state.standin.skip.expect("both pills");
-            assert_eq!(intro.x + intro.w, credits.x + credits.w, "{language:?}: one right edge");
-            assert!(intro.w >= state.standin.row.w && credits.w >= state.standin.row.w, "{language:?}: never narrower than the row it replaces");
-            assert_eq!(state.geometry(SkipKind::Intro).items[0], Some(intro));
-            assert_eq!(state.geometry(SkipKind::Credits).items[0], Some(credits));
+            let pairs = state.standin.skip.expect("both pairs");
+            let op_pairs = state.ops.iter().find_map(|op| match op {
+                DrawOp::SkipPill { rects } => Some(*rects),
+                _ => None,
+            }).expect("the skip draw operation");
+            assert_eq!(op_pairs, pairs);
+            for (kind, [watch, skip]) in [(SkipKind::Intro, pairs[0]), (SkipKind::Credits, pairs[1])] {
+                assert!((skip.x + skip.w - (state.standin.row.x + state.standin.row.w)).abs() < 0.01, "{language:?}: right edge");
+                assert!(skip.w >= state.standin.row.w, "{language:?}: primary keeps the row width floor");
+                assert_eq!(watch.x, skip.x - theme::space::SM - watch.w, "{language:?}: watch precedes skip");
+                let geometry = state.geometry(kind);
+                assert_eq!(geometry.items[0], Some(watch));
+                assert_eq!(geometry.items[1], Some(skip));
+            }
         }
     }
 }
@@ -704,7 +729,7 @@ fn an_end_aligned_offer_lands_on_the_end_of_what_it_replaces_not_the_bands() {
     assert!(near(offer.next.x + offer.next.w, edge), "Up Next ends at {} not {edge}", offer.next.x + offer.next.w);
     assert!(offer.next.x + offer.next.w <= menu.x, "and does not overlap the menu at {}", menu.x);
     let skip = compiled.lookup(0, Slot::Skip, true, true, false).unwrap();
-    for pill in skip.standin.skip.expect("both pills") {
+    for [_, pill] in skip.standin.skip.expect("both pairs") {
         assert!(near(pill.x + pill.w, edge), "the Skip pill ends at {} not {edge}", pill.x + pill.w);
     }
     assert!(near(skip.standin.row.x + skip.standin.row.w, edge), "the row the offers stand for");
