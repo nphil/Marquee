@@ -488,6 +488,7 @@ fn ass_source_styled(burned: bool, style: TextStyle) -> Option<Arc<super::ass::S
         content.source = Arc::new(super::ass::Source {
             id: content.source.id, revision: content.source.revision.wrapping_add(1),
             alignment_epoch: content.source.alignment_epoch,
+            cue_timings: content.source.cue_timings.clone(),
             origin: content.source.origin, content: super::ass::Content::Script { bytes: bytes.clone(), fonts: fonts.clone() },
         });
         if let Some(hold) = content.text.as_mut() {
@@ -496,6 +497,7 @@ fn ass_source_styled(burned: bool, style: TextStyle) -> Option<Arc<super::ass::S
                     *estimated = Arc::new(super::ass::Source { id: estimated.id,
                         revision: estimated.revision.wrapping_add(1), origin: estimated.origin,
                         alignment_epoch: None,
+                        cue_timings: estimated.cue_timings.clone(),
                         content: super::ass::Content::Script { bytes: bytes.clone(), fonts } });
                 }
             }
@@ -534,22 +536,22 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
             None => std::str::from_utf8(&bytes[header_len..]).unwrap_or(""),
         };
         let revealing = style.layout.reveal != plx_plex::plex::session::Reveal::Off;
-        let estimated = if revealing {
-            let events = super::reveal::reveal_events(held, super::reveal::Params::of(&style.layout));
-            joined(header.as_bytes(), events.as_bytes())
-        } else { joined(header.as_bytes(), held.as_bytes()) };
-        let script = if revealing {
-            let events = text_script.aligned_events(super::reveal::Params::of(&style.layout), &aligned);
-            joined(header.as_bytes(), events.as_bytes())
+        let (estimated, estimated_timings, script, cue_timings) = if revealing {
+            let params = super::reveal::Params::of(&style.layout);
+            let (estimated_events, estimated_timings) = text_script.aligned_events(params, &std::collections::BTreeMap::new());
+            let (events, cue_timings) = text_script.aligned_events(params, &aligned);
+            (joined(header.as_bytes(), estimated_events.as_bytes()), estimated_timings,
+             joined(header.as_bytes(), events.as_bytes()), cue_timings)
         } else {
-            joined(header.as_bytes(), held.as_bytes())
+            let script = joined(header.as_bytes(), held.as_bytes());
+            (script.clone(), Vec::new(), script, Vec::new())
         };
         let plain = revealing.then(|| plain.clone().unwrap_or_else(|| Arc::from(held)));
         drop(bytes);
         let current_style = TextStyle::current();
         let mut st = state();
         if let Some((_, content)) = st.loaded.as_mut() {
-            publish_restyle(content, id, base_generation, alignment_revision, alignment_epoch, style, header.len(), script, estimated, plain);
+            publish_restyle(content, id, base_generation, alignment_revision, alignment_epoch, style, header.len(), script, cue_timings, estimated, estimated_timings, plain);
             if content.text.as_ref().is_some_and(|hold| hold.alignment_revision != hold.published_alignment_revision) {
                 start_restyle(content, current_style);
             }
@@ -576,7 +578,9 @@ fn publish_restyle(
     style: TextStyle,
     header_len: usize,
     script: Arc<[u8]>,
+    cue_timings: Vec<super::ass::CueTiming>,
     estimated: Arc<[u8]>,
+    estimated_timings: Vec<super::ass::CueTiming>,
     plain: Option<Arc<str>>,
 ) {
     let (revision, origin, fonts) = match (&content.source.content, content.text.as_mut()) {
@@ -592,6 +596,7 @@ fn publish_restyle(
             let estimate_revision = hold.estimated.as_ref().map_or(1, |source| source.revision.wrapping_add(1));
             hold.estimated = Some(Arc::new(super::ass::Source { id: estimate_id, revision: estimate_revision,
                 alignment_epoch: None,
+                cue_timings: estimated_timings.into(),
                 origin: super::ass::Origin::Text(style), content: super::ass::Content::Script {
                     bytes: estimated, fonts: fonts.clone() } }));
             (content.source.revision.wrapping_add(1), super::ass::Origin::Text(style), fonts.clone())
@@ -600,6 +605,7 @@ fn publish_restyle(
     };
     content.source = Arc::new(super::ass::Source {
         alignment_epoch: Some(alignment_epoch),
+        cue_timings: cue_timings.into(),
         id, revision, origin, content: super::ass::Content::Script { bytes: script, fonts },
     });
 }
@@ -637,6 +643,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
             source: Arc::new(super::ass::Source {
                 id: super::ass::next_source_id(), revision: 1, origin: super::ass::Origin::Authored,
                 alignment_epoch: None,
+                cue_timings: Arc::from([]),
                 content: super::ass::Content::Script { bytes: bytes.into(), fonts: Arc::from([]) },
             }),
             font_generation: None,
@@ -667,17 +674,18 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
     let style = TextStyle::current();
     let header = text_ass::header(&style);
     let revealing = style.layout.reveal != plx_plex::plex::session::Reveal::Off;
-    let script = if revealing {
-        let events = super::reveal::reveal_events(&converted.events, super::reveal::Params::of(&style.layout));
-        joined(header.as_bytes(), events.as_bytes())
+    let (script, cue_timings) = if revealing {
+        let (events, timings) = converted.aligned_events(super::reveal::Params::of(&style.layout), &std::collections::BTreeMap::new());
+        (joined(header.as_bytes(), events.as_bytes()), timings)
     } else {
-        joined(header.as_bytes(), converted.events.as_bytes())
+        (joined(header.as_bytes(), converted.events.as_bytes()), Vec::new())
     };
     let plain = revealing.then(|| Arc::<str>::from(converted.events.as_str()));
     Ok(Content {
         source: Arc::new(super::ass::Source {
             id: super::ass::next_source_id(), revision: 1, origin: super::ass::Origin::Text(style),
             alignment_epoch: None,
+            cue_timings: cue_timings.into(),
             content: super::ass::Content::Script { bytes: script, fonts: Arc::from([]) },
         }),
         font_generation: None,

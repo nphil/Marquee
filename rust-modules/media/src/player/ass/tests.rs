@@ -11,6 +11,7 @@ fn event(id: u32, start_ms: i64, duration_ms: i64) -> Event {
 fn source(events: Vec<Event>) -> Source {
     Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: 1,
         revision: 1,
         origin: Origin::Authored,
@@ -272,6 +273,7 @@ const HEADER: &str = "[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY
 fn script(lines: &str) -> Arc<Source> {
     Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -336,7 +338,7 @@ fn native_aligned_first_word_waits_for_captured_onset_and_survives_seek() {
     ];
     let text = "first words ninechars"; // Same byte spans, with private text replaced.
     let body = reveal::reveal_aligned_body(text, text, 1600,
-        Params { mode: Reveal::Word, outline_alpha: 0, back_alpha: 0 }, &words);
+        Params { mode: Reveal::Word, outline_alpha: 0, back_alpha: 0 }, &words).0;
     let source = script(&format!("Dialogue: 0,1:21:44.61,1:21:46.21,Default,,0,0,0,,{body}\n"));
     let mut engine = Engine::default();
     let alpha = |frame: &Frame| -> u64 {
@@ -458,6 +460,7 @@ fn native_pixels_preserve_position_layers_alpha_motion_karaoke_and_readorder() {
 
     let embedded = Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -586,6 +589,7 @@ fn native_script_font_revision_and_cjk_fallback_use_real_glyphs() {
     };
     let attached = Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: plain.id,
         revision: 2,
         origin: Origin::Authored,
@@ -983,6 +987,7 @@ fn font_script(font_name: &str, face: usize, events: usize) -> Arc<Source> {
     }
     Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -1095,6 +1100,7 @@ fn text_source(id: u64, revision: u64, style: &TextStyle, cues: &[(i64, i64, &st
         .collect();
     Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id,
         revision,
         origin: Origin::Text(*style),
@@ -1358,6 +1364,7 @@ const BLUE: &str = r"{\an7\pos(100,100)\c&HFF0000&\p1}m 0 0 l 40 0 40 40 0 40";
 fn track(header: &str, events: &[(i64, i64, &str)]) -> Arc<Source> {
     Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: next_source_id(),
         revision: 1,
         origin: Origin::Authored,
@@ -1407,6 +1414,7 @@ fn restyle_applies_to_text_origin_tracks_of_equal_fonts_and_a_different_header_o
 
     let authored = |header: &'static [u8]| Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: 1,
         revision: 1,
         origin: Origin::Authored,
@@ -1426,6 +1434,7 @@ fn restyle_applies_to_text_origin_tracks_of_equal_fonts_and_a_different_header_o
     assert!(!restyles(&medium, &other_fonts), "different fonts need their own renderer");
     let script = |bytes: &'static [u8]| Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: 1,
         revision: 1,
         origin: Origin::Text(no_cues_style()),
@@ -1463,6 +1472,7 @@ fn aligns_are_read_from_the_style_name_of_each_active_script_line() {
         text.push_str("Dialogue: 0,0:00:02.50,0:00:04.00,An4,,0,0,0,,mid\n");
         Arc::new(Source {
             alignment_epoch: None,
+            cue_timings: Arc::from([]),
             id: n as u64,
             revision: 1,
             origin: Origin::Text(no_cues_style()),
@@ -1777,6 +1787,7 @@ fn native_a_text_script_past_the_whole_script_bound_renders_through_its_windows(
     assert!(text.len() > MAX_SCRIPT_BYTES);
     let source = Arc::new(Source {
         alignment_epoch: None,
+        cue_timings: Arc::from([]),
         id: next_source_id(),
         revision: 1,
         origin: Origin::Text(style),

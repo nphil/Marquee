@@ -102,6 +102,14 @@ impl Origin {
     }
 }
 
+/// Timing actually written into one clipped cue; zero words means estimated reveal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CueTiming {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub words: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct Source {
     /// Identity of one timeline, independent of packet revision. Embedded seeks
@@ -112,6 +120,7 @@ pub struct Source {
     pub revision: u64,
     /// Alignment generation for generated timing, or None for authored/estimated sources.
     pub alignment_epoch: Option<u64>,
+    pub cue_timings: Arc<[CueTiming]>,
     pub origin: Origin,
     pub content: Content,
 }
@@ -209,8 +218,29 @@ struct Key {
     mine: Option<super::text_style::TextStyle>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WordTiming {
+    NotInUse,
+    Estimated,
+    SpeechDock(usize),
+}
+
+#[derive(Clone, Copy)]
+struct AcceptedTiming {
+    key: Key,
+    request_seq: u64,
+    generation: u64,
+    serial: u64,
+    now_ms: i64,
+    from_ms: i64,
+    until_ms: i64,
+    value: WordTiming,
+}
+
 pub struct Runtime {
     source_id: AtomicU64,
+    request_seq: AtomicU64,
+    revision: AtomicU64,
     epoch: AtomicU64,
     alignment_epoch: AtomicU64,
     readiness: AtomicU64,
@@ -223,6 +253,8 @@ impl Runtime {
     pub const fn new() -> Self {
         Self {
             source_id: AtomicU64::new(0),
+            request_seq: AtomicU64::new(0),
+            revision: AtomicU64::new(0),
             epoch: AtomicU64::new(1),
             alignment_epoch: AtomicU64::new(0),
             readiness: AtomicU64::new(0),
@@ -272,6 +304,7 @@ pub fn request_styled(
     storage_height: i32,
     mine: Option<super::text_style::TextStyle>,
 ) -> Option<Arc<Frame>> {
+    runtime().request_seq.fetch_add(1, Ordering::AcqRel);
     if !alignment_epoch_valid(source.alignment_epoch) {
         clear();
         return None;
@@ -287,6 +320,7 @@ pub fn request_styled(
         runtime().alignment_epoch.store(source.alignment_epoch.unwrap_or(0), Ordering::Release);
         runtime().source_id.store(source.id, Ordering::Release);
     }
+    runtime().revision.store(source.revision, Ordering::Release);
     let key = Key {
         epoch: runtime().epoch.load(Ordering::Acquire),
         alignment_epoch: source.alignment_epoch,
@@ -346,6 +380,75 @@ pub fn request_styled(
 pub fn published_aligns(serial: u64) -> Option<AlignSet> {
     let mailbox = runtime().mailbox.try_lock().ok()?;
     mailbox.aligns_of(serial)
+}
+
+/// A playback update that cannot obtain its source must not retain an old cue snapshot.
+pub fn invalidate_word_timing() {
+    runtime().request_seq.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Record only the frame the playback screen accepted, never a settings preview or a prepared cue.
+pub fn accept_word_timing(source: &Source, frame: Option<&Frame>, now_ms: i64,
+    width: i32, height: i32, storage_width: i32, storage_height: i32,
+    mine: Option<super::text_style::TextStyle>) {
+    let request_seq = runtime().request_seq.load(Ordering::Acquire);
+    let Ok(mut mailbox) = runtime().mailbox.try_lock() else { return };
+    let accepted = frame.and_then(|frame| {
+        let published = mailbox.published.as_ref()?;
+        let key = published.key;
+        if key.source_id != source.id || key.revision != source.revision
+            || key.width != width || key.height != height
+            || key.storage_width != if storage_width > 0 { storage_width } else { width }
+            || key.storage_height != if storage_height > 0 { storage_height } else { height }
+            || key.mine != mine
+            || key.epoch != runtime().epoch.load(Ordering::Acquire)
+            || runtime().source_id.load(Ordering::Acquire) != source.id
+            || key.alignment_epoch != source.alignment_epoch || !alignment_epoch_valid(key.alignment_epoch)
+            || published.frame.serial != frame.serial || frame.error.is_some() || frame.rects.is_empty()
+            || !published.validity.contains(now_ms)
+        { return None; }
+        if let Some(previous) = mailbox.accepted_timing.filter(|s| s.key == key && s.generation == super::alignment::epoch() && (s.from_ms..s.until_ms).contains(&now_ms)) {
+            return Some(AcceptedTiming { request_seq, serial: frame.serial, now_ms, ..previous });
+        }
+        let (mut from_ms, mut until_ms) = (i64::MIN, i64::MAX);
+        let (mut estimated, mut applied) = (false, 0usize);
+        for cue in source.cue_timings.iter() {
+            for bound in [cue.start_ms, cue.end_ms] {
+                if bound <= now_ms { from_ms = from_ms.max(bound); } else { until_ms = until_ms.min(bound); }
+            }
+            if (cue.start_ms..cue.end_ms).contains(&now_ms) {
+                if cue.words == 0 { estimated = true; } else { applied = applied.saturating_add(cue.words); }
+            }
+        }
+        let value = if applied > 0 { WordTiming::SpeechDock(applied) }
+            else if estimated { WordTiming::Estimated } else { WordTiming::NotInUse };
+        Some(AcceptedTiming { key, request_seq, generation: super::alignment::epoch(), serial: frame.serial, now_ms, from_ms, until_ms, value })
+    });
+    mailbox.accepted_timing = accepted;
+}
+
+pub(super) fn word_timing_at(now_ms: Option<i64>) -> WordTiming {
+    let Ok(mailbox) = runtime().mailbox.try_lock() else { return WordTiming::NotInUse };
+    let Some(accepted) = mailbox.accepted_timing else { return WordTiming::NotInUse };
+    let now_ms = now_ms.unwrap_or(accepted.now_ms);
+    let key = accepted.key;
+    let valid = mailbox.published.as_ref().is_some_and(|p| p.key == key && p.frame.serial == accepted.serial && p.validity.contains(now_ms))
+        && runtime().request_seq.load(Ordering::Acquire) == accepted.request_seq
+        && runtime().source_id.load(Ordering::Acquire) == key.source_id
+        && runtime().revision.load(Ordering::Acquire) == key.revision
+        && runtime().epoch.load(Ordering::Acquire) == key.epoch
+        && alignment_epoch_valid(key.alignment_epoch)
+        && accepted.generation == super::alignment::epoch()
+        && (accepted.from_ms..accepted.until_ms).contains(&now_ms);
+    if valid { accepted.value } else { WordTiming::NotInUse }
+}
+
+/// Playback Info's current, renderer-accepted cue timing snapshot.
+pub fn word_timing() -> WordTiming {
+    if plx_plex::plex::session::Reveal::Off == crate::route::subtitle_look().reveal {
+        return WordTiming::NotInUse;
+    }
+    word_timing_at(None)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

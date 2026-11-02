@@ -97,6 +97,7 @@ impl AssSubtitles {
         } else {
             let track = plx_media::player::desired_sub_idx();
             let Some(source) = ass_source::try_selected(track) else {
+                ass::invalidate_word_timing();
                 if !self.may_hold_busy_embedded(track) {
                     self.frame = None;
                     self.aligns = None;
@@ -146,7 +147,9 @@ impl AssSubtitles {
         // A script with its own styling is drawn in the viewer's look when they asked for that.
         let mine = (!source.origin.is_text() && plx_media::route::subtitle_look().ass == AssMode::Mine)
             .then(text_style::TextStyle::current);
-        self.follow(source, clock, viewport, coded, mine);
+        let accepted = self.follow(&source, clock, viewport, coded, mine);
+        ass::accept_word_timing(&source, accepted.then(|| self.frame.as_deref()).flatten(), clock,
+            viewport.width, viewport.height, coded.0, coded.1, mine);
     }
 
     /// **The Settings preview's entry**: show `source` at `clock` ms over a picture whose luma is
@@ -171,31 +174,33 @@ impl AssSubtitles {
             self.frame = None;
             self.aligns = None;
         }
-        self.follow(source, clock, viewport, (viewport.width, viewport.height), mine);
+        self.follow(&source, clock, viewport, (viewport.width, viewport.height), mine);
     }
 
     fn follow(
         &mut self,
-        source: Arc<ass::Source>,
+        source: &Arc<ass::Source>,
         clock: i64,
         viewport: Viewport,
         coded: (i32, i32),
         mine: Option<text_style::TextStyle>,
-    ) {
+    ) -> bool {
         if self.viewport != viewport {
             self.viewport = viewport;
             self.frame = None;
         }
         let origin = source.origin;
-        if let Some(frame) = ass::request_styled(source, clock, viewport.width, viewport.height, coded.0, coded.1, mine) {
+        if let Some(frame) = ass::request_styled(source.clone(), clock, viewport.width, viewport.height, coded.0, coded.1, mine) {
             if ass::alignment_epoch_valid(frame.alignment_epoch) {
                 self.frame = Some(frame);
                 self.frame_origin = origin;
+                return true;
             } else {
                 self.retire_stale_alignment();
                 ass::clear();
             }
         }
+        false
     }
 
     /// What the player's frame-fingerprint reads: the frame's serial, so a cue appearing owes a

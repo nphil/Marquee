@@ -108,11 +108,11 @@ impl TextTrack {
 
     /// The newest-wins view of the raw cues, in start order. A cue clipped to nothing is not in it.
     /// With "Reveal as spoken" on, each cue's text is timed word by word over its CLIPPED span.
-    fn view(&self) -> Arc<[Event]> {
+    fn view(&self) -> (Arc<[Event]>, Arc<[ass::CueTiming]>) {
         self.view_with_alignment(self.aligned_epoch == Some(super::alignment::epoch()))
     }
 
-    fn view_with_alignment(&self, aligned: bool) -> Arc<[Event]> {
+    fn view_with_alignment(&self, aligned: bool) -> (Arc<[Event]>, Arc<[ass::CueTiming]>) {
         let cues: Vec<ClipCue> = self
             .raw
             .iter()
@@ -125,44 +125,42 @@ impl TextTrack {
             .collect();
         let clipped = text_ass::clip_newest_wins(&cues);
         let reveal = self.reveal;
-        self.raw
-            .values()
-            .zip(clipped)
-            .filter_map(|(cue, span)| {
-                span.map(|(start, end)| Event {
-                    start_ms: start,
-                    duration_ms: end - start,
-                    payload: if reveal.mode == plx_plex::plex::session::Reveal::Off {
-                        cue.payload.clone()
-                    } else if let Some(words) = cue.words.as_ref().filter(|_| aligned) {
-                        let body = std::str::from_utf8(&cue.payload).ok().and_then(|p| p.splitn(9, ',').nth(8));
-                        if let Some(body) = body {
-                            let relative: Vec<_> = words.iter().map(|w| super::reveal::AlignedWord {
-                                start_byte: w.start_byte, end_byte: w.end_byte,
-                                start_ms: w.start_ms - start, end_ms: w.end_ms - start,
-                            }).collect();
-                            text_ass::event_payload(cue.readorder, cue.align, &super::reveal::reveal_aligned_body(
-                                body, &cue.text, end - start, reveal, &relative,
-                            )).into_bytes().into()
-                        } else {
-                            super::reveal::reveal_packet(&cue.payload, end - start, reveal).into()
-                        }
-                    } else {
-                        super::reveal::reveal_packet(&cue.payload, end - start, reveal).into()
-                    },
-                })
-            })
-            .collect()
+        let mut events = Vec::new();
+        let mut timings = Vec::new();
+        for (cue, span) in self.raw.values().zip(clipped) {
+            let Some((start, end)) = span else { continue };
+            let body = std::str::from_utf8(&cue.payload).ok().and_then(|p| p.splitn(9, ',').nth(8));
+            let payload = if let Some(body) = body {
+                let (body, status) = if let Some(words) = cue.words.as_ref().filter(|_| aligned) {
+                    let relative: Vec<_> = words.iter().map(|w| super::reveal::AlignedWord {
+                        start_byte: w.start_byte, end_byte: w.end_byte,
+                        start_ms: w.start_ms - start, end_ms: w.end_ms - start,
+                    }).collect();
+                    super::reveal::reveal_aligned_body(body, &cue.text, end - start, reveal, &relative)
+                } else {
+                    super::reveal::reveal_body_with_status(body, end - start, reveal)
+                };
+                if let Some(words) = status {
+                    timings.push(ass::CueTiming { start_ms: start, end_ms: end, words });
+                }
+                text_ass::event_payload(cue.readorder, cue.align, &body).into_bytes().into()
+            } else {
+                cue.payload.clone()
+            };
+            events.push(Event { start_ms: start, duration_ms: end - start, payload });
+        }
+        (events.into(), timings.into())
     }
 
     fn estimated_source(&self, source: &Source) -> Option<Arc<Source>> {
         let Content::Embedded { header, fonts, .. } = &source.content else { return None };
+        let (events, cue_timings) = self.view_with_alignment(false);
         Some(Arc::new(Source {
             id: self.estimated.as_ref().map_or_else(ass::next_source_id, |old| old.id),
             revision: source.revision, origin: source.origin,
             alignment_epoch: None,
-            content: Content::Embedded { header: header.clone(), fonts: fonts.clone(),
-                events: self.view_with_alignment(false) },
+            cue_timings,
+            content: Content::Embedded { header: header.clone(), fonts: fonts.clone(), events },
         }))
     }
 }
@@ -299,14 +297,16 @@ impl Store {
                 text.reveal = super::reveal::Params::of(&style.layout);
                 if let Content::Embedded { fonts, .. } = &source.content {
                     let fonts = fonts.clone();
+                    let (events, cue_timings) = text.view();
                     *source = Arc::new(Source {
                         id: source.id,
                         revision: source.revision.wrapping_add(1),
                         origin: Origin::Text(style),
                         alignment_epoch: text.aligned_epoch,
+                        cue_timings,
                         content: Content::Embedded {
                             header: text_ass::header(&style).into_bytes().into(),
-                            events: text.view(),
+                            events,
                             fonts,
                         },
                     });
@@ -395,7 +395,7 @@ impl Store {
             .into();
         self.fonts = Some(fonts.clone());
         for (track, registered) in headers {
-            let (origin, header, events) = match registered {
+            let (origin, header, events, cue_timings) = match registered {
                 TrackHeader::Authored(header) => {
                     // An unchanged inventory also preserves the per-track/global byte budgets.
                     // A demux reopen seeks to a video cue and may never resend a long sign.
@@ -404,7 +404,7 @@ impl Store {
                         _ => None,
                     }).unwrap_or_else(|| Arc::from([]));
                     self.seen.insert(track, events.iter().cloned().collect());
-                    (Origin::Authored, header, events)
+                    (Origin::Authored, header, events, Arc::from([]))
                 }
                 TrackHeader::Text(dialect) => {
                     // The header is built for the picks of now, so the generation is the current one
@@ -418,9 +418,9 @@ impl Store {
                     text.aligned_epoch = None;
                     text.estimated = None;
                     for cue in text.raw.values_mut() { cue.words = None; }
-                    let events = text.view();
+                    let (events, cue_timings) = text.view();
                     self.text.insert(track, text);
-                    (Origin::Text(style), text_ass::header(&style).into_bytes(), events)
+                    (Origin::Text(style), text_ass::header(&style).into_bytes(), events, cue_timings)
                 }
             };
             self.tracks.insert(
@@ -430,6 +430,7 @@ impl Store {
                     revision: 0,
                     origin,
                     alignment_epoch: None,
+                    cue_timings,
                     content: Content::Embedded {
                         header: header.into(),
                         events,
@@ -508,6 +509,7 @@ impl Store {
             revision: old.revision.wrapping_add(1),
             origin: old.origin,
             alignment_epoch: None,
+            cue_timings: Arc::from([]),
             content: Content::Embedded {
                 header: header.clone(),
                 events: events.into(),
@@ -614,12 +616,14 @@ impl Store {
         if !held.raw.contains_key(&key) && held.raw.len() == held_before && !pruned {
             return None;
         }
+        let (events, cue_timings) = held.view();
         let source = Source {
             id: old.id,
             revision: old.revision.wrapping_add(1),
             origin: old.origin,
             alignment_epoch: held.aligned_epoch,
-            content: Content::Embedded { header: header.clone(), events: held.view(), fonts: fonts.clone() },
+            cue_timings,
+            content: Content::Embedded { header: header.clone(), events, fonts: fonts.clone() },
         };
         if held.aligned_epoch.is_some() {
             held.estimated = held.estimated_source(&source);
@@ -710,12 +714,12 @@ impl Store {
         text.aligned_epoch = Some(snapshot.epoch);
         text.verified_source_revision = verified_revision.map(str::to_owned);
         for (key, words) in updates { text.raw.get_mut(&key).unwrap().words = (!words.is_empty()).then_some(words); }
-        let events = text.view();
+        let (events, cue_timings) = text.view();
         let estimated = text.estimated_source(&Source { id, revision: revision.wrapping_add(1), origin, alignment_epoch: Some(snapshot.epoch),
-            content: Content::Embedded { header: header.clone(), fonts: fonts.clone(), events: Arc::from([]) } });
+            cue_timings: Arc::from([]), content: Content::Embedded { header: header.clone(), fonts: fonts.clone(), events: Arc::from([]) } });
         text.estimated = estimated;
         self.tracks.insert(snapshot.track, Arc::new(Source { id, revision: revision.wrapping_add(1), origin, alignment_epoch: Some(snapshot.epoch),
-            content: Content::Embedded { header, fonts, events } }));
+            cue_timings, content: Content::Embedded { header, fonts, events } }));
         true
     }
 
@@ -778,6 +782,7 @@ impl Store {
                 revision: 0,
                 origin: source.origin,
                 alignment_epoch: source.alignment_epoch,
+                cue_timings: source.cue_timings.clone(),
                 content: Content::Embedded {
                     header: header.clone(),
                     fonts: fonts.clone(),
@@ -790,7 +795,7 @@ impl Store {
         for text in self.text.values_mut() {
             if let Some(old) = &text.estimated {
                 text.estimated = Some(Arc::new(Source {
-                    id: ass::next_source_id(), revision: 0, origin: old.origin, alignment_epoch: None, content: old.content.clone(),
+                    id: ass::next_source_id(), revision: 0, origin: old.origin, alignment_epoch: None, cue_timings: old.cue_timings.clone(), content: old.content.clone(),
                 }));
             }
         }
@@ -956,6 +961,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn current_cue_timing_native_consumer() {
+        use super::super::reveal::AlignedWord;
+        use ass::WordTiming;
+        use std::time::{Duration, Instant};
+        let _guard = plx_base::testlock::serial();
+        ass::clear();
+        let mut style = TextStyle::current();
+        style.layout.reveal = plx_plex::plex::session::Reveal::Word;
+        let mut store = Store::default();
+        let generation = store.begin_styled("synthetic", vec![(0, TrackHeader::Text(TextDialect::Srt))], vec![], style);
+        store.push_text(generation, 0, 1000, 4000, "alpha beta", 0);
+        store.push_text(generation, 0, 3000, 3500, "{\\an8}sign", 0);
+        let render = |source: Arc<Source>, now: i64, expected: WordTiming, storage: (i32, i32)| {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let frame = ass::request(source.clone(), now, 320, 180, storage.0, storage.1);
+                ass::accept_word_timing(&source, frame.as_deref(), now, 320, 180, storage.0, storage.1, None);
+                if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready
+                    && frame.as_ref().is_some_and(|frame| frame.error.is_none() && !frame.rects.is_empty())
+                    && ass::word_timing_at(Some(now)) == expected { break; }
+                assert!(Instant::now() < deadline, "native renderer did not accept expected cue timing");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let estimated = store.selected_styled(0, style).unwrap();
+        render(estimated, 2400, WordTiming::Estimated, (320, 180));
+        let snapshot = store.alignment_snapshot(0, 0, 5000).unwrap();
+        let words = vec![
+            AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1200, end_ms: 1600 },
+            AlignedWord { start_byte: 6, end_byte: 10, start_ms: 2100, end_ms: 2900 },
+        ];
+        assert!(store.apply_alignment_revision(&snapshot, &[EmbeddedResult { cue_id: snapshot.cues[0].cue_id.clone(), words }], Some("synthetic-revision")));
+        let aligned = store.selected_styled(0, style).unwrap();
+        assert_eq!(ass::word_timing_at(Some(2400)), WordTiming::Estimated);
+        render(aligned.clone(), 2400, WordTiming::SpeechDock(2), (320, 180));
+        let held = super::store();
+        assert!(super::try_selected(0).is_none());
+        ass::invalidate_word_timing();
+        drop(held);
+        assert_eq!(ass::word_timing_at(Some(2400)), WordTiming::NotInUse);
+        render(aligned.clone(), 2400, WordTiming::SpeechDock(2), (320, 180));
+        assert_eq!(ass::word_timing_at(Some(3100)), WordTiming::NotInUse);
+        let old_frame = ass::request(aligned.clone(), 2400, 320, 180, 640, 360);
+        assert_eq!(ass::word_timing_at(Some(2400)), WordTiming::NotInUse);
+        ass::accept_word_timing(&aligned, old_frame.as_deref(), 2400, 320, 180, 640, 360, None);
+        assert_eq!(ass::word_timing_at(Some(2400)), WordTiming::NotInUse);
+        render(aligned, 2400, WordTiming::SpeechDock(2), (640, 360));
+        assert_eq!(ass::word_timing_at(Some(4000)), WordTiming::NotInUse);
+        store.push_text(generation, 0, 2500, 4500, "next cue", 0);
+        let clipped = store.selected_styled(0, style).unwrap();
+        render(clipped, 2300, WordTiming::Estimated, (320, 180));
+        super::super::alignment::invalidate();
+        assert_eq!(ass::word_timing_at(Some(2300)), WordTiming::NotInUse);
+        store.seek(generation);
+        let after_seek = store.selected_styled(0, style).unwrap();
+        render(after_seek, 2300, WordTiming::Estimated, (320, 180));
+        store.push_text(generation, 0, 4700, 5200, "short cue", 0);
+        let short = store.selected_styled(0, style).unwrap();
+        render(short, 4900, WordTiming::NotInUse, (320, 180));
+        style.layout.reveal = plx_plex::plex::session::Reveal::Off;
+        let off = store.selected_styled(0, style).unwrap();
+        render(off, 2300, WordTiming::NotInUse, (320, 180));
+        ass::clear();
+        assert_eq!(ass::word_timing_at(Some(2300)), WordTiming::NotInUse);
+    }
+
+    #[test]
     fn regression_estimated_cue_removes_previous_words() {
         let _guard = plx_base::testlock::serial();
         let (mut s, g) = text_store("estimated-removal");
@@ -1087,7 +1159,7 @@ mod tests {
                 1 => s.seek(g),
                 2 => s.retain_for_reload(),
                 _ => { s.tracks.insert(0, Arc::new(Source { id: source.id, revision: source.revision,
-                    origin: source.origin, alignment_epoch: source.alignment_epoch, content: source.content.clone() })); }
+                    origin: source.origin, alignment_epoch: source.alignment_epoch, cue_timings: source.cue_timings.clone(), content: source.content.clone() })); }
             }
             let current = s.tracks[&0].clone();
             assert!(s.publish_alignment(&snapshot, &source, budget, &mut work).is_none());
@@ -1273,6 +1345,7 @@ mod tests {
             revision: 0,
             origin: Origin::Authored,
             alignment_epoch: None,
+            cue_timings: Arc::from([]),
             content: Content::Embedded {
                 header: Arc::from(&b"[Script Info]\n"[..]),
                 events: Arc::from([Event {
@@ -1722,6 +1795,7 @@ mod tests {
                 revision: 1,
                 origin: Origin::Text(TextStyle::current()),
                 alignment_epoch: None,
+                cue_timings: Arc::from([]),
                 content: Content::Embedded {
                     header: Arc::from(&b"an older header"[..]),
                     events: Arc::from([event("cue", 1000)]),

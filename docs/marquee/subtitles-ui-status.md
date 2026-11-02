@@ -405,6 +405,14 @@ The validated Address is published only after durable session save and restored 
 shows Address/Disabled and validation or save errors, not connection or aligned/estimated status.
 The renderer distinguishes verified word timing internally; request failures retain estimates.
 
+The source update adds a functional player Info line: `Word timing: SpeechDock · N words applied`,
+`Estimated` or `Not in use`. It reads only the accepted current-cue renderer snapshot, with
+source/revision, playback generation, exact request geometry, frame validity and cue-bound fences.
+Seek, fallback, source changes and busy selection invalidate the snapshot. Labels are cached
+until the reported state changes; no polling, capture or private caption data is added.
+Focused native consumer and sidecar checks pass; installation and live current-source acceptance
+remain pending. Backend success or a nonnull source revision is not consumption evidence.
+
 Production SpeechDock 0.2.0 has the trusted PMS origin, private token file and explicit read-only
 movie/TV roots configured. The unchanged production image has bounded acoustic-positive proof:
 authoritative English cue 583 returned one aligned word, UTF-8 bytes 0–4, at

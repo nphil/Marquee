@@ -434,6 +434,7 @@ impl SampleSource {
         };
         Arc::new(ass::Source {
             alignment_epoch: None,
+            cue_timings: Arc::from([]),
             id,
             revision,
             origin,

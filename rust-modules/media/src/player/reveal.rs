@@ -248,14 +248,14 @@ pub(super) struct AlignedWord {
 
 /// Use aligned starts only when the original text, ASS body and all word spans agree.
 /// Otherwise use exactly the same estimate as an unaligned cue.
-pub(super) fn reveal_aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, words: &[AlignedWord]) -> String {
+pub(super) fn reveal_aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, words: &[AlignedWord]) -> (String, Option<usize>) {
     aligned_body(body, original, duration_ms, params, words)
-        .unwrap_or_else(|| reveal_body(body, duration_ms, params))
+        .unwrap_or_else(|| reveal_body_with_status(body, duration_ms, params))
 }
 
-fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, words: &[AlignedWord]) -> Option<String> {
+fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, words: &[AlignedWord]) -> Option<(String, Option<usize>)> {
     if params.mode == Reveal::Off || duration_ms < MIN_CUE_MS || super::ass_timing::text_animated(body.as_bytes()) {
-        return Some(body.to_string());
+        return Some((body.to_string(), None));
     }
     if words.is_empty() {
         return None;
@@ -320,7 +320,7 @@ fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, wo
 
     let units = units(body, &segs, params.mode);
     if units.is_empty() || (params.mode != Reveal::Word && units.len() < 2) {
-        return Some(body.to_string());
+        return Some((body.to_string(), None));
     }
     // Reject spans cutting a normal word in half, but allow CJK/Thai subunits.
     if params.mode == Reveal::Word && mapped.iter().any(|(at, _, _)| !units.iter().any(|u| u.at == *at)) {
@@ -357,7 +357,11 @@ fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, wo
         }
     }
     out.push_str(&body[cursor..]);
-    Some(out)
+    let used = timings.iter().filter(|(index, start)| *index > 0 || (params.mode == Reveal::Word && *start > 0))
+        .map(|(index, _)| *index).fold((None, 0usize), |(last, count), index| {
+            (Some(index), count + usize::from(last != Some(index)))
+        }).1;
+    Some((out, (used > 0).then_some(used)))
 }
 
 
@@ -365,13 +369,17 @@ fn aligned_body(body: &str, original: &str, duration_ms: i64, params: Params, wo
 /// estimated time. A body with fewer than two units, a cue shorter than [`MIN_CUE_MS`] and a body
 /// that already animates come back unchanged.
 pub fn reveal_body(body: &str, duration_ms: i64, params: Params) -> String {
+    reveal_body_with_status(body, duration_ms, params).0
+}
+
+pub(super) fn reveal_body_with_status(body: &str, duration_ms: i64, params: Params) -> (String, Option<usize>) {
     if params.mode == Reveal::Off || duration_ms < MIN_CUE_MS || super::ass_timing::text_animated(body.as_bytes()) {
-        return body.to_string();
+        return (body.to_string(), None);
     }
     let segs = segments(body);
     let units = units(body, &segs, params.mode);
     if units.len() < 2 {
-        return body.to_string();
+        return (body.to_string(), None);
     }
     let speaking = duration_ms as f64 * SPEAKING_SHARE;
     let total: f64 = units.iter().map(|u| u.weight).sum::<f64>() + units[..units.len() - 1].iter().map(|u| u.pause).sum::<f64>();
@@ -392,7 +400,7 @@ pub fn reveal_body(body: &str, duration_ms: i64, params: Params) -> String {
         elapsed += unit.weight + unit.pause;
     }
     out.push_str(&body[cursor..]);
-    out
+    (out, Some(0))
 }
 
 /// A Matroska ASS packet (`ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text`) with
@@ -479,35 +487,35 @@ mod tests {
         // Captured cue: 4,904,610–4,906,210 ms; starts 4,905,031 / 291 / 511.
         let text = "first words ninechars"; // Same byte spans, with private text replaced.
         let words = [aligned(0, 5, 421, 601), aligned(6, 11, 681, 861), aligned(12, 21, 901, 1301)];
-        let out = reveal_aligned_body(text, text, 1600, WORDS, &words);
+        let out = reveal_aligned_body(text, text, 1600, WORDS, &words).0;
         assert_eq!(starts(&out), [421, 681, 901]);
         assert!(out.starts_with("{\\1a&HFF&\\3a&HFF&\\4a&HFF&\\t(421,581,"), "{out}");
-        assert_eq!(reveal_aligned_body(text, text, 1600, WORDS, &[]), reveal_body(text, 1600, WORDS));
+        assert_eq!(reveal_aligned_body(text, text, 1600, WORDS, &[]).0, reveal_body(text, 1600, WORDS));
         let single = [aligned(0, 3, 421, 600)];
-        assert_eq!(starts(&reveal_aligned_body("one", "one", 1600, WORDS, &single)), [421]);
+        assert_eq!(starts(&reveal_aligned_body("one", "one", 1600, WORDS, &single).0), [421]);
     }
 
     #[test]
     fn aligned_words_use_exact_starts_and_keep_tags_and_style() {
         let words = [aligned(0, 5, 100, 300), aligned(6, 11, 1250, 1500), aligned(12, 17, 2900, 2990)];
         let body = "{\\i1}hello world{\\i0}\\Nagain";
-        let out = reveal_aligned_body(body, "hello world\nagain", 3000, WORDS, &words);
+        let out = reveal_aligned_body(body, "hello world\nagain", 3000, WORDS, &words).0;
         assert_eq!(starts(&out), [100, 1250, 2900]);
         assert!(out.starts_with("{\\i1}{\\1a&HFF&"));
         assert!(out.contains("{\\i0}\\N{"));
         assert!(out.contains("\\t(2900,3000,\\1a&H00&\\3a&H26&\\4a&HFF&)"));
-        let line_out = reveal_aligned_body(body, "hello world\nagain", 3000, LINES, &words);
+        let line_out = reveal_aligned_body(body, "hello world\nagain", 3000, LINES, &words).0;
         assert_eq!(starts(&line_out), [2900]);
     }
 
     #[test]
     fn aligned_utf8_spans_and_cjk_subunits_are_safe() {
         let words = [aligned(0, 6, 0, 500), aligned(7, 13, 700, 900)];
-        let out = reveal_aligned_body("你好 世界", "你好 世界", 2000, WORDS, &words);
+        let out = reveal_aligned_body("你好 世界", "你好 世界", 2000, WORDS, &words).0;
         assert_eq!(starts(&out), [700, 700]);
         let mut invalid = words;
         invalid[0].end_byte = 5;
-        assert_eq!(reveal_aligned_body("你好 世界", "你好 世界", 2000, WORDS, &invalid), reveal_body("你好 世界", 2000, WORDS));
+        assert_eq!(reveal_aligned_body("你好 世界", "你好 世界", 2000, WORDS, &invalid).0, reveal_body("你好 世界", 2000, WORDS));
     }
 
     #[test]
@@ -515,29 +523,29 @@ mod tests {
         let text = "one two three";
         let valid = [aligned(0, 3, 0, 400), aligned(4, 7, 900, 1100), aligned(8, 13, 1500, 1800)];
         let expected = reveal_body(text, 2000, WORDS);
-        assert_ne!(reveal_aligned_body(text, text, 2000, WORDS, &valid), expected);
+        assert_ne!(reveal_aligned_body(text, text, 2000, WORDS, &valid).0, expected);
         let mut bad = valid;
         bad[1].start_byte = 5;
-        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad), expected);
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad).0, expected);
         bad = valid;
         bad[1].start_ms = 399;
-        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad), expected);
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad).0, expected);
         bad = valid;
         bad[2].end_ms = 2001;
-        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad), expected);
-        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &valid[..2]), expected);
-        assert_eq!(reveal_aligned_body(text, "one two changed", 2000, WORDS, &valid), expected);
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &bad).0, expected);
+        assert_eq!(reveal_aligned_body(text, text, 2000, WORDS, &valid[..2]).0, expected);
+        assert_eq!(reveal_aligned_body(text, "one two changed", 2000, WORDS, &valid).0, expected);
         let split_tag = "one t{\\i1}wo three";
-        assert_eq!(reveal_aligned_body(split_tag, text, 2000, WORDS, &valid), reveal_body(split_tag, 2000, WORDS));
+        assert_eq!(reveal_aligned_body(split_tag, text, 2000, WORDS, &valid).0, reveal_body(split_tag, 2000, WORDS));
     }
 
     #[test]
     fn alignment_respects_existing_animation_and_reveal_settings() {
         let words = [aligned(0, 3, 0, 100), aligned(4, 7, 500, 600)];
         let animated = "{\\fad(100,100)}one two";
-        assert_eq!(reveal_aligned_body(animated, "one two", 2000, WORDS, &words), animated);
-        assert_eq!(reveal_aligned_body("one two", "one two", 2000, Params { mode: Reveal::Off, ..WORDS }, &words), "one two");
-        assert_eq!(reveal_aligned_body("one two", "one two", 600, WORDS, &words), "one two");
+        assert_eq!(reveal_aligned_body(animated, "one two", 2000, WORDS, &words).0, animated);
+        assert_eq!(reveal_aligned_body("one two", "one two", 2000, Params { mode: Reveal::Off, ..WORDS }, &words).0, "one two");
+        assert_eq!(reveal_aligned_body("one two", "one two", 600, WORDS, &words).0, "one two");
     }
 
     #[test]

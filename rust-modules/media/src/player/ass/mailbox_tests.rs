@@ -49,6 +49,7 @@ impl Sim {
             mb: Mailbox::new(),
             source: Arc::new(Source {
                 alignment_epoch: None,
+                cue_timings: Arc::from([]),
                 id: 1,
                 revision: 1,
                 origin: Origin::Authored,

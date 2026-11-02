@@ -11,6 +11,7 @@
 - Returning from playback retains visible artwork within the existing cache limits; fast scrolling prioritizes currently visible uploads.
 - Reveal as spoken can use verified SpeechDock audio timing while retaining authored cue bounds and karaoke; estimated or revised sources cannot retain stale aligned words.
 - Word-by-word audio alignment now waits for the first word's verified onset, without changing the subtitle's authored interval or estimated fallback.
+- Player Info distinguishes SpeechDock word intervals actually applied to the current cue from estimated or unused timing, clearing stale status across renderer and playback changes.
 - SpeechDock requests preserve millisecond-authored cue bounds, skip ineligible long cues without rejecting the batch, and start correctly during the first 15 seconds of playback.
 
 - Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.

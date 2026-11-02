@@ -815,10 +815,11 @@ impl SourceCue {
 }
 
 impl TextScript {
-    pub(super) fn aligned_events(&self, params: super::reveal::Params, words: &std::collections::BTreeMap<u64, Vec<super::reveal::AlignedWord>>) -> String {
+    pub(super) fn aligned_events(&self, params: super::reveal::Params, words: &std::collections::BTreeMap<u64, Vec<super::reveal::AlignedWord>>) -> (String, Vec<super::ass::CueTiming>) {
         let mut events = String::new();
+        let mut timings = Vec::new();
         for cue in &self.source_cues {
-            let body = match words.get(&cue.ordinal) {
+            let (body, applied) = match words.get(&cue.ordinal) {
                 Some(words) => {
                     let relative: Vec<_> = words.iter().map(|w| super::reveal::AlignedWord {
                         start_byte: w.start_byte, end_byte: w.end_byte,
@@ -827,14 +828,14 @@ impl TextScript {
                     }).collect();
                     super::reveal::reveal_aligned_body(&cue.body, &cue.text, cue.end_ms - cue.start_ms, params, &relative)
                 }
-                None => {
-                    events.push_str(&super::reveal::reveal_events(&cue.event(&cue.body), params));
-                    continue;
-                }
+                None => super::reveal::reveal_body_with_status(&cue.body, cue.end_ms - cue.start_ms, params),
             };
+            if let Some(words) = applied {
+                timings.push(super::ass::CueTiming { start_ms: cue.start_ms, end_ms: cue.end_ms, words });
+            }
             events.push_str(&cue.event(&body));
         }
-        events
+        (events, timings)
     }
     /// The complete script for the viewer's picks.
     pub fn assemble(&self, style: &TextStyle) -> String {
@@ -899,6 +900,57 @@ fn script_from(text: &str, dialect: TextDialect) -> TextScript {
 /// `H:MM:SS.cc` from centiseconds.
 fn centis(cs: i64) -> String {
     format!("{}:{:02}:{:02}.{:02}", cs / 360_000, cs / 6_000 % 60, cs / 100 % 60, cs % 100)
+}
+
+#[cfg(test)]
+#[test]
+fn sidecar_timings_follow_applied_transform_and_clipping() {
+    use super::ass::CueTiming;
+    use super::reveal::{AlignedWord, Params};
+    use std::collections::BTreeMap;
+
+    let params = Params { mode: Reveal::Word, outline_alpha: 0x26, back_alpha: 0xff };
+    for script in [
+        script_from_srt("1\n00:00:01,000 --> 00:00:05,000\none two\n\n2\n00:00:03,000 --> 00:00:03,500\nshort cue\n"),
+        script_from_vtt("WEBVTT\n\n00:00:01.000 --> 00:00:05.000\none two\n\n00:00:03.000 --> 00:00:03.500\nshort cue\n"),
+    ] {
+        let mut words = BTreeMap::new();
+        words.insert(0, vec![
+            AlignedWord { start_byte: 0, end_byte: 3, start_ms: 1100, end_ms: 1400 },
+            AlignedWord { start_byte: 4, end_byte: 7, start_ms: 1900, end_ms: 2100 },
+        ]);
+        let (events, timings) = script.aligned_events(params, &words);
+        assert_eq!(timings, vec![CueTiming { start_ms: 1000, end_ms: 3000, words: 2 }]);
+        assert!(events.contains("\\t(100,260,"));
+        words.get_mut(&0).unwrap()[1].start_byte = 5;
+        let (_, timings) = script.aligned_events(params, &words);
+        assert_eq!(timings, vec![CueTiming { start_ms: 1000, end_ms: 3000, words: 0 }]);
+        assert!(script.aligned_events(Params { mode: Reveal::Off, ..params }, &words).1.is_empty());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn sidecar_timings_match_serialized_bounds_with_overlapping_cues() {
+    use super::ass::CueTiming;
+    use super::reveal::{AlignedWord, Params};
+    use std::collections::BTreeMap;
+
+    let script = script_from_vtt("WEBVTT\n\n00:00:01.009 --> 00:00:04.009\none two\n\n00:00:03.909 --> 00:00:06.009 line:0\nother words\n\n00:00:07.001 --> 00:00:07.009\ntoo brief\n");
+    assert_eq!((script.source_cues[0].authored_start_ms, script.source_cues[0].authored_end_ms), (1009, 4009));
+    let words = BTreeMap::from([(0, vec![
+        AlignedWord { start_byte: 0, end_byte: 3, start_ms: 1100, end_ms: 1400 },
+        AlignedWord { start_byte: 4, end_byte: 7, start_ms: 1900, end_ms: 2100 },
+    ])]);
+    let params = Params { mode: Reveal::Word, outline_alpha: 0x26, back_alpha: 0xff };
+    let (events, timings) = script.aligned_events(params, &words);
+    assert!(events.contains("0:00:01.00,0:00:04.00"));
+    assert_eq!(timings, vec![
+        CueTiming { start_ms: 1000, end_ms: 4000, words: 2 },
+        CueTiming { start_ms: 3900, end_ms: 6000, words: 0 },
+    ]);
+    let current: Vec<_> = timings.iter().filter(|cue| cue.start_ms <= 4005 && 4005 < cue.end_ms).collect();
+    assert_eq!(current, vec![&timings[1]]);
 }
 
 #[cfg(test)]

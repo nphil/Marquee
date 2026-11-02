@@ -22,6 +22,7 @@ use plx_ui::widgets::{
 };
 use plx_ui::{Painter, Rect, View};
 use std::ffi::CString;
+use std::fmt::Write as _;
 use std::os::raw::c_int;
 
 /// [`actions`]'s fixed length: it always returns two labels, only their TEXT depends on
@@ -45,6 +46,8 @@ pub struct InfoPanelState {
     /// The action column's FOCUS POP — one spring per button ([`plx_ui::widgets::CtlPop`]). Two,
     /// the whole of [`actions`].
     ctl_pop: plx_ui::widgets::CtlPop<2>,
+    word_timing: plx_media::player::ass::WordTiming,
+    word_timing_text: String,
 }
 
 /// The ratingKey of the page the playing item belongs to: the show for an episode, the movie
@@ -60,9 +63,31 @@ pub fn detail_rk<'a>(meta: metadata::MetadataView<'a>) -> Option<&'a str> {
 
 impl InfoPanelState {
     pub fn new() -> Self {
+        let mut word_timing_text = String::with_capacity(80);
+        word_timing_text.push_str("Word timing: Not in use");
         InfoPanelState {
             focus: 0,
             ctl_pop: plx_ui::widgets::CtlPop::new(),
+            word_timing: plx_media::player::ass::WordTiming::NotInUse,
+            word_timing_text,
+        }
+    }
+
+    fn update_word_timing(&mut self) {
+        use plx_media::player::ass::WordTiming;
+        let timing = plx_media::player::ass::word_timing();
+        if self.word_timing == timing {
+            return;
+        }
+        self.word_timing = timing;
+        self.word_timing_text.clear();
+        match timing {
+            WordTiming::NotInUse => self.word_timing_text.push_str("Word timing: Not in use"),
+            WordTiming::Estimated => self.word_timing_text.push_str("Word timing: Estimated"),
+            WordTiming::SpeechDock(words) => {
+                write!(&mut self.word_timing_text, "Word timing: SpeechDock · {words} words applied")
+                    .expect("formatting word timing into a String");
+            }
         }
     }
 
@@ -132,6 +157,7 @@ impl InfoPanelState {
         if np.is_none() && d.is_none() {
             return;
         }
+        self.update_word_timing();
         // no scrim — the card floats over the transport; reproduces exactly what
         // `Popover::painter(0.0, 20.0)` (i.e. no scrim + `Popover::content_painter(20.0)`) drew.
         let p = Painter::root()
@@ -404,7 +430,10 @@ impl InfoPanelState {
         // row's contribution is gated on `n > 0` — whether the chip row ACTUALLY has something to draw
         // — not `has_tags`; see the comment above where `chips`/`n` are built for why those are two
         // different questions once a fit can drop every candidate.
-        let items = card_items(title_h, syn_h, gap_tags, (n > 0).then_some(tag_h));
+        let [title_item, synopsis_item, tags_item] =
+            card_items(title_h, syn_h, gap_tags, (n > 0).then_some(tag_h));
+        let timing_h = theme::size::LABEL as f32 + 3.0;
+        let items = [title_item, synopsis_item, tags_item, Item::new(timing_h)];
         let stack = VStack::new(&items, gap_title, Anchor::Centre(cyt + ch * 0.5));
         if let Some((y, _)) = stack.span(0) {
             title_v.draw(p, Rect::new(tx, y, tw, 0.0));
@@ -433,6 +462,11 @@ impl InfoPanelState {
         if let Some((y, _)) = stack.span(2) {
             let my = y + tag_h * 0.5; // vertical centre of the tag row
             draw_chip_row(p, &chips, chips.row(tx).kept(kept), my, measure);
+        }
+        if let Some((y, _)) = stack.span(3) {
+            TextView::new(&self.word_timing_text, theme::size::LABEL, dim)
+                .max_lines(1)
+                .draw(p, Rect::new(tx, y, tw, 0.0));
         }
     }
 }

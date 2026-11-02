@@ -19,6 +19,7 @@
 - [x] Assess Denon control capabilities and whether master volume supports configurable whole-number steps.
 - [x] Display actual half-step receiver volume consistently in the native TV UI when whole-step AVR operation is unavailable.
 - [x] Verify focused volume behavior and document the full AVR-settings integration requirements.
+- [ ] Deliver full model-supported Denon controls in native TV Settings with safe commands, capability-aware availability and confirmed receiver readback. Volume precision does not complete this integration.
 
 ## Subtitle-safe volume popup
 
@@ -39,6 +40,12 @@ Lucent shadow and antialias bounds must clear the caption, not only the layout b
 The `b506a7ae` release is installed with all 54 files matching. Actual playback and
 subtitle-safe popup acceptance completed; owned playback closed and Active Standby
 was verified at 01:27 EST on 2026-11-02. The full backlog below remains retained.
+
+## SpeechDock current-cue consumption
+
+- [x] Report actual current-cue applied word timing in the existing Info overlay, fenced to the accepted renderer frame and active source.
+- [x] Exercise native applied, estimated, not-in-use and stale-clearing behavior with focused consumer checks.
+- [ ] Build, install and verify a genuine current TV cue plus fallback or seek clearing, then coordinate standby and release.
 
 ## Sonarr and Radarr integration backlog
 

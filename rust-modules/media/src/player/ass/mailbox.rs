@@ -68,6 +68,7 @@ pub(super) struct Mailbox {
     /// withdrawn while pending.
     answered: u64,
     pub published: Option<Published>,
+    pub(super) accepted_timing: Option<super::AcceptedTiming>,
     /// At most ONE ahead frame.
     next: Option<Published>,
     pub_ids: u64,
@@ -110,6 +111,7 @@ impl Mailbox {
             requested: None,
             answered: 0,
             published: None,
+            accepted_timing: None,
             next: None,
             pub_ids: 0,
             seqs: 0,
