@@ -4,15 +4,32 @@
 
 ### Subtitle-safe volume popup
 
-The pending app/OS update reports the union of painted subtitle bounds with the same
-Wayland surface commit as its picture. Unchanged bounds send no message; there is no
-screen scan, media capture, polling loop or additional surface commit. Old compositors
-without the optional protocol retain normal playback.
+Stable 0.10.0 source `b506a7ae` is installed, including the first-word reveal fix.
+The executable is `40f426110c961365e5bfb69eb635ee0343d0948cf744718a710645f225bb5f13`;
+all 54 deployed files match. Stable ARM ELF, package and link-input checks pass.
+Actual TV acceptance covers the owner profile, Home, episode playback, subtitles
+and pause/resume. Verified acoustic first-word timing on the TV remains unproven;
+the 17 focused/native ASS onset, fade and backward-seek checks are separate evidence.
 
-The bottom popup snaps above a collision and retains that height through cue gaps while
-visible. Unknown bounds use the conventional subtitle band. Native frame planning also
-needs a popup-only collision guard before activation; asynchronous relocation alone can
-lag the first frame of a new cue. This source update is not installed yet.
+Caption compositor `6dab7dcd` and shadow-aware native UI `21255466` are installed.
+Painted subtitle bounds accompany the same Wayland surface commit as the picture;
+unchanged bounds send no message. There is no screen scan, media capture, polling
+loop or additional commit. Current-frame and queued-page guards remain enabled.
+The renderer sync patch preserves the shared painted extent; `host.rs` stays local.
+
+Actual TV playback shows the bottom Dolby Audio popup, its full shadow and
+`PCM · Dolby Surround` above subtitles at `{x:594,y:938,w:740,h:55}`, with no overlap.
+Six focused placement/native GL checks cover normal, deep and flat materials and
+changing caption geometry. Runtime UI identity matches the canonical child’s
+executable mapping, installed inode and SHA256, rather than the explicit loader.
+
+Proof: `/data/home/tmp/marquee-caption-visible-proof/`, including
+`ui-install-after-handoff.json`, `screen.json` and `captionpopup40f.png`; the 54-file
+receipt is in `/data/home/tmp/marquee-caption-final-proof/app-deploy.log`.
+At 01:27 EST on 2026-11-02, owned playback was closed and Active Standby verified,
+failures were 0, temporary OLED pixel brightness 10 was restored to the original 84,
+and the local mirror and owned remote token were absent. Intentional receiver
+unmute was preserved; the TV window was explicitly returned to the other sessions.
 
 ### Audio and skip-settings update
 

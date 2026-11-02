@@ -22,14 +22,23 @@
 
 ## Subtitle-safe volume popup
 
-- [ ] Make bottom-positioned volume popup avoid subtitles using the existing native layout path.
-- [ ] Verify subtitle-safe popup placement with focused native renders and preserve deployment notes.
-- [ ] Coordinate other TV sessions and put the TV in standby after the update and brief check.
+- [x] Make bottom-positioned volume popup avoid subtitles using the existing native layout path.
+- [x] Verify subtitle-safe popup placement with focused native renders and preserve deployment notes.
+- [x] Coordinate other TV sessions and put the TV in standby after the update and brief check.
 
-Marquee should publish only changed rendered subtitle geometry through its existing Wayland
-connection. The OS popup must avoid the current painted bounds without screen scanning,
-media logging or polling; unknown geometry needs a conservative safe area. Playback remains
-untouched during source preparation.
+Marquee publishes only changed rendered subtitle geometry through its existing Wayland
+connection. The OS popup avoids current painted bounds without screen scanning,
+media logging or polling; unknown geometry uses a conservative safe area. Full
+Lucent shadow and antialias bounds must clear the caption, not only the layout body.
+
+## SpeechDock first-word reveal
+
+- [x] Integrate the reviewed first-word onset fix without changing authored cue bounds or estimated fallback.
+- [x] Build, install and briefly verify the corrected stable app, then coordinate final standby and release.
+
+The `b506a7ae` release is installed with all 54 files matching. Actual playback and
+subtitle-safe popup acceptance completed; owned playback closed and Active Standby
+was verified at 01:27 EST on 2026-11-02. The full backlog below remains retained.
 
 ## Sonarr and Radarr integration backlog
 
