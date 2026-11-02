@@ -11,12 +11,20 @@ is relative to that player canvas, not certified physical-panel 1:1. Fill/crop a
 source/destination clipping; crop choices are offered only when the native sink supports them.
 ACB placement uses explicit windows with `fullScreen=false` before the separate PLAYING transition.
 
+Stable 0.10.0 source `757261c9` is installed on `192.168.1.242`; the existing cached-lane deploy
+matched all 54 file hashes. Release executable SHA-256:
+`581e23c3d19789adb80dfa14c3a7feec53daa193f0ae220725340b74c254407b`.
+Native Never After Dark playback shows fitted proportions and black bars. More → Video scaling
+offers Fit, Fill/crop, Original size, Zoom 125% and Stretch. Fill/crop changed the paused picture
+at 37:45; Fit was restored and playback advanced to 37:48. Native proof:
+`/tmp/lt/marquee-scaling-{modes,fill,final}.png`. Final power Active, foreground Marquee, receiver
+untouched; own mutex released with local mirror absent and remote owner absent. No platform,
+picture, power or refresh changes accompanied this app-only update. Stable storage identity
+remains `com.beb.plxnative`.
 
-Stable 0.10.0 payload source `2b12924e` is deployed on `192.168.1.242` (webOS 10.2.1, platform
-`o22n2`). The existing stable in-place deploy matched all 54 file hashes without launching the app.
-The local release executable SHA-256 is
-`01997f77af819aa91b716a104d17bc9b14ccdbb48899d290f0f8cc83faefb823`.
-The stable `com.beb.plxnative` storage identity is retained.
+### Earlier SpeechDock setup
+
+Previous payload `2b12924e` used the same stable identity and existing in-place deployment path.
 
 The staged package is `/data/home/Marquee-release/marquee-0.10.0-2b12924e.ipk`, 21,092,004 bytes,
 SHA-256 `057b4fa017cab90e3afd184670cc70437708cbd9b843ee5a87915fae1d1308bd`. Canonical/versioned
