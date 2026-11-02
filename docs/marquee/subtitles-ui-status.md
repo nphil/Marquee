@@ -375,10 +375,10 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
 
 ## Speech timing and render provenance
 
-The deployed `2b12924e` client includes the isolated SpeechDock source return
-`1b0e4e5c3ea32f38f94525aca7a89457f9dec963` and final renderer/source fences. The native Address
-and Word by word mode are now configured; successful acoustic timing application on the TV remains
-unverified. Estimated timing is the fallback; authored ASS karaoke retains its timings.
+The earlier `2b12924e` client integrated the isolated SpeechDock source return
+`1b0e4e5c3ea32f38f94525aca7a89457f9dec963` and renderer/source fences. The native Address
+remains saved; the latest bounded check below restored the original Off reveal preference.
+Positive acoustic timing on the TV remains unverified; estimates and authored ASS karaoke remain intact.
 
 SpeechDock session `01a1943c-9834-7106-872e-e017bd1c394b` owns the CPU backend. Client source
 ownership has returned to Marquee; `/data/home/Marquee-speechdock-alignment` remains frozen. Its
@@ -419,8 +419,8 @@ The temporary reveal change was restored to the original Off preference, owned p
 and actual Active Standby read back before the verified lease release. Receiver volume was left
 unchanged. Backend success or a nonnull source revision is not consumption evidence.
 
-Production SpeechDock 0.2.0 has the trusted PMS origin, private token file and explicit read-only
-movie/TV roots configured. The unchanged production image has bounded acoustic-positive proof:
+Historical SpeechDock 0.2.0 evidence used the trusted PMS origin, private token file and read-only
+movie/TV roots. That production image had bounded acoustic-positive proof:
 authoritative English cue 583 returned one aligned word, UTF-8 bytes 0–4, at
 2,478,100–2,478,220 ms on the native 20 ms grid, inside authored bounds 2,477,380–2,478,380 ms.
 The source revision is `c50d1543…` and the model SHA-256 is `cd5040c1…`.
@@ -430,8 +430,8 @@ broad film-accuracy certification, and no guards or authored bounds were relaxed
 `source_revision` can accompany estimated cues and is not proof of aligned words; estimated cues
 must clear earlier alignment. Changed-source validation returns `estimated`, `words: []` and a null
 source revision. The private pair is `actual-plex-single-{request,response}-583.json` under
-`/data/home/tmp/speechdock-alignment-production`. The native TV Address is saved and Word by word
-enabled. The backend owner reported one 1000-line container-log tail inspected at 15:14 EST:
+`/data/home/tmp/speechdock-alignment-production`. In that earlier setup the native Address was saved
+and Word by word enabled. The backend owner reported one 1000-line container-log tail at 15:14 EST:
 18 `POST /api/alignment/windows` receipts, all HTTP 200. Every returned line lacked timestamps,
 and matching receipts contained no aligned-versus-estimated classification. Attribution to the
 15:03–15:12 TV playback window/client and the acoustic outcome remain unobserved. HTTP success
