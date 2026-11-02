@@ -15,6 +15,10 @@ Marquee executable were unchanged. Actual Marquee playback shows the Dolby Audio
 remained false. Final power Active, foreground Marquee, native UI ready. Own mutex was released
 with local mirror and remote owner absent. Proof: `/data/home/tmp/marquee-volume-popup-proof/`.
 
+UI-client restart tears down native UI subscriptions and focus, then recomputes Home and refresh
+policy. It is not intrinsically playback- or refresh-neutral; live maintenance requires explicit
+permission for possible playback interruption. This movie capture does not establish neutrality.
+
 The unchanged `/tmp/lt/tv.py` transport opens a fresh SSH connection for each command; it avoids
 the observed channel closure after reusing a connection for SFTP and execution. Native popup
 smoke reuses the Smart Remote input functions from `docs/research/perf/kb.py`, without tracing.
