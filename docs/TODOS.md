@@ -21,6 +21,14 @@ buffering, temporary storage with Keep, and title-level progress across release 
 - [ ] Add temporary-cache/Keep/cancel handling, safe completed-download import, and title-level resume across release changes without duplicate files or broken seeding.
 - [ ] Review Torsher’s AGPL-3.0 license and dependencies before copying or adapting upstream code.
 
+- [ ] Audit Torsher for applicable Marquee-wide startup, poster/image loading, scrolling, memory/cache, networking and playback-buffering improvements; retain only measured benefits using the proven TV performance paths.
+- [ ] Review the rest of Torsher for worthwhile future Marquee features, including household profiles/PINs, language preferences, setup checks, notifications, backup/restore/export and device management; produce a prioritized adopt/adapt/skip shortlist with platform fit and licensing constraints.
+
+The Torsher review extends beyond Sonarr/Radarr to Marquee as a whole. Performance patterns are
+candidates, not demonstrated improvements: browser-specific techniques need native-platform
+equivalents, measured benefit and no regression before adoption. Additional features remain
+ranked proposals rather than an instruction to clone the complete application.
+
 Torsher bundles its own torrent engine based on anacrolix/torrent. Sonarr and Radarr manage
 acquisition and import; they do not themselves supply a playable partial-file stream. Backend,
 download-client and webOS format/seek compatibility need verification before implementation.
