@@ -410,8 +410,14 @@ The source update adds a functional player Info line: `Word timing: SpeechDock Â
 source/revision, playback generation, exact request geometry, frame validity and cue-bound fences.
 Seek, fallback, source changes and busy selection invalidate the snapshot. Labels are cached
 until the reported state changes; no polling, capture or private caption data is added.
-Focused native consumer and sidecar checks pass; installation and live current-source acceptance
-remain pending. Backend success or a nonnull source revision is not consumption evidence.
+The readout is installed from `d609f6a6`; all 54 payload files match and the running executable
+SHA-256 is `4ffd7d6b5fbb6107eea0691c1397acbaf3217e2327d1f94aeadadaf6fbae82d3`.
+The bounded TV check showed `Estimated` and cue-gap `Not in use` with Word by word, selected
+English external subtitles and the saved SpeechDock origin. A real seek returned `Estimated`.
+No current cue showed SpeechDock words applied; positive acoustic consumption remains unverified.
+The temporary reveal change was restored to the original Off preference, owned playback closed
+and actual Active Standby read back before the verified lease release. Receiver volume was left
+unchanged. Backend success or a nonnull source revision is not consumption evidence.
 
 Production SpeechDock 0.2.0 has the trusted PMS origin, private token file and explicit read-only
 movie/TV roots configured. The unchanged production image has bounded acoustic-positive proof:
