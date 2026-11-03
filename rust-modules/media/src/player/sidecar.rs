@@ -726,7 +726,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
         font_generation: None,
         text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, plain,
             source_sha256, script: Arc::new(converted), aligned: Arc::new(std::collections::BTreeMap::new()), verified_source_revision: None,
-            alignment_revision: 0, published_alignment_revision: 0, alignment_epoch: 0,
+            alignment_revision: 0, published_alignment_revision: 0, alignment_epoch: super::alignment::epoch(),
             estimated: None, restyling: false }),
     })
 }
