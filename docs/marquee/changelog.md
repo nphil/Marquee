@@ -13,6 +13,7 @@
 - Word-by-word audio alignment now waits for the first word's verified onset, without changing the subtitle's authored interval or estimated fallback.
 - Player Info distinguishes SpeechDock word intervals actually applied to the current cue from estimated or unused timing, clearing stale status across renderer and playback changes.
 - SpeechDock requests preserve millisecond-authored cue bounds, skip ineligible long cues without rejecting the batch, and start correctly during the first 15 seconds of playback.
+- A sidecar subtitle with SpeechDock word timing is rebuilt only when an answer changes some cue's words, not on every repeated request during dialogue, and its estimated script is reused while the subtitle style stays the same.
 
 - Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.
 - Dialogue Enhance on an Opus track whose source fails to open no longer ends in an error: a cold start retries without enhancement, and any other failed open goes through the usual recovery (HLS fallback or rollback). A slow open is no longer reported as a Load timeout.

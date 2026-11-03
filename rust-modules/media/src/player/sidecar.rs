@@ -209,6 +209,32 @@ pub(super) fn alignment_snapshot(start_ms: i64, end_ms: i64, limit: usize) -> Op
     Some(AlignmentSnapshot { generation, source_id, source_revision, stream_id, source_sha256, cues })
 }
 
+impl TextHold {
+    /// Merge a realignment answered for `epoch`. True, with the alignment revision bumped, only when
+    /// a cue's words changed: the worker asks again every few seconds of dialogue, mostly for words
+    /// already held, and each bump rebuilds the whole script and has the renderer parse it again.
+    fn realign(&mut self, epoch: u64, updates: Vec<AlignmentUpdate>, verified_revision: Option<&str>) -> bool {
+        let mut changed = false;
+        if self.alignment_epoch != epoch || verified_revision.is_none() || self.verified_source_revision.as_deref() != verified_revision {
+            // Words of another epoch or source revision go, which changes the script if any were held.
+            changed = !self.aligned.is_empty();
+            self.aligned = Arc::new(std::collections::BTreeMap::new());
+        }
+        self.verified_source_revision = verified_revision.map(str::to_owned);
+        self.alignment_epoch = epoch;
+        for update in updates {
+            let held = self.aligned.get(&update.ordinal);
+            if held.map_or(update.words.is_empty(), |words| *words == update.words)
+                || !self.script.source_cues.iter().any(|cue| cue.ordinal == update.ordinal) { continue; }
+            let aligned = Arc::make_mut(&mut self.aligned);
+            if update.words.is_empty() { aligned.remove(&update.ordinal); } else { aligned.insert(update.ordinal, update.words); }
+            changed = true;
+        }
+        if changed { self.alignment_revision = self.alignment_revision.wrapping_add(1); }
+        changed
+    }
+}
+
 /// Worker-only: the orchestrator validates identity, provenance and response before this call.
 pub(super) fn apply_alignment(generation: u64, source_id: u64, source_revision: u64, epoch: u64, updates: Vec<AlignmentUpdate>, verified_revision: Option<&str>) -> bool {
     let style = TextStyle::current();
@@ -222,20 +248,9 @@ pub(super) fn apply_alignment(generation: u64, source_id: u64, source_revision: 
     if want.as_ref() != Some(selection) || source.id != source_id || source.revision != source_revision
         || !ready_source(content) { return false; }
     let Some(hold) = content.text.as_mut() else { return false };
-    if hold.alignment_epoch != epoch || verified_revision.is_none() || hold.verified_source_revision.as_deref() != verified_revision {
-        hold.aligned = Arc::new(std::collections::BTreeMap::new());
+    if hold.realign(epoch, updates, verified_revision) {
+        start_restyle(content, style);
     }
-    hold.verified_source_revision = verified_revision.map(str::to_owned);
-    hold.alignment_epoch = epoch;
-    let aligned = Arc::make_mut(&mut hold.aligned);
-    for update in updates {
-        if hold.script.source_cues.iter().any(|cue| cue.ordinal == update.ordinal) {
-            if update.words.is_empty() { aligned.remove(&update.ordinal); }
-            else { aligned.insert(update.ordinal, update.words); }
-        }
-    }
-    hold.alignment_revision = hold.alignment_revision.wrapping_add(1);
-    start_restyle(content, style);
     true
 }
 
@@ -563,6 +578,9 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
         (content.source.id, hold.style_generation, hold.header_len, bytes.clone(), hold.plain.clone());
     let (text_script, aligned, alignment_revision) = (hold.script.clone(), hold.aligned.clone(), hold.alignment_revision);
     let alignment_epoch = hold.alignment_epoch;
+    // The estimate follows the picks alone: a restyle for new words keeps the one built for these
+    // picks, so it is neither rebuilt nor handed to the renderer as a new revision to parse.
+    let estimate_held = hold.estimated.is_some() && base_generation == style.generation();
     hold.restyling = true;
     let started = plx_base::task::spawn_small("sidecar restyle", move || {
         let header = text_ass::header(&style);
@@ -571,15 +589,17 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
             None => std::str::from_utf8(&bytes[header_len..]).unwrap_or(""),
         };
         let revealing = style.layout.reveal != plx_plex::plex::session::Reveal::Off;
-        let (estimated, estimated_timings, script, cue_timings) = if revealing {
+        let (estimated, script, cue_timings) = if revealing {
             let params = super::reveal::Params::of(&style.layout);
-            let (estimated_events, estimated_timings) = text_script.aligned_events(params, &std::collections::BTreeMap::new());
+            let estimated = (!estimate_held).then(|| {
+                let (events, timings) = text_script.aligned_events(params, &std::collections::BTreeMap::new());
+                (joined(header.as_bytes(), events.as_bytes()), timings)
+            });
             let (events, cue_timings) = text_script.aligned_events(params, &aligned);
-            (joined(header.as_bytes(), estimated_events.as_bytes()), estimated_timings,
-             joined(header.as_bytes(), events.as_bytes()), cue_timings)
+            (estimated, joined(header.as_bytes(), events.as_bytes()), cue_timings)
         } else {
             let script = joined(header.as_bytes(), held.as_bytes());
-            (script.clone(), Vec::new(), script, Vec::new())
+            ((!estimate_held).then(|| (script.clone(), Vec::new())), script, Vec::new())
         };
         let plain = revealing.then(|| plain.clone().unwrap_or_else(|| Arc::from(held)));
         let stamped = (revealing && !aligned.is_empty()).then_some(alignment_epoch);
@@ -587,7 +607,7 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
         let current_style = TextStyle::current();
         let mut st = state();
         if let Some((_, content)) = st.loaded.as_mut() {
-            publish_restyle(content, id, base_generation, alignment_revision, stamped, style, header.len(), script, cue_timings, estimated, estimated_timings, plain);
+            publish_restyle(content, id, base_generation, alignment_revision, stamped, style, header.len(), script, cue_timings, estimated, plain);
             if content.text.as_ref().is_some_and(|hold| hold.alignment_revision != hold.published_alignment_revision) {
                 start_restyle(content, current_style);
             }
@@ -605,6 +625,7 @@ fn start_restyle(content: &mut Content, style: TextStyle) {
 
 /// Publish a script built for `style` if `content` is still the file it was built from. The
 /// fonts are the ones the content holds now, so a restyle never undoes a font publication.
+/// `estimated` is `None` when the estimate held was already built for `style`.
 fn publish_restyle(
     content: &mut Content,
     id: u64,
@@ -615,8 +636,7 @@ fn publish_restyle(
     header_len: usize,
     script: Arc<[u8]>,
     cue_timings: Vec<super::ass::CueTiming>,
-    estimated: Arc<[u8]>,
-    estimated_timings: Vec<super::ass::CueTiming>,
+    estimated: Option<(Arc<[u8]>, Vec<super::ass::CueTiming>)>,
     plain: Option<Arc<str>>,
 ) {
     let (revision, origin, fonts) = match (&content.source.content, content.text.as_mut()) {
@@ -627,13 +647,15 @@ fn publish_restyle(
             }
             (hold.header_len, hold.style_generation, hold.plain) = (header_len, style.generation(), plain);
             hold.published_alignment_revision = alignment_revision;
-            let estimate_id = hold.estimated.as_ref().map_or_else(super::ass::next_source_id, |source| source.id);
-            let estimate_revision = hold.estimated.as_ref().map_or(1, |source| source.revision.wrapping_add(1));
-            hold.estimated = Some(Arc::new(super::ass::Source { id: estimate_id, revision: estimate_revision,
-                alignment_epoch: None,
-                cue_timings: estimated_timings.into(),
-                origin: super::ass::Origin::Text(style), content: super::ass::Content::Script {
-                    bytes: estimated, fonts: fonts.clone() } }));
+            if let Some((estimated, estimated_timings)) = estimated {
+                let estimate_id = hold.estimated.as_ref().map_or_else(super::ass::next_source_id, |source| source.id);
+                let estimate_revision = hold.estimated.as_ref().map_or(1, |source| source.revision.wrapping_add(1));
+                hold.estimated = Some(Arc::new(super::ass::Source { id: estimate_id, revision: estimate_revision,
+                    alignment_epoch: None,
+                    cue_timings: estimated_timings.into(),
+                    origin: super::ass::Origin::Text(style), content: super::ass::Content::Script {
+                        bytes: estimated, fonts: fonts.clone() } }));
+            }
             (content.source.revision.wrapping_add(1), super::ass::Origin::Text(style), fonts.clone())
         }
         _ => return,
@@ -1446,5 +1468,21 @@ mod tests {
         assert!(Arc::ptr_eq(&source, selected_source(content)));
         drop(st);
         reset();
+    }
+
+    /// The worker asks again every few seconds of dialogue, mostly for words already held: an answer
+    /// that changes no cue's words must not bump the revision that rebuilds the whole script.
+    #[test]
+    fn an_unchanged_realignment_does_not_bump_the_revision() {
+        let mut content = decode(b"1\n00:00:01,000 --> 00:00:04,000\nHello world\n".to_vec(), "srt").unwrap();
+        let hold = content.text.as_mut().unwrap();
+        let word = super::super::reveal::AlignedWord { start_byte: 0, end_byte: 5, start_ms: 1_100, end_ms: 1_500 };
+        let words = || vec![AlignmentUpdate { ordinal: 0, words: vec![word] }];
+        assert!(hold.realign(7, words(), Some("a")));
+        let revision = hold.alignment_revision;
+        assert!(!hold.realign(7, words(), Some("a")), "the same words again");
+        assert_eq!(hold.alignment_revision, revision);
+        assert!(hold.realign(8, words(), Some("a")), "a new epoch restamps the held words");
+        assert_eq!(hold.alignment_revision, revision.wrapping_add(1));
     }
 }
