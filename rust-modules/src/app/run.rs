@@ -5014,6 +5014,8 @@ mod lifecycle_regression_tests {
             assert!(app.bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::InstallPlaying(Some(plx_data::metadata::PlayingItem {
                 sid: plx_plex::plex::ServerId::from_raw(0),
                 rk: "rk".into(),
+                media_id: None,
+                part_key: String::new(),
                 show_rk: String::new(),
                 kind: String::new(),
                 audio: Vec::new(),
@@ -5024,6 +5026,7 @@ mod lifecycle_regression_tests {
                 bitrate: 0,
                 dovi: Default::default(),
                 markers: Vec::new(),
+                markers_known: false,
                 chapters: (1..=2).map(chapter).collect(),
                 hdr: false,
             }))));
@@ -5756,19 +5759,23 @@ mod lifecycle_regression_tests {
         }
 
         /// The Up Next countdown of the Player page already on screen (an Engine started through
-        /// `accept_start` has mounted it), run out.
+        /// `accept_start` has mounted it), run out. Marquee lets an elapsed countdown act only for a
+        /// confirmed credits marker under the playing playhead, on the visible row with its primary
+        /// control focused, so the frame is set up that way.
         fn expire_countdown_on_mounted_player(&mut self) -> Frame {
+            let credits = plx_data::metadata::Marker {
+                kind: plx_data::metadata::MarkerKind::Credits,
+                start_ms: 0,
+                end_ms: 60_000,
+                final_seg: true,
+            };
+            plx_data::metadata::set_playing_markers_for_test(self.app.bridge.metadata_mut().state_mut(), vec![credits]);
+            plx_media::player::restore_state_for_test(plx_media::player::PlaybackState::Playing as u8);
             let player = super::super::bridge::player_mut(&mut self.app.pages).unwrap();
-            player.up_next.tick(
-                plx_appkit::player_hud::ControlSlot::UpNext(plx_data::metadata::Marker {
-                    kind: plx_data::metadata::MarkerKind::Credits,
-                    start_ms: 0,
-                    end_ms: 60_000,
-                    final_seg: true,
-                }),
-                20,
-                true,
-            );
+            player.up_next.tick(plx_appkit::player_hud::ControlSlot::UpNext(credits), 20, true);
+            player.hud.extend(20, 60_000);
+            player.hud.nav.focus = plx_appkit::player_hud::geometry::GROUP_ROW;
+            player.hud.nav.btn = plx_appkit::up_next::PRIMARY_BTN;
             let mut fr = Frame::begin(&self.app.player.session, self.app.bridge.metadata_view());
             fr.now = 20 + 5_000;
             assert!(player.up_next.expired(fr.now));
@@ -9249,6 +9256,15 @@ mod lifecycle_regression_tests {
         )
     }
 
+    /// What `playback_tick`'s elapsed-countdown arm does once its countdown has run out: press the
+    /// row's primary control. The rig's Engine decodes nothing, so its pump never reports Playing,
+    /// and Marquee runs that arm only under a playing playhead.
+    fn press_the_expired_countdown(rig: &mut Rig, fr: &Frame) {
+        let app = &mut rig.app;
+        super::super::playback::activate_ctrl_row(&mut app.player, &mut app.adapters.player, &mut app.repause_at,
+            fr.ctrl, &mut app.refresh_hubs, fr.ctrl.primary_btn(), &mut app.pages, &mut app.bridge);
+    }
+
     /// **Up Next from the credits marks the episode it leaves watched.** Credits start before the
     /// server's own watched threshold, so the `stopped` report at 30 s of 60 s would leave the
     /// episode unwatched: the loop's `play_up_next` arms the flag and the stop scrobbles after it.
@@ -9262,8 +9278,8 @@ mod lifecycle_regression_tests {
         };
         let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
         playing_live_at(&mut rig, 30_000);
-        let mut fr = rig.expire_countdown_on_mounted_player();
-        unsafe { playback_tick(&mut rig.app, &mut fr); }
+        let fr = rig.expire_countdown_on_mounted_player();
+        press_the_expired_countdown(&mut rig, &fr);
         assert!(plx_media::route::play_pending(), "the countdown requested the successor");
 
         let (stopped, scrobbled) = e1_stop_requests(&rig);
@@ -9289,8 +9305,8 @@ mod lifecycle_regression_tests {
         };
         let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
         playing_live_at(&mut rig, 59_000);
-        let mut fr = rig.expire_countdown_on_mounted_player();
-        unsafe { playback_tick(&mut rig.app, &mut fr); }
+        let fr = rig.expire_countdown_on_mounted_player();
+        press_the_expired_countdown(&mut rig, &fr);
         assert!(plx_media::route::play_pending(), "the countdown requested the successor");
 
         let (stopped, scrobbled) = e1_stop_requests(&rig);
@@ -9326,7 +9342,8 @@ mod lifecycle_regression_tests {
             &mut app.repause_at,
             skip,
             &mut app.refresh_hubs,
-            0,
+            // Marquee's pill pairs Watch with Skip; the Skip half is the one that skips.
+            plx_appkit::skip_pill::BTN_SKIP,
             &mut app.pages,
             &mut app.bridge,
         );
