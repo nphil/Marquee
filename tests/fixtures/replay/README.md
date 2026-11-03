@@ -618,3 +618,12 @@ against the synthetic mock on the integrated tree with `tests/focusfp.sh --rec -
 only its recording segment was replaced, with the identical manifests and anchor flags retained.
 The alphabet adds source-backed Movie/TV Show labels, remaining minutes and medium-format
 English dates. Both Targets and Resolve must pass the complete recordings before landing.
+
+Merging upstream into Marquee combined both trees' shape moves (`SCREEN_SHAPES_PIN`
+`0x5728_ae88_4208_713f`), which moved the state shape from 3894237859247589253 to
+4453049476616702048. All three anchors were refused on load, then recorded again on the merged
+tree with `tests/focusfp.sh --rec --only 1,6,12` (350 ms keys, 1 s boot settle, 1.5 s final
+settle) and installed with `tools/plxnative-rec rerecord`, anchors retained. Flow 6 steps past
+Marquee's Subtitles row to reach Privacy, and the alphabet adds Marquee's Settings copy
+(`marquee_copy`). `tests/replay_fixtures.py` replays all three with `verdict=SAME` in Targets and
+Resolve and every difference counter at zero.

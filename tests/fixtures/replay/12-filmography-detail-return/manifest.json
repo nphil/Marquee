@@ -1,7 +1,7 @@
 {
  "anchor": true,
  "blobs": false,
- "build": "0.10.0-dev",
+ "build": "0.11.0-dev",
  "clock": {
   "start": 0
  },
@@ -61,8 +61,8 @@
        "address": "127.0.0.1",
        "machine_id": "",
        "name": "",
-       "origin": "http://127.0.0.1:32508",
-       "port": 32508,
+       "origin": "http://127.0.0.1:32498",
+       "port": 32498,
        "tier": "local",
        "token": "s00000002"
       }
@@ -182,11 +182,11 @@
    ],
    "version": 1
   },
-  "hash": 11507675493079502630,
+  "hash": 494045107389955658,
   "probe": "controlled=home version=1"
  },
  "schema": 3,
- "state_fp": 3894237859247589253,
+ "state_fp": 4453049476616702048,
  "triggers": [
   "plxnative-app-init",
   "plxnative-rec",
