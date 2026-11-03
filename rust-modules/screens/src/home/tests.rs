@@ -1199,7 +1199,7 @@ fn every_settled_row_keeps_its_focused_label_block_above_the_overscan_bottom() {
     use plx_plex::plex::session::{UnderPosters, UnderPostersDetails as Details};
     // Every block the Under posters setting can draw: two lines, one line, nothing.
     for (title, details) in [(true, Details::Genre), (false, Details::YearLength), (false, Details::None)] {
-        crate::registry::captions::TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details, show_sort_info: false })));
+        crate::registry::captions::TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details, sort_value: false })));
         let lines = crate::registry::captions::policy().max_lines();
         crate::registry::captions::TEST_UNDER_POSTERS.with(|cell| cell.set(None));
         let block = if lines == 0 { 0.0 } else { ui_cards::TileLabel::height(lines == 2) };
@@ -1370,161 +1370,6 @@ fn each_heading_run_carries_its_own_size_weight_and_ink() {
         "the dot and the handle are one annotation: same rung, same weight, so they drop onto the title's baseline together"
     );
     assert!(runs[1].sz < runs[0].sz, "the annotation is a rung DOWN from the title — the drop is why it must be baseline-aligned");
-}
-
-struct MetaRun {
-    text: String,
-    dx: f32,
-    budget: f32,
-    sz: i32,
-    bold: i32,
-    ink: [f32; 4],
-}
-fn meta_flow(base: f32, source: &str) -> (f32, Vec<MetaRun>) {
-    let mut runs = Vec::new();
-    let width = meta_source_flow(base, source, |text, dx, budget, size, bold, ink| {
-        runs.push(MetaRun {
-            text: text.into(),
-            dx,
-            budget,
-            sz: size,
-            bold,
-            ink,
-        });
-        width_of(text, size, bold).min(budget.max(0.0))
-    });
-    (width, runs)
-}
-
-#[test]
-fn a_hero_from_our_own_server_draws_no_source_run_at_all() {
-    let (w, runs) = meta_flow(420.0, "");
-    assert!(
-        runs.is_empty(),
-        "an empty source must produce no runs, no pad and no dot"
-    );
-    assert_eq!(w, 420.0, "…and must not move the line's own end by a pixel");
-}
-
-#[test]
-fn a_borrowed_hero_states_its_owner_as_the_last_run_on_the_line() {
-    let base = 420.0;
-    let (w, runs) = meta_flow(base, "friend");
-    assert_eq!(runs.len(), 2, "the separator and the run, and nothing else");
-    assert_eq!(runs[0].text, "\u{b7}");
-    assert_eq!(
-        runs[0].dx,
-        base + SOURCE_PAD,
-        "the dot is one pad past the facts"
-    );
-    assert_eq!(
-        runs[1].text, "Shared by friend",
-        "the person, not the machine"
-    );
-    assert_eq!(
-        runs[1].dx,
-        runs[0].dx + width_of("\u{b7}", theme::size::BODY, 0) + SOURCE_PAD,
-        "the run is one pad past the dot"
-    );
-    assert_eq!(
-        w,
-        base + 2.0 * SOURCE_PAD
-            + width_of("\u{b7}", theme::size::BODY, 0)
-            + width_of("Shared by friend", theme::size::BODY, 0),
-        "the line grows by exactly the dot, the run and one pad either side of the dot"
-    );
-}
-
-#[test]
-fn the_hero_source_run_keeps_the_lines_rung_and_takes_one_step_of_ink() {
-    let (_, runs) = meta_flow(420.0, "friend");
-    for r in &runs {
-        assert_eq!(
-            (r.sz, r.bold),
-            (theme::size::BODY, 0),
-            "'{}' left the meta line's own rung",
-            r.text
-        );
-        assert_ne!(
-            r.sz,
-            theme::size::CAPTION,
-            "the hero line is BODY — it is not E's line and must not shrink to it"
-        );
-    }
-    assert_eq!(
-        runs[0].ink,
-        theme::TEXT_SEPARATOR,
-        "the middot carries the separator token's own .45"
-    );
-    assert_eq!(
-        runs[1].ink,
-        theme::TEXT_TERTIARY,
-        "one step under the line's TEXT_SECONDARY, never level with it"
-    );
-    assert_ne!(runs[1].ink, theme::TEXT_SECONDARY);
-}
-
-#[test]
-fn an_over_long_handle_truncates_rather_than_wrapping() {
-    let ridiculous = "a-very-long-plex-account-handle-that-nobody-would-ever-choose";
-    for base in [0.0f32, 420.0, HERO_COL_W] {
-        let (w, runs) = meta_flow(base, ridiculous);
-        assert_eq!(
-            runs.len(),
-            2,
-            "base {base}: a long handle is still ONE run — there is no second line to go to"
-        );
-        for r in &runs {
-            assert!(
-                r.budget > 0.0,
-                "base {base}: '{}' was given no room at all ({})",
-                r.text,
-                r.budget
-            );
-            assert!(
-                r.dx + r.budget <= META_FLOW_W + 1e-3,
-                "base {base}: '{}' may elide past the bound",
-                r.text
-            );
-        }
-        assert!(
-            w <= META_FLOW_W + 1e-3,
-            "base {base}: the line ran to {w}, past its {META_FLOW_W} bound"
-        );
-    }
-    // …and the room left at that worst case is a real annotation's worth rather than a stub —
-    // a QUARTER of the whole line, which is the guard that a future widening of the hero column
-    // (or a tightening of the bound) cannot quietly starve the run into a bare ellipsis. It is
-    // stated as a share of the line and not in pixels of text because the synthetic metric here
-    // is roughly twice the shipped font's advance; the share is a claim about the geometry,
-    // which is the part the host can actually speak for.
-    let (_, worst) = meta_flow(HERO_COL_W, "friend");
-    assert!(
-        worst[1].budget >= 0.25 * META_FLOW_W,
-        "a meta line whose facts fill the column leaves the run only {} of {META_FLOW_W}",
-        worst[1].budget
-    );
-}
-
-#[test]
-fn the_meta_lines_bound_keeps_the_run_inside_the_hero_wedge() {
-    use plx_ui::widgets::hero_scrim_a;
-    assert!(
-        hero_scrim_a(HERO_META_R, 1.0) > 0.0,
-        "the line ends where the wedge has already given up"
-    );
-    let wedge_end = (0..=SCR_W as i32)
-        .map(|x| x as f32)
-        .find(|&x| hero_scrim_a(x, 1.0) <= 0.0)
-        .expect("the wedge must end inside the frame");
-    assert!(
-        HERO_META_R <= wedge_end - 0.2 * SCR_W,
-        "the bound ({HERO_META_R}) must stay a fifth of the panel short of the wedge's end ({wedge_end})"
-    );
-    assert!(
-        HERO_META_R > MARGIN_X + HERO_COL_W,
-        "…and past the text column, or the run has nowhere to go"
-    );
 }
 
 // Additional phase-8 ownership proofs: real engine movement, stable identity, effects and map.
@@ -5905,7 +5750,7 @@ fn home_hands_the_continue_watching_shelf_the_deck_policy_under_nothing() {
     plx_data::pms::seed_continue_window_for_test(&mut state, &adapter, 12, true);
     let snapshot = plx_data::pms::hubs_snapshot(&state);
     for (title, tall) in [(false, plx_ui::caption_policy::BAND_ONE_LINE), (true, plx_ui::caption_policy::BAND_TWO_LINES)] {
-        TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details: UnderPostersDetails::None, show_sort_info: false })));
+        TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details: UnderPostersDetails::None, sort_value: false })));
         let s = screen(snapshot.view());
         assert_eq!(s.rows[0].identity, HomeHubIdentity::ContinueWatching);
         assert_eq!(s.grid.shelves[0].band_h(), tall, "title {title}: the deck keeps its progress line's band");
@@ -5927,7 +5772,7 @@ fn home_opens_its_focused_shelf_band_by_the_policys_band_h() {
     use crate::registry::captions::TEST_UNDER_POSTERS;
     for (title, details, tall) in [(false, UnderPostersDetails::None, 0.0), (false, UnderPostersDetails::Genre, 80.0),
         (true, UnderPostersDetails::YearLength, 112.0)] {
-        TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details, show_sort_info: false })));
+        TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details, sort_value: false })));
         let opened = shelf_top_settled(1, 0, band_open_of(false)) - shelf_top_settled(1, 1, band_open_of(false));
         let policy = crate::registry::captions::policy();
         TEST_UNDER_POSTERS.with(|cell| cell.set(None));
@@ -5953,7 +5798,7 @@ fn a_caption_input_that_changes_under_a_kept_row_reaches_the_drawn_block() {
     let mut state = plx_data::pms::PmsState::default();
     let adapter = std::sync::Arc::new(plx_data::pms::PmsAdapter::default());
     plx_data::pms::seed_ring_for_test(&mut state, &adapter, rows, items, &|_| 0, (0, rows - 1));
-    let setting = |title, details| TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details, show_sort_info: false })));
+    let setting = |title, details| TEST_UNDER_POSTERS.with(|cell| cell.set(Some(UnderPosters { title, details, sort_value: false })));
     // The block the shelf draws under card `col` of `row`, as the card source words it.
     let block = |s: &HomeScreen, state: &plx_data::pms::PmsState, row: usize, col: usize| {
         let snapshot = plx_data::pms::hubs_snapshot(state);

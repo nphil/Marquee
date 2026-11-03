@@ -17,10 +17,25 @@ fork. The engine, the pump and the drivers beside them execute their effects.
 
 ## Pipeline
 
-In-process is the point: ACB can only bind an app-owned sink, which the earlier URI/out-of-process
-path (`com.webos.media/load`, `start_playback()`) could not provide — that path is kept only as
-dead-ish reference, and `docs/buffer-feed-plan.md` records the pivot (treat it as history, not
-spec). The stream side: `PMS HTTP GET` → demux → per-lane access-unit
+Normal playback uses in-process buffer-feed. Earlier URI/out-of-process experiments
+(`com.webos.media/load`) failed to bind, prompting the pivot recorded in `docs/buffer-feed-plan.md`
+(history, not spec). The controlled 2026-11-02 experiment later displayed its SDR720p24 fixture
+through ACB on the webOS 4.5 dev set, both with and without `connectDass`; see
+`docs/measurements/uri-acb-dass-2026-11-02.md`. URI mode exists in the tree only as a
+developer probe: `uriprobe.rs` (the pure machine) and `uriprobe_drive.rs` (its driver, forked to
+from `engine::start_bufferfeed_inner` by the `plxnative-uriprobe` trigger) play one stream through
+`com.webos.media` with no Engine behind it, to learn what webOS 5+ does with the exported window id
+(issue #1064). Its `drive` variant goes one step further and drives the transport the way a real
+URI backend would have to — pause, resume, a seek, a text and an audio `selectTrack`, and
+`setSubtitleEnable` — logging the position around each call, because the binding question is
+settled and the remaining question is whether the pipeline can be controlled. It is
+`devtriggers`-only, so a release build carries none of it, and it reports nothing to Plex.
+`uri_protocol.rs` holds shared pure builders/strict decoding; `uri_lifecycle.rs` owns registration
+and request correlation, close deadlines and quarantine. The probe's logical Done does not release
+its adapter slot or exported window: the driver waits for successful bus unregister, keeps polling
+outside the player screen, and blocks reuse through unresolved close. Generic track/seek events and
+method ACKs remain distinct observations; they do not invent confirmation or resume policy.
+The stream side: `PMS HTTP GET` → demux → per-lane access-unit
 queues with byte-cap backpressure (`aq.rs`) → the pump `Feed()`s each AU to the Starfish pipeline.
 The demuxer is **`ff.rs` — the libavformat the app BUNDLES (not the TV's), over a custom AVIO on
 one of TWO transports** (design record: `docs/ffmpeg-demuxer-plan.md`; the hand-rolled `mkv.rs`
@@ -33,7 +48,7 @@ is not one any `shutdown(2)` of ours can reach. Exactly one of the two ever has 
 and pinned to majors 63/63/61, and is built `--disable-network` with `file` as its only protocol —
 so the AVIO is not merely how bytes reach it today, it is the only way they *can*. See the root
 `docs/agent-reference.md` linking section for why. It
-emits Annex-B video AUs (param sets prepended at each keyframe) and, for AV1, Section-5 temporal units (TD OBU first, the av1C sequence header and metadata OBUs in-band on keyframes; `/tmp/plxnative-av1obu` = notd,noseq,raw tokens varies it on a debug build), for VP9 the demuxed packet unchanged (a frame carries its own headers and libpf's `video/x-vp9` caps have no `codec_data`), and AC3/EAC3, ADTS-framed AAC, or DTS core audio frames,
+emits Annex-B video AUs (param sets prepended at each keyframe; a stream with no avcC/hvcC record, which is what an MPEG-TS or raw elementary stream under a `.mp4` name looks like since the route trusts the part's file NAME, arrives with start codes already: `ff::NalInput` decides it once per stream from the extradata, H.264 is framed in place and held back until its first keyframe, and HEVC is refused like a codec with no framing; its clock is also moved to 0 at the demuxer (`ff::stream_origin_ns`: packets rebased after the read, the origin added back on a seek) because the engine takes a fresh play's first keyframe to be near 0 and a capture's clock starts wherever the transmitter's did; Matroska and MP4 keep theirs; #1084) and, for AV1, Section-5 temporal units (TD OBU first, the av1C sequence header and metadata OBUs in-band on keyframes; `/tmp/plxnative-av1obu` = notd,noseq,raw tokens varies it on a debug build), for VP9 the demuxed packet unchanged (a frame carries its own headers and libpf's `video/x-vp9` caps have no `codec_data`), and AC3/EAC3, ADTS-framed AAC, or DTS core audio frames,
 and seeks by time via `av_seek_frame` (libavformat's own Cues index).
 
 ## Threading model (this is the whole ballgame)
@@ -109,8 +124,11 @@ something.
   Methods returning a `std::string` use a hidden sret first-arg; read the `char*` at offset 0 (SSO)
   for short replies like `"Ok"`/`"BufferFull"`.
 - **Dolby Vision and Dolby Atmos have their own document: `docs/dolby-vision.md`.** A DV node is
-  emitted only after the boot-time configd probe definitely confirms hardware support. The route
-  freezes that capability + presentation decision, and every Load/reload/recovery consumes the
+  emitted only when the boot-time configd probe definitely confirms hardware support and the seated
+  profile's Dolby Vision setting is Auto (`ResolveEnv::dolby_vision_mode`, applied by
+  `DolbyVisionMode::gate` where the route plans, to the presentation only). The route freezes the
+  probe's own capability (for read-outs) + that gated presentation decision, and every
+  Load/reload/recovery consumes the
   stored presentation rather than re-reading the later cache; `dvnonode` is the logged diagnostic
   exception. Atmos routing and ACB forwarding are independent and unchanged. The payload evidence,
   Profile 5 one-tick fix and instrument traps live in that document.
@@ -314,7 +332,7 @@ something.
   collides with the pipeline's uMS connection (CONN_FIND_ERR). See the comment in `load_thread`.
 - **ACB bind order matters** (mirrors Kodi/ss4s): `setSinkType(MAIN)` → `setMediaId` →
   `setState(LOADED)` → *wait for decoded frames* → `setMediaVideoData(<sourceInfo envelope
-  as captured; a PQ VP9 gets its HDR keys written in first, see below>)` → `setDisplayWindow` → `setState(PLAYING)`. The payload passed to
+  as captured; a PQ VP9 gets its HDR keys written in first, see below>)` → `setDisplayWindow` → `setState(PLAYING)`. In normal buffer-feed playback, the payload passed to
   `setMediaVideoData` is the **whole `sourceInfo` envelope** captured verbatim from the pipeline's
   callback (`sourceInfoRaw`), not a reconstructed one — with ONE exception: a VP9 stream whose container says PQ gets `hdrType` / `mediaVui` / `mediaSei` written in first (`player/vp9_hdr.rs`), because a VP9 bitstream cannot carry the transfer function, so the pipeline's own envelope says `"hdrType":"none"` and the panel stays SDR (device-measured on the dev set, whose ACB path is the only one that sends the envelope: the TV's `picture.dynamicRange` flips to HDR with the rewrite and stays SDR with `/tmp/plxnative-novp9hdr`; webOS 5+ has no ACB, so nothing is sent there and its VP9 HDR behaviour is unknown). The envelope is otherwise untouched, and an envelope that already names an HDR type is never overridden. Audio is owned by the pipeline — **never feed
   ACB an audio SINK or elementary stream**. That half is real and unchanged. Its long-stated
@@ -327,7 +345,9 @@ something.
   "Dolby Vision / Dolby Atmos" read-out captured on screen. Details and addresses:
   `acb_send_atmos` in `src/starfish.c`. `AcbAPI_setMediaVideoData`/`setState`/
   `setDisplayWindow` take a `long *taskId` out-param as their last arg — the 3-arg ABI is required
-  (2-arg calls corrupt memory / segfault).
+  (2-arg calls corrupt memory / segfault). The developer-only `acb-control`/`acb-dass` URI
+  experiment separately permits a reconstructed descriptor for its known SDR720p24 fixture;
+  that exception does not apply to normal buffer-feed playback.
 - **Opus goes to LG's own decoder only as far as the set is known to take it** (`ff_native_audio.rs`,
   `devcaps.rs`). What a set announces is layered, in this order and logged at boot as `devcaps: ...
   audio layers:`: the codec table, minus the codecs `/etc/gst/gstcool.conf` shows nothing can decode
@@ -596,7 +616,20 @@ something.
   player screen with `draw_subtitle_message` (and `notice_shown()` is a term of its `clock_fingerprint`, so
   the expiry owes a frame). It is silent where the server burns the selection (a re-encode, or a remux whose embedded
   track the app may not read itself); over a plain remux the app draws it, and draws an embedded
-  track too (`subside.rs`) when the link is local and the Part is 1..=30000 kbps. Which sidecar
+  track too (`subside.rs`) when the link is local and the Part is 1..=30000 kbps. A sidecar is in
+  the Part's FILE time while a remux starts on a Part keyframe EARLIER than or at the requested
+  offset — not always the last one (a 917 s request started on 914.914 s while 916.916 s existed;
+  see `ff_subside`'s `sidecar_clock_at_917…` test) — and the app labels that frame with the
+  requested offset, so under the same local-link and bitrate gate the side
+  reader also runs CLOCK-ONLY for it (`subside::CLOCK_ONLY`: no track, no store, no
+  `side_subs_owner`, never the burn) to find that keyframe by the byte-exact anchor match;
+  `player::sidecar_clock_ns` adds the published delta (`subside::exact_delta_ns`) to the sidecar's
+  playhead, for a sidecar over a remux only (embedded cues were shifted by the reader already) and
+  never from the assumed mapping (2.002 s wrong at 917 s on one file). That delta is known a moment
+  after each remux start (the scan reads the Part up to the anchor); until then — and off the gate,
+  or with no exact match — the sidecar is drawn exactly as before, 0.6–2.2 s early on the remux's
+  clock, and when the delta lands the position drops once, which `ass_source::Clock::sample` treats
+  as a break and rewinds, so a cue already shown early can appear a second time. Which sidecar
   starts is `sidecar::restore_selection`'s one answer: the server's selected one, else the one the
   track memory chose for this episode (`Plan::memory_sidecar`, its key and codec read from the
   playing item).

@@ -36,7 +36,7 @@
 //! frozen top-level keys: no pick in this module ever writes one.
 use super::plan::{supported_quality, Quality, QUALITY_LADDER};
 use plx_plex::plex::session::{
-    InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
+    DolbyVisionMode, DolbyVisionModePref, InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
     ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitleLook, SubtitleLookPref, SubtitlePosition,
     RememberAudioChoices, RememberAudioChoicesPref,
@@ -151,7 +151,7 @@ macro_rules! packed_by_index {
         }
     )*};
 }
-packed_by_index!(AutoSkipDelay = 0; CreditsCountdownDelay = 1; InstantDpadSeeking = 0; NextEpisodeMode = 0; SkipInterval = 1; DeckPress = 0; SubtitleSize = 1, alignment = true; SubtitlePosition = 0, alignment = true; SubtitleTone = 0, alignment = true; HdrOverlayBrightness = 1);
+packed_by_index!(AutoSkipDelay = 0; CreditsCountdownDelay = 1; DolbyVisionMode = 0; InstantDpadSeeking = 0; NextEpisodeMode = 0; SkipInterval = 1; DeckPress = 0; SubtitleSize = 1, alignment = true; SubtitlePosition = 0, alignment = true; SubtitleTone = 0, alignment = true; HdrOverlayBrightness = 1);
 
 impl Packed for RememberAudioChoices {
     const SEED: u8 = 1;
@@ -178,7 +178,8 @@ impl Packed for DirectPlayMode {
 }
 
 /// Under posters is one byte: the title switch in bit 0, the details' ladder index in bits 1-3
-/// ([`UnderPosters::pack`]). The seed, 0, is the default (no title, year and length), so a read
+/// and "sort value Off" in bit 4 ([`UnderPosters::pack`]). The seed, 0, is the default (no title,
+/// year and length, sort value On), so a read
 /// before any restore is what the install did before the setting existed.
 impl Packed for UnderPosters {
     const SEED: u8 = 0;
@@ -245,6 +246,7 @@ impl Packed for AudioEnhancements {
 }
 
 live_cell!(pub(super) INSTANT_DPAD_SEEKING: InstantDpadSeeking, "instant D-pad seeking");
+live_cell!(pub(super) DOLBY_VISION_MODE: DolbyVisionMode, "Dolby Vision mode");
 
 // ---- the cells ------------------------------------------------------------------------------
 
@@ -398,6 +400,7 @@ live_setting!(InstantDpadSeekingPref, INSTANT_DPAD_SEEKING, "instant D-pad seeki
 live_setting!(RememberAudioChoicesPref, REMEMBER_AUDIO_CHOICES, "remember audio choices");
 live_setting!(IntroSkipDelayPref, INTRO_SKIP_DELAY, "intro skip delay");
 live_setting!(CreditsSkipDelayPref, CREDITS_SKIP_DELAY, "credits skip delay");
+live_setting!(DolbyVisionModePref, DOLBY_VISION_MODE, "Dolby Vision mode");
 live_setting!(DeckPressPref, DECK_PRESS, "deck press");
 live_setting!(UnderPostersPref, UNDER_POSTERS, "under posters");
 live_setting!(SubtitleSizePref, SUBTITLE_SIZE, "subtitle size");
@@ -463,6 +466,7 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<IntroSkipDelayPref>(),
     LiveRow::of::<CreditsSkipDelayPref>(),
     LiveRow::of::<InstantDpadSeekingPref>(),
+    LiveRow::of::<DolbyVisionModePref>(),
     LiveRow::of::<DeckPressPref>(),
     LiveRow::of::<UnderPostersPref>(),
     LiveRow::of::<AudioEnhancementsPref>(),
@@ -850,6 +854,7 @@ choices! {
     IntroSkipDelay => IntroSkipDelayPref,
     CreditsSkipDelay => CreditsSkipDelayPref,
     InstantDpadSeeking => InstantDpadSeekingPref,
+    DolbyVision => DolbyVisionModePref,
     DeckPress => DeckPressPref,
     UnderPosters => UnderPostersPref,
     TrailerAutoplay => TrailerAutoplayPref,
@@ -973,6 +978,9 @@ pub fn set_next_episode_mode(mode: NextEpisodeMode) -> bool { confirm::<NextEpis
 pub fn instant_dpad_seeking() -> InstantDpadSeeking { InstantDpadSeekingPref::live() }
 pub fn restore_instant_dpad_seeking(seeking: InstantDpadSeeking) { restore_live::<InstantDpadSeekingPref>(seeking) }
 
+pub fn dolby_vision_mode() -> DolbyVisionMode { DolbyVisionModePref::live() }
+pub fn restore_dolby_vision_mode(mode: DolbyVisionMode) { restore_live::<DolbyVisionModePref>(mode) }
+
 pub fn skip_interval() -> SkipInterval { SkipIntervalPref::live() }
 pub fn restore_skip_interval(interval: SkipInterval) { restore_live::<SkipIntervalPref>(interval) }
 /// Blocking persistence seam, as [`set_next_episode_mode`].
@@ -983,7 +991,9 @@ pub fn restore_remember_audio_choices(value: RememberAudioChoices) { restore_liv
 pub fn set_remember_audio_choices(value: RememberAudioChoices) -> bool { confirm::<RememberAudioChoicesPref>(value) }
 
 pub fn intro_skip_delay() -> AutoSkipDelay { IntroSkipDelayPref::live() }
+pub fn restore_intro_skip_delay(delay: AutoSkipDelay) { restore_live::<IntroSkipDelayPref>(delay) }
 pub fn credits_skip_delay() -> CreditsCountdownDelay { CreditsSkipDelayPref::live() }
+pub fn restore_credits_skip_delay(delay: CreditsCountdownDelay) { restore_live::<CreditsSkipDelayPref>(delay) }
 
 pub fn deck_press() -> DeckPress { DeckPressPref::live() }
 pub fn restore_deck_press(mode: DeckPress) { restore_live::<DeckPressPref>(mode) }

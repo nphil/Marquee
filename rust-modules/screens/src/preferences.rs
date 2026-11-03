@@ -18,7 +18,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver};
-use plx_plex::plex::session::{UiResolution, InstantDpadSeeking, RememberAudioChoices, AutoSkipDelay, CreditsCountdownDelay};
+use plx_plex::plex::session::{UiResolution, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, AutoSkipDelay, CreditsCountdownDelay};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
 use plx_media::route::{Choice, DeckPress, DirectPlayMode, NextEpisodeMode, Quality, SkipInterval, SubtitlePosition, SubtitleSize, HdrOverlayBrightness};
 use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
@@ -53,6 +53,7 @@ impl PickerKind {
         Self::CreditsSkipDelay => plx_platform::i18n::msg::settings_playback_credits_skip(),
         Self::InstantDpadSeeking => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking(),
         Self::RememberAudioChoices => plx_platform::i18n::msg::settings_audio_remember_choices(),
+        Self::DolbyVision => plx_platform::i18n::msg::settings_playback_dolby_vision(),
         Self::UiResolution => plx_platform::i18n::msg::settings_resolution_title(),
         Self::AudioLanguage => plx_platform::i18n::msg::settings_audio_language(), Self::SubtitleMode => plx_platform::i18n::msg::settings_audio_subtitles(),
         Self::SubtitleLanguage => plx_platform::i18n::msg::settings_audio_subtitle_language(), Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_forced_subtitles(),
@@ -72,13 +73,14 @@ impl PickerKind {
         Self::CreditsSkipDelay => plx_platform::i18n::msg::settings_playback_credits_skip_copy(),
         Self::InstantDpadSeeking => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking_copy(),
         Self::RememberAudioChoices => plx_platform::i18n::msg::settings_audio_remember_choices_copy(),
+        Self::DolbyVision => plx_platform::i18n::msg::settings_playback_dolby_vision_copy(),
         Self::UiResolution => plx_platform::i18n::msg::settings_resolution_detail(),
         Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_account_note(),
     }}
     /// The field-list page this field belongs to; `None` for a field the Settings root lists itself.
     fn kind(self) -> Option<Kind> {
         match self {
-            Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::HdrOverlay | Self::NextEpisode | Self::DeckPress | Self::SkipInterval | Self::InstantDpadSeeking | Self::IntroSkipDelay | Self::CreditsSkipDelay => Some(Kind::Playback),
+            Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::HdrOverlay | Self::NextEpisode | Self::DeckPress | Self::SkipInterval | Self::InstantDpadSeeking | Self::IntroSkipDelay | Self::CreditsSkipDelay | Self::DolbyVision => Some(Kind::Playback),
             Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles | Self::RememberAudioChoices => Some(Kind::AudioSubtitles),
             Self::UiResolution => None,
         }
@@ -99,7 +101,7 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Value { IntroSkipDelay(AutoSkipDelay), CreditsSkipDelay(CreditsCountdownDelay), RememberAudioChoices(RememberAudioChoices), InstantDpadSeeking(InstantDpadSeeking), Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), HdrOverlay(HdrOverlayBrightness), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), UiResolution(UiResolution), Language(String), Mode(i64), Forced(i64) }
+enum Value { IntroSkipDelay(AutoSkipDelay), CreditsSkipDelay(CreditsCountdownDelay), RememberAudioChoices(RememberAudioChoices), InstantDpadSeeking(InstantDpadSeeking), DolbyVision(DolbyVisionMode), Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), HdrOverlay(HdrOverlayBrightness), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), UiResolution(UiResolution), Language(String), Mode(i64), Forced(i64) }
 
 /// The hashed half of a transaction: what the page shows while a load or save is in flight.
 struct Io { busy: bool, status: String }
@@ -270,6 +272,7 @@ impl Txn {
             Value::RememberAudioChoices(mode) => PreferenceCmd::Choose(Choice::RememberAudioChoices(mode), reply),
             Value::IntroSkipDelay(delay) => PreferenceCmd::Choose(Choice::IntroSkipDelay(delay), reply),
             Value::CreditsSkipDelay(delay) => PreferenceCmd::Choose(Choice::CreditsSkipDelay(delay), reply),
+            Value::DolbyVision(mode) => PreferenceCmd::Choose(Choice::DolbyVision(mode), reply),
             Value::SkipInterval(interval) => PreferenceCmd::Choose(Choice::SkipInterval(interval), reply),
             // Install-wide, not a seated profile's live setting, so it has no `Choice`.
             Value::UiResolution(mode) => PreferenceCmd::UiResolution { mode, reply },
@@ -332,7 +335,7 @@ impl Txn {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RowId { Field(PickerKind), Retry }
+enum RowId { Field(PickerKind), PlayerHud, Retry }
 impl FormId for RowId {
     /// Hand-assigned, per page: each field's position in ITS page's list (what its table index was
     /// before the page moved onto a form, so a recorded focus on a field row is unchanged), Retry
@@ -351,8 +354,10 @@ impl FormId for RowId {
             Self::Field(PickerKind::UiResolution) => 9,
             Self::Field(PickerKind::InstantDpadSeeking) => 10,
             Self::Field(PickerKind::RememberAudioChoices) => 4,
-            Self::Field(PickerKind::IntroSkipDelay) => 11,
-            Self::Field(PickerKind::CreditsSkipDelay) => 12,
+            Self::Field(PickerKind::DolbyVision) => 11,
+            Self::PlayerHud => 12,
+            Self::Field(PickerKind::IntroSkipDelay) => 13,
+            Self::Field(PickerKind::CreditsSkipDelay) => 14,
             Self::Retry => 6,
         })
     }
@@ -393,6 +398,7 @@ pub struct PreferencesPage {
     instant_dpad_seeking: InstantDpadSeeking,
     remember_audio_choices: RememberAudioChoices,
     skip_delays: (AutoSkipDelay, CreditsCountdownDelay),
+    dolby_vision: DolbyVisionMode,
     /// Whose settings the list was last built for, with the profile publication it read that from
     /// (not canonical state, like `look`: the copy and the rows' dimming are not hashed either).
     whose: (u32, Whose),
@@ -407,7 +413,8 @@ impl PreferencesPage {
             next_episode: plx_media::route::next_episode_mode(), deck_press: plx_media::route::deck_press(),
             skip_interval: plx_media::route::skip_interval(), instant_dpad_seeking: plx_media::route::instant_dpad_seeking(),
             remember_audio_choices: plx_media::route::remember_audio_choices(),
-            skip_delays: (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay()), whose: Whose::now() };
+            skip_delays: (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay()),
+            dolby_vision: plx_media::route::dolby_vision_mode(), whose: Whose::now() };
         s.rebuild(None);
         s
     }
@@ -438,6 +445,7 @@ impl PreferencesPage {
         self.instant_dpad_seeking = plx_media::route::instant_dpad_seeking();
         self.remember_audio_choices = plx_media::route::remember_audio_choices();
         self.skip_delays = (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay());
+        self.dolby_vision = plx_media::route::dolby_vision_mode();
         self.whose = Whose::now();
         self.copy = copy_text(Subject::Page(self.state.kind), &self.state.io.status, self.state.direct_play, &self.whose.1).into_owned();
         let inputs = FieldListInputs {
@@ -473,7 +481,7 @@ impl PreferencesPage {
 /// Which fields `kind`'s list shows: Audio & Subtitles has none until a snapshot has loaded.
 fn fields_of(inputs: &FieldListInputs<'_>) -> &'static [PickerKind] {
     match inputs.kind {
-        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::HdrOverlay, PickerKind::NextEpisode, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking],
+        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::HdrOverlay, PickerKind::NextEpisode, PickerKind::IntroSkipDelay, PickerKind::CreditsSkipDelay, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking, PickerKind::DolbyVision],
         Kind::AudioSubtitles if inputs.prefs.is_some() => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::RememberAudioChoices],
         Kind::AudioSubtitles => &[PickerKind::RememberAudioChoices],
     }
@@ -494,6 +502,7 @@ fn resolve_value(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
         PickerKind::RememberAudioChoices => Value::RememberAudioChoices(plx_media::route::remember_audio_choices()),
         PickerKind::IntroSkipDelay => Value::IntroSkipDelay(plx_media::route::intro_skip_delay()),
         PickerKind::CreditsSkipDelay => Value::CreditsSkipDelay(plx_media::route::credits_skip_delay()),
+        PickerKind::DolbyVision => Value::DolbyVision(plx_media::route::dolby_vision_mode()),
         PickerKind::UiResolution => Value::UiResolution(plx_plex::plex::session::peek().ui_resolution()),
         // A deprecated code (`pb`) resolves to its replacement so the picker checks that entry.
         PickerKind::AudioLanguage => Value::Language(prefs.and_then(|p| p.stated_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
@@ -525,6 +534,8 @@ fn field_options(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
             .map(|m| (instant_dpad_seeking_label(if m == RememberAudioChoices::On { InstantDpadSeeking::On } else { InstantDpadSeeking::Off }).into(), Value::RememberAudioChoices(m))).collect(),
         PickerKind::IntroSkipDelay => AutoSkipDelay::LADDER.into_iter().map(|d| (skip_delay_label(d).into(), Value::IntroSkipDelay(d))).collect(),
         PickerKind::CreditsSkipDelay => CreditsCountdownDelay::LADDER.into_iter().map(|d| (skip_delay_label(AutoSkipDelay::from_index(d.index() + 1)).into(), Value::CreditsSkipDelay(d))).collect(),
+        PickerKind::DolbyVision => DolbyVisionMode::LADDER.into_iter()
+            .map(|m| (dolby_vision_label(m).into(), Value::DolbyVision(m))).collect(),
         PickerKind::SkipInterval => SkipInterval::LADDER.into_iter()
             .map(|i| (skip_interval_label(i), Value::SkipInterval(i))).collect(),
         PickerKind::UiResolution => UiResolution::LADDER.into_iter()
@@ -599,6 +610,9 @@ fn field_form(inputs: &FieldListInputs<'_>) -> Form<RowId, Action, SettingsPage>
         section = section.item(RowId::Field(field), RowKind::Nav(SettingsPage::Picker(field)), Action::Open, row)
             .disabled(inputs.read_only || credits_disabled);
     }
+    section = section.item_if(inputs.kind == Kind::Playback, RowId::PlayerHud, RowKind::Nav(SettingsPage::PlayerHud), Action::Open,
+        Row::new(plx_platform::i18n::msg::settings_hud_title()).chevron(true).dim(inputs.busy))
+        .disabled(inputs.read_only);
     section = section.item_if(inputs.kind == Kind::AudioSubtitles && !inputs.busy && inputs.show_retry,
         RowId::Retry, RowKind::Button, Action::Retry,
         Row::new(plx_platform::i18n::msg::settings_audio_retry()).detail(plx_platform::i18n::msg::settings_audio_retry_detail()));
@@ -643,6 +657,12 @@ fn instant_dpad_seeking_label(mode: InstantDpadSeeking) -> &'static str {
     match mode {
         InstantDpadSeeking::Off => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking_off(),
         InstantDpadSeeking::On => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking_on(),
+    }
+}
+fn dolby_vision_label(mode: DolbyVisionMode) -> &'static str {
+    match mode {
+        DolbyVisionMode::Auto => plx_platform::i18n::msg::settings_playback_auto(),
+        DolbyVisionMode::Off => plx_platform::i18n::msg::settings_playback_dolby_vision_off(),
     }
 }
 /// What the Interface resolution reads, on the Settings root and in its picker. The sizes are
@@ -693,6 +713,12 @@ impl Machine<InnerHost> for PreferencesPage {
                 if stale { self.txn.recover_stale(&mut self.state.io, fx); }
                 let adopted = self.txn.adopt_shared();
                 let had_rows = self.form.table.n_rows() > 0;
+                // Marquee lists its local Remember audio choices row while the account rows load: until the
+                // account answers, a cursor on that row is the seat an empty table would not have had.
+                let remember = RowId::Field(PickerKind::RememberAudioChoices).key().0;
+                let awaiting_account = self.state.kind == Kind::AudioSubtitles && self.txn.snapshot.is_none()
+                    && self.state.io.status.is_empty()
+                    && cx.focus.current.is_some_and(|k| k.entry == self.entry && k.elem == remember);
                 let landed = self.txn.poll(&mut self.state.io, fx) != Landed::Nothing;
                 if landed || stale || started || adopted || self.state.quality != plx_media::route::quality()
                     || self.state.direct_play != plx_media::route::direct_play_mode()
@@ -703,8 +729,16 @@ impl Machine<InnerHost> for PreferencesPage {
                     || self.instant_dpad_seeking != plx_media::route::instant_dpad_seeking()
                     || self.remember_audio_choices != plx_media::route::remember_audio_choices()
                     || self.skip_delays != (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay())
+                    || self.dolby_vision != plx_media::route::dolby_vision_mode()
                     || self.whose.0 != plx_plex::plex::session::current_gen() {
                     self.rebuild_keeping();
+                    if awaiting_account && landed {
+                        // the account's rows (or its Retry) arrived under the seat the page gave its local row: land on the first of them
+                        if let Some(first) = (0..self.form.table.n_rows().max(0) as usize).filter_map(|i| self.form.id_at(i).copied())
+                            .find(|&id| id != RowId::Field(PickerKind::RememberAudioChoices)) {
+                            self.rebuild(Some(first));
+                        }
+                    }
                     // An empty loading table had no engine seat. Give its first landing (or
                     // Retry row) one so OK works immediately, without moving an existing
                     // cursor when an ordinary save completes or another page owns focus.

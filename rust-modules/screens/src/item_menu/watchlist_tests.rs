@@ -99,7 +99,10 @@ fn remove_is_destructive_and_add_is_not() {
     assert!(on.destructive(ItemRow::WatchlistRemove));
     let off = card(0, Some(&face(Membership::Off, Kind::Movie, false)));
     assert!(!off.destructive(ItemRow::WatchlistAdd));
-    assert_eq!(on.ids().last(), Some(&ItemRow::WatchlistRemove), "the destructive row is last");
+    // Marquee's Delete closes the menu; the Watchlist removal is the destructive row just above it
+    assert!(on.destructive(ItemRow::DeleteMedia));
+    assert_eq!(on.ids().last(), Some(&ItemRow::DeleteMedia), "Delete is the last row");
+    assert_eq!(on.ids().iter().rev().nth(1), Some(&ItemRow::WatchlistRemove), "the Watchlist removal sits above Delete");
 }
 
 #[test]

@@ -9,12 +9,12 @@
 //! T-live and T-settings sit in media (`route/prefs_tests.rs`), where the lists they hold to these
 //! descriptors are declared.
 use super::prefs::{Descriptor, Fallback, ListRow, Parse, ProfileMemory, Row, Scope, Setting, SettingsWrite, DESCRIPTORS};
-use super::prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, InstantDpadSeekingPref, RememberAudioChoicesPref, AudioEnhancementsPref, AutoSignInPref, DeckPressPref, UnderPostersPref, DirectPlayModePref, LastHeroBlurPref,
+use super::prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, AudioEnhancementsPref, AutoSignInPref, DeckPressPref, UnderPostersPref, DirectPlayModePref, LastHeroBlurPref,
     LastLibraryRow, LibraryViewsRow, NextEpisodeModePref, PlaintextConsentRow, QualityPref, ServerKeyPinsRow,
     HdrOverlayBrightnessPref, SkipIntervalPref, SubtitleLookPref, SubtitleOffsetsPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref,
     HoldHintTaughtPref, TrailerAutoplayPref, UiResolutionPref};
 use super::{
-    AutoSkipDelay, CreditsCountdownDelay, InstantDpadSeeking, RememberAudioChoices, CanonicalSessionPreferences, DeckPress, UnderPosters, UnderPostersDetails, DirectPlayMode, LastLibrary, LibraryViews, NextEpisodeMode,
+    AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, CanonicalSessionPreferences, DeckPress, UnderPosters, UnderPostersDetails, DirectPlayMode, LastLibrary, LibraryViews, NextEpisodeMode,
     PlaintextChoice, PlaintextConsent, PlaybackQuality, Preferences, ServerKeyPin, Session, SkipInterval,
     HdrOverlayBrightness, HoldHintTaught, SubtitleLook, SubtitleOffsetEntry, SubtitlePosition, SubtitleSize, SubtitleTone, UiResolution,
 };
@@ -115,8 +115,9 @@ fn every_marker_names_its_own_field() {
     check_row::<RememberAudioChoicesPref>(RememberAudioChoices::Off);
     check_row::<IntroSkipDelayPref>(AutoSkipDelay::Seconds3);
     check_row::<CreditsSkipDelayPref>(CreditsCountdownDelay::Seconds10);
+    check_row::<DolbyVisionModePref>(DolbyVisionMode::Off);
     check_row::<DeckPressPref>(DeckPress::Play);
-    check_row::<UnderPostersPref>(UnderPosters { title: true, details: UnderPostersDetails::Genre, show_sort_info: false });
+    check_row::<UnderPostersPref>(UnderPosters { title: true, details: UnderPostersDetails::Genre, sort_value: false });
     check_row::<AudioEnhancementsPref>(crate::plex::AudioEnhancements { boost_dialog: true, normalize_loudness: false });
     // A5: the remaining `Copy` rows.
     check_row::<AutoSignInPref>(true);
@@ -130,7 +131,7 @@ fn every_marker_names_its_own_field() {
     // `the_subtitle_offsets_row_names_its_own_field`) and the per-profile record list
     // (`ProfilePrefsPref`, `profile_prefs_tests::nothing_picked_serializes_to_no_key`): a row needs
     // its line in one of the four places.
-    assert_eq!(DESCRIPTORS.len(), 21 + 5 + 2 + 1);
+    assert_eq!(DESCRIPTORS.len(), 22 + 5 + 2 + 1 + 1, "plus `HudSelectionPref`, a `String` row checked by `profile_prefs_tests`");
 }
 
 /// The list rows do what `check_row` proves for the `Copy` ones: the marker names its own field
@@ -226,6 +227,7 @@ fn the_declared_live_and_settings_facts_are_the_ones_main_has() {
         ("remember_audio_choices", Some(Confirm)),
         ("intro_skip_delay", Some(Confirm)),
         ("credits_skip_delay", Some(Confirm)),
+        ("dolby_vision_mode", Some(Confirm)),
         ("deck_press", Some(Confirm)),
         ("under_posters", Some(Confirm)),
         ("subtitle_size", Some(Optimistic)),
@@ -344,9 +346,11 @@ fn garbage_fixtures() -> Vec<(&'static str, Vec<Value>)> {
         ("remember_audio_choices", generic()),
         ("intro_skip_delay", generic()),
         ("credits_skip_delay", generic()),
+        ("dolby_vision_mode", generic()),
         ("deck_press", generic()),
         ("under_posters", generic()),
         ("audio_enhancements", generic()),
+        ("hud_selection", vec![Value::Null, json!(17), json!(true), json!([1, "x"]), json!({"unexpected": 1})]),
         // A5. A switch's garbage excludes the booleans, which are VALID values for it.
         ("auto_sign_in", not_a_bool()),
         ("ui_resolution", generic()),
@@ -496,10 +500,10 @@ fn under_posters_is_soft_per_field_and_omitted_at_the_default() {
     }
     // A later build's spelling of `details` keeps the title the viewer chose.
     let kept = under_posters_session(json!({ "title": true, "details": "future_kind" }));
-    assert_eq!(kept.under_posters(), UnderPosters { title: true, details: UnderPostersDetails::YearLength, show_sort_info: false });
+    assert_eq!(kept.under_posters(), UnderPosters { title: true, details: UnderPostersDetails::YearLength, sort_value: true });
     // And a bad title keeps the details.
     let kept = under_posters_session(json!({ "title": "yes", "details": "genre" }));
-    assert_eq!(kept.under_posters(), UnderPosters { title: false, details: UnderPostersDetails::Genre, show_sort_info: false });
+    assert_eq!(kept.under_posters(), UnderPosters { title: false, details: UnderPostersDetails::Genre, sort_value: true });
     // The default is not written, so a session predating the field serializes as it did.
     let json = serde_json::to_string(&Session::default()).unwrap();
     assert!(!json.contains("under_posters"), "{json}");
@@ -510,12 +514,14 @@ fn under_posters_is_soft_per_field_and_omitted_at_the_default() {
 fn under_posters_round_trips_and_packs_into_one_byte() {
     for details in UnderPostersDetails::LADDER {
         for title in [false, true] {
-            let v = UnderPosters { title, details, show_sort_info: false };
-            let session = Session::default().with_pref::<UnderPostersPref>(v);
-            assert_eq!(serde_json::to_string(&session).unwrap().contains("under_posters"), v != UnderPosters::DEFAULT);
-            let back: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
-            assert_eq!(back.under_posters(), v);
-            assert_eq!(UnderPosters::unpack(v.pack()), v, "{v:?}");
+            for sort_value in [true, false] {
+                let v = UnderPosters { title, details, sort_value };
+                let session = Session::default().with_pref::<UnderPostersPref>(v);
+                assert_eq!(serde_json::to_string(&session).unwrap().contains("under_posters"), v != UnderPosters::DEFAULT);
+                let back: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+                assert_eq!(back.under_posters(), v);
+                assert_eq!(UnderPosters::unpack(v.pack()), v, "{v:?}");
+            }
         }
     }
     assert_eq!(UnderPosters::DEFAULT.pack(), 0, "the live cell's seed is the default");
@@ -526,18 +532,37 @@ fn under_posters_round_trips_and_packs_into_one_byte() {
 }
 
 #[test]
-fn sort_information_is_opt_in_soft_parsed_and_preserved_by_the_packed_cell() {
-    for details in UnderPostersDetails::LADDER {
-        for title in [false, true] {
-            let value = UnderPosters { title, details, show_sort_info: true };
-            assert_eq!(UnderPosters::unpack(value.pack()), value);
-            let session = Session::default().with_pref::<UnderPostersPref>(value);
-            let restored: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
-            assert_eq!(restored.under_posters(), value);
-        }
+fn sort_value_is_on_by_default_stored_as_its_off_state_and_soft_parsed() {
+    // Everyone starts On: the default, the packed seed and a profile that never chose it.
+    assert!(UnderPosters::DEFAULT.sort_value && UnderPosters::default().sort_value);
+    assert_eq!(UnderPosters::unpack(0), UnderPosters::DEFAULT);
+    assert_eq!(UnderPosters::DEFAULT.pack() & 16, 0, "bit 4 is the Off state");
+    assert_eq!(UnderPosters { sort_value: false, ..UnderPosters::DEFAULT }.pack(), 16);
+    let absent = under_posters_session(json!({"title":true,"details":"genre"}));
+    assert!(absent.under_posters().sort_value);
+    // The retired `show_sort_info` key of the earlier switch is ignored, whatever it said, and
+    // is never written back.
+    for old in [json!(true), json!(false), json!("yes")] {
+        let read = under_posters_session(json!({"title":true,"details":"genre","show_sort_info":old}));
+        assert_eq!(read.under_posters(), UnderPosters { title: true, details: UnderPostersDetails::Genre, sort_value: true });
     }
-    let old = under_posters_session(json!({"title":true,"details":"genre"}));
-    assert!(!old.under_posters().show_sort_info);
-    let bad = under_posters_session(json!({"title":true,"details":"genre","show_sort_info":"yes"}));
-    assert_eq!(bad.under_posters(), old.under_posters());
+    assert!(!serde_json::to_string(&Session::default().with_pref::<UnderPostersPref>(
+        UnderPosters { title: true, ..UnderPosters::DEFAULT })).unwrap().contains("show_sort_info"));
+    // Off round-trips through the file and the packed cell, and only Off is written.
+    let off = UnderPosters { title: true, details: UnderPostersDetails::Video, sort_value: false };
+    let json = serde_json::to_string(&Session::default().with_pref::<UnderPostersPref>(off)).unwrap();
+    assert!(json.contains("sort_value_off"), "{json}");
+    let on = serde_json::to_string(&Session::default().with_pref::<UnderPostersPref>(
+        UnderPosters { sort_value: true, ..off })).unwrap();
+    assert!(!on.contains("sort_value"), "{on}");
+    let restored: Session = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.under_posters(), off);
+    assert_eq!(UnderPosters::unpack(off.pack()), off);
+    // A malformed value costs only that field and reads as the default On.
+    for bad in [json!("yes"), json!(3), Value::Null, json!([true])] {
+        let read = under_posters_session(json!({"title":true,"details":"genre","sort_value_off":bad}));
+        assert_eq!(read.under_posters(), UnderPosters { title: true, details: UnderPostersDetails::Genre, sort_value: true });
+    }
+    let read = under_posters_session(json!({"title":true,"sort_value_off":true}));
+    assert!(!read.under_posters().sort_value && read.under_posters().title);
 }

@@ -116,6 +116,31 @@ fn app_font(bold: bool) -> &'static CStr {
     })
 }
 
+/// The path [`app_font`] opens, as a path: for a caller that reads the face file itself and must read the
+/// one SDL_ttf opens (the HUD cost model's two faces, [`read_price_model`]).
+pub fn app_font_path(bold: bool) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(app_font(bold).to_bytes()))
+}
+
+/// **The HUD price model, read from its two faces**: the whole-pixel advances of the font files `regular` and
+/// `bold` name (the paths [`app_font_path`] returns, `appfont.ttf` and `appfont-bold.ttf`), as the one
+/// [`WholePixelMeasure`](plx_base::fontcov::advances::WholePixelMeasure) every side of the HUD lint prices with.
+/// Blocking file IO and two parses of faces of ~400 KB each, so a frame never calls it: `hud_cli` reads the model
+/// for the command line, and the player-HUD driver reads it once, on the storage worker. The error is the first
+/// face that failed, as `path: reason`.
+pub fn read_price_model(
+    regular: &std::path::Path,
+    bold: &std::path::Path,
+) -> Result<plx_base::fontcov::advances::WholePixelMeasure, String> {
+    use plx_base::fontcov::advances::{Face, WholePixelMeasure};
+    let face = |path: &std::path::Path| {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Face::parse(&bytes).ok_or_else(|| format!("{}: unreadable metrics tables", path.display()))
+    };
+    Ok(WholePixelMeasure::new(face(regular)?, face(bold)?))
+}
+
 const VS_TEXT: &CStr = crate::gfx::glsl!("shaders/vs_text.vert");
 const FS_TEXT: &CStr = crate::gfx::glsl!("shaders/fs_text.frag");
 const FS_TEXT_FADE: &CStr = crate::gfx::glsl!("shaders/fs_text_fade.frag");
@@ -1609,11 +1634,27 @@ unsafe fn render_runs(
     Some((out, w, h, rise))
 }
 
+/// `TTF_Init`, the first half of every font init ([`init_text`], [`init_fonts_headless`]). SDL_ttf's
+/// own init starts FreeType and nothing else: it needs no SDL video, no window and no GL context.
+unsafe fn ttf_init() -> bool {
+    TTF_Init() == 0
+}
+
+/// The second half: open the base face at the probe size and, if it opens, publish `TEXT_OK`, the one
+/// switch `TtfMeasure` and every width reads. The ONE write of `TEXT_OK`; false when no face opened.
+unsafe fn publish_text_ok() -> bool {
+    if font_at(28, 0).is_null() {
+        return false;
+    }
+    TEXT_OK = 1;
+    true
+}
+
 pub fn init_text() {
     FITTED_LINES.with(|cache| cache.borrow_mut().entries.clear());
     MEASURED_BOUNDS.with(|cache| cache.borrow_mut().entries.clear());
     unsafe {
-        if TTF_Init() != 0 {
+        if !ttf_init() {
             log("TTF_Init failed");
             return;
         }
@@ -1678,13 +1719,61 @@ pub fn init_text() {
             glUniform2f(TLI_SCREEN, SCR_W, SCR_H);
             glUniform1i(TLI_TEX, 0);
         }
-        if !font_at(28, 0).is_null() {
-            TEXT_OK = 1;
-        }
+        publish_text_ok();
         // read through a raw pointer, not `&TEXT_OK`: `format!` takes its arguments BY REFERENCE,
         // which is a shared reference to a `static mut` (`static_mut_refs`, a future hard error)
         log(&format!("init_text ok={}", *addr_of!(TEXT_OK)));
     }
+}
+
+/// **The fonts without the renderer.** [`init_text`] opens the fonts AND links the text shaders, so it
+/// needs a GL context; measuring needs only the first. This is the font half on its own: it starts
+/// SDL_ttf, opens the shipped base face and publishes `TEXT_OK`, so [`TtfMeasure`] answers real widths in
+/// a process with no window (`plxnative-sim --hud-lint`, which has no GL context to link a program in).
+/// It touches no GL symbol, logs nothing of its own and starts no SDL subsystem.
+///
+/// **It refuses the fallback.** [`font_at`] answers the system DroidSans when the shipped face will not
+/// open, which is a defect that looks like a measurement (the module header). A headless caller asked
+/// for the app's own widths, so both shipped faces must be readable files, and the error names the one
+/// that is not and the directory they are looked for in (the resolver is `plx_base::paths::app_dir`, so
+/// `PLXNATIVE_APP_DIR` steers it in the simulator and nowhere else). A shipped face that is a file but
+/// not a font is the one case it cannot see; `font_at` logs that fallback.
+///
+/// Idempotent: a second call after a success does nothing. Main-thread only, like [`init_text`].
+pub fn init_fonts_headless() -> Result<(), String> {
+    if unsafe { *addr_of!(TEXT_OK) } != 0 {
+        return Ok(());
+    }
+    let faces = [app_font_path(false), app_font_path(true)];
+    unreadable_face(&faces).map_err(|reason| {
+        format!(
+            "{reason} (the faces are read from {}; set PLXNATIVE_APP_DIR to the directory holding \
+             appfont.ttf and appfont-bold.ttf, pkg/ in the repository)",
+            plx_base::paths::app_dir().display()
+        )
+    })?;
+    unsafe {
+        if !ttf_init() {
+            return Err("SDL_ttf did not start (TTF_Init failed)".to_owned());
+        }
+        if !publish_text_ok() {
+            return Err(format!("SDL_ttf could not open {}", faces[0].display()));
+        }
+    }
+    Ok(())
+}
+
+/// The first of `faces` that is not a regular file, as `path: reason`; `Ok` when every one is. The pure
+/// half of [`init_fonts_headless`]'s refusal, so the host suite can drive it without SDL or an install.
+fn unreadable_face(faces: &[std::path::PathBuf]) -> Result<(), String> {
+    for face in faces {
+        match std::fs::metadata(face) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Err(format!("{}: not a file", face.display())),
+            Err(e) => return Err(format!("{}: {e}", face.display())),
+        }
+    }
+    Ok(())
 }
 
 fn entry_key(e: &TCacheEntry) -> &[u8] {
@@ -1760,6 +1849,45 @@ unsafe fn text_tex(
     plx_base::diag::spans::span("text", || text_tex_miss(s_bytes, s_c, sz, bold, hash))
 }
 
+/// `s_c` drawn white-on-clear by the single face `f` (the base path of [`text_tex_miss`]); the caller
+/// frees the surface, and null is a failed render.
+unsafe fn render_white(f: *mut TtfFont, s_c: *const c_char) -> *mut SdlSurface {
+    let white = SdlColor {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    TTF_RenderUTF8_Blended(f, s_c, white)
+}
+
+/// **Is there no renderer?** True when the fonts are open but no text shader was ever linked: the state
+/// [`init_fonts_headless`] leaves (`init_text` publishes `TEXT_OK` only after its programs link, so in
+/// the app the two are never apart). Derived from the shader, not kept in a flag of its own, so it
+/// cannot disagree with it.
+unsafe fn no_renderer() -> bool {
+    *addr_of!(TPROG) == 0
+}
+
+/// One glyph's line height and ink band `(h, ink_top, ink_bottom)` straight from the rendered surface,
+/// with no texture: the numbers [`text_tex`] would cache for it (`text_tex_miss`'s base path is this
+/// same render and `surface_ink_v`), for a process that has no GL context to upload to. `(0, 0, 0)` for
+/// a face that will not open or a render that fails, like the cache's miss.
+unsafe fn glyph_band(s: &CStr, sz: c_int, bold: c_int) -> (c_int, c_int, c_int) {
+    let f = font_at(sz, bold);
+    if f.is_null() {
+        return (0, 0, 0);
+    }
+    let surf = render_white(f, s.as_ptr());
+    if surf.is_null() {
+        return (0, 0, 0);
+    }
+    let h = (*surf).h;
+    let (ink_t, ink_b) = surface_ink_v(surf);
+    SDL_FreeSurface(surf);
+    (h, ink_t, ink_b)
+}
+
 /// [`text_tex`]'s miss: render, upload and store one string.
 unsafe fn text_tex_miss(
     s_bytes: &[u8],
@@ -1787,13 +1915,7 @@ unsafe fn text_tex_miss(
     if f.is_null() {
         return (0, 0, 0, 0, 0, 0);
     }
-    let white = SdlColor {
-        r: 255,
-        g: 255,
-        b: 255,
-        a: 255,
-    };
-    let surf = TTF_RenderUTF8_Blended(f, s_c, white);
+    let surf = render_white(f, s_c);
     if surf.is_null() {
         return (0, 0, 0, 0, 0, 0);
     }
@@ -2557,6 +2679,9 @@ pub fn text_height(sz: c_int, bold: c_int) -> f32 {
         if TEXT_OK == 0 {
             return sz as f32;
         }
+        if no_renderer() {
+            return glyph_band(c"0", sz, bold).0 as f32;
+        }
         let (_tex, _w, h, _it, _ib, _rise) = text_tex(b"0", c"0".as_ptr(), sz, bold);
         h as f32
     }
@@ -2571,6 +2696,10 @@ pub fn text_cap_band(sz: c_int, bold: c_int) -> (f32, f32) {
     unsafe {
         if TEXT_OK == 0 {
             return (sz as f32 * 0.15, sz as f32 * 0.9);
+        }
+        if no_renderer() {
+            let (_h, ink_t, ink_b) = glyph_band(c"H", sz, bold);
+            return (ink_t as f32, ink_b as f32);
         }
         let (_t, _w, _h, it, ib, _rise) = text_tex(b"H", c"H".as_ptr(), sz, bold);
         (it as f32, ib as f32)
@@ -3266,6 +3395,21 @@ mod tests {
             assert_partitions(s);
         }
     }
+
+    /// `init_fonts_headless` never falls back to a system face: a shipped face that is missing, or is a
+    /// directory, is an error that names it, and the two shipped faces of the repository pass.
+    #[test]
+    fn the_headless_font_init_refuses_a_face_it_cannot_read_and_names_it() {
+        let pkg = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../pkg"));
+        let shipped = [pkg.join("appfont.ttf"), pkg.join("appfont-bold.ttf")];
+        assert_eq!(unreadable_face(&shipped), Ok(()));
+        let gone = pkg.join("no-such-face.ttf");
+        let err = unreadable_face(&[shipped[0].clone(), gone.clone()]).unwrap_err();
+        assert!(err.starts_with(&format!("{}: ", gone.display())), "{err}");
+        let err = unreadable_face(&[pkg.to_path_buf()]).unwrap_err();
+        assert_eq!(err, format!("{}: not a file", pkg.display()));
+        assert_eq!(unreadable_face(&[]), Ok(()));
+    }
 }
 
 #[cfg(test)]
@@ -3738,5 +3882,35 @@ mod cache_policy_tests {
         assert!(background_prewarm_pending(), "the old owner's drop left the new queue alone");
         clear_background_prewarm_owned(new);
         assert!(!background_prewarm_pending(), "the current owner clears it");
+    }
+}
+
+#[cfg(test)]
+mod price_model_tests {
+    //! [`read_price_model`], against the shipped faces and two broken ones.
+    use super::*;
+
+    /// **The HUD price model reads from the two shipped faces, and says which face it could not read.** The
+    /// model is `Send` (the player-HUD driver builds it on the storage worker and keeps it in the driver).
+    #[test]
+    fn the_price_model_reads_the_shipped_faces_and_names_the_one_it_cannot() {
+        fn is_send<T: Send>() {}
+        is_send::<plx_base::fontcov::advances::WholePixelMeasure>();
+        let pkg = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../pkg"));
+        let (regular, bold) = (pkg.join("appfont.ttf"), pkg.join("appfont-bold.ttf"));
+        let model = read_price_model(&regular, &bold).expect("the shipped faces parse");
+        assert!(model.face(false).width("Watchlist", 20) > 0.0 && model.face(true).width("Watchlist", 20) > 0.0);
+
+        let missing = pkg.join("missing.ttf");
+        let reason = read_price_model(&regular, &missing).err().expect("a missing bold face is an error");
+        assert!(reason.starts_with(&format!("{}: ", missing.display())), "{reason}");
+
+        let scratch = std::env::temp_dir().join(format!("plx-price-model-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let garbage = scratch.join("garbage.ttf");
+        std::fs::write(&garbage, b"not a font").unwrap();
+        let reason = read_price_model(&garbage, &bold).err().expect("a face without metrics tables is an error");
+        assert_eq!(reason, format!("{}: unreadable metrics tables", garbage.display()));
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }

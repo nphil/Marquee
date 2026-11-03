@@ -600,3 +600,21 @@ to 17882145870915066293. All three anchors were recorded again on the merged tre
 interval and halved idle sleeps, passed `plxnative-rec check`, and were installed with
 `tools/plxnative-rec rerecord`, anchors retained. `make check-replay` replays all three with
 `verdict=SAME` in Targets and Resolve and every difference counter at zero.
+
+Opt-in playback diagnostics adds the Settings root's recorder status and addressed query/reply
+shape. The three anchors were observed failing the old shape preflight, then recorded afresh
+against tests/mock_pms.py with tests/focusfp.sh --rec --only 1,6,12 (350 ms key interval and
+halved settle waits). The busy host needed a longer mock startup wait. They were checked and
+installed with tools/plxnative-rec rerecord, preserving anchor flags; the synthetic alphabet
+adds only the new English labels and the deterministic status/off codec vocabulary.
+
+The approved Home/Detail hero proposal changes metadata weight and size, title fallback size,
+facts wording, and the shared hero geometry. CI observed all three anchors refusing with
+`replay measurement table miss`. The wider hero column also exposed an accidental dependency
+in route-page layout; `theme::layout::ROUTE_COPY_W` now preserves the route family's 660 px
+column independently of the hero's 943 px reading column. All three flows were recorded afresh
+against the synthetic mock on the integrated tree with `tests/focusfp.sh --rec --only 1,6,12`
+(350 ms keys, 1 s boot settle, 1.5 s final settle). Each passed the synthetic vocabulary check;
+only its recording segment was replaced, with the identical manifests and anchor flags retained.
+The alphabet adds source-backed Movie/TV Show labels, remaining minutes and medium-format
+English dates. Both Targets and Resolve must pass the complete recordings before landing.

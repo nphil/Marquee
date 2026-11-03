@@ -19,6 +19,7 @@
   "widgets.speed.normal": "Звычайная",
   "widgets.menu.stats": "Статыстыка",
   "widgets.menu.diagnostics": "Даслаць дыягностыку",
+  "widgets.menu.previous_episode": "Папярэдняя серыя",
   "widgets.badge.forced": "ПРЫМУСОВЫЯ",
   "widgets.toggle.on": "Укл.",
   "widgets.toggle.off": "Выкл.",
@@ -134,7 +135,7 @@
     "many": "{heading} · {count} ДАРОЖАК",
     "other": "{heading} · {count} ДАРОЖКІ"
   },
-  "widgets.reason.jail_help": "Для выпраўлення патрэбны тэлевізар з root-доступам і Homebrew Channel. Даведка: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem.",
+  "widgets.reason.jail_help": "Патрэбны root-доступ да тэлевізара і Homebrew Channel. Даведка: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem",
   "widgets.tracks.empty": "Няма дарожак",
   "widgets.tracks.bytes": {
     "one": "{count} байт",

@@ -356,9 +356,9 @@ fn the_under_posters_policy_sizes_the_focused_rows_band() {
         settle(&mut page, &mut engine, &fixture, 0);
         page.layout.row_y(4, 0.0) - rest
     };
-    let nothing = below_focus(UnderPosters { title: false, details: UnderPostersDetails::None, show_sort_info: false });
-    let one_line = below_focus(UnderPosters { title: false, details: UnderPostersDetails::Genre, show_sort_info: false });
-    let two_lines = below_focus(UnderPosters { title: true, details: UnderPostersDetails::Genre, show_sort_info: false });
+    let nothing = below_focus(UnderPosters { title: false, details: UnderPostersDetails::None, sort_value: false });
+    let one_line = below_focus(UnderPosters { title: false, details: UnderPostersDetails::Genre, sort_value: false });
+    let two_lines = below_focus(UnderPosters { title: true, details: UnderPostersDetails::Genre, sort_value: false });
     crate::registry::captions::TEST_UNDER_POSTERS.with(|cell| cell.set(None));
     assert!(nothing.abs() < 0.01, "a policy showing nothing opens no band: {nothing}");
     assert!((one_line - 40.0).abs() < 0.01, "one line opens 80 - 40 px: {one_line}");
@@ -366,29 +366,203 @@ fn the_under_posters_policy_sizes_the_focused_rows_band() {
 }
 
 #[test]
-fn sort_information_mode_keeps_the_real_library_focus_and_restores_legacy_geometry() {
+fn value_mode_keeps_the_real_library_focus_and_restores_the_caption_geometry() {
     use plx_plex::plex::session::UnderPosters;
     let _guard = plx_base::testlock::serial();
-    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters { show_sort_info: true, ..UnderPosters::DEFAULT })));
-    let fixture = Fixture::new();
+    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters::DEFAULT)));
+    let mut fixture = Fixture::new();
+    fixture.listing = fixture.listing.clone().with_sort_key("year");
     let mut page = fixture.screen();
     page.initial = false;
-    assert!(page.layout.persistent_captions());
     let mut engine = FocusEngine::new();
     let first = page.key(page.pair.detail.elem_at(0).unwrap());
     engine.set(OWNER, first, Some(page.pair.groups_config().detail), By::Restore);
     deliver(&mut page, &mut engine, &fixture, ScreenEvent::FocusMoved { from: None, to: first, by: By::Restore });
     settle(&mut page, &mut engine, &fixture, 0);
+    assert!(page.layout.value_line(), "Sort value On and a sort with a value: the grid shows values");
     direction(&mut page, &mut engine, &fixture, Dir::Right);
     direction(&mut page, &mut engine, &fixture, Dir::Down);
     settle(&mut page, &mut engine, &fixture, 2000);
     assert_eq!(page.grid_position(engine.current(OWNER)), Some((1, 1)));
     let focus = engine.current(OWNER);
     let pitch = page.layout.grid_pitch();
-    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters::DEFAULT)));
+    assert_eq!(pitch - page.layout.card_h(), 60.0, "rows are 60 px apart while values show");
+    // Sort value Off: the grid draws as it did before, 40 px rows and the Title/Details band.
+    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters { sort_value: false, ..UnderPosters::DEFAULT })));
     frame(&mut page, &mut engine, &fixture, 5000);
-    assert!(!page.layout.persistent_captions());
-    assert!(page.layout.grid_pitch() < pitch);
-    assert_eq!(engine.current(OWNER), focus, "turning off captions keeps the selected poster");
+    assert!(!page.layout.value_line());
+    assert_eq!(page.layout.grid_pitch() - page.layout.card_h(), 40.0);
+    assert_eq!(engine.current(OWNER), focus, "turning values off keeps the selected poster");
+    // Back On, but sorted by Title: no value to show, so the same plain geometry.
+    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters::DEFAULT)));
+    fixture.listing = fixture.listing.clone().with_sort_key("titleSort");
+    frame(&mut page, &mut engine, &fixture, 8000);
+    assert!(!page.layout.value_line(), "Title and Random sorts show no value");
+    assert_eq!(page.layout.grid_pitch() - page.layout.card_h(), 40.0);
+    // And a sort a later server declares, which the table does not word, keeps the captions too.
+    fixture.listing = fixture.listing.clone().with_sort_key("futureServerSort");
+    frame(&mut page, &mut engine, &fixture, 11000);
+    assert!(!page.layout.value_line());
+    // The same switch DEEP in the grid: the rows' pitch changes (60 -> 40 px) under a scroll held in the
+    // old pitch's coordinates, so the page must seat the focused row again the way a focus move does, or
+    // the row it stands on is scrolled up under the header.
+    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters::DEFAULT)));
+    let mut deep = Fixture::new();
+    deep.listing = numbered(0..300).with_sort_key("year");
+    let mut page = deep.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    let elem = crate::library::tests::deep(&mut page, &deep, 90);
+    let row = 90 / page.layout.cols();
+    let key = page.key(elem);
+    engine.set(OWNER, key, Some(page.pair.groups_config().detail), By::Restore);
+    deliver(&mut page, &mut engine, &deep, ScreenEvent::FocusMoved { from: None, to: key, by: By::Restore });
+    settle(&mut page, &mut engine, &deep, 0);
+    assert!(page.layout.value_line() && row >= 10, "values show at a deep row ({row})");
+    // Where a focus move seats a row: its poster top where the first row's is at rest.
+    let seated = |page: &LibraryScreen| page.layout.row_y(row, page.scroll.pos) - page.layout.row_y(0, 0.0);
+    assert!(seated(&page).abs() < 1.0, "with values the focused row is seated at the grid top: {}", seated(&page));
+    crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(Some(UnderPosters { sort_value: false, ..UnderPosters::DEFAULT })));
+    frame(&mut page, &mut engine, &deep, 5000);
+    assert!(!page.layout.value_line());
+    assert_eq!(engine.current(OWNER), Some(key), "turning values off keeps the selected poster");
+    assert!(seated(&page).abs() < 1.0, "Off at a deep row: the focused row is seated at the grid top, not under the header: {}", seated(&page));
+    settle(&mut page, &mut engine, &deep, 5016);
+    assert!(seated(&page).abs() < 1.0, "and it stays seated once settled: {}", seated(&page));
     crate::registry::captions::TEST_UNDER_POSTERS.with(|c| c.set(None));
+}
+
+/// A server's re-list plays its landing (the removed card fades out where it stood, the others
+/// slide over), and only its landing: the play is let go once it ends.
+#[test]
+fn a_server_re_list_plays_its_landing_with_a_ghost_and_then_lets_go() {
+    let _guard = plx_base::testlock::serial();
+    let mut fixture = Fixture::new();
+    let sid = plx_plex::plex::ServerId::from_raw(0);
+    let movie = |i: usize| Some(plx_data::pms::PmsMovie { sid, rk: format!("relist-{i}"), ..Default::default() });
+    let listing = |rks: &[usize]| plx_data::browse::view::ListingSnapshot::fixture(sid, rks.iter().map(|&i| movie(i)).collect(), Vec::new());
+    fixture.listing = listing(&[0, 1, 2, 3, 4, 5, 6, 7]);
+    let mut page = fixture.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    settle(&mut page, &mut engine, &fixture, 0);
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()));
+
+    fixture.listing = listing(&[0, 1, 2, 3, 4, 5, 6, 7]).with_relist();
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    settle(&mut page, &mut engine, &fixture, 2000);
+    fixture.listing = listing(&[0, 1, 3, 4, 5, 6, 7]);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 4000);
+    frame(&mut page, &mut engine, &fixture, 4016);
+    let (playing, ghosts) = page.pair.detail.relist_probe();
+    assert!(playing, "the re-list's landing plays");
+    assert_eq!(ghosts, [Some("relist-2".to_string())], "the removed card is its ghost");
+    settle(&mut page, &mut engine, &fixture, 4032);
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()), "the landing ended and was let go");
+
+    // A later change that is not a re-list cuts, as before.
+    fixture.listing = listing(&[0, 3, 4, 5, 6, 7]);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 7000);
+    frame(&mut page, &mut engine, &fixture, 7016);
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()));
+}
+
+
+#[test]
+fn relist_regression_the_removed_tail_card_has_its_ghost_pixels() {
+    let _guard = plx_base::testlock::serial();
+    let mut fixture = Fixture::new();
+    fixture.listing = numbered(0..8);
+    let mut page = fixture.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    settle(&mut page, &mut engine, &fixture, 0);
+    fixture.listing = fixture.listing.clone().with_relist();
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    settle(&mut page, &mut engine, &fixture, 2000);
+    fixture.listing = numbered(0..7);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 4000);
+    frame(&mut page, &mut engine, &fixture, 4016);
+    let (playing, ghosts) = page.pair.detail.relist_probe();
+    assert!(playing);
+    assert_eq!(ghosts, [Some("7".to_string())], "the removed last tile must fade with its own pixels");
+    plx_machine::idle::frame_begin(1.0 / 60.0);
+    let (_, moving) = plx_machine::idle::scoped_motion(|| frame(&mut page, &mut engine, &fixture, 4032));
+    assert!(moving, "the landing buys frames while moving");
+    settle(&mut page, &mut engine, &fixture, 4048);
+    plx_machine::idle::frame_begin(1.0 / 60.0);
+    let (_, moving) = plx_machine::idle::scoped_motion(|| frame(&mut page, &mut engine, &fixture, 8000));
+    assert!(!moving, "a settled landing buys no frames");
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()));
+}
+
+#[test]
+fn relist_regression_each_coalesced_relist_keeps_its_removed_card() {
+    let _guard = plx_base::testlock::serial();
+    let mut fixture = Fixture::new();
+    fixture.listing = numbered(0..8);
+    let mut page = fixture.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    settle(&mut page, &mut engine, &fixture, 0);
+    fixture.listing = fixture.listing.clone().with_relist();
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    settle(&mut page, &mut engine, &fixture, 2000);
+    // The first answer lands, while the store already owes the next re-list.
+    fixture.listing = numbered(1..8).with_relist();
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 4000);
+    frame(&mut page, &mut engine, &fixture, 4016);
+    let (playing, ghosts) = page.pair.detail.relist_probe();
+    assert!(playing);
+    assert_eq!(ghosts, [Some("0".to_string())], "an intermediate re-list must retain the card it removed");
+    settle(&mut page, &mut engine, &fixture, 4032);
+    fixture.listing = numbered(2..8);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 7000);
+    frame(&mut page, &mut engine, &fixture, 7016);
+    assert_eq!(page.pair.detail.relist_probe().1, [Some("1".to_string())]);
+    settle(&mut page, &mut engine, &fixture, 7032);
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()));
+}
+
+#[test]
+fn relist_regression_reenabling_after_a_query_cut_adopts_current_rows() {
+    let _guard = plx_base::testlock::serial();
+    let mut fixture = Fixture::new();
+    fixture.listing = numbered(0..8);
+    let mut page = fixture.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    settle(&mut page, &mut engine, &fixture, 0);
+    fixture.listing = fixture.listing.clone().with_relist();
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    settle(&mut page, &mut engine, &fixture, 2000);
+    fixture.listing = numbered(0..7);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    settle(&mut page, &mut engine, &fixture, 4000);
+
+    // An ordinary query edit cuts to different cards while landing play is disabled.
+    fixture.listing = numbered(10..18).with_query(9);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    settle(&mut page, &mut engine, &fixture, 6000);
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()));
+
+    // The next notification leaves these rows in place while its answer is out.
+    fixture.listing = fixture.listing.clone().with_relist();
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 8000);
+    frame(&mut page, &mut engine, &fixture, 8016);
+    assert_eq!(page.pair.detail.relist_probe(), (false, Vec::new()),
+        "arming the next re-list must not animate the previous query's stale keys");
+
+    fixture.listing = numbered(11..18).with_query(9);
+    page.sync(&fixture.cx(engine.current(OWNER)));
+    frame(&mut page, &mut engine, &fixture, 9000);
+    frame(&mut page, &mut engine, &fixture, 9016);
+    assert_eq!(page.pair.detail.relist_probe().1, [Some("10".to_string())],
+        "the new answer still plays against the current query's rows");
 }

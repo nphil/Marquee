@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(parse(br#"{"url":"ftp://b.example.net","api_key":"0123456789abcdef"}"#).unwrap_err(), Refusal::Address);
         // plain http is for the home network only
         assert_eq!(parse(br#"{"url":"http://bazarr.example.net","api_key":"0123456789abcdef"}"#).unwrap_err(), Refusal::Address);
-        assert_eq!(parse(br#"{"url":"https://b.example.net","api_key":"has a space"}"#).unwrap_err(), Refusal::Key);
+        assert_eq!(parse(br#"{"url":"https://b.example.net","api_key":"has\u0007a bell"}"#).unwrap_err(), Refusal::Key);
         assert_eq!(parse(br#"{"url":"https://b.example.net","api_key":""}"#).unwrap_err(), Refusal::Key);
     }
 

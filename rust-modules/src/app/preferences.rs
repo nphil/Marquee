@@ -3,7 +3,7 @@
 //! here, never in a screen constructor or step.
 use plx_media::route::{choose, Choice, How};
 use plx_plex::plex::account::{PreferenceError, PreferenceRequest};
-use plx_plex::plex::session::{InstantDpadSeekingPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref,
+use plx_plex::plex::session::{DolbyVisionModePref, InstantDpadSeekingPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref,
     SkipIntervalPref, SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, TrailerAutoplayPref, UnderPostersPref};
 use plx_plex::plex::session::RememberAudioChoicesPref;
 use plx_plex::plex::session::{IntroSkipDelayPref, CreditsSkipDelayPref};
@@ -18,6 +18,7 @@ fn choose_setting(choice: Choice, reply: Sender<bool>) {
         Choice::DirectPlay(v) => choose::<DirectPlayModePref>(v, How::settings::<DirectPlayModePref>(reply)),
         Choice::NextEpisode(v) => choose::<NextEpisodeModePref>(v, How::settings::<NextEpisodeModePref>(reply)),
         Choice::InstantDpadSeeking(v) => choose::<InstantDpadSeekingPref>(v, How::settings::<InstantDpadSeekingPref>(reply)),
+        Choice::DolbyVision(v) => choose::<DolbyVisionModePref>(v, How::settings::<DolbyVisionModePref>(reply)),
         Choice::SkipInterval(v) => choose::<SkipIntervalPref>(v, How::settings::<SkipIntervalPref>(reply)),
         Choice::RememberAudioChoices(v) => choose::<RememberAudioChoicesPref>(v, How::settings::<RememberAudioChoicesPref>(reply)),
         Choice::IntroSkipDelay(v) => choose::<IntroSkipDelayPref>(v, How::settings::<IntroSkipDelayPref>(reply)),

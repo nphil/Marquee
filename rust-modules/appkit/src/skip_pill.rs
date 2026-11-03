@@ -1,5 +1,13 @@
-//! Watch and Skip controls replace the transport discs during a marked segment, keeping the
-//! control row's height and right edge.
+//! **Watch and Skip** replace the transport's Subtitles/Audio discs while the playhead sits inside
+//! one of the playing leaf's server markers (`metadata::playing_markers`, fetched with
+//! `?includeMarkers=1`): same row, same right edge, same height, and the discs return the moment the
+//! segment ends. Skip keeps the row's floor width; Watch takes only its own label's.
+//!
+//! The cost is that CC/Audio are covered for the length of the segment, so BACK over the pair
+//! DISMISSES the offer for that segment and puts the discs back (`PlayerScreen::dismiss_offer` asks
+//! `PlayerReq::DismissOffer`, which marks the segment skipped in the metadata store — the same set a
+//! Skip press uses). The pair only exists while the HUD is up, which is why `app.rs` RAISES the HUD
+//! once when a segment begins and parks focus on Skip, so a bare OK still skips in one press.
 #![allow(dead_code)]
 use plx_data::metadata::{self, MarkerKind};
 use plx_ui::theme;
@@ -80,59 +88,15 @@ pub fn prompt_for(m: metadata::Marker) -> Prompt {
     }
 }
 
-// The primary retains the stand-in slot's floor; Watch only needs its intrinsic width,
-// matching Up Next's unequal pair and keeping Skip at the original right edge.
-fn pair(primary: Rect, watch_w: f32) -> (Rect, Rect) {
-    let watch = Rect::new(primary.x - theme::space::SM - watch_w, primary.y, watch_w, primary.h);
-    (watch, primary)
-}
-
-fn watch_width(pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> f32 {
-    Button::pill_w_measured(pr.watch_label_c(), theme::size::BODY, false, None, measure)
-}
-
-fn bounds(watch: Rect, skip: Rect) -> Rect {
-    Rect::new(watch.x, skip.y, skip.x + skip.w - watch.x, skip.h)
-}
-
-fn choose(watch: Rect, skip: Rect, idx: i32) -> Rect {
-    if idx == BTN_WATCH { watch } else { skip }
-}
-
-pub fn rect(row: &mut crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> Rect {
-    let primary = crate::player_hud::classic::ctrl_slot(row, pr.label(), measure);
-    let (watch, skip) = pair(primary, watch_width(pr, measure));
-    bounds(watch, skip)
-}
-
-pub fn item_rect(row: &mut crate::player_hud::motion::HudMotion, pr: Prompt, idx: i32, measure: &dyn plx_machine::machine::Measure) -> Rect {
-    let primary = crate::player_hud::classic::ctrl_slot(row, pr.label(), measure);
-    let (watch, skip) = pair(primary, watch_width(pr, measure));
-    choose(watch, skip, idx)
-}
-
-fn pair_peek(row: &crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> (Rect, Rect) {
-    let anchor = crate::player_hud::classic::frame_geometry().row_anchor;
-    let width = crate::player_hud::classic::ctrl_slot_w(row, pr.label(), measure);
-    pair(Rect::new(anchor.right - width, anchor.top, width, anchor.h), watch_width(pr, measure))
-}
-
-pub fn rect_peek(row: &crate::player_hud::motion::HudMotion, pr: Prompt, measure: &dyn plx_machine::machine::Measure) -> Rect {
-    let (watch, skip) = pair_peek(row, pr, measure);
-    bounds(watch, skip)
-}
-
-pub fn item_rect_peek(row: &crate::player_hud::motion::HudMotion, pr: Prompt, idx: i32, measure: &dyn plx_machine::machine::Measure) -> Rect {
-    let (watch, skip) = pair_peek(row, pr, measure);
-    choose(watch, skip, idx)
-}
-
-pub fn draw(row: &mut crate::player_hud::motion::HudMotion, p: Painter, pr: Prompt, focused: Option<i32>, progress: Option<f32>, measure: &dyn plx_machine::machine::Measure) {
+/// **Draw the pair** at the rects the caller already has: the compiled package's `[watch, skip]`
+/// (`Standin::skip`, one pair per marker kind), placed at compile time in the control row's place.
+/// `focused` is the row's focused item while the row holds focus; `progress` is the automatic
+/// skip's elapsed fraction, swept across Skip.
+pub fn draw_at(row: &crate::player_hud::motion::HudMotion, p: Painter, pr: Prompt, [watch, skip]: [Rect; 2], focused: Option<i32>, progress: Option<f32>) {
     let (watch_label, skip_label) = (pr.watch_label_c(), pr.label_c());
-    let primary = crate::player_hud::classic::ctrl_slot(row, pr.label(), measure);
-    let watch_w = Button::pill_w_measured(watch_label, theme::size::BODY, false, None, measure);
-    let (watch, skip) = pair(primary, watch_w);
     let e = Env::inert();
+    // Both stand in the transport discs' own slot, over the video plane and on the HUD's ramp, so
+    // they wear the discs' ground and the control ROW's pop (`HudMotion::scale`) — see `ControlGround`.
     Button::new(watch_label.as_ptr(), theme::size::BODY, watch)
         .scale(row.scale(BTN_WATCH))
         .focused(focused == Some(BTN_WATCH))
@@ -147,24 +111,4 @@ pub fn draw(row: &mut crate::player_hud::motion::HudMotion, p: Painter, pr: Prom
         button = button.progress(progress);
     }
     button.draw(&e, p);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pair_preserves_primary_and_right_edge() {
-        let primary = Rect::new(800.0, 900.0, 240.0, 60.0);
-        let (watch, skip) = pair(primary, 160.0);
-        assert_eq!(skip, primary);
-        assert_eq!(watch.x + watch.w + theme::space::SM, skip.x);
-        assert_eq!((watch.y, watch.h), (skip.y, skip.h));
-        let union = bounds(watch, skip);
-        assert_eq!(union.x, watch.x);
-        assert_eq!(union.x + union.w, primary.x + primary.w);
-        assert_eq!(choose(watch, skip, BTN_WATCH), watch);
-        assert_eq!(choose(watch, skip, BTN_SKIP), skip);
-        assert_eq!(PRIMARY_BTN, BTN_SKIP);
-    }
 }

@@ -1,0 +1,9 @@
+{
+  "speechdock.title": "SpeechDock",
+  "speechdock.root_detail": "Timingdienst voor ondertitels.",
+  "speechdock.copy": "SpeechDock ontvangt audio en ondertiteltekst voor Engelse uitlijning. Andere talen houden een geschatte timing. Laat het adres leeg om het uit te schakelen.",
+  "speechdock.address_detail": "Alleen een HTTP(S)-origin; leegmaken schakelt uit.",
+  "speechdock.disabled": "Uitgeschakeld",
+  "speechdock.invalid": "Voer een HTTP(S)-origin in zonder inloggegevens, pad, query of fragment.",
+  "speechdock.save_failed": "Het adres kon niet worden opgeslagen."
+}

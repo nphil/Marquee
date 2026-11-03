@@ -72,11 +72,11 @@
   },
   "widgets.menu.quality_converted": {
     "value": "Converted",
-    "description": "Second part of the player More menu's Quality row value ('Original \u00b7 Converted'): Original is picked but the video playing is not the original file because the server is converting the picture. A short value, never a sentence; the picked choice stays checked."
+    "description": "Second part of the player More menu's Quality row value ('Original · Converted'): Original is picked but the video playing is not the original file because the server is converting the picture. A short value, never a sentence; the picked choice stays checked."
   },
   "widgets.menu.quality_converted_note": {
     "value": "Your Plex server is converting this video.",
-    "description": "One-line sub-label under the checked entry of the player's Quality page when the Quality row reports a conversion the viewer did not pick by name ('Original \u00b7 Converted', 'Auto \u00b7 720p'). Always the same neutral sentence; it names no cause."
+    "description": "One-line sub-label under the checked entry of the player's Quality page when the Quality row reports a conversion the viewer did not pick by name ('Original · Converted', 'Auto · 720p'). Always the same neutral sentence; it names no cause."
   },
   "widgets.menu.speed": {
     "value": "Playback speed",
@@ -93,6 +93,10 @@
   "widgets.menu.diagnostics": {
     "value": "Send diagnostics",
     "description": "Option or section label in the player overflow menu."
+  },
+  "widgets.menu.previous_episode": {
+    "value": "Previous Episode",
+    "description": "Row in the player overflow menu, shown when the playing episode has an earlier one (or can restart): starts the previous episode, or this one over. Same noun as widgets.next.episode, in the same capitalisation."
   },
   "widgets.badge.forced": {
     "value": "FORCED",
@@ -551,7 +555,7 @@
     }
   },
   "widgets.reason.jail_help": {
-    "value": "Repair requires a rooted TV and Homebrew Channel access. See github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem for help.",
+    "value": "Repair requires a rooted TV and Homebrew Channel access. Help: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem",
     "description": "reason jail_help"
   },
   "widgets.tracks.empty": {
@@ -762,7 +766,7 @@
   },
   "widgets.tracks.enh_reason_converting": {
     "value": "Not available while your Plex server converts this video.",
-    "description": "One-line reason under the DISABLED (dim) Boost dialog / Normalize loudness rows whenever the Quality row reads 'Original \u00b7 Converted' (Original picked, the server converting the video). Same fact as that row."
+    "description": "One-line reason under the DISABLED (dim) Boost dialog / Normalize loudness rows whenever the Quality row reads 'Original · Converted' (Original picked, the server converting the video). Same fact as that row."
   },
   "widgets.tracks.enh_reason_forced": {
     "value": "Not available while Force Direct Play is on. Set Direct Play to Auto in Settings to use it.",

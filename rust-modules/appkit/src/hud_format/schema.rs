@@ -98,8 +98,7 @@
 //! the identity (`bold` false, a `pad` of 0, a cell `align` of `start`). The compiler reads them from here.
 //!
 //! **Open items, not settled by the spec** (the compiler and lint inherit them):
-//! * `rest: "custom"`: the spec says "with allowed inks" but names no key, so 1.0 has none; the name is
-//!   accepted and the compiler decides what it draws.
+//! * `rest: "custom"` is refused: 1.0 has no keys that could define its inks; accepted faces are explicit.
 //! * `valign` has no default; a band cell without `align` packs at `start`.
 //! * `label_align` is spelled `centre` (the spec's spelling) while `align` is spelled `center`.
 //! * D10's "app text takes no `w` and no `max_lines`" is a set of [`Rule::IfValue`] entries on the three
@@ -116,6 +115,8 @@
 
 use plx_ui::icons::Icon;
 use plx_ui::theme;
+
+use crate::player_hud::classic::{HUD_TITLE_SZ, SCRIM_H};
 
 /// A format version: `(major, minor)`.
 pub type Since = (u8, u8);
@@ -617,14 +618,10 @@ pub static INK_TOKENS: &[(&str, [f32; 4])] = &[
     ),
 ];
 
-/// The pixel size of the `HUD_TITLE` rung: the existing carve-out of the now-playing title, 54 px. It
-/// mirrors `player_hud`'s private `HUD_TITLE_SZ`; wave B, which has `player_hud` in scope, makes that one
-/// const the source and a test pin the two together.
-pub const HUD_TITLE_PX: i32 = 54;
-
 /// The type-scale rungs a text cell may name: `theme::size` but for `DIAGNOSTIC` (the diagnostics
-/// instrument's own rung, below the couch floor), plus `HUD_TITLE`, the existing 54 px carve-out, legal
-/// only on a text cell bound to `title.main` (a [`Rule::NameOnlyWith`]).
+/// instrument's own rung, below the couch floor), plus `HUD_TITLE`, the existing 54 px carve-out (the
+/// now-playing title's own `classic::HUD_TITLE_SZ`, the one source), legal only on a text cell bound to
+/// `title.main` (a [`Rule::NameOnlyWith`]).
 pub static SIZE_RUNGS: &[(&str, i32)] = &[
     ("HERO", theme::size::HERO),
     ("DISPLAY", theme::size::DISPLAY),
@@ -634,7 +631,7 @@ pub static SIZE_RUNGS: &[(&str, i32)] = &[
     ("LABEL", theme::size::LABEL),
     ("CAPTION", theme::size::CAPTION),
     ("MICRO", theme::size::MICRO),
-    ("HUD_TITLE", HUD_TITLE_PX),
+    ("HUD_TITLE", HUD_TITLE_SZ),
 ];
 
 /// The spacing rungs (`theme::space`) a gap may name.
@@ -743,6 +740,7 @@ pub static BINDINGS: &[Binding] = &[
     Binding { name: "info.title", since: V1_0, doc: "The info section's title (server text)." },
     Binding { name: "info.summary", since: V1_0, doc: "The playing item's synopsis (server text)." },
     Binding { name: "info.facts", since: V1_0, doc: "The playing item's facts run, fitted by a `facts` cell." },
+    Binding { name: "info.word_timing", since: V1_0, doc: "Whether subtitle word reveal runs on estimated timing or on applied SpeechDock alignment (app text)." },
     Binding { name: "label.chapters", since: V1_0, doc: "The app's Chapters label (app text, localized)." },
     Binding { name: "label.info", since: V1_0, doc: "The app's Info label (app text, localized)." },
 ];
@@ -753,6 +751,7 @@ pub const TEXT_BINDS: &[&str] = &[
     "title.main",
     "info.title",
     "info.summary",
+    "info.word_timing",
     "label.chapters",
     "label.info",
     "item.start",
@@ -777,11 +776,6 @@ pub fn binding(name: &str) -> Option<&'static Binding> {
 // Nodes: the package, `layout` and everything under it
 // ---------------------------------------------------------------------------------------------------
 
-/// The pixel height of classic's whole scrim over the screen bottom, which bounds a package scrim's
-/// `extra` and `height`. It mirrors `player_hud`'s private `SCRIM_H` (470); wave B, which has
-/// `player_hud` in scope, makes that one const the source and a test pin the two together.
-pub const SCRIM_H_PX: i64 = 470;
-
 /// A width on the 1920-wide canvas.
 const PX_W: Ty = Ty::Int { min: 1, max: 1920 };
 /// A height on the 1080-tall canvas.
@@ -797,7 +791,7 @@ pub const BODY_SIZES: &[&str] = &[
 /// The three alignments of a cell in its band, and of the Up Next column.
 const ALIGNS: Ty = Ty::Enum(&["start", "center", "end"]);
 /// The two focus faces and the four rest faces of a control (the item node and an Up Next button).
-const RESTS: Ty = Ty::Enum(&["film", "bare", "solid", "custom"]);
+const RESTS: Ty = Ty::Enum(&["film", "bare", "solid"]);
 const FOCI: Ty = Ty::Enum(&["accent", "ring"]);
 
 const F_WHEN: Field = Field::opt(
@@ -820,7 +814,7 @@ const F_GAP_AFTER: Field = Field::opt(
 const F_REST: Field = Field::opt(
     "rest",
     RESTS,
-    "The resting face: `film` today's, `bare` the glyph only, `solid` the focused colours at rest, `custom` (1.0 defines no ink keys for it: the compiler decides).",
+    "The resting face: `film` today's, `bare` the glyph only, `solid` the focused colours at rest. `custom` is unsupported because 1.0 has no keys defining its inks.",
 )
 .default("\"film\"");
 const F_FOCUS: Field = Field::opt(
@@ -956,13 +950,13 @@ pub static SCRIM: Node = Node {
         ),
         Field::opt(
             "extra",
-            Ty::Int { min: 0, max: SCRIM_H_PX },
+            Ty::Int { min: 0, max: SCRIM_H as i64 },
             "With `cover: \"block\"`: px of scrim above the block's top. At most classic's whole scrim height.",
         )
         .keyable(),
         Field::opt(
             "height",
-            Ty::Int { min: 0, max: SCRIM_H_PX },
+            Ty::Int { min: 0, max: SCRIM_H as i64 },
             "With `cover: \"fixed\"`: the scrim's height from the screen bottom. At most classic's whole scrim height.",
         )
         .keyable(),
@@ -1299,6 +1293,10 @@ pub static CELL_SPACER: Node = Node {
     doc: "Empty width.",
 };
 
+/// The most controls one `segment` holds. The player's row is a segment, and
+/// [`crate::player_hud::geometry::MAX_ROW_ITEMS`], the width of the geometry report's `items`, is this.
+pub const MAX_SEGMENT_ITEMS: usize = 24;
+
 pub static CELL_PLAYBAR: Node = Node {
     name: "playbar",
     kind: NodeKind::Plain,
@@ -1309,7 +1307,7 @@ pub static CELL_PLAYBAR: Node = Node {
         Field::req(
             "thickness",
             Ty::Int { min: 1, max: 64 },
-            "The track's height in px: the band's box. The knob, the clocks and the mark overhang it.",
+            "The track's height in px. The bar's box is the track and the line the clocks are drawn on under it, or this if taller; the knob and the mark overhang the track.",
         )
         .keyable(),
         Field::opt(
@@ -1379,7 +1377,7 @@ pub static CELL_SEGMENT: Node = Node {
             "items",
             Ty::List {
                 of: &Ty::Object("item"),
-                max_len: 24,
+                max_len: MAX_SEGMENT_ITEMS,
             },
             "The controls, in order.",
         ),
@@ -2243,7 +2241,7 @@ mod tests {
     fn hud_format_schema_binding_lists_are_subsets_of_the_catalogue_and_card_scope_is_by_name() {
         let names: HashSet<_> = BINDINGS.iter().map(|b| b.name).collect();
         assert_eq!(names.len(), BINDINGS.len(), "binding names are unique");
-        assert_eq!(BINDINGS.len(), 30);
+        assert_eq!(BINDINGS.len(), 31);
         for list in [
             TEXT_BINDS,
             IMAGE_BINDS,
@@ -2311,7 +2309,7 @@ mod tests {
             from_rungs.as_slice(),
             "BODY_SIZES is SIZE_RUNGS but for HUD_TITLE"
         );
-        assert!(size_rung("HUD_TITLE") == Some(HUD_TITLE_PX));
+        assert!(size_rung("HUD_TITLE") == Some(HUD_TITLE_SZ));
         // Every Ty::Size sits in a node whose rule restricts HUD_TITLE; every other size key excludes it.
         for n in all_nodes() {
             for f in n.fields {
@@ -2395,7 +2393,7 @@ mod tests {
             field(&SCRIM, "extra").unwrap().ty,
             Ty::Int {
                 min: 0,
-                max: SCRIM_H_PX
+                max: SCRIM_H as i64
             },
             "extra is at most classic's scrim"
         );
@@ -2511,7 +2509,7 @@ mod tests {
         assert_eq!(en(&CELL, "align"), ["start", "center", "end"]);
         assert_eq!(en(&CELL, "valign"), ["top", "center", "bottom"]);
         assert_eq!(en(&ITEM, "widget"), ["disc", "pill", "button"]);
-        assert_eq!(en(&ITEM, "rest"), ["film", "bare", "solid", "custom"]);
+        assert_eq!(en(&ITEM, "rest"), ["film", "bare", "solid"]);
         assert_eq!(en(&ITEM, "focus"), ["accent", "ring"]);
         assert_eq!(
             en(&UP_NEXT, "countdown"),

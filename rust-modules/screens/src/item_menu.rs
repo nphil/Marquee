@@ -810,7 +810,7 @@ impl ItemMenuScreen {
                 self.pending_delete = Some(rk.clone());
                 if let Some(i) = self.form.index_of_key(RowKey(elem)) { self.form.table.sel = i as i32; }
                 let to = fx.from();
-                crate::plaintext_question::enter_group(fx, to, ALERT_GROUP);
+                crate::registry::enter_group(fx, to, ALERT_GROUP);
             }
             return;
         }

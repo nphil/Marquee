@@ -90,10 +90,13 @@ impl AssSubtitles {
         self.now = now;
         self.scene = blend::Scene { luma: None, hdr: source_hdr };
         self.retire_stale_alignment();
-        let (source, embedded_track) = if plx_media::route::subtitles_burned(ps) || plx_media::player::loading(ps) {
-            (None, None)
+        let playhead = plx_media::player::playpos_ns();
+        // A sidecar is in file time, so over a remux it is sampled at `sidecar_clock_ns`; embedded text
+        // is sampled at the playhead (`player::subtitle_draw` pairs them the same way).
+        let (source, embedded_track, position_ns) = if plx_media::route::subtitles_burned(ps) || plx_media::player::loading(ps) {
+            (None, None, playhead)
         } else if sidecar::selected() {
-            (sidecar::ass_source(false), None)
+            (sidecar::ass_source(false), None, plx_media::player::sidecar_clock_ns(ps, playhead))
         } else {
             let track = plx_media::player::desired_sub_idx();
             let Some(source) = ass_source::try_selected(track) else {
@@ -107,7 +110,7 @@ impl AssSubtitles {
                 }
                 return;
             };
-            (source, Some(track))
+            (source, Some(track), playhead)
         };
         let Some(source) = source else {
             if self.source != 0 {
@@ -134,7 +137,7 @@ impl AssSubtitles {
             self.aligns = None;
         }
         let clock = self.clock.sample(
-            plx_media::player::playpos_ns(),
+            position_ns,
             now,
             plx_media::player::is_playing(ps),
         );
@@ -229,7 +232,8 @@ impl AssSubtitles {
     }
 
     /// `lift` is the transport HUD being up, and `band` the HUD's, as its layout reports it: the
-    /// distance a bottom region moves is the band's `lift`. It moves a text subtitle's bottom regions
+    /// bottom region moves by the band's `lift` plus the `rise` an open section asks, zero with none (see
+    /// `lift_dys`). It moves a text subtitle's bottom regions
     /// and nothing else: an authored script keeps its own placement. `model` is the frame's HUD
     /// snapshot, which the caption ink's tone is read from.
     pub fn draw(&mut self, lift: bool, band: HudBand, model: &plx_appkit::player_hud::model::HudModel) -> Option<Rect> {
@@ -415,14 +419,16 @@ fn frame_geometry(
 
 /// How far (vertical px, negative is up) each region of a Text-origin frame moves while the HUD is
 /// up (`lift`); an authored frame never moves. `regions` are `(y, height)` in frame pixels. Plan §2.4:
-/// - every active cue bottom-aligned: all regions move by the band's fixed `lift`;
+/// - every active cue bottom-aligned: all regions move by the band's fixed `lift`, and by the `rise` that
+///   clears an open section (zero with none);
 /// - no bottom cue: nothing moves;
 /// - mixed: a region moves when its bottom edge is at or below `anchor - pitch / 2`, unless such a
 ///   region also starts above the frame's midline (a merged top+bottom region), in which case
 ///   nothing moves, erring towards not lifting a top cue. A region right above the moving group
 ///   (a block whose lines are separate regions) joins it.
 ///
-/// The moved group is clamped once so its top stays on the screen.
+/// The moved group is clamped once so its top stays on the screen, and the section's rise is clamped by the
+/// safe area (`HudBand::clear_rise`).
 #[cfg(test)]
 fn lift_dys(
     origin: ass::Origin,
@@ -487,11 +493,26 @@ fn place_dys(
         dys.fill(-1.0);
     }
     let Some(top) = moving_top(regions, dys) else { return };
-    let bottom = regions.iter().zip(dys.iter()).filter(|(_, d)| **d != 0.0).map(|(r, _)| r.0 + r.1).max().unwrap_or(top);
-    let up = paint::rise(top as f32, bottom as f32, if lift { band.lift } else { 0.0 }, placement);
+    let bottom = moving_bottom(regions, dys).unwrap_or(top);
+    // the moving group rises by the band's fixed lift and, while a section is open, by the rise that
+    // clears it, unless the group's own top would then cross the safe area (it overlaps the section
+    // instead, at its own size); `paint::rise` adds the look's placement. The one shared delta is the
+    // same for every region that moves.
+    let hud_lift = if lift {
+        let position = style.position;
+        band.lift + HudBand::clear_rise(band.rise_for(position), band.rest_limit(position), (bottom - top) as f32)
+    } else {
+        0.0
+    };
+    let up = paint::rise(top as f32, bottom as f32, hud_lift, placement);
     for dy in dys.iter_mut().filter(|d| **d != 0.0) {
         *dy = -up;
     }
+}
+
+/// The bottom edge of the regions marked as moving (`dys` entry non-zero).
+fn moving_bottom(regions: &[(i32, i32)], dys: &[f32]) -> Option<i32> {
+    regions.iter().zip(dys).filter(|(_, &d)| d != 0.0).map(|(r, _)| r.0 + r.1).max()
 }
 
 /// The top edge of the regions marked as moving (`dys` entry non-zero).
@@ -707,6 +728,59 @@ mod tests {
         // The clamp, not the bound: far past it the lift is cut to keep the block on the screen.
         let (_, lifted) = lifted_libass_top(HudBand::from_controls_top(300.0));
         assert!(lifted >= 0.0);
+    }
+
+    /// **The section rows of the table, through the libass lift**: with Info (block top 668) or Chapters (684)
+    /// open, a bottom cue rises by the band's lift AND the rise that clears the section, so its line ends on the
+    /// table's limit (libass's block sits `INK_TRIM` under the bespoke one, as it does with nothing open).
+    #[test]
+    fn a_bottom_cue_stands_on_the_limit_the_open_section_leaves() {
+        let table = [
+            (668.0, [656.0, 620.0, 460.0]), // built-in Info
+            (684.0, [672.0, 620.0, 460.0]), // built-in Chapters
+        ];
+        for (top, limits) in table {
+            let band = HudBand::CLASSIC.with_rise(HudBand::CLASSIC.rise_to_clear(top));
+            for (position, limit) in SubtitlePosition::LADDER.into_iter().zip(limits) {
+                for size in SubtitleSize::LADDER {
+                    let style = style(size, position);
+                    let (y, h) = line_at(style, 0);
+                    let dys = dys_in(band, text(style), true, &[(y, h)], BOTTOM);
+                    assert_eq!(
+                        (y + h) as f32 + dys[0] - text_style::INK_TRIM,
+                        limit,
+                        "{top} {position:?} {size:?}: {dys:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// One delta for every region that moves, a region above the limit staying, with a section open.
+    #[test]
+    fn the_section_rise_is_one_delta_for_the_group_that_moves() {
+        let style = style(SubtitleSize::Medium, SubtitlePosition::Low);
+        let band = HudBand::CLASSIC.with_rise(HudBand::CLASSIC.rise_to_clear(668.0));
+        let (y, h) = line_at(style, 0);
+        let regions = [(y - h, h), (y, h), (100, 48)];
+        let dys = dys_in(band, text(style), true, &regions, TOP_AND_BOTTOM);
+        assert_eq!(dys, [-324.0, -324.0, 0.0], "the two lines of the block move together, the top sign stays");
+    }
+
+    /// Where the lifted block's top would cross the safe area the rise stops: the block overlaps the section.
+    #[test]
+    fn the_section_rise_stops_where_the_block_would_leave_the_safe_area() {
+        let style = style(SubtitleSize::Huge, SubtitlePosition::Low);
+        let pitch = text_style::CAPTION_LINE_PITCH * style.scale();
+        let height = text_style::CAPTION_ANCHOR_LINES as f32 * pitch;
+        let top = text_style::bottom_anchor_y(style.position) - height;
+        // a section 880 px tall would lift the block past the top of the screen
+        let band = HudBand::CLASSIC.with_rise(HudBand::CLASSIC.rise_to_clear(200.0));
+        let dys = dys_in(band, text(style), true, &[(top as i32, height as i32)], BOTTOM);
+        let lifted = top + dys[0];
+        assert!((lifted - (plx_ui::consts::SAFE.y + text_style::INK_TRIM)).abs() < 1.0, "the block stops at the safe top: {lifted}");
+        // …and nothing about the block's size changed: it is the same region, moved
+        assert_eq!(dys.len(), 1);
     }
 
     #[test]

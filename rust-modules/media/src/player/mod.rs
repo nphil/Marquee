@@ -34,6 +34,14 @@ pub mod playurl; // the `plxnative-playurl` dev trigger: a stream and its Load d
 pub mod preview;
 pub mod recovery; // the failed-open ladder (pure machine); `pump` drives it
 pub mod release; // the native object's off-frame release lifecycle (pure machine); `engine` runs it
+#[cfg(feature = "devtriggers")]
+pub mod uri_protocol;
+#[cfg(feature = "devtriggers")]
+pub mod uri_lifecycle;
+#[cfg(feature = "devtriggers")]
+pub mod uriprobe; // the URI-mode probe (issue #1064, dev trigger `plxnative-uriprobe`): what to say to com.webos.media (pure machine); `uriprobe_drive` runs it
+#[cfg(feature = "devtriggers")]
+pub mod uriprobe_drive; // runs the probe: the transport, the window verbs and the route-start settle the machine leaves to a driver
 // `test` here is THIS crate's own test build only, not `any(test, feature = "test-support")`: the
 // application crate's `port.rs` names `StarfishSink` in every build of its library that is not its
 // own test build, and `cargo check --lib --tests` builds that library with this crate's
@@ -653,8 +661,15 @@ fn acb_playstate_ready(stage: shared::Stage) -> bool {
 /// `Stage::Streaming` is the FIRST stage at which the ordered ACB bind transaction has finished:
 /// `setMediaId` → LOADED → `setMediaVideoData` → `setDisplayWindow` → PLAYING. It is the same
 /// predicate [`acb_mirror_playstate`] uses to decide whether the sink can take a PLAYSTATE at all,
-/// deliberately — one definition of "the plane is really ours", not two. No engine means no sink,
-/// so the bit clears on teardown without teardown having to remember to say so.
+/// deliberately — one definition of "the plane is really ours", not two. Buffer-feed ownership
+/// clears when its Engine is removed.
+///
+/// A URI-mode probe session (`uriprobe_drive`, dev trigger `plxnative-uriprobe`) has no Engine and
+/// so no Engine ACB stage: its observation starts with service `playing`, or with the controlled
+/// ACB experiment's first bind call. It remains latched through logical stop until release is
+/// acknowledged. The ACB experiment retains plane ownership through bus release until app exit,
+/// because asynchronous ACB completion is unproven. `drive` steps ownership before this call,
+/// including frames after the player screen has gone.
 ///
 /// This is an OBSERVATION of the adapter, not a second owner: it hands the answer to
 /// [`machine::Player::set_video_plane_bound`], which is the only writer and the only publisher.
@@ -663,6 +678,8 @@ pub fn observe_video_plane(
     pa: &mut adapter::PlayerAdapter,
 ) -> Option<bool> {
     let bound = pa.engine().is_some_and(|e| acb_playstate_ready(e.stage));
+    #[cfg(feature = "devtriggers")]
+    let bound = bound || pa.uri_plane_open();
     pl.set_video_plane_bound(bound)
 }
 
@@ -2146,9 +2163,11 @@ pub(crate) fn subtitle_offset_ns() -> i64 {
 }
 
 /// **The content time whose cue is on screen at playhead `now_ns`**: the playhead minus the
-/// offset, so a +2 s offset shows at 12 s the cue authored for 10 s. Every lookup — embedded text,
-/// image sets, the sidecar — goes through this one subtraction; saturating, so no offset can wrap
-/// a timestamp at either end of `i64`.
+/// offset, so a +2 s offset shows at 12 s the cue authored for 10 s. Image-set lookups (and the
+/// image store's prune) go through this subtraction; saturating, so no offset can wrap a
+/// timestamp at either end of `i64`. Embedded TEXT is sampled at the playhead [`subtitle_draw`]
+/// returns and a sidecar at [`sidecar_clock_ns`]'s (the playhead plus the side reader's measured
+/// remux delta); the screen subtracts the viewer's offset from both positions itself.
 ///
 /// The sidecar holds its whole file, so any offset in its range is exact there. An EMBEDDED track
 /// only has the cues the demuxer has read, which is why [`subtitle_offset_range_ms`] gives it no
@@ -2160,6 +2179,56 @@ pub(crate) fn subtitle_offset_ns() -> i64 {
 /// track empty until enough history has been read again.
 pub fn subtitle_clock_ns(now_ns: i64) -> i64 {
     now_ns.saturating_sub(subtitle_offset_ns())
+}
+
+/// **What the client draws for the selected subtitle, and the playhead to draw it at**: the source
+/// and the position in nanoseconds the caller samples its render clock from. `None` while the server
+/// burns the selection or the stream is loading. The viewer's timing offset is NOT applied here: the
+/// caller subtracts it after sampling ([`subtitle_offset_ms`]), so it composes with this.
+///
+/// An embedded track is drawn at the playhead as it stands: the side reader already moved its cues
+/// onto the remux clock. A sidecar is in FILE time, so over a remux it is drawn at
+/// [`sidecar_clock_ns`].
+pub fn subtitle_draw(ps: &crate::route::PlaybackSession) -> Option<(std::sync::Arc<ass::Source>, i64)> {
+    if crate::route::subtitles_burned(ps) || loading(ps) {
+        return None;
+    }
+    let playhead = playpos_ns();
+    if let Some(source) = sidecar::ass_source(false) {
+        return Some((source, sidecar_clock_ns(ps, playhead)));
+    }
+    ass_source::selected(desired_sub_idx()).map(|source| (source, playhead))
+}
+
+/// **The file-time position a SIDECAR is asked for at playhead `playhead_ns`.**
+///
+/// A sidecar's timestamps are the Part's. On a direct play the playhead is file time. Over a remux
+/// it is not: PMS starts the remux on a Part keyframe EARLIER than or at the requested offset — not
+/// always the last one (a 917 s request started on 914.914 s while 916.916 s existed; see
+/// `ff_subside`'s `sidecar_clock_at_917…` test) — but the engine labels that first frame with the
+/// REQUESTED offset (`disp_base`), so the playhead runs ahead of the content by the snap (measured:
+/// 0.6 s to 2.2 s on one file) and the sidecar drew early. The side reader measures that constant
+/// (`ff::subside`, `delta = part_time − playhead`) and this adds it, so the renderer is asked for
+/// the content time actually on screen. The viewer's timing offset is subtracted after this, by the
+/// caller, and composes with it.
+///
+/// Moved only when ALL hold: the selection is a sidecar, the app draws it over a live remux
+/// ([`crate::route::SubtitlePresenter::ClientOverRemux`]) and the reader matched this run's first
+/// keyframe byte for byte ([`subside::exact_delta_ns`]). Never for an embedded track — the reader
+/// has moved its cues by `-delta` already, so adding it here too would correct them twice — and
+/// never from an ASSUMED delta, which was measured 2.002 s wrong (see `ff_subside`'s
+/// `sidecar_clock_at_917…` test). **Off the reader's gate** (a remote link, a Part above the
+/// bitrate bound) nothing is measured, nothing is shifted, and a sidecar is drawn exactly as
+/// before; so is a run whose scan found no byte-exact match. **Before the measurement lands**
+/// (right after every remux start: the mirror is cleared and stays clear until this run's scan
+/// reads the Part up to the anchor) nothing is shifted either: the sidecar sits at the old early
+/// position for that moment, then the position drops by the snap, which `ass_source::Clock::sample`
+/// treats as a break and rewinds, so a cue already shown early can appear a second time once.
+pub fn sidecar_clock_ns(ps: &crate::route::PlaybackSession, playhead_ns: i64) -> i64 {
+    if !crate::route::sidecar_over_remux(ps) {
+        return playhead_ns;
+    }
+    subside::exact_delta_ns().map_or(playhead_ns, |delta| playhead_ns.saturating_add(delta))
 }
 
 /// The oldest cue end a store must still hold: the LATEST delay ([`SUBTITLE_OFFSET_LATEST_MS`])
@@ -2765,14 +2834,12 @@ fn sf_on_event_inner(ty: c_int, num: i64, s: *const c_char, scope: shared::Event
 #[no_mangle]
 pub extern "C" fn acb_on_event(ev: c_long, reply: *const c_char) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
-        let r = if reply.is_null() {
-            String::new()
-        } else {
-            unsafe { CStr::from_ptr(reply) }
-                .to_string_lossy()
-                .into_owned()
+        let (code, binding_error) = if reply.is_null() { (None, false) } else {
+            let text = unsafe { CStr::from_ptr(reply) }.to_string_lossy();
+            let code = serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|value| value.get("errorCode").and_then(serde_json::Value::as_i64));
+            (code, text.contains("ERROR_06"))
         };
-        log(&format!("acb_cb ev={ev} reply={r}"));
+        log(&format!("acb_cb ev={ev} errorCode={code:?} ERROR_06={binding_error}"));
     }));
 }
 
@@ -3392,7 +3459,7 @@ mod tests {
         assert_eq!(
             line,
             format!(
-                "PlxNative {} · webOS 4.10.2 · 43LM6300PVB · m3r · tv_pipeline",
+                "Marquee {} · webOS 4.10.2 · 43LM6300PVB · m3r · tv_pipeline",
                 plx_plex::plex::identity::version()
             )
         );

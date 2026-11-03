@@ -389,8 +389,23 @@ type EnhState = (
 /// the panel opens on (`plx_ui::popover::anchor_panel`'s `need_h`), so the side is the same on
 /// every page and never flips under a viewer who pushes one. A server-length list (audio dubs,
 /// subtitle tracks) may be taller and scrolls inside the panel. Classic's room above its row is
-/// 710, which this stays under, so classic always opens upward.
-const NEED_H: f32 = 700.0;
+/// 710, which this stays under, so classic always opens upward. `pub(crate)` because the HUD lint
+/// places this menu with it (`hud_format::lint_menus`, M2), through [`place_panel`].
+pub(crate) const NEED_H: f32 = 700.0;
+
+/// **The one call of the shared placer for this menu**: a panel of `size` beside `anchor`, on the side
+/// [`NEED_H`] decides, `PLAYER_MENU_GAP` away, inside `SAFE`. The live panel ([`table_natural`]), the
+/// overscan audit ([`overscan_rects`]) and the HUD lint (`hud_format::lint_menus`) all place through
+/// it, so none can drift from another.
+pub(crate) fn place_panel(anchor: Rect, size: (f32, f32)) -> plx_ui::popover::Anchored {
+    plx_ui::popover::anchor_panel(
+        anchor,
+        size,
+        NEED_H,
+        theme::layout::PLAYER_MENU_GAP,
+        plx_ui::popover::Placement::PLAYER_MENU,
+    )
+}
 
 /// **A tab root's natural panel**, placed beside `anchor` — the layout of `table` as the panel would
 /// hug it. Each tab hugs its own rows (shared menu rule); the edge the opener's segment ends at is
@@ -410,13 +425,7 @@ fn table_natural(
     // `draw`) can read the count a rebuild left stale. Idempotent and a few short strings.
     table.fit_notes(pw, measure);
     let ph = table.measured_height().max(160.0);
-    plx_ui::popover::anchor_panel(
-        anchor,
-        (pw, ph),
-        NEED_H,
-        theme::layout::PLAYER_MENU_GAP,
-        plx_ui::popover::Placement::PLAYER_MENU,
-    )
+    place_panel(anchor, (pw, ph))
 }
 
 /// The renderer the ACTIVE subtitle is drawn by — what decides whether the caption's Size and
@@ -789,7 +798,7 @@ impl TrackMenuState {
             active_any: false,
             fix_armed: false,
             removal_watching: false,
-            anchor: crate::player_hud::classic::frame_geometry().row,
+            anchor: crate::player_hud::classic::ctrl_row_hit_rect(),
             side: std::cell::Cell::new(plx_ui::popover::Side::Above),
         };
         s.form.table.min_panel_w = theme::layout::PLAYER_MENU_MIN_W;
@@ -3100,18 +3109,12 @@ fn table_form(
 
 /// The panel at its WIDEST ([`plx_ui::table::MENU_MAX_W`], the shared cap — either tab may hug
 /// up to it) and TALLEST, for the overscan audit ([`plx_ui::consts::SAFE`]) — placed by the
-/// same placer as the live panel, beside classic's anchor, with the height of the whole room (the
+/// same placer as the live panel, beside the anchor of the compiled classic (`player_hud::audit_geometry`), with the height of the whole room (the
 /// measured height comes from a `TableView` no host test can measure).
 #[cfg(any(test, feature = "test-support"))]
 pub fn overscan_rects(out: &mut Vec<(&'static str, Rect)>) {
     let pw = plx_ui::table::MENU_MAX_W;
-    let placed = plx_ui::popover::anchor_panel(
-        crate::player_hud::classic::frame_geometry().row,
-        (pw, plx_ui::consts::SCR_H),
-        NEED_H,
-        theme::layout::PLAYER_MENU_GAP,
-        plx_ui::popover::Placement::PLAYER_MENU,
-    );
+    let placed = place_panel(crate::player_hud::audit_geometry().row, (pw, plx_ui::consts::SCR_H));
     out.push(("track menu panel (widest)", placed.rect));
 }
 
@@ -5985,7 +5988,7 @@ mod focus_tests {
             active_any: false,
             fix_armed: false,
             removal_watching: false,
-            anchor: crate::player_hud::classic::frame_geometry().row,
+            anchor: crate::player_hud::classic::ctrl_row_hit_rect(),
             side: std::cell::Cell::new(plx_ui::popover::Side::Above),
         }
     }
@@ -7997,7 +8000,7 @@ mod classic_placement_tests {
     /// a panel at `CTRL_RIGHT - pw`, bottom 764.
     #[test]
     fn the_classic_anchor_is_the_row_ending_at_the_segment_edge_above_the_gap() {
-        let a = crate::player_hud::classic::frame_geometry().row;
+        let a = crate::player_hud::classic::ctrl_row_hit_rect();
         assert_eq!(a.x + a.w, crate::player_hud::classic::CTRL_RIGHT, "the segment's outer edge");
         assert_eq!(a.y - theme::layout::PLAYER_MENU_GAP, 764.0, "PLAYER_MENU_GAP above the row is classic's bottom edge");
         assert_eq!((a.y, a.h), (crate::player_hud::classic::CTRL_Y, crate::player_hud::classic::CTRL_H), "the discs' own band");

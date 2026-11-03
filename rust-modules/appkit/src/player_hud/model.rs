@@ -4,8 +4,8 @@
 //! scrub target, `playpos_ns()`, `seek_display_ns()`, `duration_ns()`, `loading(ps)` and the
 //! subtitle picks and bitmap cue. The player screen is a machine and reads no global
 //! (`docs/sans-io.md`), so those reads become fields of this value, which `src/app/run.rs` fills ONCE
-//! a frame and pushes into the screen the way it already pushes `busy` and `transport`. Every draw
-//! below it takes `&HudModel`.
+//! a frame and pushes into the screen the way it already pushes `busy` and `transport`. The renderer
+//! reads it through its `Frame`, and the scrub preview takes it directly; a draw reads no player global.
 //!
 //! Pure data: every field is `Copy`, there is no borrowed string and no allocation, so building one is
 //! a dozen atomic loads and the snapshot costs nothing to hand down the draw. It carries no
@@ -29,6 +29,8 @@ pub struct HudModel {
     /// `plx_media::player::TX.paused.load(Relaxed)`: the viewer is logically paused. Drives the
     /// title's reveal and the playbar's state mark.
     pub paused: bool,
+    /// The playing metadata is a genuine episode, independent of queue neighbours.
+    pub is_episode: bool,
     /// `plx_media::player::TX.scrub_ns.load(Relaxed)`: the live scrub preview's target, -1 when no
     /// scrub is in progress.
     pub scrub_ns: i64,
@@ -61,6 +63,11 @@ pub struct HudModel {
     /// `plx_appkit::info_panel::detail_rk(meta).is_some()`: the playing item has a ratingKey to
     /// open the page of (`go_to_detail`).
     pub detail: bool,
+    /// The viewer's Skip interval in whole seconds (`plx_media::route::skip_interval().ns() / 1e9`): the
+    /// rung a `seek by: setting` control's `by_interval` face is picked at.
+    pub skip_secs: u32,
+    /// Stats for nerds is up (`app::diagnostics::enabled()`): the `on` of a `toggle_stats` face.
+    pub stats: bool,
     /// `plx_media::player::bitmap_by_key`: the lookup `draw_subtitle_bitmap` calls when the key
     /// changes. Injected so this module never names the player.
     pub bitmap_by_key: BitmapLookup,
@@ -78,6 +85,7 @@ impl Default for HudModel {
     fn default() -> Self {
         Self {
             paused: false,
+            is_episode: false,
             scrub_ns: -1,
             playpos_ns: 0,
             seek_display_ns: -1,
@@ -90,6 +98,8 @@ impl Default for HudModel {
             controls: super::state::Controls::NONE,
             chapters: false,
             detail: false,
+            skip_secs: 10,
+            stats: false,
             bitmap_key: None,
             bitmap_by_key: no_bitmap,
         }

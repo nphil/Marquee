@@ -177,10 +177,10 @@ fn every_root_detail_line_fits_a_known_good_width() {
         }
     }
     assert_eq!(
-        checked, 12,
+        checked, 15,
         "expected a detail line on exactly Favorite libraries, Under posters, Video & playback, \
-         Subtitles, Audio & subtitles, Language, Bazarr, Automatically Sign In, Play trailers automatically, Privacy & \
-         data, Legal notices, and About PlxNative (this host is not webOS 1-3, so no Interface \
+         Subtitles, Audio & subtitles, Language, Bazarr, SpeechDock, Automatically Sign In, Play trailers automatically, Privacy & \
+         data, Legal notices, Record playback diagnostics, Save diagnostic log, and About Marquee (this host is not webOS 1-3, so no Interface \
          resolution row; its fit is `settings_text_fit_tests`) — got {checked}; \
          did the signed-in multi-user fixture stop building one of these rows?"
     );
