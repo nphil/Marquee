@@ -62,6 +62,8 @@ Q&A](https://github.com/nphil/Marquee/issues) or in a [GitHub
 issue](https://github.com/nphil/Marquee/issues), together with your TV model and
 webOS platform release.
 
+<a name="jail"></a>
+
 ## Playback reports `jail_missing_rtkmem`
 
 This is a specific problem on Realtek **k5lp/k3lp** sets: LG's Developer Mode sandbox on some of

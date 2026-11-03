@@ -132,7 +132,7 @@
     "many": "{heading} · {count} DE FAIXAS",
     "other": "{heading} · {count} FAIXAS"
   },
-  "widgets.reason.jail_help": "A reparação requer um televisor com root e acesso ao Homebrew Channel. Ajuda: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem",
+  "widgets.reason.jail_help": "A reparação requer um televisor com root e acesso ao Homebrew Channel. Ajuda: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#jail",
   "widgets.tracks.empty": "Sem faixas",
   "widgets.tracks.bytes": {
     "one": "{count} byte",

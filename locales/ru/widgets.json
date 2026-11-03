@@ -135,7 +135,7 @@
     "many": "{heading} · {count} ДОРОЖЕК",
     "other": "{heading} · {count} ДОРОЖКИ"
   },
-  "widgets.reason.jail_help": "Нужны root-доступ к телевизору и Homebrew Channel. Инструкция: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem",
+  "widgets.reason.jail_help": "Для исправления нужны root-доступ к телевизору и Homebrew Channel. Инструкция: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#jail",
   "widgets.tracks.empty": "Нет дорожек",
   "widgets.tracks.bytes": {
     "one": "{count} байт",

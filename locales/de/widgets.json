@@ -129,7 +129,7 @@
     "one": "{heading} · {count} SPUR",
     "other": "{heading} · {count} SPUREN"
   },
-  "widgets.reason.jail_help": "Die Reparatur braucht einen gerooteten Fernseher mit Homebrew Channel. Hilfe: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem",
+  "widgets.reason.jail_help": "Die Reparatur braucht einen gerooteten Fernseher mit Homebrew Channel. Hilfe: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#jail",
   "widgets.tracks.empty": "Keine Spuren",
   "widgets.tracks.bytes": {
     "one": "{count} Byte",

@@ -79,7 +79,7 @@
   "settings.consent.crash.document": "Plantages / Erreurs",
   "settings.consent.usage.document": "Statistiques / Utilisation",
   "settings.consent.example": "Voir un exemple de rapport",
-  "settings.consent.policy": "Infos de confidentialité",
+  "settings.consent.policy": "Confidentialité",
   "settings.consent.analytics_id": "Analytics ID",
   "settings.consent.crash_id": "ID du rapport de plantage",
   "settings.consent.delete": "Supprimer toutes les données locales",
