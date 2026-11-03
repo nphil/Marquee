@@ -592,7 +592,9 @@ fn account_preference_landing_seats_the_first_rows_and_retry_landing() {
     let _restore = RestoreProfile(previous);
     let user = plx_plex::plex::session::UserRef { id: 7, uuid: "preference-seat-fixture".into(),
         ..Default::default() };
-    plx_plex::plex::session::publish_profile_for_test(Some(user.clone()), 71);
+    // Marquee lists Audio & subtitles read-only while nobody is seated, so the fixture profile is seated.
+    let stamp = _sess.seated(&user.uuid, "composed-preference-load-seat-account");
+    plx_plex::plex::session::publish_seat_for_test(Some(user.clone()), 71, stamp);
     let (request, snapshot) = PreferenceRequest::fixture_for_test(user, 71, AudioPreferences::default());
     for fail_first in [false, true] {
         let (mut d, mut rig, id) = consent_opened(SettingsPage::AudioSubtitles);

@@ -723,10 +723,11 @@ impl Machine<InnerHost> for PreferencesPage {
                 let adopted = self.txn.adopt_shared();
                 let had_rows = self.form.table.n_rows() > 0;
                 // Marquee lists its local Remember audio choices row while the account rows load: until the
-                // account answers, a cursor on that row is the seat an empty table would not have had.
+                // account answers, a cursor on that row is the seat an empty table would not have had. The
+                // load's own status line reads "Loading…", so the in-flight receipt is what marks the wait.
                 let remember = RowId::Field(PickerKind::RememberAudioChoices).key().0;
                 let awaiting_account = self.state.kind == Kind::AudioSubtitles && self.txn.snapshot.is_none()
-                    && self.state.io.status.is_empty()
+                    && matches!(self.txn.pending, Some(Pending::Account(_)))
                     && cx.focus.current.is_some_and(|k| k.entry == self.entry && k.elem == remember);
                 let landed = self.txn.poll(&mut self.state.io, fx) != Landed::Nothing;
                 if landed || stale || started || adopted || self.state.quality != plx_media::route::quality()

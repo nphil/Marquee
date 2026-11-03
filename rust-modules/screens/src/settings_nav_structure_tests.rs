@@ -169,7 +169,9 @@ fn every_audio_and_subtitles_field_pushes_its_picker() {
     }
     let _restore = Restore(previous);
     let user = plx_plex::plex::session::UserRef { id: 7, uuid: "nav-structure-audio".into(), ..Default::default() };
-    plx_plex::plex::session::publish_profile_for_test(Some(user.clone()), 81);
+    // Marquee lists Audio & subtitles read-only while nobody is seated, so the fixture profile is seated.
+    let stamp = _sess.seated(&user.uuid, "nav-structure-audio-account");
+    plx_plex::plex::session::publish_seat_for_test(Some(user.clone()), 81, stamp);
     let (request, snapshot) = PreferenceRequest::fixture_for_test(user, 81, AudioPreferences::default());
     let items = super::super::preferences::nav_items_for_test(super::super::preferences::Kind::AudioSubtitles, Some(&AudioPreferences::default()));
     assert_eq!(items.len(), 5, "{items:?}");
@@ -401,7 +403,9 @@ fn every_pushed_picker_opens_on_its_checked_line_and_pops_to_its_row() {
         }
         let _restore = Restore(previous);
         let user = ses::UserRef { id: 7, uuid: "nav-structure-checked-lines".into(), ..Default::default() };
-        ses::publish_profile_for_test(Some(user.clone()), 81);
+        // Marquee lists Audio & subtitles read-only while nobody is seated, so the fixture profile is seated.
+        let stamp = _sess.seated(&user.uuid, "nav-structure-checked-lines-account");
+        ses::publish_seat_for_test(Some(user.clone()), 81, stamp);
         let language_line = |code: &str| 1 + plx_plex::plex::languages::picker().position(|l| l.code == code)
             .unwrap_or_else(|| panic!("{code} is in the language picker")) as u32;
         let prefs = AudioPreferences { stated_language: Some("fr".into()), subtitle_language: Some("de".into()),
