@@ -131,7 +131,7 @@
     "many": "{heading} · {count} TRACCE",
     "other": "{heading} · {count} TRACCE"
   },
-  "widgets.reason.jail_help": "Servono root e Homebrew Channel. Aiuto: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem.",
+  "widgets.reason.jail_help": "Servono root e Homebrew Channel. Aiuto: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#jail.",
   "widgets.tracks.empty": "Nessuna traccia",
   "widgets.tracks.bytes": {
     "one": "{count} byte",

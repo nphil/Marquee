@@ -134,7 +134,7 @@
     "many": "{heading} · {count} ŚCIEŻEK",
     "other": "{heading} · {count} ŚCIEŻKI"
   },
-  "widgets.reason.jail_help": "Naprawa wymaga zrootowanego TV i dostępu do Homebrew Channel. Pomoc: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem.",
+  "widgets.reason.jail_help": "Naprawa wymaga zrootowanego TV i dostępu do Homebrew Channel. Pomoc: github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#jail.",
   "widgets.tracks.empty": "Brak ścieżek",
   "widgets.tracks.bytes": {
     "one": "{count} bajt",

@@ -551,7 +551,7 @@
     }
   },
   "widgets.reason.jail_help": {
-    "value": "Repair requires a rooted TV and Homebrew Channel access. See github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#playback-reports-jail_missing_rtkmem for help.",
+    "value": "Repair requires a rooted TV and Homebrew Channel access. See github.com/nphil/Marquee/blob/main/docs/troubleshooting.md#jail for help.",
     "description": "reason jail_help"
   },
   "widgets.tracks.empty": {

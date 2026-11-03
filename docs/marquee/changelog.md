@@ -18,6 +18,7 @@
 - Dialogue Enhance on an Opus track whose source fails to open now goes through the usual recovery (HLS fallback or rollback) instead of ending in an error, and a slow open is no longer reported as a Load timeout.
 
 - Home prepares the next banner's text during idle time, moving cold text work out of banner transitions without redrawing the settled screen.
+- The playback-repair help note fits in every language again (shorter troubleshooting link), and the Russian privacy title and French consent row fit their columns.
 
 ## 0.10.0
 
