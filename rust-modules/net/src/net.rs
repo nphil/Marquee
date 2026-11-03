@@ -134,6 +134,10 @@ const CURLOPT_NOSIGNAL: c_int = 99;
 /// `curl/curl.h`; both have existed since libcurl 7.7. Set only by [`keypin::apply`].
 const CURLOPT_FRESH_CONNECT: c_int = 74;
 const CURLOPT_FORBID_REUSE: c_int = 75;
+/// `CURLOPT_SSL_SESSIONID_CACHE` (LONG + 150): 0 keeps this handle from resuming a cached TLS
+/// session and from caching its own. Read off `curl/curl.h`; it has existed since libcurl 7.16. Set
+/// only by [`keypin::apply`].
+const CURLOPT_SSL_SESSIONID_CACHE: c_int = 150;
 const CURLOPT_CONNECTTIMEOUT: c_int = 78;
 const CURLOPT_TIMEOUT: c_int = 13;
 const CURLOPT_TIMEOUT_MS: c_int = 155;
@@ -3115,8 +3119,8 @@ pub mod keypin {
     use super::{
         c_int, c_long, curl_easy_setopt_long, curl_easy_setopt_ptr, peer_leaf_pin, tls_verify_why,
         wall_clock_year, CURL, CURLOPT_CAINFO, CURLOPT_CERTINFO, CURLOPT_FORBID_REUSE,
-        CURLOPT_FRESH_CONNECT, CURLOPT_PINNEDPUBLICKEY, CURLOPT_SSL_VERIFYHOST,
-        CURLOPT_SSL_VERIFYPEER,
+        CURLOPT_FRESH_CONNECT, CURLOPT_PINNEDPUBLICKEY, CURLOPT_SSL_SESSIONID_CACHE,
+        CURLOPT_SSL_VERIFYHOST, CURLOPT_SSL_VERIFYPEER,
     };
     use std::collections::HashMap;
     use std::ffi::{c_void, CStr};
@@ -3836,8 +3840,11 @@ pub mod keypin {
     /// would be no certificate for [`confirm`] to read (the open would be refused as a pin
     /// mismatch), and the pin and the name would not have been checked for this request at all. It
     /// also covers libcurl 7.53.1, where the pinned key is not part of the connection-reuse match,
-    /// so a key-mode handle could otherwise ride a connection set up under different rules. The cost
-    /// is one TLS handshake per key-mode request, accepted because key mode is a degraded state
+    /// so a key-mode handle could otherwise ride a connection set up under different rules.
+    /// `CURLOPT_SSL_SESSIONID_CACHE` 0 makes that handshake a full one: a resumed TLS session
+    /// presents no certificate either, and libcurl 8.18 shares sessions between the handles of one
+    /// multi, so every seek of a media source in key mode failed as a pin mismatch (rc 90). The cost
+    /// is one full TLS handshake per key-mode request, accepted because key mode is a degraded state
     /// (a wrong clock) that the first strict success ends.
     ///
     /// # Safety
@@ -3853,6 +3860,7 @@ pub mod keypin {
             (CURLOPT_CERTINFO, 1),
             (CURLOPT_FRESH_CONNECT, 1),
             (CURLOPT_FORBID_REUSE, 1),
+            (CURLOPT_SSL_SESSIONID_CACHE, 0),
             (CURLOPT_SSL_VERIFYHOST, 2),
             (CURLOPT_SSL_VERIFYPEER, 0),
         ] {
