@@ -1708,8 +1708,12 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         return;
     }
     // The source failed to open before the Opus header existed, so Load was never issued and the
-    // sink never becomes ready: the ordinary failed-open ladder, ahead of the ctor wait.
+    // sink never becomes ready: the ordinary failed-open ladder, ahead of the ctor wait. A cold
+    // enhanced start owns its failure instead: the app retries it plain, without the enhancement.
     if eng.opus_source_failed() && SHARED.demux_failed.load(Acquire) {
+        if eng.defer_opus_source_failure() {
+            return;
+        }
         if crate::route::preview_request(ps) {
             finish_preview_open_failure(ps, pa);
             return;

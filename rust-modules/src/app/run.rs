@@ -1997,7 +1997,11 @@ fn pointer_on_bar(app: &App, x: f32, y: f32) -> bool {
 pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         park_on_decoder_release(app);
         if playback_may_run(app) {
-            if plx_media::player::engine::take_opus_metadata_refusal(&mut app.adapters.player) {
+            // A cold enhanced start that failed before its Load, on an invalid Opus header or a
+            // source that never opened, retries plain once at the same resume point.
+            if plx_media::player::engine::take_opus_metadata_refusal(&mut app.adapters.player)
+                || plx_media::player::engine::take_opus_source_failure(&mut app.adapters.player)
+            {
                 if !super::playback::retry_failed_playback(
                     &mut app.player.session,
                     &mut app.adapters.player,
@@ -5469,7 +5473,7 @@ mod lifecycle_regression_tests {
         }
     }
 
-    fn cold_enhancement_start_refusal(plain_also_refused: bool, opus_metadata_failure: bool) {
+    fn cold_enhancement_start_refusal(plain_also_refused: bool, opus_source_failure: bool) {
         use plx_plex::plex::{AudioEnhancements, serverinfo::Subscription};
         let _serial = plx_base::testlock::serial();
         let _prefs = EnhancementPrefs {
@@ -5478,7 +5482,7 @@ mod lifecycle_regression_tests {
         };
         let Some(mut rig) = Rig::serving_with(move |request| {
             if request.contains("/decision?") && !request.contains("hasMDE=1") {
-                let codec = if opus_metadata_failure { "opus" } else { "ac3" };
+                let codec = if opus_source_failure { "opus" } else { "ac3" };
                 return format!(r#"{{"MediaContainer":{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":1,"codec":"h264","decision":"copy"}},{{"streamType":2,"codec":"{codec}","decision":"transcode"}}]}}]}}]}}]}}}}"#);
             }
             queue_body(request, true).replace("aac", "ac3")
@@ -5493,17 +5497,18 @@ mod lifecycle_regression_tests {
         assert!(plx_media::route::arm_play_resume(&mut rig.app.player.session, 17_000_000_000));
         rig.resolve();
         assert!(plx_media::route::start_requested_enhancement(&rig.app.player.session), "fixture must resolve an enhanced route");
-        if !opus_metadata_failure {
+        if !opus_source_failure {
             assert_eq!(plx_media::route::cur_enhancement_label(&rig.app.player.session), Some("applied"));
             // Missing URL produces a synchronous refusal before an Engine exists.
             plx_media::route::clear_url(&mut rig.app.player.session);
             finish_landed_play(&mut rig.app, true);
         } else {
-            // The fixture serves JSON instead of media, so the Opus output metadata never arrives.
+            // The fixture serves JSON instead of media, so the enhanced source fails to open
+            // before any Opus header exists.
             finish_landed_play(&mut rig.app, true);
             assert!(rig.app.adapters.player.is_live(), "the enhanced attempt must launch first");
             let mut fr = Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view());
-            poll_until("Opus metadata refusal did not trigger recovery", || {
+            poll_until("the failed Opus source did not trigger recovery", || {
                 unsafe { playback_tick(&mut rig.app, &mut fr); }
                 plx_media::route::play_pending()
             });
@@ -5542,7 +5547,7 @@ mod lifecycle_regression_tests {
     }
 
     #[test]
-    fn cold_enhanced_opus_metadata_refusal_retries_plain() {
+    fn cold_enhanced_opus_source_failure_retries_plain() {
         cold_enhancement_start_refusal(false, true);
     }
 

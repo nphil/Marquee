@@ -288,10 +288,16 @@ impl Engine {
         self.opus_metadata_waiting.load(Ordering::Acquire)
     }
 
-    /// The source failed to open before any Opus header existed: an ordinary failed open, for the
-    /// recovery ladder, not an invalid header.
+    /// The source failed to open before any Opus header existed: an ordinary failed open, not an
+    /// invalid header.
     pub(super) fn opus_source_failed(&self) -> bool {
         self.opus_source_failed.load(Ordering::Acquire)
+    }
+
+    /// A cold enhanced start keeps its failed source for the app's plain retry
+    /// ([`take_opus_source_failure`]); any other Engine's goes to the failed-open ladder.
+    pub(super) fn defer_opus_source_failure(&self) -> bool {
+        self.opus_recovery_armed
     }
 }
 
@@ -307,6 +313,19 @@ pub fn arm_opus_metadata_recovery(pa: &mut super::adapter::PlayerAdapter, attemp
 pub fn take_opus_metadata_refusal(pa: &mut super::adapter::PlayerAdapter) -> bool {
     let Some(engine) = pa.engine() else { return false; };
     if engine.opus_recovery_armed && engine.opus_metadata_refused.swap(false, Ordering::AcqRel) {
+        engine.opus_recovery_armed = false;
+        true
+    } else {
+        false
+    }
+}
+
+/// Consume the armed Engine's failed source, once. A cold enhanced start whose source never
+/// opened is a failed enhanced start like a refused one, so the app retries it plain; disarmed,
+/// the failed source takes the failed-open ladder.
+pub fn take_opus_source_failure(pa: &mut super::adapter::PlayerAdapter) -> bool {
+    let Some(engine) = pa.engine() else { return false; };
+    if engine.opus_recovery_armed && engine.opus_source_failed() {
         engine.opus_recovery_armed = false;
         true
     } else {
@@ -6750,10 +6769,11 @@ mod off_frame_release_tests {
         stop_bufferfeed(&mut ps, &mut pa);
     }
 
-    /// A cold enhanced start deferred behind an Unload that fails to open its source goes the same
-    /// way: the engine reports the failed source and raises no header refusal.
+    /// A cold enhanced start deferred behind an Unload keeps its recovery owner. Its failed source is
+    /// no header refusal; the pump holds it for the app's plain retry, which takes it once. Disarmed
+    /// (a retry that could not run), it reaches the failed-open ladder like any failed source.
     #[test]
-    fn a_deferred_cold_enhanced_opus_source_failure_is_not_a_header_refusal() {
+    fn a_deferred_cold_enhanced_opus_source_failure_keeps_its_recovery_owner() {
         let _serial = plx_base::testlock::serial();
         let mut ps = crate::route::PlaybackSession::IDLE;
         let mut pa = arm(&ps);
@@ -6776,6 +6796,13 @@ mod off_frame_release_tests {
             if pa.is_live() { crate::player::pump(&mut ps, &mut pa, 0); }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
+        use crate::player::recovery::Phase;
+        crate::player::pump(&mut ps, &mut pa, 0);
+        assert_eq!(ps.open_recovery().phase(), Phase::Opening, "the ladder took a failure the start owns");
+        assert!(take_opus_source_failure(&mut pa), "the owner never received its failed source");
+        assert!(!take_opus_source_failure(&mut pa), "the failed source is taken once");
+        crate::player::pump(&mut ps, &mut pa, 0);
+        assert_ne!(ps.open_recovery().phase(), Phase::Opening, "a disarmed failed source never reached the ladder");
         stop_bufferfeed(&mut ps, &mut pa);
     }
 
@@ -7351,6 +7378,40 @@ mod load_in_flight_tests {
 
         SHARED.restart_native_load_clock(epoch);
         assert!(SHARED.native_load_elapsed(epoch).is_some_and(|e| e < crate::player::pump::NATIVE_LOAD_BUDGET));
+    }
+
+    /// Pump an Engine whose Opus header was invalid, with or without a cold enhanced start owning
+    /// it: whether the pump failed the Engine, and whether the app could take the refusal.
+    fn pump_invalid_opus_header(owned: bool) -> (bool, bool) {
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        SHARED.reset_session();
+        crate::route::reset_player_control_for_test(&ps);
+        crate::player::ffi_host::reset_native_lifecycle_for_test();
+        let _cleanup = Cleanup;
+        let mut pa = crate::player::adapter::PlayerAdapter::new(unsafe {
+            plx_base::task::MainThread::assume()
+        });
+        let mut eng = engine_loading(SHARED.begin_native_session().expect("native session"));
+        eng.opus_recovery_armed = owned;
+        eng.opus_metadata_waiting.store(true, std::sync::atomic::Ordering::Release);
+        eng.opus_metadata_refused.store(true, std::sync::atomic::Ordering::Release);
+        pa.install(eng);
+        SHARED.fail_demux(DemuxExitClass::LoadRefused);
+
+        crate::player::pump::pump(&mut ps, &mut pa, 1_000);
+        let failed = crate::player::state(&ps) == crate::player::PlaybackState::Error;
+        let taken = take_opus_metadata_refusal(&mut pa);
+        assert!(!take_opus_metadata_refusal(&mut pa), "the refusal is taken once");
+        (failed, taken)
+    }
+
+    /// An invalid Opus header is the one pre-Load refusal. A cold enhanced start owns it: the pump
+    /// holds it for the app's plain retry. An Engine nobody owns fails on it.
+    #[test]
+    fn an_invalid_opus_header_is_held_for_its_owner_and_fails_an_unowned_engine() {
+        let _serial = plx_base::testlock::serial();
+        assert_eq!(pump_invalid_opus_header(true), (false, true), "the cold enhanced start lost its refusal");
+        assert_eq!(pump_invalid_opus_header(false), (true, false), "an unowned invalid header left the Engine up");
     }
 
     /// `load-returned-log-is-conditional-on-loadcompleted-and-unbounded-after`: the OTHER half of

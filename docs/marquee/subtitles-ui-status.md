@@ -367,9 +367,11 @@ the 60-family and 100 Hz in LG’s 50-family; `refresh 120` does not change the 
   restore the prior route and position. The recovery is not seamless or a second decoder.
 - Cold enhanced startup waits nonblockingly for the selected demux output metadata. OpusHead carries
   channels, mapping and pre-skip; original media channels must not be guessed for transcoded output.
-  A refused cold enhanced start retries plain playback once at the retained position. Deferred unloads
-  retain that recovery owner; a refused plain start becomes Failed even before native Ready. Seven
-  focused cold-start/Opus checks passed; the successful enhanced path was exercised on the TV.
+  A cold enhanced start that is refused (an invalid Opus header included) or whose source fails to
+  open retries plain playback once at the retained position; any other failed open takes the
+  failed-open ladder. Deferred unloads retain that recovery owner; a refused plain start becomes
+  Failed even before native Ready. Seven focused cold-start/Opus checks passed; the successful
+  enhanced path was exercised on the TV.
 - Scene stills use authenticated Plex Part-index endpoints, not the photo transcoder. The image
   cache is memory-only; missing generated indexes show no still. The request deadline does not
   interrupt synchronous DNS resolution.
