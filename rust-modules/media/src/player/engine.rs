@@ -252,6 +252,8 @@ pub struct Engine {
     opus_start_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     opus_metadata_refused: std::sync::Arc<std::sync::atomic::AtomicBool>,
     opus_metadata_waiting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The demuxer closed its header channel: the source failed to open, so Load was never issued.
+    opus_source_failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     opus_payload_owner: std::sync::Arc<std::sync::OnceLock<std::ffi::CString>>,
     opus_recovery_armed: bool,
     pub report_th: Option<std::thread::JoinHandle<()>>, // /:/timeline progress reporter
@@ -278,6 +280,18 @@ impl Engine {
 
     pub(super) fn opus_metadata_refused(&self) -> bool {
         self.opus_metadata_refused.load(Ordering::Acquire)
+    }
+
+    /// Load is held back until the demuxer publishes the Opus header, so the Load budget has not
+    /// started and the wait is the demuxer open's own.
+    pub(super) fn opus_header_pending(&self) -> bool {
+        self.opus_metadata_waiting.load(Ordering::Acquire)
+    }
+
+    /// The source failed to open before any Opus header existed: an ordinary failed open, for the
+    /// recovery ladder, not an invalid header.
+    pub(super) fn opus_source_failed(&self) -> bool {
+        self.opus_source_failed.load(Ordering::Acquire)
     }
 }
 
@@ -1294,18 +1308,33 @@ fn with_opus_info(p: &str, channels: i64, head: &[u8]) -> Option<String> {
     })
 }
 
+/// What the demuxer's Opus header channel delivered.
+enum OpusHeader {
+    Ready(std::ffi::CString),
+    /// The stream's Opus layout is one the pipeline cannot be declared to feed.
+    Invalid,
+    /// The demuxer ended without publishing a header: the source failed to open.
+    SourceFailed,
+    Cancelled,
+}
+
 fn opus_payload_from_output(
     rx: std::sync::mpsc::Receiver<Option<(i64, Vec<u8>)>>,
     cancelled: &std::sync::atomic::AtomicBool,
     base: &str,
-) -> Option<std::ffi::CString> {
-    let (channels, head) = rx.recv().ok().flatten()?;
+) -> OpusHeader {
+    let received = rx.recv();
     if cancelled.load(Ordering::Acquire) {
-        return None;
+        return OpusHeader::Cancelled;
     }
-    let payload = with_opus_info(base, channels, &head)?;
+    let Ok(output) = received else { return OpusHeader::SourceFailed };
+    let Some((channels, head)) = output else { return OpusHeader::Invalid };
+    let Some(payload) = with_opus_info(base, channels, &head) else { return OpusHeader::Invalid };
     log(&format!("start_bufferfeed: opusInfo channels={channels}"));
-    std::ffi::CString::new(payload).ok()
+    match std::ffi::CString::new(payload) {
+        Ok(payload) => OpusHeader::Ready(payload),
+        Err(_) => OpusHeader::Invalid,
+    }
 }
 
 /// **Who owns the PCM a Load declares.** Audio the app decodes at 1x (FLAC, ALAC, LPCM, and a lossy codec the attempt decodes in
@@ -2109,6 +2138,7 @@ fn start_bufferfeed_inner(
     let opus_start_cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let opus_metadata_refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let opus_metadata_waiting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(wait_for_opus));
+    let opus_source_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let opus_payload_owner = std::sync::Arc::new(std::sync::OnceLock::new());
     if stream {
         // What the payload ACTUALLY declared, once, in the event log. Not test scaffolding: until
@@ -2236,24 +2266,35 @@ fn start_bufferfeed_inner(
     let opus_cancel = opus_start_cancelled.clone();
     let opus_refused = opus_metadata_refused.clone();
     let opus_waiting = opus_metadata_waiting.clone();
+    let opus_source_down = opus_source_failed.clone();
     let opus_payload_keepalive = opus_payload_owner.clone();
     let opus_payload = wait_for_opus.then(|| payload_c.to_string_lossy().into_owned());
     let load_th = plx_base::task::spawn("media", move || {
         if let (Some(rx), Some(base)) = (opus_rx, opus_payload) {
-            let payload = opus_payload_from_output(rx, &opus_cancel, &base);
-            if opus_cancel.load(Ordering::Acquire) {
-                return;
-            }
-            if let Some(payload) = payload {
-                opus_waiting.store(false, Ordering::Release);
-                let payload = opus_payload_keepalive.get_or_init(|| payload);
-                threads::load_thread(threads::SendPtr(payload.as_ptr() as *mut c_char), native_epoch, Some(route_attempt), audio_lead);
-            } else {
-                log("start_bufferfeed: selected output has no supported Opus layout; refusing the Load");
-                SHARED.mark_native_load_returned(native_epoch, None);
-                crate::route::publish_route_start_result(route_attempt, crate::route::RouteStartResult::StartFailed);
-                opus_refused.store(true, Ordering::Release);
-                SHARED.fail_demux(DemuxExitClass::LoadRefused);
+            match opus_payload_from_output(rx, &opus_cancel, &base) {
+                OpusHeader::Cancelled => {}
+                OpusHeader::Ready(payload) => {
+                    // The budget bounds the Load call, not the demuxer open that preceded it.
+                    SHARED.restart_native_load_clock(native_epoch);
+                    opus_waiting.store(false, Ordering::Release);
+                    let payload = opus_payload_keepalive.get_or_init(|| payload);
+                    threads::load_thread(threads::SendPtr(payload.as_ptr() as *mut c_char), native_epoch, Some(route_attempt), audio_lead);
+                }
+                OpusHeader::Invalid => {
+                    log("start_bufferfeed: selected output has no supported Opus layout; refusing the Load");
+                    SHARED.mark_native_load_returned(native_epoch, None);
+                    crate::route::publish_route_start_result(route_attempt, crate::route::RouteStartResult::StartFailed);
+                    opus_refused.store(true, Ordering::Release);
+                    SHARED.fail_demux(DemuxExitClass::LoadRefused);
+                }
+                OpusHeader::SourceFailed => {
+                    log("start_bufferfeed: the source failed before an Opus header; Load not issued");
+                    SHARED.mark_native_load_returned(native_epoch, None);
+                    // The demuxer names its own exit; this only guarantees the flag the pump keys on.
+                    SHARED.fail_demux(DemuxExitClass::Other);
+                    opus_waiting.store(false, Ordering::Release);
+                    opus_source_down.store(true, Ordering::Release);
+                }
             }
         } else {
             threads::load_thread(payload_ptr, native_epoch, Some(route_attempt), audio_lead);
@@ -2346,6 +2387,7 @@ fn start_bufferfeed_inner(
         opus_start_cancelled,
         opus_metadata_refused,
         opus_metadata_waiting,
+        opus_source_failed,
         opus_payload_owner,
         opus_recovery_armed: false,
         report_th,
@@ -5393,6 +5435,7 @@ mod prime_livelock_tests {
             opus_start_cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             opus_metadata_refused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             opus_metadata_waiting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            opus_source_failed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             opus_payload_owner: std::sync::Arc::new(std::sync::OnceLock::new()),
             opus_recovery_armed: false,
             report_th: None,
@@ -6576,8 +6619,10 @@ mod off_frame_release_tests {
         assert_ne!(crate::player::error_now(&ps).kind, crate::player::FailureKind::ReleaseTimeout);
     }
 
+    /// An Opus source that fails to open never yields a header, so Load is never issued. That is an
+    /// ordinary failed open and takes the recovery ladder, not a bad-header refusal.
     #[test]
-    fn unenhanced_opus_metadata_refusal_reaches_error_before_sink_ready() {
+    fn an_opus_source_that_fails_to_open_takes_the_recovery_ladder() {
         let _serial = plx_base::testlock::serial();
         let mut ps = crate::route::PlaybackSession::IDLE;
         let mut pa = arm(&ps);
@@ -6587,17 +6632,23 @@ mod off_frame_release_tests {
         assert!(matches!(start_bufferfeed_tracked(&mut ps, &mut pa), BufferfeedStartOutcome::Launched(_)));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while crate::player::state(&ps) != crate::player::PlaybackState::Error {
-            assert!(std::time::Instant::now() < deadline, "metadata refusal left the player connecting");
+            assert!(std::time::Instant::now() < deadline, "source failure left the player connecting");
             crate::player::pump(&mut ps, &mut pa, 0);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        crate::player::pump(&mut ps, &mut pa, 0);
-        assert_eq!(crate::player::state(&ps), crate::player::PlaybackState::Error);
+        assert_ne!(
+            ps.open_recovery().phase(),
+            crate::player::recovery::Phase::Opening,
+            "the failure never reached the failed-open ladder"
+        );
+        assert!(!take_opus_metadata_refusal(&mut pa), "a failed source is not a header refusal");
         stop_bufferfeed(&mut ps, &mut pa);
     }
 
+    /// A cold enhanced start deferred behind an Unload that fails to open its source goes the same
+    /// way: the engine reports the failed source and raises no header refusal.
     #[test]
-    fn deferred_cold_enhanced_opus_refusal_keeps_recovery_owner() {
+    fn a_deferred_cold_enhanced_opus_source_failure_is_not_a_header_refusal() {
         let _serial = plx_base::testlock::serial();
         let mut ps = crate::route::PlaybackSession::IDLE;
         let mut pa = arm(&ps);
@@ -6614,12 +6665,12 @@ mod off_frame_release_tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             poll_release(&mut ps, &mut pa, std::time::Instant::now());
-            if take_opus_metadata_refusal(&mut pa) { break; }
-            assert!(std::time::Instant::now() < deadline, "deferred start lost its recovery owner");
+            assert!(!take_opus_metadata_refusal(&mut pa), "a failed source raised a header refusal");
+            if pa.engine().is_some_and(|e| e.opus_source_failed()) { break; }
+            assert!(std::time::Instant::now() < deadline, "the deferred start never reported its failed source");
             if pa.is_live() { crate::player::pump(&mut ps, &mut pa, 0); }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        assert!(!take_opus_metadata_refusal(&mut pa), "refusal is consumed once");
         stop_bufferfeed(&mut ps, &mut pa);
     }
 
@@ -7164,6 +7215,37 @@ mod load_in_flight_tests {
         // Unblock and join the held load thread so the process doesn't leak it into later tests.
         crate::player::ffi_host::release_load_for_test();
         load_thread.join().expect("load_thread joins");
+    }
+
+    /// A Load held back for the Opus header has not been issued, so the demuxer's open does not
+    /// spend its budget: a slow open is not a LoadTimeout hang, and the budget runs from the call.
+    #[test]
+    fn the_load_budget_does_not_run_while_the_opus_header_is_awaited() {
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        let _serial = plx_base::testlock::serial();
+        SHARED.reset_session();
+        crate::route::reset_player_control_for_test(&ps);
+        crate::player::ffi_host::reset_native_lifecycle_for_test();
+        crate::player::ffi_host::force_clocksink_for_test(true);
+        let _cleanup = Cleanup;
+
+        let mut pa = crate::player::adapter::PlayerAdapter::new(unsafe {
+            plx_base::task::MainThread::assume()
+        });
+        let epoch = SHARED.begin_native_session().expect("native session");
+        let eng = engine_loading(epoch);
+        eng.opus_metadata_waiting.store(true, std::sync::atomic::Ordering::Release);
+        pa.install(eng);
+        assert!(SHARED.test_backdate_native_load_issued(epoch, crate::player::pump::NATIVE_LOAD_BUDGET));
+
+        crate::player::pump::pump(&mut ps, &mut pa, 1_000);
+        assert!(
+            !SHARED.load_failed.load(std::sync::atomic::Ordering::Acquire),
+            "a slow demuxer open was reported as a Load hang"
+        );
+
+        SHARED.restart_native_load_clock(epoch);
+        assert!(SHARED.native_load_elapsed(epoch).is_some_and(|e| e < crate::player::pump::NATIVE_LOAD_BUDGET));
     }
 
     /// `load-returned-log-is-conditional-on-loadcompleted-and-unbounded-after`: the OTHER half of
@@ -7977,7 +8059,9 @@ mod sink_envelope_tests {
         let head = b"OpusHead\x01\x02\x00\x00\x80\xbb\x00\x00\x00\x00\x00".to_vec();
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(Some((2, head.clone()))).unwrap();
-        let payload = opus_payload_from_output(rx, &cancelled, &base).unwrap();
+        let OpusHeader::Ready(payload) = opus_payload_from_output(rx, &cancelled, &base) else {
+            panic!("a selected header makes the payload");
+        };
         let value: serde_json::Value = serde_json::from_slice(payload.as_bytes()).unwrap();
         let info = &value["args"][0]["option"]["externalStreamingInfo"]["contents"]["opusInfo"];
         assert_eq!(info["channels"], 2);
@@ -7995,11 +8079,20 @@ mod sink_envelope_tests {
         assert!(with_opus_info(&base, 6, &invalid).is_none());
         let (tx, rx) = std::sync::mpsc::channel();
         drop(tx);
-        assert!(opus_payload_from_output(rx, &cancelled, &base).is_none());
+        assert!(
+            matches!(opus_payload_from_output(rx, &cancelled, &base), OpusHeader::SourceFailed),
+            "a closed channel is a failed source, not a bad header"
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(None).unwrap();
+        assert!(matches!(opus_payload_from_output(rx, &cancelled, &base), OpusHeader::Invalid));
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Some((6, head.clone()))).unwrap();
+        assert!(matches!(opus_payload_from_output(rx, &cancelled, &base), OpusHeader::Invalid));
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(Some((2, head))).unwrap();
         cancelled.store(true, Ordering::Release);
-        assert!(opus_payload_from_output(rx, &cancelled, &base).is_none());
+        assert!(matches!(opus_payload_from_output(rx, &cancelled, &base), OpusHeader::Cancelled));
     }
 
     /// The speed menu offers only what the Load can declare: on a set whose measured H.264 row is

@@ -1707,12 +1707,26 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         }
         return;
     }
+    // The source failed to open before the Opus header existed, so Load was never issued and the
+    // sink never becomes ready: the ordinary failed-open ladder, ahead of the ctor wait.
+    if eng.opus_source_failed() && SHARED.demux_failed.load(Acquire) {
+        if crate::route::preview_request(ps) {
+            finish_preview_open_failure(ps, pa);
+            return;
+        }
+        let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::SourceFailed, None, "");
+        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+            decode_in_app(ps, pa, offset_ns);
+        }
+        return;
+    }
     // wait for the media-thread ctor
     if unsafe { super::sink().ready(mt) } == 0 {
         // Same `!eng.preview_abandon` reasoning as the loadCompleted arms below: an abandoned
         // trailer-preview Load must not drive the D.1.4 deferral logging/budget clock just
         // because this earlier ctor-wait poll happens to run first.
-        if eng.stage == Stage::Loading && !eng.preview_abandon {
+        // Held for the Opus header: Load is not issued yet, so its budget has not started.
+        if eng.stage == Stage::Loading && !eng.preview_abandon && !eng.opus_header_pending() {
             native_load_gate_ready(eng.native_epoch);
         }
         set_state(PlaybackState::Connecting);

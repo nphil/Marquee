@@ -1192,6 +1192,17 @@ impl Shared {
         Some(epoch)
     }
 
+    /// Start `epoch`'s Load budget now. A Load held back for the Opus header spends the demuxer's
+    /// open before the call; the budget bounds the call, so the clock restarts as the call is issued.
+    pub fn restart_native_load_clock(&self, epoch: u32) {
+        let mut state = self.native_session.lock().unwrap_or_else(|e| e.into_inner());
+        if let NativeSessionPhase::Active { epoch: active, load_issued_at, .. } = &mut state.phase {
+            if epoch != 0 && *active == epoch {
+                *load_issued_at = Instant::now();
+            }
+        }
+    }
+
     /// Mark `epoch`'s Starfish `Load` call as returned (issue #74 D.1) — called by
     /// `threads::load_thread` immediately after the real, blocking `sf_load` call comes back,
     /// BEFORE `route::publish_route_start_result` runs (that mechanism stays separate: a route
