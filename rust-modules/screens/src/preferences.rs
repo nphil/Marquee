@@ -16,7 +16,7 @@
 //! session reads every tick already makes. The confirmed snapshot stays with the screens; workers
 //! return receipts and never mutate the UI, and a failed save leaves the confirmed value intact.
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::mpsc::{self, Receiver};
 use plx_plex::plex::session::{UiResolution, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, AutoSkipDelay, CreditsCountdownDelay};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
@@ -184,7 +184,15 @@ thread_local! {
     /// thread; this is how a picker starts from the snapshot its parent confirmed (no second
     /// load under a sliding page) and how the parent learns what the picker's save confirmed.
     static CONFIRMED: RefCell<(u64, Option<(PreferenceRequest, PreferenceSnapshot)>)> = const { RefCell::new((0, None)) };
+    /// The profile publication the field list last built its rows for (`Whose::now`, re-read on
+    /// every tick, and `RouteSurface::tick` ticks the page under a picker too). A picker of a local
+    /// per-profile setting leaves when it moves from the one it opened under, so a pick never lands
+    /// on another profile; the value arrives from the page beneath, not from the session registry.
+    static SHOWN_SEAT: Cell<u32> = const { Cell::new(0) };
 }
+
+/// `SHOWN_SEAT` now.
+fn shown_seat() -> u32 { SHOWN_SEAT.with(Cell::get) }
 
 /// A load/save in flight plus the confirmed account snapshot it edits — one implementation for
 /// the field list (initial load, Retry) and the pickers (writes).
@@ -447,6 +455,7 @@ impl PreferencesPage {
         self.skip_delays = (plx_media::route::intro_skip_delay(), plx_media::route::credits_skip_delay());
         self.dolby_vision = plx_media::route::dolby_vision_mode();
         self.whose = Whose::now();
+        SHOWN_SEAT.with(|seat| seat.set(self.whose.0));
         self.copy = copy_text(Subject::Page(self.state.kind), &self.state.io.status, self.state.direct_play, &self.whose.1).into_owned();
         let inputs = FieldListInputs {
             kind: self.state.kind, quality: self.state.quality, direct_play: self.state.direct_play,
@@ -737,6 +746,7 @@ impl Machine<InnerHost> for PreferencesPage {
                         if let Some(first) = (0..self.form.table.n_rows().max(0) as usize).filter_map(|i| self.form.id_at(i).copied())
                             .find(|&id| id != RowId::Field(PickerKind::RememberAudioChoices)) {
                             self.rebuild(Some(first));
+                            self.focus(fx);
                         }
                     }
                     // An empty loading table had no engine seat. Give its first landing (or

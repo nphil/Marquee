@@ -33,7 +33,7 @@
 //! once from `/dev/urandom` and persisted by [`session`](super::session).
 
 /// The product name. Unique, and not `Plex …` anything.
-pub const PRODUCT: &str = plx_platform::APP_NAME;
+pub const PRODUCT: &str = plx_platform::i18n::APP_NAME;
 
 /// The app version, handed in by the application: `plx_plex` cannot see `PLX_VERSION`, because a
 /// `cargo:rustc-env` reaches one crate only and the rule that derives it (`rust-modules/build.rs`)

@@ -1,5 +1,6 @@
 //! Destructive PMS deletion and account Watchlist cleanup. All calls block; use a worker.
 use super::{account::AccountClient, catalog_hex_of_guid, Client, ClientKey};
+use super::paging::{paged_path, PageReq};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,7 +96,7 @@ fn catalog_id(guid: &str, kind: MediaKind) -> Option<String> {
 
 // Returns Some(true) only with positive evidence that episodes remain. A missing count is unknown.
 fn episodes_remain<B: Backend>(backend: &mut B, show: &str, missing_is_empty: bool) -> Option<bool> {
-    let path = format!("/library/metadata/{show}/allLeaves?X-Plex-Container-Start=0&X-Plex-Container-Size=1");
+    let path = paged_path(&format!("/library/metadata/{show}/allLeaves"), PageReq { start: 0, size: 1 });
     let (status, body) = backend.get(&path)?;
     if status == 404 && missing_is_empty { return Some(false); }
     if !(200..300).contains(&status) { return None; }

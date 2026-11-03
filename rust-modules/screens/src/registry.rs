@@ -2729,7 +2729,10 @@ pub const SCREEN_SHAPES: &[&str] = &[
 // 0x9425_f33f_3f53_6aa5.
 // Opt-in playback diagnostics adds Root status and addressed command replies.
 // Replay anchors are re-recorded through tools/plxnative-rec rerecord.
-const SCREEN_SHAPES_PIN: u64 = 0x666e053447eaa2de;
+// Marquee's media deletion: `item_menu::SHAPE` gains `pending_delete:Option<str>` and the
+// confirmation alert's `alert_open`, `alert_choice` and `alert_scroll` before `table`. One bump; the
+// three replay fixtures were re-recorded against it; the previous pin was 0x666e_0534_47ea_a2de.
+const SCREEN_SHAPES_PIN: u64 = 0x5728_ae88_4208_713f;
 
 #[cfg(test)]
 mod arg_tests {

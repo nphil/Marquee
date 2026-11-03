@@ -405,6 +405,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
     fn regression_estimated_result_reaches_embedded_consumer() {
         use super::super::{ass, ass_source};
         let _guard = plx_base::testlock::serial();

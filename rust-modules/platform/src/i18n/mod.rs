@@ -5,6 +5,9 @@ use icu_plurals::{PluralCategory, PluralRules};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::OnceLock;
 
+/// Display name shared with the package title and localized messages (`@APP_NAME@`).
+pub const APP_NAME: &str = env!("PLX_DISPLAY_NAME");
+
 pub const CONTRIBUTE_URL: &str =
     "https://github.com/nphil/Marquee/blob/main/docs/localization.md";
 

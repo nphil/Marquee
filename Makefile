@@ -2315,6 +2315,10 @@ libass-host: $(LIBASS_HOST_STAGED)
 check-ass: $(LIBASS_HOST_STAGED)
 	cd rust-modules && CARGO_INCREMENTAL=0 PLXNATIVE_APP_DIR="$(CURDIR)/pkg" PATH="$$HOME/.cargo/bin:$$PATH" \
 	  cargo +$(RUST_TOOLCHAIN) test --lib -p plx_media player::ass::tests -- --include-ignored
+	# SpeechDock word timing through the same renderer: alignment results, embedded and sidecar
+	# sources. `restyle_timing` is a hand-run measurement of a local file, not a gate.
+	cd rust-modules && CARGO_INCREMENTAL=0 PLXNATIVE_APP_DIR="$(CURDIR)/pkg" PATH="$$HOME/.cargo/bin:$$PATH" \
+	  cargo +$(RUST_TOOLCHAIN) test --lib -p plx_media -- player::alignment:: player::ass_source:: player::sidecar:: --include-ignored --skip restyle_timing
 	# The same library's UI text surface (ABI 4): Arabic and Hebrew runs, gfx/src/rtl.rs.
 	cd rust-modules && CARGO_INCREMENTAL=0 PLXNATIVE_APP_DIR="$(CURDIR)/pkg" PATH="$$HOME/.cargo/bin:$$PATH" \
 	  cargo +$(RUST_TOOLCHAIN) test --lib -p plx_gfx rtl:: -- --include-ignored

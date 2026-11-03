@@ -961,6 +961,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
     fn current_cue_timing_native_consumer() {
         use super::super::reveal::AlignedWord;
         use ass::WordTiming;
@@ -1042,6 +1043,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
     fn regression_embedded_requires_displayed_ready_revision() {
         let _guard = plx_base::testlock::serial();
         super::super::sidecar::reset();

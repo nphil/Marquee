@@ -1217,7 +1217,7 @@ derived_output() {
     pkg/mali-irq-sample|pkg/sockprobe|pkg/logmprobe) ;;
     pkg/*.ipk|pkg/ipk.sha256|pkg/lib*-plx.so.*|pkg/libass-plx-host.so.0*|pkg/libass-plx.0.dylib.*.new) ;;
     pkg/*.dylib|pkg/symbols|pkg/.ffabi-ok|pkg/.ffabi-host-ok|pkg/.build-config|pkg/.config-local-stamp) ;;
-    pkg/.flavor|pkg/PlxNative.app|pkg/PlxNative-*|pkg/*.link.*|pkg/link-evidence) ;;
+    pkg/.flavor|pkg/*.app|pkg/*-*.zip|pkg/*-README.md|pkg/*.link.*|pkg/link-evidence) ;;
     ipkroot/*.tar.gz|ipkroot/debian-binary|ipkroot/data/usr|stub/*.so|*.o) ;;
     tools/node_modules|__pycache__|*/__pycache__|*.pyc|.DS_Store|*/.DS_Store) ;;
     .tv-*.pid|.tv-*.log) ;;                                     # a session's scratch, not its address or password

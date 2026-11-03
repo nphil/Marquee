@@ -80,7 +80,7 @@ impl PickerPage {
                 checked: u32::MAX, confirming: false, affirmative: false, alert_scroll: 0 },
             copy: String::new(), txn: Txn::new(true),
             alert: DecisionPrompt::new(ALERT_GROUP, ALERT, ALERT + 1, plx_platform::i18n::msg::settings_cancel_c(), plx_platform::i18n::msg::settings_playback_enable_force_c()),
-            profile_generation: plx_plex::plex::session::current_gen() };
+            profile_generation: shown_seat() };
         s.rebuild(true);
         s
     }
@@ -149,9 +149,15 @@ impl PickerPage {
         fx.push(Fx::Nav(plx_machine::machine::NavOp::Pop));
         fx.invalidate(plx_machine::present::Provenance::Input);
     }
+    /// A local per-profile setting whose profile changed under the list: a pick would land on the
+    /// other profile. The field list beneath publishes the profile it shows (`SHOWN_SEAT`).
+    fn seat_moved(&self) -> bool {
+        matches!(self.state.field, PickerKind::RememberAudioChoices | PickerKind::IntroSkipDelay | PickerKind::CreditsSkipDelay)
+            && self.profile_generation != shown_seat()
+    }
     fn activate(&mut self, key: u32, fx: &mut Effects<'_, InnerHost>) {
         if self.state.io.busy { return; }
-        if matches!(self.state.field, PickerKind::RememberAudioChoices | PickerKind::IntroSkipDelay | PickerKind::CreditsSkipDelay) && self.profile_generation != plx_plex::plex::session::current_gen() {
+        if self.seat_moved() {
             self.pop(fx);
             return;
         }
@@ -237,7 +243,7 @@ impl Machine<InnerHost> for PickerPage {
             ScreenEvent::Tick(t) => {
                 self.alert.update(t.dt());
                 let started = self.start_initial_load(fx);
-                if (self.account() && self.txn.stale()) || (matches!(self.state.field, PickerKind::RememberAudioChoices | PickerKind::IntroSkipDelay | PickerKind::CreditsSkipDelay) && self.profile_generation != plx_plex::plex::session::current_gen()) {
+                if (self.account() && self.txn.stale()) || self.seat_moved() {
                     // The profile changed under the list: nothing here can be saved any more. Leave;
                     // the field list beneath sees the same staleness and reloads.
                     self.txn.snapshot = None; self.txn.pending = None; self.state.io.busy = false;

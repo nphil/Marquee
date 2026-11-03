@@ -1,11 +1,15 @@
 //! Optional private compositor subtitle geometry hint. All Wayland calls are on SDL's thread.
 use std::os::raw::c_void;
 
+// The simulator has no compositor client, so only the device build and the tests use the cache.
+#[cfg(any(not(feature = "hostsim"), test))]
 type Bounds = (i32, i32, i32, i32, i32, i32);
 
+#[cfg(any(not(feature = "hostsim"), test))]
 #[derive(Default)]
 struct BoundsCache(Option<Bounds>);
 
+#[cfg(any(not(feature = "hostsim"), test))]
 impl BoundsCache {
     fn changed(&mut self, canvas_width: i32, canvas_height: i32, rect: Option<(i32, i32, i32, i32)>) -> Option<Bounds> {
         let (x, y, width, height) = rect.unwrap_or((0, 0, 0, 0));
@@ -23,26 +27,28 @@ mod wayland {
     use std::os::raw::{c_int, c_uint};
     use std::ptr::{addr_of, addr_of_mut, null, null_mut};
 
-    // These layouts and signatures match wl_interface and wl_message in wayland-util.h.
+    // These layouts and signatures match wl_interface and wl_message in wayland-util.h. The `Wl`
+    // names keep ci/check-statics-heap.py, which resolves types by simple name, off the app's
+    // heap-owning `Message` and `Client` types.
     #[repr(C)]
-    struct Message { name: *const c_char, signature: *const c_char, types: *const *const Interface }
+    struct WlMessage { name: *const c_char, signature: *const c_char, types: *const *const WlInterface }
     #[repr(C)]
-    struct Interface { name: *const c_char, version: c_int, method_count: c_int, methods: *const Message, event_count: c_int, events: *const Message }
+    struct WlInterface { name: *const c_char, version: c_int, method_count: c_int, methods: *const WlMessage, event_count: c_int, events: *const WlMessage }
 
-    static mut REGION_METHODS: [Message; 2] = [
-        Message { name: b"destroy\0".as_ptr().cast(), signature: b"\0".as_ptr().cast(), types: null() },
-        Message { name: b"set_bounds\0".as_ptr().cast(), signature: b"iiiiii\0".as_ptr().cast(), types: null() },
+    static mut REGION_METHODS: [WlMessage; 2] = [
+        WlMessage { name: b"destroy\0".as_ptr().cast(), signature: b"\0".as_ptr().cast(), types: null() },
+        WlMessage { name: b"set_bounds\0".as_ptr().cast(), signature: b"iiiiii\0".as_ptr().cast(), types: null() },
     ];
-    static mut REGION_INTERFACE: Interface = Interface {
+    static mut REGION_INTERFACE: WlInterface = WlInterface {
         name: b"lumatv_subtitle_region_v1\0".as_ptr().cast(), version: 1, method_count: 2,
         methods: addr_of!(REGION_METHODS).cast(), event_count: 0, events: null(),
     };
-    static mut GET_REGION_TYPES: [*const Interface; 2] = [addr_of!(REGION_INTERFACE), null()];
-    static mut MANAGER_METHODS: [Message; 2] = [
-        Message { name: b"destroy\0".as_ptr().cast(), signature: b"\0".as_ptr().cast(), types: null() },
-        Message { name: b"get_region\0".as_ptr().cast(), signature: b"no\0".as_ptr().cast(), types: addr_of!(GET_REGION_TYPES).cast() },
+    static mut GET_REGION_TYPES: [*const WlInterface; 2] = [addr_of!(REGION_INTERFACE), null()];
+    static mut MANAGER_METHODS: [WlMessage; 2] = [
+        WlMessage { name: b"destroy\0".as_ptr().cast(), signature: b"\0".as_ptr().cast(), types: null() },
+        WlMessage { name: b"get_region\0".as_ptr().cast(), signature: b"no\0".as_ptr().cast(), types: addr_of!(GET_REGION_TYPES).cast() },
     ];
-    static mut MANAGER_INTERFACE: Interface = Interface {
+    static mut MANAGER_INTERFACE: WlInterface = WlInterface {
         name: b"lumatv_subtitle_manager_v1\0".as_ptr().cast(), version: 1, method_count: 2,
         methods: addr_of!(MANAGER_METHODS).cast(), event_count: 0, events: null(),
     };
@@ -66,21 +72,26 @@ mod wayland {
     unsafe extern "C" fn remove(_: *mut c_void, _: *mut c_void, _: c_uint) {}
     static LISTENER: Listener = Listener { global, remove };
 
-    struct Client { manager: *mut c_void, region: *mut c_void, destroy: Destroy, marshal: Marshal, cache: BoundsCache }
-    static mut CLIENT: Option<Client> = None;
+    struct RegionClient { manager: *mut c_void, region: *mut c_void, destroy: Destroy, marshal: Marshal, cache: BoundsCache }
+    static mut CLIENT: Option<RegionClient> = None;
+
+    /// A libwayland symbol from the process's own scope (`libwayland-client` is already mapped).
+    fn sym(name: &str) -> Option<*mut c_void> {
+        plx_base::dynlib::Handle::self_handle().sym(name).filter(|p| !p.is_null())
+    }
 
     pub(super) unsafe fn init(display: *mut c_void, surface: *mut c_void) {
         release();
         if display.is_null() || surface.is_null() { return; }
         let (Some(ctor), Some(bind), Some(add_listener), Some(roundtrip), Some(destroy), Some(marshal), Some(registry_iface), Some(surface_iface)) = (
-            crate::system::wl_sym("wl_proxy_marshal_constructor"),
-            crate::system::wl_sym("wl_proxy_marshal_constructor_versioned"),
-            crate::system::wl_sym("wl_proxy_add_listener"),
-            crate::system::wl_sym("wl_display_roundtrip"),
-            crate::system::wl_sym("wl_proxy_destroy"),
-            crate::system::wl_sym("wl_proxy_marshal"),
-            crate::system::wl_sym("wl_registry_interface"),
-            crate::system::wl_sym("wl_surface_interface"),
+            sym("wl_proxy_marshal_constructor"),
+            sym("wl_proxy_marshal_constructor_versioned"),
+            sym("wl_proxy_add_listener"),
+            sym("wl_display_roundtrip"),
+            sym("wl_proxy_destroy"),
+            sym("wl_proxy_marshal"),
+            sym("wl_registry_interface"),
+            sym("wl_surface_interface"),
         ) else { return; };
         let ctor: Constructor = std::mem::transmute(ctor);
         let bind: Bind = std::mem::transmute(bind);
@@ -108,7 +119,7 @@ mod wayland {
             destroy(manager);
             return;
         }
-        CLIENT = Some(Client { manager, region, destroy, marshal, cache: BoundsCache::default() });
+        CLIENT = Some(RegionClient { manager, region, destroy, marshal, cache: BoundsCache::default() });
     }
 
     pub(super) unsafe fn release() {
