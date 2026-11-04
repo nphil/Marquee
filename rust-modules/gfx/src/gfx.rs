@@ -8186,24 +8186,27 @@ mod tests {
     use super::*;
 
     /// **[`enc_u8`] is `(enc(v).clamp(0, 1) * 255 + 0.5) as u8` to the bit, without a `powf`.**
-    /// Every threshold is checked from both sides (the last float below it and the threshold
-    /// itself), then a dense sweep of the whole working range and the edge values a colour
-    /// pipeline can hand it: negatives, zero, the linear toe, above white, infinities and NaN.
+    /// Every float within 1024 ULPs of each threshold is checked, which is where a `powf` rounding
+    /// wobble could put one float on the wrong side of a step; then a sweep of the whole working
+    /// range and the edge values a colour pipeline can hand it: negatives, zero, the linear toe,
+    /// above white, infinities and NaN. Away from a threshold both sides agree unless `enc` is off
+    /// by a whole code, which the sweep catches.
     #[test]
     fn the_quantised_encode_is_the_powf_encode_to_the_bit() {
         let reference = |v: f32| (enc(v).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         for &t in enc_u8_thresholds().iter() {
-            let below = f32::from_bits(t.to_bits() - 1);
-            assert_eq!(enc_u8(below), reference(below), "just below {t:e}");
-            assert_eq!(enc_u8(t), reference(t), "at {t:e}");
+            for b in t.to_bits() - 1024..=t.to_bits() + 1024 {
+                let v = f32::from_bits(b);
+                assert_eq!(enc_u8(v), reference(v), "at {v:e}, near the threshold {t:e}");
+            }
         }
-        // Every 16th float in [0, 1.25): ~67M values' worth of bit patterns, sampled 1 in 16.
+        // Every 1024th float in [0, 1.25): ~1M of its bit patterns.
         let (lo, hi) = (0.0f32.to_bits(), 1.25f32.to_bits());
         let mut b = lo;
         while b < hi {
             let v = f32::from_bits(b);
             assert_eq!(enc_u8(v), reference(v), "at {v:e}");
-            b += 16;
+            b += 1024;
         }
         for v in [
             -1.0,
@@ -10472,11 +10475,15 @@ mod shadow_band_tests {
         len + q[0].max(q[1]).min(0.0) - r
     }
 
-    /// `fs_shadow.frag`'s `CUT_AA`, parsed from the shader itself.
+    /// `fs_shadow.frag`'s `CUT_AA`, parsed from the shader itself, once: the grid tests ask for it
+    /// per sample point.
     fn cut_aa() -> f32 {
-        let src = super::FS_SHADOW.to_str().unwrap();
-        let at = src.find("#define CUT_AA").expect("the cut's ramp half-width");
-        src[at..].lines().next().unwrap().split_whitespace().nth(2).unwrap().parse().unwrap()
+        static AA: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| {
+            let src = super::FS_SHADOW.to_str().unwrap();
+            let at = src.find("#define CUT_AA").expect("the cut's ramp half-width");
+            src[at..].lines().next().unwrap().split_whitespace().nth(2).unwrap().parse().unwrap()
+        });
+        *AA
     }
 
     /// `fs_shadow.frag`'s discard test (the cut's coverage is exactly 0) for a fragment at `pos`
