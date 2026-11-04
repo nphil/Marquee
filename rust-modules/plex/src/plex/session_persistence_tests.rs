@@ -137,6 +137,7 @@ impl Drop for TempCandidates {
 /// behaviour below.
 #[test]
 fn every_durable_candidate_unwritable_and_no_fallback_offered_fails_the_save() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _g = plx_base::testlock::serial();
     let (_guard, candidates) = TempCandidates::new("watch-fail");
     let durable_only = candidates[..2].to_vec();
@@ -156,6 +157,7 @@ fn every_durable_candidate_unwritable_and_no_fallback_offered_fails_the_save() {
 /// `auth_paths()` and re-reads from disk exactly as a fresh boot would).
 #[test]
 fn runtime_dir_candidate_persists_and_reloads_when_every_durable_candidate_is_unwritable() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     use std::os::unix::fs::PermissionsExt;
     let _g = plx_base::testlock::serial();
     let (_guard, candidates) = TempCandidates::new("persist-reload");
@@ -296,6 +298,7 @@ fn write_atomic_reports_the_errno_and_parent_stat_per_candidate() {
 /// by reading the call site this change added, not by this test.
 #[test]
 fn refused_candidates_produce_evidence_when_a_later_one_still_succeeds() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _g = plx_base::testlock::serial();
     let (_guard, candidates) = TempCandidates::new("evidence-survives-success");
     redirect_candidates_for_test(Some(candidates.clone()));
@@ -1163,6 +1166,7 @@ impl Drop for CanonicalReadOverride {
 
 #[test]
 fn unavailable_helper_fallback_survives_cache_drop_and_restart() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let (_paths, candidates) = TempCandidates::new("blocked-restart");
     redirect_for_test(None);
@@ -1364,6 +1368,7 @@ impl Drop for RestorePermissions {
 
 #[test]
 fn signout_neutralizes_fallback_when_parent_refuses_unlink() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("unlink-refused");
     let (_paths, candidates) = TempCandidates::new("unlink-refused");
@@ -1389,6 +1394,7 @@ fn signout_neutralizes_fallback_when_parent_refuses_unlink() {
 
 #[test]
 fn signout_reports_candidate_that_cannot_be_unlinked_or_neutralized() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let file = TempSession::new("unlink-and-overwrite-refused");
     assert!(save_legacy_fallback_locked(&signed_in(), false, false).is_some());
@@ -1409,6 +1415,7 @@ fn signout_reports_candidate_that_cannot_be_unlinked_or_neutralized() {
 
 #[test]
 fn confirmed_clear_neutralizes_an_undeletable_migration_candidate() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("confirmed-neutralization");
     let (_paths, candidates) = TempCandidates::new("confirmed-neutralization");
@@ -1442,6 +1449,7 @@ fn neutralization_refuses_symlinks_and_shared_inodes_without_truncating_them() {
 
 #[test]
 fn p1_recovery_write_retires_the_previous_outage_snapshot() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("p1-recovery");
     let (_paths, candidates) = TempCandidates::new("p1-recovery");
@@ -1461,6 +1469,7 @@ fn p1_recovery_write_retires_the_previous_outage_snapshot() {
 
 #[test]
 fn p1_failed_signout_cannot_reopen_fallback_after_restart() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("p1-revocation");
     let (_paths, candidates) = TempCandidates::new("p1-revocation");
@@ -1524,6 +1533,7 @@ fn p1_authoritative_reads_retire_only_marked_files() {
 
 #[test]
 fn p1_retirement_failure_does_not_fail_or_replace_canonical_data() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("p1-retirement-failure");
     let (_paths, candidates) = TempCandidates::new("p1-retirement-failure");
@@ -1610,6 +1620,7 @@ fn signout_counts_an_absent_candidate_behind_a_read_only_mount_as_retired() {
 /// retries) on every attempt, and this process stays locally revoked.
 #[test]
 fn signout_keeps_reporting_a_present_candidate_behind_a_read_only_mount() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let file = TempSession::new("present-behind-erofs");
     assert!(save_legacy_fallback_locked(&signed_in(), false, false).is_some());
@@ -1749,6 +1760,7 @@ impl Drop for SyntheticKeymanager {
 
 #[test]
 fn p2_outage_reseals_the_latest_snapshot_over_a_marked_secure_fallback() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let (_paths, candidates) = TempCandidates::new("p2-reseal");
     redirect_for_test(None);
@@ -1768,6 +1780,7 @@ fn p2_outage_reseals_the_latest_snapshot_over_a_marked_secure_fallback() {
 
 #[test]
 fn p2_plaintext_winner_retires_older_lower_priority_marked_candidates() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let (_paths, candidates) = TempCandidates::new("p2-plaintext-stale");
     redirect_for_test(None);
@@ -1786,6 +1799,7 @@ fn p2_plaintext_winner_retires_older_lower_priority_marked_candidates() {
 
 #[test]
 fn p2_proven_signin_retries_failed_revocation_marker_removal() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("p2-marker-retry");
     let (_paths, candidates) = TempCandidates::new("p2-marker-retry");
@@ -1828,6 +1842,7 @@ fn marked_secure_fallback_never_downgrades_and_unmarked_secure_input_is_preserve
 
 #[test]
 fn sealed_fallback_retires_a_stale_candidate_even_when_it_cannot_be_unlinked() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let (_paths, candidates) = TempCandidates::new("sealed-stale-neutralization");
     redirect_for_test(None);
@@ -1844,6 +1859,7 @@ fn sealed_fallback_retires_a_stale_candidate_even_when_it_cannot_be_unlinked() {
 
 #[test]
 fn plaintext_cleanup_preserves_unmarked_input_and_does_not_fail_a_successful_save() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let (_paths, candidates) = TempCandidates::new("plaintext-cleanup-policy");
     redirect_for_test(None);
@@ -1867,6 +1883,7 @@ fn plaintext_cleanup_preserves_unmarked_input_and_does_not_fail_a_successful_sav
 
 #[test]
 fn new_signout_cancels_an_older_signins_pending_marker_removal() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("new-signout-marker-retry");
     let (_paths, candidates) = TempCandidates::new("new-signout-marker-retry");
@@ -1933,6 +1950,7 @@ fn fresh_outage_signin_after_signout_survives_restart() {
 
 #[test]
 fn sealed_marked_fallback_migrates_when_canonical_recovers_missing() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("sealed-fallback-recovered-missing");
     let (_paths, candidates) = TempCandidates::new("sealed-fallback-recovered-missing");
@@ -1954,6 +1972,7 @@ fn sealed_marked_fallback_migrates_when_canonical_recovers_missing() {
 
 #[test]
 fn marked_missing_migration_failure_stays_transient_and_retries() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     for sealed in [false, true] {
         let _root = TempCanonicalRoot::new("marked-migration-retry");
@@ -1983,6 +2002,7 @@ fn marked_missing_migration_failure_stays_transient_and_retries() {
 
 #[test]
 fn unmarked_sealed_missing_record_keeps_its_established_legacy_behavior() {
+    plx_base::skip_as_root!("needs a read-only directory or file to refuse a session write or unlink");
     let _serial = plx_base::testlock::serial();
     let _root = TempCanonicalRoot::new("unmarked-sealed-missing");
     let (_paths, candidates) = TempCandidates::new("unmarked-sealed-missing");

@@ -64,6 +64,7 @@ impl Drop for RestorePermissions {
 
 #[test]
 fn p1_adapter_does_not_complete_an_erase_with_an_incomplete_sweep() {
+    plx_base::skip_as_root!("needs a read-only session directory or file to refuse the write or unlink");
     let _serial = plx_base::testlock::serial();
     let file = ScratchSession::new("p1-adapter-erase");
     save(&signed_in());

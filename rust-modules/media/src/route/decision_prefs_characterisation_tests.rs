@@ -195,6 +195,7 @@ pub(super) const WRITE_FAILED: &str = "durable write failed (live value kept for
 /// would let every "non-Durable" test below pass for the wrong reason.
 #[test]
 fn the_unwritable_fixture_is_a_readable_session_whose_write_is_not_durable() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     use session::async_persistence::CompletionOutcome;
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-fixture");
@@ -230,6 +231,7 @@ fn the_unwritable_fixture_is_a_readable_session_whose_write_is_not_durable() {
 /// publishes and persists. No telemetry on either path.
 #[test]
 fn confirm_direct_play_mode_publishes_only_a_durable_write() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-confirm-dpm");
     sign_in(&session);
@@ -255,6 +257,7 @@ fn confirm_direct_play_mode_publishes_only_a_durable_write() {
 /// Durable pick and never on a refused one.
 #[test]
 fn confirm_next_episode_publishes_and_reports_once_only_on_a_durable_write() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-confirm-ne");
     sign_in(&session);
@@ -283,6 +286,7 @@ fn confirm_next_episode_publishes_and_reports_once_only_on_a_durable_write() {
 /// Skip interval: as next episode.
 #[test]
 fn confirm_skip_interval_publishes_and_reports_once_only_on_a_durable_write() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-confirm-skip");
     sign_in(&session);
@@ -311,6 +315,7 @@ fn confirm_skip_interval_publishes_and_reports_once_only_on_a_durable_write() {
 /// Continue Watching press: the same gate, no telemetry.
 #[test]
 fn confirm_deck_press_publishes_only_a_durable_write() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-confirm-deck");
     sign_in(&session);
@@ -336,6 +341,7 @@ fn confirm_deck_press_publishes_only_a_durable_write() {
 /// SUPPORTED rung, and the stored one is `Some(q)`.
 #[test]
 fn confirm_default_quality_publishes_only_a_durable_write() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-confirm-quality");
     sign_in(&session);
@@ -473,6 +479,7 @@ fn optimistic_tone_enhancements_and_quality_publish_before_the_write() {
 /// position; the line is `"<label>: durable write failed (live value kept for this session)"`).
 #[test]
 fn optimistic_failure_keeps_the_value_replies_false_and_logs() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-opt-failed");
     sign_in(&session);
@@ -498,6 +505,7 @@ fn optimistic_failure_keeps_the_value_replies_false_and_logs() {
 /// A reply is optional: with `None` a failure still keeps the value and still logs.
 #[test]
 fn optimistic_failure_without_a_reply_still_keeps_and_logs() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-opt-failed-noreply");
     sign_in(&session);
@@ -519,6 +527,7 @@ fn optimistic_failure_without_a_reply_still_keeps_and_logs() {
 /// attempted" are gone with the old door.
 #[test]
 fn tone_enhancements_and_quality_failures_keep_the_value_and_log_the_door_line() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-opt-failed-silent");
     sign_in(&session);
@@ -575,6 +584,7 @@ fn optimistic_size_and_position_never_republish_over_a_newer_pick() {
 /// The same when the completing write FAILS: no revert, no republish.
 #[test]
 fn optimistic_size_never_republishes_over_a_newer_pick_when_the_write_fails() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-opt-newer-failed");
     sign_in(&session);
@@ -717,6 +727,7 @@ fn a_durable_direct_play_write_republishes_over_an_already_published_auto() {
 /// And when the Confirm half is refused there is no second publish: the first one stands alone.
 #[test]
 fn a_refused_direct_play_write_does_not_republish_auto() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("prefs-char-play-automatically-refused");
     sign_in(&session);

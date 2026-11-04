@@ -33,6 +33,8 @@ pub mod testlock; // one lock for every test that touches a process-global
 #[cfg(any(test, feature = "test-support"))]
 pub mod testnet; // the one accept for a loopback test server whose listener is nonblocking
 #[cfg(any(test, feature = "test-support"))]
+pub mod testroot; // `skip_as_root!`: a test that needs the permission checks root does not make
+#[cfg(any(test, feature = "test-support"))]
 pub mod testscratch; // per-process scratch directories a test binary removes when it exits
 #[cfg(any(test, feature = "test-support"))]
 pub mod testrace; // N threads released by one barrier, joined with a deadline: the shared-state race test

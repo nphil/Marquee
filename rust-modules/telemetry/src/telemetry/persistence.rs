@@ -1174,6 +1174,7 @@ mod tests {
 
     #[test]
     fn failed_migration_write_keeps_the_legacy_source() {
+        plx_base::skip_as_root!("needs a read-only state directory to refuse the write");
         let _g = plx_base::testlock::serial();
         let fixture = Fixture::new("failed");
         let source = legacy_path(&fixture, "telemetry.json");
@@ -1204,6 +1205,7 @@ mod tests {
 
     #[test]
     fn failed_untrusted_barrier_leaves_writable_source_untrusted_on_next_launch() {
+        plx_base::skip_as_root!("needs a read-only state directory to refuse the write");
         let _g = plx_base::testlock::serial();
         let fixture = Fixture::new("widened-barrier-failure");
         let source = legacy_path(&fixture, "telemetry.json");

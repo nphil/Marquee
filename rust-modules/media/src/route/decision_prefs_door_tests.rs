@@ -19,6 +19,7 @@ use std::sync::mpsc;
 /// The Confirm rows publish and report on it; size and position reply `true`.
 #[test]
 fn confirm_repick_of_the_current_value_writes_nothing_and_reports_saved() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("door-repick");
     sign_in(&session);
@@ -65,6 +66,7 @@ fn confirm_repick_of_the_current_value_writes_nothing_and_reports_saved() {
 /// value; before, `update` swallowed the refusal and nothing was said.
 #[test]
 fn tone_write_failure_logs_and_keeps_the_live_value() {
+    plx_base::skip_as_root!("the Unwritable fixture needs a read-only directory to refuse the session write");
     let _g = plx_base::testlock::serial();
     let session = session::TempSession::new("door-tone-failure");
     sign_in(&session);

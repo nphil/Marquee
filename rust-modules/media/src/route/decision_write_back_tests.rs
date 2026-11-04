@@ -220,6 +220,7 @@ fn param<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 
 #[test]
 fn write_back_parks_at_landing_and_sends_on_the_first_frame() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(part(55002));
     let plan = w.resolve(Resolve::launch());
     assert_eq!(
@@ -299,6 +300,7 @@ fn write_back_once_per_play() {
 /// onto a transcode that PUTs its own selection (W3).
 #[test]
 fn a_parked_write_is_dropped_when_the_route_was_replaced_in_place() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     for replace in ["a transcode took over", "a different url landed"] {
         let mut w = world(part(55002));
         let plan = w.resolve(Resolve::launch());
@@ -319,6 +321,7 @@ fn a_parked_write_is_dropped_when_the_route_was_replaced_in_place() {
 /// dropped instead of overriding it.
 #[test]
 fn a_pick_before_the_first_frame_supersedes_the_parked_write() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(part(55002));
     let plan = w.resolve(Resolve::launch());
     w.land(plan);
@@ -335,6 +338,7 @@ fn a_pick_before_the_first_frame_supersedes_the_parked_write() {
 /// re-matched subtitle, instead of the write being dropped as "the selection changed".
 #[test]
 fn a_rematched_subtitle_is_written_with_the_parked_audio() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(part(55002));
     let plan = w.resolve(Resolve::launch());
     assert_eq!(plan.write_back, Some(WriteBack { audio: Some(36015), subtitle: Some(SubWrite::Id(55001)) }), "setup");
@@ -358,6 +362,7 @@ fn a_rematched_subtitle_is_written_with_the_parked_audio() {
 /// own selection (here none, so the field is omitted).
 #[test]
 fn a_rematched_subtitle_is_withheld_while_the_part_carries_an_external() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut model = part(0);
     model.subs.push((55009, true));
     let mut w = world(model);
@@ -378,6 +383,7 @@ fn a_rematched_subtitle_is_withheld_while_the_part_carries_an_external() {
 /// Off, and a write with no half left sends nothing.
 #[test]
 fn a_rematch_to_off_creates_no_explicit_off() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     // Audio and subtitle remembered: the subtitle half goes, the audio half is still sent.
     let mut w = world(part(0));
     let plan = w.resolve(Resolve::launch());
@@ -449,6 +455,7 @@ fn mp4_part(sub_sel: i64) -> PartModel {
 /// instead of PUTting on its own and making the write-back drop itself ("the selection changed").
 #[test]
 fn a_forced_track_found_by_the_containers_names_is_written_with_the_remembered_audio() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(mp4_part(55002));
     let plan = w.resolve(Resolve { memory: memory(Some(english()), Some(forced_only())), ..Resolve::launch() });
     assert_eq!(plan.sub_sid, 0, "setup: no title and no flag, so the resolve finds no forced track");
@@ -482,6 +489,7 @@ fn a_forced_track_found_by_the_containers_names_is_written_with_the_remembered_a
 /// `subtitleStreamID=0` would create an explicit Off nobody chose: the audio is sent alone.
 #[test]
 fn a_rematch_to_off_over_a_part_with_nothing_selected_sends_no_explicit_off() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut model = mp4_part(0);
     model.forced = vec![55001];
     let mut w = world(model);
@@ -505,6 +513,7 @@ fn a_rematch_to_off_over_a_part_with_nothing_selected_sends_no_explicit_off() {
 /// shows on screen; the remembered audio is still written, and moves nothing else.
 #[test]
 fn a_rematched_forced_track_is_not_written_while_the_part_carries_an_external() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut model = mp4_part(0);
     model.subs.push((55009, true));
     let mut w = world(model);
@@ -526,6 +535,7 @@ fn a_rematched_forced_track_is_not_written_while_the_part_carries_an_external() 
 /// its own selection, as any subtitle change on a direct play does.
 #[test]
 fn with_nothing_parked_the_rematch_commits_with_its_own_put() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(mp4_part(55002));
     let plan = w.resolve(Resolve { memory: memory(Some(english()), Some(forced_only())), ..Resolve::direct_retry() });
     assert_eq!(plan.write_back, None, "setup: a retry writes nothing back");
@@ -550,6 +560,7 @@ fn with_nothing_parked_the_rematch_commits_with_its_own_put() {
 /// screen: the server keeps the landing's selection while the screen shows the re-matched track.
 #[test]
 fn a_stale_parked_write_does_not_swallow_the_rematchs_put_when_the_route_changed() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(mp4_part(55002));
     let plan = w.resolve(Resolve { memory: memory(Some(english()), Some(forced_only())), ..Resolve::launch() });
     w.land(plan);
@@ -576,6 +587,7 @@ fn a_stale_parked_write_does_not_swallow_the_rematchs_put_when_the_route_changed
 /// owed re-match.
 #[test]
 fn a_stale_parked_write_does_not_swallow_the_rematchs_put_after_an_audio_pick() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(mp4_part(55002));
     let forced_english = SubtitleMemo::Track(SubtitleTrackMemo {
         lang: "eng".into(),
@@ -614,6 +626,7 @@ fn a_stale_parked_write_does_not_swallow_the_rematchs_put_after_an_audio_pick() 
 /// with the download. The re-matched subtitle is still shown on screen.
 #[test]
 fn an_unparked_rematch_writes_nothing_while_the_part_carries_an_external() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut model = part(0);
     model.subs.push((55009, true));
     let mut w = world(model);
@@ -765,6 +778,7 @@ fn audio_only_write_back_keeps_a_server_selected_download() {
 /// remembered audio must still be written, naming the download unchanged.
 #[test]
 fn audio_only_write_back_survives_a_sidecar_the_plan_does_not_name() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut model = part(55009);
     model.subs.push((55009, true));
     let mut w = world(model);
@@ -865,6 +879,7 @@ fn forced_only_writes_the_forced_track_or_zero() {
 
 #[test]
 fn write_back_failure_is_logged_and_playback_continues() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(part(55002));
     w.pms.set_fault(true);
     let plan = w.resolve(Resolve::launch());
@@ -920,6 +935,7 @@ fn manual_pick_after_the_first_frame_lands_last() {
 /// picks share the queue.
 #[test]
 fn queued_put_is_dropped_after_a_profile_switch() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let w = world(part(55002));
     let client = plx_plex::plex::client_for(w.sid).expect("the registered slot");
     // Hold the worker inside a first request so the second one sits queued.
@@ -950,6 +966,7 @@ fn queued_put_is_dropped_after_a_profile_switch() {
 /// The same drop, for a write-back, names itself in the log.
 #[test]
 fn a_queued_write_back_is_dropped_after_a_profile_switch() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(part(55002));
     let plan = w.resolve(Resolve::launch());
     w.land(plan);
@@ -996,6 +1013,7 @@ fn a_queued_put_survives_a_token_refresh_for_the_same_user() {
 /// either one tells the two apart; this row grades the pair together.
 #[test]
 fn a_queued_put_is_dropped_when_the_slot_is_re_pointed_at_a_new_client() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let w = world(part(55002));
     let first = plx_plex::plex::client_for(w.sid).expect("the registered slot");
     let first_instance = first.instance_gen();
@@ -1023,6 +1041,7 @@ fn a_queued_put_is_dropped_when_the_slot_is_re_pointed_at_a_new_client() {
 
 #[test]
 fn a_parked_write_is_dropped_while_the_memory_note_is_up() {
+    plx_base::skip_unless_log_is_ours!(event_log());
     let mut w = world(part(55002));
     let plan = w.resolve(Resolve::launch());
     w.land(plan);

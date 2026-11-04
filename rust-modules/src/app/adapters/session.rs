@@ -1595,6 +1595,7 @@ mod tests {
     /// completes.
     #[test]
     fn a_clear_that_leaves_a_credential_retries_with_capped_backoff_and_never_gives_up() {
+        plx_base::skip_as_root!("needs a read-only session directory or file to refuse the write or unlink");
         use std::os::unix::fs::PermissionsExt;
         let _serial = plx_base::testlock::serial();
         let session = plx_plex::plex::session::TempSession::new("erase-capped-backoff");
@@ -1810,6 +1811,7 @@ mod tests {
     /// absent-commit-detail arm the old inline branch imitated.
     #[test]
     fn the_bridge_reports_a_failed_write_as_failed_not_durable() {
+        plx_base::skip_as_root!("needs a read-only session directory or file to refuse the write or unlink");
         use plx_session::auth::owner::{CommitDelta, CredentialPatch, Identity, Pending, PendingCommit,
             SessionInit, SessionMachine, StreamPhase};
         use std::os::unix::fs::PermissionsExt;
