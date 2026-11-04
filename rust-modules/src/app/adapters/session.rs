@@ -1504,7 +1504,8 @@ mod tests {
         let plan = CommitPlan { authority: plx_plex::plex::session::SaveAuthority::FreshReauthentication,
             ..queued_plan(&plx_plex::plex::session::load()) };
         enqueue_test_commit(&mut adapter, plan);
-        assert!(adapter.take_committed().is_none(), "admitted, not yet run");
+        adapter.submit_commit();
+        assert!(adapter.commits.front().unwrap().ticket.is_some(), "the finished erase no longer holds the commit");
         plx_base::storage_worker::drain_for_test();
         let completed = adapter.take_committed().expect("the new sign-in's commit runs");
         assert!(matches!(completed.disk, Ok(Some(_))), "the new credential is written");
