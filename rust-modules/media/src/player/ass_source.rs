@@ -1633,36 +1633,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_backward_seek_after_a_deep_read_keeps_the_events_at_the_target() {
+    /// A store read 200 events past the `MAX_EVENTS` window, so events 0..200 have been retired.
+    fn read_past_the_window() -> (Store, u64, i64) {
         let mut s = Store::new();
         let g = s.begin("fixture", vec![(0, TrackHeader::Authored(b"header".to_vec()))], vec![]);
-        // A typeset-heavy file read 30 000 events in; the window holds the latest 8 192.
-        for n in 0..30_000 {
+        let read = MAX_EVENTS as i64 + 200;
+        for n in 0..read {
             s.push(g, 0, timed(n), 0);
         }
-        // The viewer rewinds to event 10 000 (the floor follows the rebased clock).
+        (s, g, read)
+    }
+
+    #[test]
+    fn a_backward_seek_after_a_deep_read_keeps_the_events_at_the_target() {
+        let (mut s, g, _) = read_past_the_window();
+        assert!(!embedded(&s, 0).contains(&timed(100)), "the seek target left the window");
+        // The viewer rewinds to event 100 (the floor follows the rebased clock).
         s.seek(g);
-        let floor_ms = 10_000_000 - 62_000;
-        for n in 10_000..10_100 {
+        let floor_ms = 100_000 - 62_000;
+        for n in 100..150 {
             s.push(g, 0, timed(n), floor_ms);
         }
         let held = embedded(&s, 0);
-        for n in 10_000..10_100 {
+        for n in 100..150 {
             assert!(held.contains(&timed(n)), "event {n} at the seek target was lost");
         }
-        assert!(held.len() <= 8192);
+        assert!(held.len() <= MAX_EVENTS);
     }
 
     #[test]
     fn duplicates_after_a_seek_are_not_doubled_and_the_index_tracks_evictions() {
-        let mut s = Store::new();
-        let g = s.begin("fixture", vec![(0, TrackHeader::Authored(b"header".to_vec()))], vec![]);
-        for n in 0..20_000 {
-            s.push(g, 0, timed(n), 0);
-        }
+        let (mut s, g, read) = read_past_the_window();
         s.seek(g);
-        for n in 19_000..20_000 {
+        for n in read - 1000..read {
             s.push(g, 0, timed(n), 0);
         }
         let held = embedded(&s, 0);
