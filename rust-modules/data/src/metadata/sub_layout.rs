@@ -73,7 +73,7 @@ pub struct SubTrack {
     pub lang: String,
     /// What the row reads, in plain words: the language, then in brackets only what tells it
     /// apart: a region, what the track carries ("English (dub)", "English (on-screen text)") and,
-    /// when it would otherwise read like a built-in track, "downloaded". Never a format, an
+    /// when a downloaded track would otherwise read the same, "built-in". Never a format, an
     /// acronym or the file's own title.
     pub label: String,
     /// The rank kind: a title naming a dub or signs and songs counts as dub or on-screen text.
@@ -262,7 +262,7 @@ fn sub_tracks(
     offered: &[usize],
     names: &super::track_names::TrackNames,
 ) -> Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> {
-    // The label before any "downloaded": language, region, variant.
+    // The label before any "built-in": language, region, variant.
     let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>, Vec<&'static str>, Option<String>, bool)> = offered
         .iter()
         .filter_map(|&i| {
@@ -283,14 +283,15 @@ fn sub_tracks(
             Some((track, group, key, words, region, s.external))
         })
         .collect();
-    // A downloaded track that reads like a built-in one says so.
+    // A built-in track that reads like a downloaded one says so: the downloaded one is the
+    // automatic pick (`route::plan::follow_audio`), so it keeps the plain name.
     let mixed: Vec<bool> = out
         .iter()
         .map(|(t, .., ext)| out.iter().any(|(o, .., o_ext)| o.i != t.i && o.label == t.label && o_ext != ext))
         .collect();
     for ((t, _, _, words, region, external), mixed) in out.iter_mut().zip(mixed) {
-        if mixed && *external {
-            words.push(plx_platform::i18n::msg::widgets_tracks_variant_downloaded());
+        if mixed && !*external {
+            words.push(plx_platform::i18n::msg::widgets_tracks_variant_built_in());
             t.label = natural_label(&t.lang, region.as_deref(), words);
         }
     }
@@ -647,7 +648,7 @@ mod tests {
 
     /// **Rows read in plain words**: the full translation is its language; a dub transcript (an
     /// SDH flag, or a title naming SDH or a dub), a forced or signs-and-songs track, a region and a
-    /// downloaded twin of a built-in track each add a word; no format, acronym or title shows.
+    /// built-in twin of a downloaded track each add a word; no format, acronym or title shows.
     #[test]
     fn rows_read_in_plain_words() {
         let mut subs = vec![
@@ -669,8 +670,8 @@ mod tests {
         };
         let own = |s: &str| s.to_string();
         assert_eq!(labels("English"), [
-            (1, own("English"), None),
-            (2, own("English (downloaded)"), None),
+            (1, own("English (built-in)"), None),
+            (2, own("English"), None),
             (3, own("English (dub)"), Some(1)),
             (4, own("English (dub)"), Some(2)),
             (0, own("English (on-screen text)"), None),

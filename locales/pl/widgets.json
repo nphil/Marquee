@@ -343,6 +343,6 @@
   "widgets.tracks.variant_dub": "dubbing",
   "widgets.tracks.variant_on_screen": "plansze",
   "widgets.tracks.variant_commentary": "komentarz",
-  "widgets.tracks.variant_downloaded": "pobrane",
-  "widgets.tracks.sub_label": "{language} ({detail})"
+  "widgets.tracks.sub_label": "{language} ({detail})",
+  "widgets.tracks.variant_built_in": "wbudowane"
 }

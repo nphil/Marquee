@@ -501,6 +501,12 @@ fn an_automatic_subtitle_follows_the_audio() {
     ]);
     assert_eq!(ladder(&sidecars, "eng", None).pick, Some((9, -1)));
     assert_eq!(ladder(&sidecars, "jpn", None).pick, None, "the server's own sidecar stands");
+    let downloaded = episode(vec![
+        server_selected(text_sub(1, "eng", "Dialogue")),
+        Stream { key: "/library/streams/8".into(), ..sub(8, 8, "eng", true) },
+    ]);
+    assert_eq!(ladder(&downloaded, "jpn", None).pick, Some((8, -1)), "a downloaded translation outranks the built-in one");
+    assert_eq!(ladder(&downloaded, "eng", None).pick, Some((8, -1)), "and is the English fallback with no dub transcript");
 
     let signs = episode(vec![server_selected(text_sub(1, "eng", "Signs & Songs")), cc_sidecar(9)]);
     assert_eq!(ladder(&signs, "eng", None).pick, Some((1, 0)), "on-screen text is not followed");

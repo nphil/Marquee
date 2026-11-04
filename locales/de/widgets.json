@@ -335,6 +335,6 @@
   "widgets.tracks.variant_dub": "Synchro",
   "widgets.tracks.variant_on_screen": "Einblendungen",
   "widgets.tracks.variant_commentary": "Kommentar",
-  "widgets.tracks.variant_downloaded": "heruntergeladen",
-  "widgets.tracks.sub_label": "{language} ({detail})"
+  "widgets.tracks.sub_label": "{language} ({detail})",
+  "widgets.tracks.variant_built_in": "eingebettet"
 }

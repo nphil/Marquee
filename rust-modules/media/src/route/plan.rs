@@ -3728,8 +3728,9 @@ fn follow_audio_pick(
 /// **The audio follow of an automatic subtitle**: within the language of `base`, the track that
 /// matches the audio playing. Audio in that language prefers the dub transcript (`SubTraits::dub`:
 /// an SDH/CC flag, which is how PMS marks a `.cc`/`.sdh` sidecar, or a name saying SDH, CC, Dub or
-/// Dubtitle); any other audio the full translation (not forced, signs and songs, dub or commentary).
-/// An embedded track the client renders and a sidecar it draws (ordinal -1) both qualify. `base`
+/// Dubtitle); any other audio, and that audio when no dub transcript exists, the full translation
+/// (not forced, signs and songs, dub or commentary), a downloaded one over a built-in one. An
+/// embedded track the client renders and a sidecar it draws (ordinal -1) both qualify. `base`
 /// stands when it is forced, signs and songs or a commentary, when the audio's language is unknown,
 /// or when no track fits better.
 pub(super) fn follow_audio(subs: &[plx_data::metadata::Stream], audio_lang: &str, base: (i64, i32)) -> (i64, i32) {
@@ -3738,19 +3739,29 @@ pub(super) fn follow_audio(subs: &[plx_data::metadata::Stream], audio_lang: &str
     if traits.forced || traits.signs || traits.commentary || audio_lang.is_empty() {
         return base;
     }
-    let dub = lang_matches(&b.lang_code, audio_lang);
-    let fits = |t: SubTraits| !t.forced && !t.signs && !t.commentary && t.dub == dub;
-    if fits(traits) {
-        return base;
+    let fits = |t: SubTraits, dub: bool| !t.forced && !t.signs && !t.commentary && t.dub == dub;
+    let first = |dub: bool, external: Option<bool>| {
+        (0..subs.len())
+            .filter(|&i| {
+                let s = &subs[i];
+                s.id > 0 && external.is_none_or(|e| s.external == e)
+                    && lang_matches(&b.lang_code, &s.lang_code) && fits(sub_traits(s), dub)
+            })
+            .find_map(|i| {
+                let s = &subs[i];
+                let drawable = if s.external { s.sidecar_renderable() } else { embedded_subtitle_renderable(&s.codec) };
+                drawable.then(|| (s.id, plx_data::metadata::sub_render_ordinal(subs, i)))
+            })
+    };
+    if lang_matches(&b.lang_code, audio_lang) {
+        if fits(traits, true) {
+            return base;
+        }
+        if let Some(dub) = first(true, None) {
+            return dub;
+        }
     }
-    (0..subs.len())
-        .filter(|&i| subs[i].id > 0 && lang_matches(&b.lang_code, &subs[i].lang_code) && fits(sub_traits(&subs[i])))
-        .find_map(|i| {
-            let s = &subs[i];
-            let drawable = if s.external { s.sidecar_renderable() } else { embedded_subtitle_renderable(&s.codec) };
-            drawable.then(|| (s.id, plx_data::metadata::sub_render_ordinal(subs, i)))
-        })
-        .unwrap_or(base)
+    first(false, Some(true)).or_else(|| first(false, Some(false))).unwrap_or(base)
 }
 
 /// Software feed formats and Dolby Vision declaration support. Forced mode bypasses device bounds

@@ -1461,16 +1461,16 @@
     "value": "commentary",
     "description": "Subtitles panel of the player's track selector, in brackets after a language: \"English (commentary)\". The track transcribes a commentary. Lower case."
   },
-  "widgets.tracks.variant_downloaded": {
-    "value": "downloaded",
-    "description": "Subtitles panel of the player's track selector, in brackets after a language: \"English (downloaded)\". Tells a subtitle file stored beside the video apart from a built-in track that would otherwise read the same. Lower case."
-  },
   "widgets.tracks.sub_label": {
     "value": "{language} ({detail})",
-    "description": "Subtitles panel of the player's track selector: a subtitle row's name. {language} is the language name, {detail} the plain words that tell the track apart, comma-separated (a region, \"dub\", \"on-screen text\", \"downloaded\").",
+    "description": "Subtitles panel of the player's track selector: a subtitle row's name. {language} is the language name, {detail} the plain words that tell the track apart, comma-separated (a region, \"dub\", \"on-screen text\", \"built-in\").",
     "args": {
       "language": "str",
       "detail": "str"
     }
+  },
+  "widgets.tracks.variant_built_in": {
+    "value": "built-in",
+    "description": "Subtitles panel of the player's track selector, in brackets after a language: \"English (built-in)\". Tells a subtitle track stored inside the video file apart from a downloaded subtitle file that would otherwise read the same. Lower case."
   }
 }
