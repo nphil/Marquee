@@ -633,6 +633,8 @@ The detail page's accessibility chips now read "Subtitles" and "Audio descriptio
 `12-filmography-detail-return` was refused on the first measurement it had never taken (`replay:
 REFUSED — replay measurement table miss`, both modes), while `1-boot-home-chip-grid` and
 `6-settings-family` stayed SAME. Only the Flow 12 recording segment was replaced
-(`tests/focusfp.sh --rec --only 12`, `tools/plxnative-rec check`), the manifest and anchor flag
-kept; "CC", no longer drawn by any recording, leaves the closed alphabet ("Subtitles" is already in
-it).
+(`tests/focusfp.sh --rec --only 12` on a debug simulator, `tools/plxnative-rec check`), the manifest
+and anchor flag kept, and the alphabet did not move. A release simulator records a different
+`state_fp` (14932426646651267467 against 4453049476616702048), so only a debug build can record.
+`tests/focusfp.sh --targets` and `--resolve` replay it `verdict=SAME` with every difference counter
+at zero.
