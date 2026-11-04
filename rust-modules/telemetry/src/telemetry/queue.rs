@@ -334,11 +334,16 @@ mod tests {
     #[test]
     fn at_the_byte_cap_sessions_are_dropped_before_crash_reports() {
         let session = rec("sess", Category::Errors, br#"{"attrs":{"release":"r"},"did":"d","sid":"s","started":"t"}"#);
-        // The largest crash body for which four crash reports fit and no session does.
-        let mut n = 90_000;
-        while 4 * encode(&rec("c", Category::Errors, &vec![b'x'; n + 3])).unwrap().len() <= MAX_BYTES {
-            n += 3;
+        // The largest crash body, in 3-byte steps from 90 000, for which four crash reports fit and
+        // no session does. The encoded length grows with the body, so a binary search finds it.
+        let fits = |k: usize| 4 * encode(&rec("c", Category::Errors, &vec![b'x'; 90_000 + 3 * k + 3])).unwrap().len() <= MAX_BYTES;
+        // At k = MAX_BYTES / 12 the body alone is over a quarter of the cap.
+        let (mut lo, mut hi) = (0, MAX_BYTES / 12);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if fits(mid) { lo = mid + 1 } else { hi = mid }
         }
+        let n = 90_000 + 3 * lo;
         let crash = |id: &str| rec(id, Category::Errors, &vec![b'x'; n]);
         let all = vec![crash("c1"), crash("c2"), crash("c3"), crash("c4"), session];
         let (kept, dropped) = trim(all);
