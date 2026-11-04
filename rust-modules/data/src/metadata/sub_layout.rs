@@ -64,21 +64,6 @@ pub fn image_codec_badge(codec: &str) -> Option<&'static str> {
     }
 }
 
-/// A badge a track row may show. At most ONE of Forced / SDH / External (`player.html:954`'s
-/// priority: FORCED > SDH > EXTERNAL), and — owner, 2026-10-01 — an IMAGE subtitle always also
-/// carries its codec ("PGS"), so the format reads on an SDH or forced bitmap track too; a text
-/// subtitle shows no format. Hashable because it is part of the "identical tracks" key
-/// [`SubTrack::ordinal`] is counted over.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum RowBadge {
-    Forced,
-    Sdh,
-    External,
-    /// An image codec's short display name ([`image_codec_badge`]: "PGS", "VOBSUB", "DVB"). Always
-    /// last.
-    Codec(&'static str),
-}
-
 /// One offered subtitle track, parsed once — the unit every section is built from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubTrack {
@@ -86,12 +71,15 @@ pub struct SubTrack {
     pub i: usize,
     /// The display language (`Stream.lang`, or the catalog's "Unknown").
     pub lang: String,
-    /// `SubLabel.source`, or the region fallback when that is empty (`track_label::region_detail`).
-    pub detail: String,
+    /// What the row reads, in plain words: the language, then in brackets only what tells it
+    /// apart: a region, what the track carries ("English (dub)", "English (on-screen text)") and,
+    /// when it would otherwise read like a built-in track, "downloaded". Never a format, an
+    /// acronym or the file's own title.
+    pub label: String,
+    /// The rank kind: a title naming a dub or signs and songs counts as dub or on-screen text.
     pub kind: Kind,
-    pub badges: Vec<RowBadge>,
-    /// `Some(n)` when this track is otherwise IDENTICAL (same lang, detail, badge) to at least one
-    /// other offered track — an ordinal among the identical ones only (`player.html:959-962,1110`).
+    /// `Some(n)` when this track's [`Self::label`] is the same as at least one other offered
+    /// track's — an ordinal among those only (`player.html:959-962,1110`).
     pub ordinal: Option<u32>,
 }
 
@@ -274,38 +262,43 @@ fn sub_tracks(
     offered: &[usize],
     names: &super::track_names::TrackNames,
 ) -> Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> {
-    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> = offered
+    // The label before any "downloaded": language, region, variant.
+    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>, Vec<&'static str>, Option<String>, bool)> = offered
         .iter()
         .filter_map(|&i| {
             let s = subs.get(i)?;
             let lang = display_lang(s);
             let container = names.sub(super::sub_render_ordinal(subs, i));
             let merged = track_label::track_name(&s.title, container, &lang);
-            let label = track_label::parse(&merged, &lang, s.forced, s.sdh);
-            let mut detail = label.source;
-            if detail.is_empty() {
-                if let Some(region) = track_label::region_detail(&s.language_tag) {
-                    detail = region;
-                }
-            }
-            // the panel's priority: one of FORCED > SDH > EXTERNAL, then the image codec if any
-            let mut badges = match label.kind {
-                Kind::Forced => vec![RowBadge::Forced],
-                Kind::Sdh => vec![RowBadge::Sdh],
-                _ if s.external => vec![RowBadge::External],
-                _ => Vec::new(),
+            let kind = match track_label::parse(&merged, &lang, s.forced, s.sdh).kind {
+                Kind::Full if track_label::names_signs_and_songs(&merged) => Kind::Forced,
+                Kind::Full if track_label::names_dub(&merged) => Kind::Sdh,
+                k => k,
             };
-            if let Some(name) = image_codec_badge(&s.codec) {
-                badges.push(RowBadge::Codec(name));
-            }
+            let region = track_label::region_detail(&s.language_tag);
+            let words: Vec<&'static str> = kind.variant_word().into_iter().collect();
+            let label = natural_label(&lang, region.as_deref(), &words);
             let (group, key) = group_of(s, i, &lang);
-            let track = SubTrack { i, lang, detail, kind: label.kind, badges, ordinal: None };
-            Some((track, group, key))
+            let track = SubTrack { i, lang, label, kind, ordinal: None };
+            Some((track, group, key, words, region, s.external))
         })
         .collect();
+    // A downloaded track that reads like a built-in one says so.
+    let mixed: Vec<bool> = out
+        .iter()
+        .map(|(t, .., ext)| out.iter().any(|(o, .., o_ext)| o.i != t.i && o.label == t.label && o_ext != ext))
+        .collect();
+    for ((t, _, _, words, region, external), mixed) in out.iter_mut().zip(mixed) {
+        if mixed && *external {
+            words.push(plx_platform::i18n::msg::widgets_tracks_variant_downloaded());
+            t.label = natural_label(&t.lang, region.as_deref(), words);
+        }
+    }
+    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> =
+        out.into_iter().map(|(t, g, k, ..)| (t, g, k)).collect();
 
-    type Identity = (String, String, Vec<RowBadge>);
-    let identity = |t: &SubTrack| -> Identity { (t.lang.clone(), t.detail.clone(), t.badges.clone()) };
+    type Identity = String;
+    let identity = |t: &SubTrack| -> Identity { t.label.clone() };
     let keys: Vec<Identity> = out.iter().map(|(t, ..)| identity(t)).collect();
     let mut totals: HashMap<&Identity, u32> = HashMap::new();
     for k in &keys {
@@ -322,6 +315,18 @@ fn sub_tracks(
     out
 }
 
+/// "English", or "Portuguese (Brazil, dub)": the language, then its region and the plain words
+/// that tell this track apart, in brackets.
+pub fn natural_label(lang: &str, region: Option<&str>, words: &[&str]) -> String {
+    let detail: Vec<&str> = region.into_iter().chain(words.iter().copied()).collect();
+    if detail.is_empty() {
+        lang.to_string()
+    } else {
+        // the generated message takes its arguments in name order: detail, language
+        plx_platform::i18n::msg::widgets_tracks_sub_label(&detail.join(", "), lang)
+    }
+}
+
 /// What the track menu calls a subtitle, read off the stream the way the menu reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SubTraits {
@@ -331,6 +336,11 @@ pub struct SubTraits {
     pub sdh: bool,
     /// The name says commentary (`track_label::Kind::Commentary`), whatever the flags say.
     pub commentary: bool,
+    /// The track transcribes a dub: SDH (flag or name, which is how PMS flags a `.cc`/`.sdh`
+    /// sidecar) or a name saying Dub / Dubtitle.
+    pub dub: bool,
+    /// The name says signs and songs: on-screen text only, like a forced track.
+    pub signs: bool,
 }
 
 /// The menu's own predicate for one subtitle stream: the merged name, parsed, with
@@ -341,7 +351,13 @@ pub fn sub_traits(s: &Stream) -> SubTraits {
     let name = track_label::track_name(&s.title, "", &s.lang);
     let label = track_label::parse(&name, &s.lang, s.forced, s.sdh);
     let (forced, sdh) = track_label::flags(&label, s.forced, s.sdh);
-    SubTraits { forced, sdh, commentary: label.kind == Kind::Commentary }
+    SubTraits {
+        forced,
+        sdh,
+        commentary: label.kind == Kind::Commentary,
+        dub: sdh || track_label::names_dub(&name),
+        signs: track_label::names_signs_and_songs(&name),
+    }
 }
 
 /// **Group and order the Subtitles panel's rows.**
@@ -629,31 +645,37 @@ mod tests {
         assert_eq!((french.id.stream, french.tracks.len()), (1, 1), "the member that gave the key is not offered");
     }
 
-    /// **An image subtitle's badge is a short display name, not Plex's raw codec string**:
-    /// "HDMV_PGS_SUBTITLE" reads "PGS", "DVD_SUBTITLE" and "VOBSUB" read "VOBSUB", "DVB_SUBTITLE"
-    /// reads "DVB". A text codec carries none.
+    /// **Rows read in plain words**: the full translation is its language; a dub transcript (an
+    /// SDH flag, or a title naming SDH or a dub), a forced or signs-and-songs track, a region and a
+    /// downloaded twin of a built-in track each add a word; no format, acronym or title shows.
     #[test]
-    fn an_image_subtitles_badge_is_a_short_name() {
-        let codecs = [
-            ("pgs", Some("PGS")),
-            ("hdmv_pgs_subtitle", Some("PGS")),
-            ("vobsub", Some("VOBSUB")),
-            ("dvd_subtitle", Some("VOBSUB")),
-            ("dvdsub", Some("VOBSUB")),
-            ("dvb_subtitle", Some("DVB")),
-            ("dvbsub", Some("DVB")),
-            ("srt", None),
+    fn rows_read_in_plain_words() {
+        let mut subs = vec![
+            stream(1, 0, "English", "eng", "Signs / Songs"),
+            stream(2, 1, "English", "eng", "Dialogue"),
+            stream(3, 2, "English", "eng", ""),
+            stream(4, 3, "English", "eng", ""),
+            stream(5, 4, "English", "eng", "Dubtitle"),
+            stream(6, 5, "Portuguese", "por", "PGS iAHD"),
         ];
-        for (n, (codec, want)) in codecs.into_iter().enumerate() {
-            let mut s = stream(n as i64 + 1, n as i64, "French", "fra", "");
-            s.codec = codec.into();
-            let m = model(&[s], &[]);
-            let badge = m.other[0].tracks[0].badges.iter().find_map(|b| match b {
-                RowBadge::Codec(c) => Some(*c),
-                _ => None,
-            });
-            assert_eq!(badge, want, "{codec}");
-        }
+        subs[0].codec = "pgs".into();
+        subs[2].external = true;
+        subs[3].sdh = true;
+        subs[5].language_tag = "pt-BR".into();
+        let m = model(&subs, &[]);
+        let labels = |name: &str| -> Vec<(usize, String, Option<u32>)> {
+            let lang = m.other.iter().find(|o| o.name == name).unwrap();
+            lang.tracks.iter().map(|t| (t.i, t.label.clone(), t.ordinal)).collect()
+        };
+        let own = |s: &str| s.to_string();
+        assert_eq!(labels("English"), [
+            (1, own("English"), None),
+            (2, own("English (downloaded)"), None),
+            (3, own("English (dub)"), Some(1)),
+            (4, own("English (dub)"), Some(2)),
+            (0, own("English (on-screen text)"), None),
+        ]);
+        assert_eq!(labels("Portuguese"), [(5, own("Portuguese (Brazil)"), None)]);
     }
 
     /// A language's identity is the stream id, so removing an earlier track moves its list

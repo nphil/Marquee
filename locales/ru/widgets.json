@@ -188,7 +188,6 @@
   "widgets.tracks.style_image_note": "Графические субтитры: свой размер и положение.",
   "widgets.tracks.style_styled_note": "Субтитры с оформлением: свой размер и положение.",
   "widgets.tracks.timing": "Синхронизация",
-  "widgets.tracks.external_badge": "ВНЕШНИЕ",
   "widgets.tracks.tone_white": "Белый",
   "widgets.tracks.tone_silver": "Серебристый",
   "widgets.tracks.tone_light_grey": "Светло-серый",
@@ -245,8 +244,6 @@
   "widgets.tracks.search.add_failed": "Не удалось добавить",
   "widgets.tracks.search.add_failed_note": "Сервер не смог добавить эти субтитры. Попробуйте другие.",
   "widgets.tracks.track_ordinal": "Дорожка {number}",
-  "widgets.tracks.kind_full": "Полные",
-  "widgets.tracks.kind_commentary": "Комментарии",
   "widgets.tracks.capsule_later": "Субтитры позже на {duration}",
   "widgets.tracks.capsule_earlier": "Субтитры раньше на {duration}",
   "widgets.tracks.capsule_original": "Исходная синхронизация",
@@ -342,5 +339,10 @@
   "widgets.tracks.bazarr_bad_key": "Bazarr отклонил ключ API.",
   "widgets.tracks.bazarr_not_bazarr": "Этот адрес отвечает не так, как Bazarr.",
   "widgets.tracks.bazarr_not_in": "В Bazarr нет этого названия.",
-  "widgets.tracks.bazarr_refused": "Bazarr не смог выполнить поиск. Проверьте его источники."
+  "widgets.tracks.bazarr_refused": "Bazarr не смог выполнить поиск. Проверьте его источники.",
+  "widgets.tracks.variant_dub": "дубляж",
+  "widgets.tracks.variant_on_screen": "надписи",
+  "widgets.tracks.variant_commentary": "комментарии",
+  "widgets.tracks.variant_downloaded": "загруженные",
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

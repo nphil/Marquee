@@ -100,7 +100,7 @@
 //! offered list) pops to the root ([`TrackMenuState::pages_hold`]); a language page that drops to a
 //! single track stays open, and popping it lands on that track's direct row.
 use plx_data::metadata;
-use plx_data::metadata::sub_layout::{self, LangId, OtherLang, RowBadge, RowTarget, SubHeader, SubModel, SubRow, SubTrack};
+use plx_data::metadata::sub_layout::{self, LangId, OtherLang, RowTarget, SubHeader, SubModel, SubRow, SubTrack};
 use plx_data::metadata::track_label;
 use plx_plex::plex::session::{LookPreset, Reveal, SubBack, SubEdge, SubFont, SubtitleLook, SubtitlePosition, SubtitleSize, SubtitleTone};
 use plx_ui::frame::Budget;
@@ -1654,9 +1654,13 @@ impl TrackMenuState {
                 _ if self.hit_on_item(h) => Some(msg::widgets_tracks_search_added()),
                 _ => None,
             };
-            let title = if h.title.is_empty() { h.language.clone() } else { h.title.clone() };
-            let detail: Vec<&str> =
-                [h.provider.as_str(), h.language.as_str()].into_iter().filter(|p| !p.is_empty()).collect();
+            // Plain words, never the release's file name: the language, then what the file carries.
+            let words: Vec<&str> = [
+                h.hearing_impaired.then(msg::widgets_tracks_variant_dub),
+                h.forced.then(msg::widgets_tracks_variant_on_screen),
+            ].into_iter().flatten().collect();
+            let title = sub_layout::natural_label(&h.language, None, &words);
+            let detail: Vec<&str> = [h.provider.as_str()].into_iter().filter(|p| !p.is_empty()).collect();
             let mut row = Row::new(title).server_label();
             let operation_hit = matches!(download,
                 DownloadPhase::Sending { hit } | DownloadPhase::Waiting { hit, .. }
@@ -1668,12 +1672,6 @@ impl TrackMenuState {
                 }
             } else if !detail.is_empty() {
                 row = row.detail(detail.join(" \u{b7} ")).server_detail();
-            }
-            if h.hearing_impaired {
-                row = row.badge(Badge::Sdh);
-            }
-            if h.forced {
-                row = row.badge(Badge::Forced);
             }
             if let Some(state) = state {
                 row = row.value(state);
@@ -2861,7 +2859,6 @@ fn format_offset(ms: i64) -> String {
 
 // ---- section building ----
 use plx_data::metadata::friendly_codec; // the ONE codec→display-name map (shared with the Info card)
-use plx_data::metadata::track_label::Kind;
 
 /// The sub-line under an audio track, saying so when the server would convert it: a track the TV
 /// cannot decode ("AAC 7.1" here) plays through the server's remux with only its audio converted,
@@ -2927,7 +2924,6 @@ fn channel_short(layout: &str) -> String {
 
 // ---- Subtitles-tab sections (the model is `metadata::sub_layout`, plan §3) ------------------
 
-/// The drawn form of a row's one badge.
 /// The languages a subtitle search can be asked in: the account picker's list (`plex::languages`)
 /// narrowed to plain TWO-letter codes, the only form PMS accepts (`docs/pms-api.md` §8) — a region
 /// variant (`en-GB`) folds onto the same search and would only repeat a row.
@@ -2935,69 +2931,27 @@ pub fn search_languages() -> Vec<&'static plx_plex::plex::languages::Language> {
     plx_plex::plex::languages::picker().filter(|l| l.code.len() == 2).collect()
 }
 
-fn row_badge(b: &RowBadge) -> Badge {
-    match b {
-        RowBadge::Forced => Badge::Forced,
-        RowBadge::Sdh => Badge::Sdh,
-        RowBadge::External => Badge::Text(plx_platform::i18n::msg::widgets_tracks_external_badge().to_string()),
-        RowBadge::Codec(c) => Badge::Text((*c).to_string()),
-    }
-}
-
-/// A flat row: label = language, detail = source/region (+ "Track N" when this track needed one),
-/// one badge. Used for a single-track "yours" language, and for every "Other languages" row.
+/// A flat row: label = the track's plain name (+ "Track N" when this track needed one). Used for
+/// a single-track "yours" language, and for every "Other languages" row.
 fn flat_row(t: &SubTrack, active_sub: c_int) -> Row {
-    let mut row = Row::new(t.lang.clone()).checked(active_sub >= 0 && t.i == active_sub as usize);
-    let mut parts: Vec<String> = Vec::new();
-    if !t.detail.is_empty() {
-        parts.push(t.detail.clone());
-    }
+    let mut row = Row::new(t.label.clone()).checked(active_sub >= 0 && t.i == active_sub as usize);
     if let Some(n) = t.ordinal {
-        parts.push(plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64));
-    }
-    if !parts.is_empty() {
-        row = row.detail(parts.join(" \u{b7} "));
-    }
-    for b in &t.badges {
-        row = row.badge(row_badge(b));
+        row = row.detail(plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64));
     }
     row
 }
 
-/// A row inside a multi-track "yours" language section (`player.html:1110-1115`): label = the
-/// source (+ "Track N" if needed), or — for a NAMELESS track — the kind word itself ("Forced",
-/// "SDH", "Full", "Commentary"), in which case a Forced/SDH badge that would only repeat the
-/// label is dropped.
+/// A row inside a multi-track "yours" language section (`player.html:1110-1115`).
 fn in_lang_row(t: &SubTrack, active_sub: c_int) -> Row {
-    let mut row = Row::new(in_lang_label(t)).checked(active_sub >= 0 && t.i == active_sub as usize);
-    // a Forced/SDH chip that would only repeat the kind word the label already is, is dropped; the
-    // image codec never is
-    let label_is_kind = t.detail.is_empty() && t.ordinal.is_none();
-    for b in &t.badges {
-        if !(label_is_kind && matches!(b, RowBadge::Forced | RowBadge::Sdh)) {
-            row = row.badge(row_badge(b));
-        }
-    }
-    row
+    Row::new(in_lang_label(t)).checked(active_sub >= 0 && t.i == active_sub as usize)
 }
 
-/// A track's label inside its language: the source (+ "Track N" if needed), or the kind word for a
-/// nameless one. Also the value a language's drill-in reads out for its active variant.
+/// A track's label inside its language: its plain name (+ "Track N" if needed). Also the value a
+/// language's drill-in reads out for its active variant.
 fn in_lang_label(t: &SubTrack) -> String {
-    let nth = t.ordinal.map(|n| plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64));
-    if !t.detail.is_empty() {
-        match &nth {
-            Some(n) => format!("{} \u{b7} {}", t.detail, n),
-            None => t.detail.clone(),
-        }
-    } else if let Some(n) = &nth {
-        if t.kind == Kind::Full {
-            n.clone()
-        } else {
-            format!("{} \u{b7} {}", t.kind.fallback_label(), n)
-        }
-    } else {
-        t.kind.fallback_label().to_string()
+    match t.ordinal {
+        Some(n) => format!("{} \u{b7} {}", t.label, plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64)),
+        None => t.label.clone(),
     }
 }
 
@@ -3195,27 +3149,21 @@ mod tests {
         assert_eq!(targets[2], Some(TrackRow::Sub(0)));
     }
 
-    // ---- sub_layout: a nameless track reads as its kind, with no badge ------------------------
+    // ---- sub_layout: rows read in plain words, with no badge ---------------------------------
 
     #[test]
-    fn a_nameless_track_in_a_multitrack_group_is_labelled_by_its_kind_with_no_badge() {
-        let subs = vec![
-            stream(1, 0, "Russian", "rus", ""), // full — keeps the bucket multi-track
-            stream(2, 1, "Russian", "rus", "Форс."), // forced, nameless
+    fn a_forced_track_reads_as_on_screen_text_and_no_row_carries_a_badge() {
+        let mut subs = vec![
+            stream(1, 0, "Russian", "rus", ""),
+            stream(2, 1, "Russian", "rus", "Форс."),
+            stream(3, 2, "Russian", "rus", "SDH"),
         ];
+        subs[0].external = true;
+        subs[2].codec = "pgs".into();
         let offered: Vec<usize> = (0..subs.len()).collect();
-        let names = TrackNames::new();
-        let (sections, _targets) =
-            sub_layout(&subs, &offered, &names, &["rus"], -1, true, 0);
-        let forced_row = sections[1]
-            .rows
-            .iter()
-            .find(|r| r.label == "Forced")
-            .expect("a nameless forced track reads as its kind word");
-        assert!(
-            forced_row.badges.is_empty(),
-            "the kind word already says Forced; the badge is dropped"
-        );
+        let (sections, _) = sub_layout(&subs, &offered, &TrackNames::new(), &["rus"], -1, true, 0);
+        let rows: Vec<(&str, usize)> = sections[1].rows.iter().map(|r| (r.label.as_str(), r.badges.len())).collect();
+        assert_eq!(rows, [("Russian", 0), ("Russian (dub)", 0), ("Russian (on-screen text)", 0)]);
     }
 
     // ---- sub_layout: identical tracks get "Track N" --------------------------------------------
@@ -3231,53 +3179,7 @@ mod tests {
         let (sections, _targets) =
             sub_layout(&subs, &offered, &names, &["rus"], -1, true, 0);
         let labels: Vec<&str> = sections[1].rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, ["iTunes \u{b7} Track 1", "iTunes \u{b7} Track 2"]);
-    }
-
-    // ---- sub_layout: one badge per row, by priority --------------------------------------------
-
-    #[test]
-    fn one_kind_badge_per_row_by_priority_forced_over_sdh_over_external_and_an_image_codec_always_adds_its_own() {
-        let mk = |sdh: bool, external: bool, codec: &str| metadata::Stream {
-            sdh,
-            external,
-            lang: "English".into(),
-            lang_code: "eng".into(),
-            codec: codec.into(),
-            ..Default::default()
-        };
-        let names = TrackNames::new();
-
-        let subs = vec![mk(true, false, "srt")];
-        let (sections, _) = sub_layout(&subs, &[0], &names, &["eng"], -1, true, 0);
-        assert!(matches!(sections[0].rows[2].badges.as_slice(), [Badge::Sdh]));
-
-        let subs = vec![mk(false, true, "srt")];
-        let (sections, _) = sub_layout(&subs, &[0], &names, &["eng"], -1, true, 0);
-        assert!(matches!(sections[0].rows[2].badges.as_slice(), [Badge::Text(t)] if t == "EXTERNAL"));
-
-        let subs = vec![mk(true, true, "srt")];
-        let (sections, _) = sub_layout(&subs, &[0], &names, &["eng"], -1, true, 0);
-        assert!(
-            matches!(sections[0].rows[2].badges.as_slice(), [Badge::Sdh]),
-            "SDH beats EXTERNAL"
-        );
-
-        let subs = vec![mk(false, false, "pgs")];
-        let (sections, _) = sub_layout(&subs, &[0], &names, &["eng"], -1, true, 0);
-        assert!(matches!(sections[0].rows[2].badges.as_slice(), [Badge::Text(t)] if t == "PGS"));
-
-        // an image subtitle keeps its format whatever else it is: the codec chip follows the kind
-        let subs = vec![mk(true, false, "pgs")];
-        let (sections, _) = sub_layout(&subs, &[0], &names, &["eng"], -1, true, 0);
-        assert!(
-            matches!(sections[0].rows[2].badges.as_slice(), [Badge::Sdh, Badge::Text(t)] if t == "PGS"),
-            "SDH + PGS"
-        );
-        // a text subtitle never shows a format, external or not
-        let subs = vec![mk(false, true, "ass")];
-        let (sections, _) = sub_layout(&subs, &[0], &names, &["eng"], -1, true, 0);
-        assert!(matches!(sections[0].rows[2].badges.as_slice(), [Badge::Text(t)] if t == "EXTERNAL"));
+        assert_eq!(labels, ["Russian \u{b7} Track 1", "Russian \u{b7} Track 2"]);
     }
 
     // ---- sub_layout: "Other languages" is ONE drill-in row on the root -------------------------
@@ -6806,38 +6708,19 @@ mod language_page_tests {
         teardown(&ps);
     }
 
-    /// **Only image subtitles carry a format badge**: PGS shows one, a text track (SRT) none — on
-    /// the Other languages page and on a language page alike.
+    /// **Track rows carry no badge and no format**: kind and format are words in the label or
+    /// nothing — on the Other languages page and on a language page alike.
     #[test]
-    fn the_format_badge_is_only_on_image_subtitles() {
+    fn track_rows_read_in_plain_words_with_no_badge() {
         let _g = plx_base::testlock::serial();
         let (mut menu, ps, _store) = open(subs_with_vobsub());
         menu.push(TrackPage::OtherLanguages);
-        let badges = |m: &TrackMenuState, id| row_of(m, id).badges.iter().map(|b| b.text().to_string()).collect::<Vec<_>>();
-        assert_eq!(badges(&menu, TrackRow::Sub(5)), ["PGS"], "Dutch is an image subtitle");
-        assert!(badges(&menu, TrackRow::Sub(4)).is_empty(), "German SRT shows no format");
-        assert!(badges(&menu, TrackRow::OpenLang(LangId { stream: 11, slot: 1 })).is_empty(), "a drill-in is not a track");
+        let plain = |m: &TrackMenuState, id| { let r = row_of(m, id); (r.label.clone(), r.badges.len()) };
+        assert_eq!(plain(&menu, TrackRow::Sub(5)), ("Dutch".to_string(), 0), "an image subtitle shows no format");
         menu.push(TrackPage::Language(11));
-        assert!(badges(&menu, TrackRow::Sub(1)).is_empty(), "French full is SRT");
-        assert!(badges(&menu, TrackRow::Sub(2)).is_empty(), "the SDH chip would only repeat its label");
-        assert_eq!(row_of(&menu, TrackRow::Sub(2)).label, "SDH");
-        assert_eq!(badges(&menu, TrackRow::Sub(3)), ["PGS"], "a forced image track still shows its format");
-        assert_eq!(row_of(&menu, TrackRow::Sub(3)).label, "Forced");
-        // a VobSub SDH track: its raw codec ("dvd_subtitle") shows as the short name, after the kind
-        menu.push(TrackPage::Language(16));
-        assert!(badges(&menu, TrackRow::Sub(6)).is_empty(), "Italian text shows no format");
-        assert_eq!(badges(&menu, TrackRow::Sub(7)), ["SDH", "VOBSUB"]);
-        // a row whose only badge could be the codec: the same French forced track, unlabelled
-        let (mut menu2, ps2, _s2) = open(vec![
-            stream(1, 0, "French", "fra", ""),
-            pgs(stream(2, 1, "French", "fra", "")),
-        ]);
-        menu2.push(TrackPage::OtherLanguages);
-        menu2.push(TrackPage::Language(1));
-        assert!(badges(&menu2, TrackRow::Sub(0)).is_empty());
-        assert_eq!(badges(&menu2, TrackRow::Sub(1)), ["PGS"]);
+        assert_eq!(plain(&menu, TrackRow::Sub(2)), ("French (dub)".to_string(), 0));
+        assert_eq!(plain(&menu, TrackRow::Sub(3)), ("French (on-screen text)".to_string(), 0));
         teardown(&ps);
-        teardown(&ps2);
     }
 
     /// **Initial focus**: Other languages opens on the checked row (the language's drill-in when
@@ -6855,7 +6738,7 @@ mod language_page_tests {
         assert_eq!(menu.selected_id(), Some(TrackRow::OpenLang(LangId { stream: 11, slot: 1 })), "the language holding the active track");
         let french = row_of(&menu, TrackRow::OpenLang(LangId { stream: 11, slot: 1 }));
         assert!(french.checked);
-        assert_eq!(french.value.as_deref(), Some("SDH"), "reads the active variant");
+        assert_eq!(french.value.as_deref(), Some("French (dub)"), "reads the active variant");
         menu.on_ok(store.view());
         assert_eq!(menu.selected_id(), Some(TrackRow::Sub(2)), "the active variant");
         assert!(row_of(&menu, TrackRow::Sub(2)).checked);

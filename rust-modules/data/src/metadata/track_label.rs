@@ -40,15 +40,14 @@ impl Kind {
         }
     }
 
-    /// The word a NAMELESS track in a multi-track group is labelled by, when its own detail is
-    /// empty (`player.html:1111`: `t.forced ? "Forced" : t.sdh ? "SDH" : "Full"`). A commentary
-    /// track without a name of its own reads the same way. Catalog text: this is drawn.
-    pub fn fallback_label(self) -> &'static str {
+    /// The plain words a subtitle row adds after its language for this kind ("English (dub)"),
+    /// `None` for the full translation, which is just its language. Catalog text: this is drawn.
+    pub fn variant_word(self) -> Option<&'static str> {
         match self {
-            Kind::Full => plx_platform::i18n::msg::widgets_tracks_kind_full(),
-            Kind::Sdh => plx_platform::i18n::msg::widgets_badge_sdh(),
-            Kind::Forced => plx_platform::i18n::msg::widgets_tracks_forced(),
-            Kind::Commentary => plx_platform::i18n::msg::widgets_tracks_kind_commentary(),
+            Kind::Full => None,
+            Kind::Sdh => Some(plx_platform::i18n::msg::widgets_tracks_variant_dub()),
+            Kind::Forced => Some(plx_platform::i18n::msg::widgets_tracks_variant_on_screen()),
+            Kind::Commentary => Some(plx_platform::i18n::msg::widgets_tracks_variant_commentary()),
         }
     }
 }
@@ -147,6 +146,23 @@ fn split_words(name: &str) -> Vec<Word> {
 /// is in [`FORCED_WORDS`], so without this the edge strip would eat it and badge the track FORCED.
 /// Matched lower-cased on consecutive words, at either edge, before any kind word is stripped.
 const NAMING_PHRASES: &[&[&str]] = &[&["signs", "&", "songs"], &["signs", "and", "songs"], &["signs", "songs"], &["songs", "&", "signs"], &["songs", "and", "signs"]];
+
+/// Words that name the transcript of a DUBBED audio track: "Dub", "Dub (SDH)", "Dubtitle".
+const DUB_WORDS: &[&str] = &["dub", "dubs", "dubbed", "dubtitle", "dubtitles"];
+
+/// Whether a title names a dub transcript ([`DUB_WORDS`], whole words only).
+pub fn names_dub(title: &str) -> bool {
+    split_words(title).iter().any(|w| DUB_WORDS.contains(&normalize_word(&w.text).as_str()))
+}
+
+/// Whether a title names a signs-and-songs track ([`NAMING_PHRASES`] anywhere in it): the anime
+/// typesetting track that carries only on-screen text, which [`parse`] keeps as a name.
+pub fn names_signs_and_songs(title: &str) -> bool {
+    let words = split_words(title);
+    NAMING_PHRASES.iter().any(|phrase| {
+        words.windows(phrase.len()).any(|run| run.iter().zip(phrase.iter()).all(|(w, p)| normalize_word(&w.text) == *p))
+    })
+}
 
 /// Does a [`NAMING_PHRASES`] entry start at `words[0]` (`from_back == false`) or end at the last
 /// word (`from_back == true`)?

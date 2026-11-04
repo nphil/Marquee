@@ -506,6 +506,31 @@ pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid:
     }
 }
 
+/// **The audio follow of an automatic subtitle**: while the landing's subtitle is one nobody chose
+/// by hand (`TrackContext::auto_subs`, cleared by the viewer's own pick), a new audio puts on what
+/// the ladder would have landed for that audio's language: the dub transcript for audio in the
+/// subtitle's language, the full translation otherwise, or Off. Derived like the Forced only follow:
+/// no memory is written, and no selection PUT goes over a Part with an external stream (W5).
+pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_sid: i64) {
+    if ps.sub_mode == SubMode::ForcedOnly || ps.cur_memory_note || original_recovery_pending() {
+        return;
+    }
+    let Some(ctx) = ps.track_ctx.as_ref() else { return };
+    let lang = ctx.audio_lang_of(audio_sid);
+    let Some(&(_, want)) = ctx.auto_subs.as_ref().and_then(|t| t.iter().find(|(l, _)| l == lang)) else { return };
+    let (id, ordinal) = want.unwrap_or((0, -1));
+    if id == ps.cur_sub_sid {
+        return;
+    }
+    let sidecar = ctx.subs.iter().find(|s| ordinal < 0 && s.id == id && s.id > 0).map(|s| (s.key.clone(), s.codec.clone()));
+    let put = !external_on_part(&ctx.subs);
+    commit_subtitle_selection_inner(ps, ordinal, id, ordinal >= 0 || sidecar.is_some(), put);
+    match sidecar {
+        Some((key, codec)) => crate::player::sidecar::select(cur_sid(ps), id, key, codec),
+        None => crate::player::sidecar::deselect(),
+    }
+}
+
 /// **The first decoded frame's re-match** (FO; the pump calls it once per frame, and it does
 /// its work once per landing). On a direct play the demuxer's track names are known only once the
 /// file is open, so a remembered subtitle the resolve could not find by name (an MP4 part's PMS

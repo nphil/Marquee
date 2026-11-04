@@ -317,6 +317,10 @@ pub struct TrackContext {
     /// Owed once, at the first decoded frame of a direct play; `None` after, or when no remembered
     /// track decided the landing.
     pub(super) rematch: Option<Rematch>,
+    /// The automatic subtitle for each audio language, while no one has chosen one by hand: what
+    /// an audio switch re-picks from (`plan::AutoSubs`). `None` once the viewer picks, or when
+    /// the show's memory decides the subtitle.
+    pub(super) auto_subs: Option<super::plan::AutoSubs>,
 }
 
 impl TrackContext {
@@ -333,6 +337,7 @@ impl TrackContext {
             audio_lang: audio_lang.to_string(),
             forced_lang,
             rematch: None,
+            auto_subs: None,
         }
     }
 

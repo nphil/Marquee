@@ -630,9 +630,9 @@ something.
   or with no exact match — the sidecar is drawn exactly as before, 0.6–2.2 s early on the remux's
   clock, and when the delta lands the position drops once, which `ass_source::Clock::sample` treats
   as a break and rewinds, so a cue already shown early can appear a second time. Which sidecar
-  starts is `sidecar::restore_selection`'s one answer: the server's selected one, else the one the
-  track memory chose for this episode (`Plan::memory_sidecar`, its key and codec read from the
-  playing item).
+  starts is `sidecar::restore_selection`'s one answer: the one the resolve chose for this episode
+  (`Plan::memory_sidecar`: the track memory's, or an automatic pick following the audio), else the
+  server's selected one, its key and codec read from the playing item.
 - **A seek NEVER interrupts the demuxer.** The pump publishes the target in `seek_to_ns` and the
   demux thread — the only thread that touches the `AVFormatContext` — `av_seek_frame`s on it
   between two reads. Do not reintroduce an interrupt: the pump used to `shutdown(2)` the socket to

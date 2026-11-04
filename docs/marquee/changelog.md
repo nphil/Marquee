@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Automatic subtitles follow the audio: English audio prefers the dub transcript (an SDH/CC track, a `.en.cc.srt` sidecar, or one titled Dub/Dubtitle), other audio the full English translation, and an audio switch re-picks unless a subtitle was chosen by hand. Subtitle menus name tracks in plain words: "English", "English (dub)", "English (on-screen text)", "English (downloaded)", with no format names, acronyms or file titles.
 - Playback preserves non-standard picture aspect ratios by default. More offers Fit, Fill/crop, Original size, Zoom and Stretch without restarting playback.
 - Bazarr subtitle activation reports confirmed progress through Plex discovery and loading to Active or a typed error; metadata rechecks do not repeat downloads.
 - Sidecar readiness requires a positive-duration cue and uses epoch-tagged renderer publication.

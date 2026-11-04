@@ -472,3 +472,39 @@ fn the_route_says_when_a_remembered_subtitle_is_not_shown() {
         "nothing was picked, so there is nothing the route could fail to show",
     );
 }
+
+// ---- the audio follow of an automatic subtitle -------------------------------------------------
+
+/// A `.en.cc.srt` sidecar as PMS lists it: external, English, flagged hearing-impaired.
+fn cc_sidecar(id: i64) -> Stream {
+    Stream { key: format!("/library/streams/{id}"), sdh: true, ..sub(id, id, "eng", true) }
+}
+
+/// **An automatic subtitle follows the audio.** English audio prefers the dub transcript (the `.cc`
+/// sidecar, or a track titled Dub/Dubtitle) over the full translation PMS selected; Japanese audio
+/// the full translation over a selected dub transcript. On-screen text, the account's Forced only
+/// and a remembered choice are left alone, and the server's own sidecar stands when it already fits.
+#[test]
+fn an_automatic_subtitle_follows_the_audio() {
+    let item = episode(vec![text_sub(2, "eng", "Signs / Songs"), server_selected(text_sub(1, "eng", "Dialogue")), cc_sidecar(9)]);
+    assert_eq!(ladder(&item, "eng", None).pick, Some((9, -1)), "English audio: the .cc sidecar");
+    assert_eq!(ladder(&item, "jpn", None).pick, Some((1, 0)), "Japanese audio: the full translation stands");
+    let titled = episode(vec![server_selected(text_sub(1, "eng", "Dub (SDH)")), text_sub(2, "eng", "")]);
+    assert_eq!(ladder(&titled, "jpn", None).pick, Some((2, 1)));
+    assert_eq!(ladder(&titled, "eng", None).pick, Some((1, 0)));
+    let dubtitle = episode(vec![server_selected(text_sub(1, "eng", "")), text_sub(2, "eng", "Dubtitle")]);
+    assert_eq!(ladder(&dubtitle, "eng", None).pick, Some((2, 1)));
+    let sidecars = episode(vec![
+        text_sub(1, "eng", "Dialogue"),
+        server_selected(Stream { key: "/library/streams/8".into(), ..sub(8, 8, "eng", true) }),
+        cc_sidecar(9),
+    ]);
+    assert_eq!(ladder(&sidecars, "eng", None).pick, Some((9, -1)));
+    assert_eq!(ladder(&sidecars, "jpn", None).pick, None, "the server's own sidecar stands");
+
+    let signs = episode(vec![server_selected(text_sub(1, "eng", "Signs & Songs")), cc_sidecar(9)]);
+    assert_eq!(ladder(&signs, "eng", None).pick, Some((1, 0)), "on-screen text is not followed");
+    let forced_only = SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 2 };
+    assert_eq!(pick_subtitle(&item, &NO_SHOW_RULES(), forced_only, "eng", None, None).pick, Some((1, 0)));
+    assert_eq!(ladder(&item, "eng", Some(&track_memo("spa"))).pick, Some((1, 0)), "a remembered choice is not followed");
+}

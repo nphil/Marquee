@@ -184,7 +184,6 @@
   "widgets.tracks.style_image_note": "Sottotitoli immagine: misure e posizione fisse.",
   "widgets.tracks.style_styled_note": "Sottotitoli stilizzati: misure e posizione fisse.",
   "widgets.tracks.timing": "Sincronizzazione",
-  "widgets.tracks.external_badge": "ESTERNA",
   "widgets.tracks.tone_white": "Bianco",
   "widgets.tracks.tone_silver": "Argento",
   "widgets.tracks.tone_light_grey": "Grigio chiaro",
@@ -241,8 +240,6 @@
   "widgets.tracks.search.add_failed": "Non aggiunto",
   "widgets.tracks.search.add_failed_note": "Il server non è riuscito ad aggiungere questo sottotitolo. Provane un altro.",
   "widgets.tracks.track_ordinal": "Traccia {number}",
-  "widgets.tracks.kind_full": "Completi",
-  "widgets.tracks.kind_commentary": "Commento",
   "widgets.tracks.capsule_later": "Sottotitoli ritardati: {duration}",
   "widgets.tracks.capsule_earlier": "Sottotitoli anticipati: {duration}",
   "widgets.tracks.capsule_original": "Sincronizzazione originale",
@@ -338,5 +335,10 @@
   "widgets.tracks.bazarr_bad_key": "Bazarr ha rifiutato la chiave API.",
   "widgets.tracks.bazarr_not_bazarr": "Quell'indirizzo non risponde come Bazarr.",
   "widgets.tracks.bazarr_not_in": "Bazarr non ha questo titolo.",
-  "widgets.tracks.bazarr_refused": "Bazarr non ha potuto cercare. Controlla i suoi provider."
+  "widgets.tracks.bazarr_refused": "Bazarr non ha potuto cercare. Controlla i suoi provider.",
+  "widgets.tracks.variant_dub": "doppiaggio",
+  "widgets.tracks.variant_on_screen": "scritte",
+  "widgets.tracks.variant_commentary": "commento",
+  "widgets.tracks.variant_downloaded": "scaricato",
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

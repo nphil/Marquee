@@ -1288,6 +1288,10 @@ pub struct ResolveEnv {
     /// beside an override) consults no memory, so the memo that supplied the language is not in the
     /// resolve; this seeds the new landing's context with it. Read only for such a retry.
     pub forced_lang: String,
+    /// The outgoing landing's automatic subtitle per audio language ([`TrackContext`]'s
+    /// `auto_subs`), `None` once the viewer picked one. A retry consults no memory or account, so
+    /// this is how its landing keeps following the audio. Read only for a retry.
+    pub auto_subs: Option<AutoSubs>,
     /// the loaded detail's streams when it IS this item — saves the worker a GET
     pub cached_item: Option<plx_data::metadata::PlayingItem>,
     /// The version the viewer picked (Play Version); `None` plays the default. A picked version
@@ -1573,8 +1577,9 @@ pub struct Plan {
     pub memory_note: bool,
     /// **The remembered sidecar this resolve chose to draw** (C5): the stream id of THIS episode's
     /// same-language external file that the profile's remembered external subtitle meant
-    /// ([`memory_subtitle`]). `None` for every other plan, including a remembered
-    /// embedded track and a server-selected sidecar (which the landing finds on its own). The landing restores it
+    /// ([`memory_subtitle`]), or the sidecar an automatic subtitle follows the audio to
+    /// ([`follow_audio`]). `None` for every other plan, including a remembered embedded track and a
+    /// server-selected sidecar left standing (which the landing finds on its own). The landing restores it
     /// exactly as it restores the server's selection (`player::sidecar::restore_selection`: the key
     /// and codec are looked up in the playing item), on the routes where the app draws a sidecar.
     pub memory_sidecar: Option<i64>,
@@ -1997,8 +2002,9 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 pick_subtitle(p, &show_prefs, account, &audio_lang, env.subtitle_override, memory_sub)
             });
             // The ladder's pick is an EMBEDDED track unless its ordinal is negative: a remembered sidecar
-            // (`track_memory::memory_subtitle`). A sidecar is never a `sub_pick` below (it has no container
-            // ordinal): it takes the same road as a sidecar the server selected, `sidecar_id`.
+            // (`track_memory::memory_subtitle`) or an automatic one that follows the audio
+            // ([`follow_audio`]). A sidecar is never a `sub_pick` below (it has no container ordinal): it
+            // takes the same road as a sidecar the server selected, `sidecar_id`.
             let ladder_pick = sub_decision.as_ref().and_then(|d| d.pick);
             let sub_pick = ladder_pick.filter(|&(_, ord)| ord >= 0);
             let memory_sidecar = ladder_pick.filter(|&(_, ord)| ord < 0).map(|(id, _)| id);
@@ -2013,6 +2019,17 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 if env.subtitle_override.is_some() && env.sub_mode == SubMode::ForcedOnly {
                     ctx.keep_forced_lang(&env.forced_lang);
                 }
+                // Rule 3 of the audio follow: only a subtitle nobody chose by hand follows the audio.
+                ctx.auto_subs = if env.subtitle_override.is_some() {
+                    env.auto_subs.clone()
+                } else if memory_sub.is_none() {
+                    let account = account_subtitles.as_ref().map(|(language, mode, forced)| SubtitleLangPrefs {
+                        language: language.as_deref(), mode: *mode, forced: *forced,
+                    }).unwrap_or_default();
+                    Some(auto_subtitles(p, &show_prefs, account))
+                } else {
+                    None
+                };
                 ctx
             });
             // The ONE `track-memory:` line of this resolve. What the route did with a remembered subtitle
@@ -3666,7 +3683,74 @@ pub(super) fn pick_subtitle(
     } else {
         SubPickSource::Account
     };
-    SubDecision { pick: pick_dp_subtitle_account(subs, prefs, account, audio_lang), source, miss }
+    let pick = pick_dp_subtitle_account(subs, prefs, account, audio_lang);
+    let pick = if memory.is_none() { follow_audio_pick(item, account, audio_lang, pick) } else { pick };
+    SubDecision { pick, source, miss }
+}
+
+/// Each audio language's automatic subtitle as [`pick_subtitle`] would land it with no memory
+/// (a server-selected sidecar included), so an audio switch re-picks by the same rule.
+pub(crate) type AutoSubs = Vec<(String, Option<(i64, i32)>)>;
+
+fn auto_subtitles(
+    item: &plx_data::metadata::PlayingItem, prefs: &plx_plex::plex::ShowLangPrefs, account: SubtitleLangPrefs<'_>,
+) -> AutoSubs {
+    let mut out: AutoSubs = Vec::new();
+    for audio in &item.audio {
+        let lang = &audio.lang_code;
+        if out.iter().any(|(l, _)| l == lang) {
+            continue;
+        }
+        let pick = pick_subtitle(item, prefs, account, lang, None, None).pick.or_else(|| server_sidecar_pick(item));
+        out.push((lang.clone(), pick));
+    }
+    out
+}
+
+fn server_sidecar_pick(item: &plx_data::metadata::PlayingItem) -> Option<(i64, i32)> {
+    plx_data::metadata::server_selected_sidecar(item).map(|s| (s.id, -1))
+}
+
+/// [`follow_audio`] over the ladder's automatic answer, or over the sidecar the server selected
+/// when the ladder left that one standing. Unchanged answers stay as they were (`None` for the
+/// server's sidecar); the account's Forced only rule is never followed.
+fn follow_audio_pick(
+    item: &plx_data::metadata::PlayingItem, account: SubtitleLangPrefs<'_>, audio_lang: &str, pick: Option<(i64, i32)>,
+) -> Option<(i64, i32)> {
+    if account.forced == 2 {
+        return pick;
+    }
+    let Some(base) = pick.or_else(|| server_sidecar_pick(item)) else { return pick };
+    let followed = follow_audio(&item.subs, audio_lang, base);
+    if followed == base { pick } else { Some(followed) }
+}
+
+/// **The audio follow of an automatic subtitle**: within the language of `base`, the track that
+/// matches the audio playing. Audio in that language prefers the dub transcript (`SubTraits::dub`:
+/// an SDH/CC flag, which is how PMS marks a `.cc`/`.sdh` sidecar, or a name saying SDH, CC, Dub or
+/// Dubtitle); any other audio the full translation (not forced, signs and songs, dub or commentary).
+/// An embedded track the client renders and a sidecar it draws (ordinal -1) both qualify. `base`
+/// stands when it is forced, signs and songs or a commentary, when the audio's language is unknown,
+/// or when no track fits better.
+pub(super) fn follow_audio(subs: &[plx_data::metadata::Stream], audio_lang: &str, base: (i64, i32)) -> (i64, i32) {
+    let Some(b) = subs.iter().find(|s| s.id == base.0) else { return base };
+    let traits = sub_traits(b);
+    if traits.forced || traits.signs || traits.commentary || audio_lang.is_empty() {
+        return base;
+    }
+    let dub = lang_matches(&b.lang_code, audio_lang);
+    let fits = |t: SubTraits| !t.forced && !t.signs && !t.commentary && t.dub == dub;
+    if fits(traits) {
+        return base;
+    }
+    (0..subs.len())
+        .filter(|&i| subs[i].id > 0 && lang_matches(&b.lang_code, &subs[i].lang_code) && fits(sub_traits(&subs[i])))
+        .find_map(|i| {
+            let s = &subs[i];
+            let drawable = if s.external { s.sidecar_renderable() } else { embedded_subtitle_renderable(&s.codec) };
+            drawable.then(|| (s.id, plx_data::metadata::sub_render_ordinal(subs, i)))
+        })
+        .unwrap_or(base)
 }
 
 /// Software feed formats and Dolby Vision declaration support. Forced mode bypasses device bounds

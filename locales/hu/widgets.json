@@ -180,7 +180,6 @@
   "widgets.tracks.style_image_note": "A képalapú feliratok mérete és helye rögzített.",
   "widgets.tracks.style_styled_note": "A formázott feliratok mérete és helye rögzített.",
   "widgets.tracks.timing": "Időzítés",
-  "widgets.tracks.external_badge": "KÜLSŐ",
   "widgets.tracks.tone_white": "Fehér",
   "widgets.tracks.tone_silver": "Ezüst",
   "widgets.tracks.tone_light_grey": "Világosszürke",
@@ -237,8 +236,6 @@
   "widgets.tracks.search.add_failed": "Sikertelen hozzáadás",
   "widgets.tracks.search.add_failed_note": "A szerver nem tudta hozzáadni ezt a feliratot. Próbáljon egy másikat.",
   "widgets.tracks.track_ordinal": "{number}. sáv",
-  "widgets.tracks.kind_full": "Teljes",
-  "widgets.tracks.kind_commentary": "Kommentár",
   "widgets.tracks.capsule_later": "Felirat késleltetése: {duration}",
   "widgets.tracks.capsule_earlier": "Felirat előrehozása: {duration}",
   "widgets.tracks.capsule_original": "Eredeti időzítés",
@@ -334,5 +331,10 @@
   "widgets.tracks.bazarr_bad_key": "A Bazarr elutasította az API-kulcsot.",
   "widgets.tracks.bazarr_not_bazarr": "Ez a cím nem úgy válaszol, mint a Bazarr.",
   "widgets.tracks.bazarr_not_in": "A Bazarr nem ismeri ezt a címet.",
-  "widgets.tracks.bazarr_refused": "A Bazarr nem tudott keresni. Ellenőrizze a szolgáltatókat."
+  "widgets.tracks.bazarr_refused": "A Bazarr nem tudott keresni. Ellenőrizze a szolgáltatókat.",
+  "widgets.tracks.variant_dub": "szinkron",
+  "widgets.tracks.variant_on_screen": "képernyőszöveg",
+  "widgets.tracks.variant_commentary": "kommentár",
+  "widgets.tracks.variant_downloaded": "letöltött",
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

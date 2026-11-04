@@ -184,7 +184,6 @@
   "widgets.tracks.style_image_note": "Legendas em imagem: tamanho e posição próprios.",
   "widgets.tracks.style_styled_note": "Legendas com estilo: tamanho e posição próprios.",
   "widgets.tracks.timing": "Sincronização",
-  "widgets.tracks.external_badge": "EXTERNA",
   "widgets.tracks.tone_white": "Branco",
   "widgets.tracks.tone_silver": "Prateado",
   "widgets.tracks.tone_light_grey": "Cinzento-claro",
@@ -241,8 +240,6 @@
   "widgets.tracks.search.add_failed": "Não adicionadas",
   "widgets.tracks.search.add_failed_note": "O servidor não conseguiu adicionar estas legendas. Experimente outras.",
   "widgets.tracks.track_ordinal": "Faixa {number}",
-  "widgets.tracks.kind_full": "Completas",
-  "widgets.tracks.kind_commentary": "Comentários",
   "widgets.tracks.capsule_later": "Legendas {duration} mais tarde",
   "widgets.tracks.capsule_earlier": "Legendas {duration} mais cedo",
   "widgets.tracks.capsule_original": "Sincronização original",
@@ -338,5 +335,10 @@
   "widgets.tracks.bazarr_bad_key": "O Bazarr recusou a chave de API.",
   "widgets.tracks.bazarr_not_bazarr": "Esse endereço não responde como o Bazarr.",
   "widgets.tracks.bazarr_not_in": "O Bazarr não tem este título.",
-  "widgets.tracks.bazarr_refused": "O Bazarr não conseguiu pesquisar. Verifique os fornecedores."
+  "widgets.tracks.bazarr_refused": "O Bazarr não conseguiu pesquisar. Verifique os fornecedores.",
+  "widgets.tracks.variant_dub": "dublagem",
+  "widgets.tracks.variant_on_screen": "texto na tela",
+  "widgets.tracks.variant_commentary": "comentários",
+  "widgets.tracks.variant_downloaded": "baixado",
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

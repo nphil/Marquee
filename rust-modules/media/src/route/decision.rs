@@ -37,7 +37,7 @@ pub use memory::{
 #[cfg(any(test, feature = "test-support"))]
 pub use memory::{park_write_back_for_test, write_back_parked};
 pub(super) use memory::ParkedWriteBack;
-use memory::{follow_audio_with_forced_only, parked_write_back, recalled_track_memory, remembered_subtitle_offset, settle_landing_selection};
+use memory::{follow_audio_with_auto_subtitle, follow_audio_with_forced_only, parked_write_back, recalled_track_memory, remembered_subtitle_offset, settle_landing_selection};
 
 // ---- ONE playback session, as ONE value -----------------------------------------------------
 
@@ -8313,6 +8313,7 @@ impl ResolveEnv {
             subtitle_override: None,
             sub_mode: SubMode::Track,
             forced_lang: forced_only_lang(ps).to_string(),
+            auto_subs: ps.track_ctx.as_ref().and_then(|c| c.auto_subs.clone()),
             cached_item: meta.cached_playing(sid, rk),
             version: None,
             quality: quality(),
@@ -9423,9 +9424,9 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
     }
     // Restore the external renderer AND the route's stream identity before publishing the
     // start contract, so timeline reports and later audio/quality transcodes keep this pick.
-    // The sidecar is the server's own selection, else the one the profile's memory chose for this
-    // episode (`plan.memory_sidecar`, its key and codec read from the playing item: one restore, one
-    // selection list). Also over a plain remux: the server carries no subtitle there, so the app
+    // The sidecar is the one the resolve chose for this episode (`plan.memory_sidecar`: the
+    // profile's memory, or an automatic pick following the audio), else the server's own selection
+    // (its key and codec read from the playing item: one restore, one selection list). Also over a plain remux: the server carries no subtitle there, so the app
     // draws the sidecar (`side_subs_allowed`). Every other transcode keeps the server's burn and no
     // client sidecar.
     if plan.sub_render_ordinal.is_none()
@@ -11495,12 +11496,14 @@ pub fn enhancement_test_session(route: EnhTestFixture) -> (PlaybackSession, Serv
 /// **While the subtitle mode is Forced only the pick also re-points it** (FO): the forced
 /// track in the language of the audio just chosen is committed as a derived selection
 /// ([`follow_audio_with_forced_only`]), which PUTs like any in-playback subtitle change and writes
-/// NO memory: the memo stays Forced only.
+/// NO memory: the memo stays Forced only. **An automatic subtitle re-picks by the same rule**
+/// ([`follow_audio_with_auto_subtitle`]), unless the viewer chose one by hand.
 pub fn commit_audio_selection(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
     let sid = audio.sid;
     let accepted = commit_audio_route(ps, audio);
     if accepted {
         follow_audio_with_forced_only(ps, sid);
+        follow_audio_with_auto_subtitle(ps, sid);
     }
     accepted
 }
@@ -11625,6 +11628,10 @@ pub fn commit_subtitle_selection(
     stream_id: i64,
     client_renderable: bool,
 ) {
+    // The viewer chose: the subtitle stops following the audio for the rest of this playback.
+    if let Some(ctx) = ps.track_ctx.as_mut() {
+        ctx.auto_subs = None;
+    }
     commit_subtitle_selection_inner(ps, sub_idx, stream_id, client_renderable, true);
 }
 

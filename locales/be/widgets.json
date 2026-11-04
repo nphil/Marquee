@@ -188,7 +188,6 @@
   "widgets.tracks.style_image_note": "Субцітры-відарысы маюць свой памер і пазіцыю.",
   "widgets.tracks.style_styled_note": "Субцітры са стылем маюць свой памер і пазіцыю.",
   "widgets.tracks.timing": "Сінхранізацыя",
-  "widgets.tracks.external_badge": "ВОНКАВЫЯ",
   "widgets.tracks.tone_white": "Белы",
   "widgets.tracks.tone_silver": "Серабрысты",
   "widgets.tracks.tone_light_grey": "Светла-шэры",
@@ -245,8 +244,6 @@
   "widgets.tracks.search.add_failed": "Не ўдалося дадаць",
   "widgets.tracks.search.add_failed_note": "Сервер не змог дадаць гэтыя субцітры. Паспрабуйце іншыя.",
   "widgets.tracks.track_ordinal": "Дарожка {number}",
-  "widgets.tracks.kind_full": "Поўныя",
-  "widgets.tracks.kind_commentary": "Каментарый",
   "widgets.tracks.capsule_later": "Субцітры на {duration} пазней",
   "widgets.tracks.capsule_earlier": "Субцітры на {duration} раней",
   "widgets.tracks.capsule_original": "Зыходная сінхранізацыя",
@@ -342,5 +339,10 @@
   "widgets.tracks.bazarr_bad_key": "Bazarr адхіліў ключ API.",
   "widgets.tracks.bazarr_not_bazarr": "Гэты адрас адказвае не як Bazarr.",
   "widgets.tracks.bazarr_not_in": "У Bazarr няма гэтай назвы.",
-  "widgets.tracks.bazarr_refused": "Bazarr не здолеў выканаць пошук. Праверце яго крыніцы."
+  "widgets.tracks.bazarr_refused": "Bazarr не здолеў выканаць пошук. Праверце яго крыніцы.",
+  "widgets.tracks.variant_dub": "дубляж",
+  "widgets.tracks.variant_on_screen": "надпісы",
+  "widgets.tracks.variant_commentary": "каментарый",
+  "widgets.tracks.variant_downloaded": "спампаваныя",
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

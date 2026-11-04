@@ -2005,6 +2005,30 @@ fn the_audio_follow_is_forced_only_alone_and_never_falls_back_to_a_full_track() 
     tidy_write(&mut ps);
 }
 
+/// **An automatic subtitle re-picks on an audio switch, until the viewer picks one.** The landing's
+/// table says English audio shows the dub transcript and Japanese the full translation; a pick by
+/// hand ends the follow.
+#[test]
+fn an_automatic_subtitle_follows_the_audio_until_the_viewer_picks() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let subs = vec![srt(55001, 3, "eng", false, false), plx_data::metadata::Stream { sdh: true, ..srt(55002, 4, "eng", false, false) }];
+    land_with_context(&mut ps, subs, Some(1), SubMode::Track);
+    ps.track_ctx.as_mut().unwrap().auto_subs = Some(vec![("eng".into(), Some((55002, 1))), ("jpn".into(), Some((55001, 0)))]);
+
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55001, "Japanese audio: the full translation");
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55002, "English audio: the dub transcript");
+
+    commit_subtitle_pick(&mut ps, 0, 55001, true, None);
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55001, "the viewer's pick stays");
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
 /// On a live transcode the re-pointed subtitle is a burn, so the audio switch and the subtitle
 /// change both rebuild: they must be ONE Retranscode, and the subtitle the rebuild names is the new
 /// one.
