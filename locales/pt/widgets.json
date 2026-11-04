@@ -222,6 +222,7 @@
   "widgets.sidecar.empty": "Este ficheiro de legendas não tem linhas legíveis",
   "widgets.badge.subtitles": "Legendas",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Legendas para surdos",
   "widgets.badge.audio_description": "Audiodescrição",
   "widgets.tracks.other_languages": "Outros idiomas",
   "widgets.tracks.search.open": "Procurar legendas",

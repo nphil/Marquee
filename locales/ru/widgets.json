@@ -226,6 +226,7 @@
   "widgets.sidecar.empty": "В файле субтитров нет читаемых строк",
   "widgets.badge.subtitles": "Субтитры",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Субтитры для глухих",
   "widgets.badge.audio_description": "Аудиоописание",
   "widgets.tracks.other_languages": "Другие языки",
   "widgets.tracks.search.open": "Найти субтитры",

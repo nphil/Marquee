@@ -222,6 +222,7 @@
   "widgets.sidecar.empty": "Ce fichier de sous-titres ne contient aucune ligne lisible",
   "widgets.badge.subtitles": "Sous-titres",
   "widgets.badge.sdh": "SME",
+  "widgets.badge.captions": "Sous-titres pour sourds",
   "widgets.badge.audio_description": "Audiodescription",
   "widgets.tracks.other_languages": "Autres langues",
   "widgets.tracks.search.open": "Rechercher des sous-titres",

@@ -226,6 +226,7 @@
   "widgets.sidecar.empty": "Ten plik napisów nie zawiera czytelnych wierszy",
   "widgets.badge.subtitles": "Napisy",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Napisy dla niesłyszących",
   "widgets.badge.audio_description": "Audiodeskrypcja",
   "widgets.tracks.other_languages": "Inne języki",
   "widgets.tracks.search.open": "Szukaj napisów",

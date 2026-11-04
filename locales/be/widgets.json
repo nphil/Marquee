@@ -226,6 +226,7 @@
   "widgets.sidecar.empty": "У гэтым файле субцітраў няма радкоў, якія можна прачытаць",
   "widgets.badge.subtitles": "Субцітры",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Субцітры для глухіх",
   "widgets.badge.audio_description": "Аўдыяапісанне",
   "widgets.tracks.other_languages": "Іншыя мовы",
   "widgets.tracks.search.open": "Шукаць субцітры",

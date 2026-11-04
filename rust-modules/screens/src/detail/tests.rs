@@ -5274,7 +5274,7 @@ fn the_identity_line_paints_sm_after_the_run_and_xs_between_chips() {
     let run_right = kind_run.at.x + plx_machine::machine::Measure::width_str(m, kind, theme::hero::IDENTITY_SIZE, false);
     let res = keyline_left(painted_x(&runs, "1080p").expect("resolution chip"), "1080p", m);
     let cc_label = plx_platform::i18n::msg::widgets_badge_subtitles();
-    let sdh_label = plx_platform::i18n::msg::widgets_badge_sdh();
+    let sdh_label = plx_platform::i18n::msg::widgets_badge_captions();
     let cc = keyline_left(painted_x(&runs, cc_label).expect("CC chip"), cc_label, m);
     let sdh = keyline_left(painted_x(&runs, sdh_label).expect("SDH chip"), sdh_label, m);
     assert!((res.0 - run_right - theme::space::SM).abs() < 0.5, "SM after the dotted run: {} vs {run_right}", res.0);

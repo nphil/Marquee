@@ -218,6 +218,7 @@
   "widgets.sidecar.empty": "Ebben a feliratfájlban nincs olvasható sor",
   "widgets.badge.subtitles": "Feliratok",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Felirat siketeknek",
   "widgets.badge.audio_description": "Audionarráció",
   "widgets.tracks.other_languages": "Más nyelvek",
   "widgets.tracks.search.open": "Feliratok keresése",

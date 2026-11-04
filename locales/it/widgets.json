@@ -222,6 +222,7 @@
   "widgets.sidecar.empty": "Questo file di sottotitoli non contiene righe leggibili",
   "widgets.badge.subtitles": "Sottotitoli",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Sottotitoli per non udenti",
   "widgets.badge.audio_description": "Audiodescrizione",
   "widgets.tracks.other_languages": "Altre lingue",
   "widgets.tracks.search.open": "Cerca sottotitoli",

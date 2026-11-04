@@ -218,6 +218,7 @@
   "widgets.sidecar.empty": "Diese Untertiteldatei hat keine lesbaren Zeilen",
   "widgets.badge.subtitles": "Untertitel",
   "widgets.badge.sdh": "SDH",
+  "widgets.badge.captions": "Untertitel für Hörgeschädigte",
   "widgets.badge.audio_description": "Audiodeskription",
   "widgets.tracks.other_languages": "Andere Sprachen",
   "widgets.tracks.search.open": "Untertitel suchen",

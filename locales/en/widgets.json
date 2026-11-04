@@ -982,7 +982,11 @@
   },
   "widgets.badge.sdh": {
     "value": "SDH",
-    "description": "Badge: subtitles for the deaf and hard of hearing. Must match the abbreviation in browse.detail.sdh, which introduces it."
+    "description": "The Tracks panel's technical tag for a subtitle track made for the deaf and hard of hearing. Every other surface says widgets.badge.captions."
+  },
+  "widgets.badge.captions": {
+    "value": "Captions",
+    "description": "Badge: the title has subtitles for the deaf and hard of hearing. Plain words, not the SDH mark; the explanation text is browse.detail.sdh."
   },
   "widgets.badge.audio_description": {
     "value": "Audio description",

@@ -218,6 +218,7 @@
   "widgets.sidecar.empty": "Dit ondertitelbestand heeft geen leesbare regels",
   "widgets.badge.subtitles": "Ondertitels",
   "widgets.badge.sdh": "ODS",
+  "widgets.badge.captions": "Ondertitels voor doven",
   "widgets.badge.audio_description": "Audiodescriptie",
   "widgets.tracks.other_languages": "Andere talen",
   "widgets.tracks.search.open": "Ondertitels zoeken",

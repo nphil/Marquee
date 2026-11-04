@@ -175,7 +175,7 @@ impl Rows {
             ));
         }
         if d.subs.iter().any(|s| s.sdh) {
-            self.access.push((plx_platform::i18n::msg::widgets_badge_sdh(), plx_platform::i18n::msg::browse_detail_sdh()));
+            self.access.push((plx_platform::i18n::msg::widgets_badge_captions(), plx_platform::i18n::msg::browse_detail_sdh()));
         }
         if d.audio.iter().any(|a| a.ad) {
             self.access.push((

@@ -140,7 +140,7 @@
     "description": "Detail page Accessibility column: the line under the Subtitles badge."
   },
   "browse.detail.sdh": {
-    "value": "Subtitles for the deaf and hard of hearing (SDH) refer to subtitles in the original language with the addition of relevant non-dialogue information.",
+    "value": "Captions are subtitles for the deaf and hard of hearing: the original language with the addition of relevant non-dialogue information.",
     "description": "browse detail sdh"
   },
   "browse.detail.audio_description": {
