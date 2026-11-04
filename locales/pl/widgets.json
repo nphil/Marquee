@@ -32,7 +32,7 @@
   "widgets.tracks.subtitles": "Napisy",
   "widgets.tracks.unknown": "Nieznane",
   "widgets.tracks.off": "Wyłączone",
-  "widgets.tracks.forced_only": "Tylko wymuszone",
+  "widgets.tracks.forced_only": "Tylko plansze",
   "widgets.tracks.mono": "Mono",
   "widgets.tracks.stereo": "Stereo",
   "widgets.tracks.original": "Oryginał: {language}",
@@ -341,7 +341,7 @@
   "widgets.tracks.bazarr_not_in": "Bazarr nie zna tego tytułu.",
   "widgets.tracks.bazarr_refused": "Bazarr nie mógł wyszukać. Sprawdź jego dostawców.",
   "widgets.tracks.variant_dub": "dubbing",
-  "widgets.tracks.variant_on_screen": "tekst na ekranie",
+  "widgets.tracks.variant_on_screen": "plansze",
   "widgets.tracks.variant_commentary": "komentarz",
   "widgets.tracks.variant_downloaded": "pobrane",
   "widgets.tracks.sub_label": "{language} ({detail})"

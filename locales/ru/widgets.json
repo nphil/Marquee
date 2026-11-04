@@ -32,7 +32,7 @@
   "widgets.tracks.subtitles": "Субтитры",
   "widgets.tracks.unknown": "Неизвестно",
   "widgets.tracks.off": "Выкл.",
-  "widgets.tracks.forced_only": "Только принудит.",
+  "widgets.tracks.forced_only": "Только надписи",
   "widgets.tracks.mono": "Моно",
   "widgets.tracks.stereo": "Стерео",
   "widgets.tracks.original": "Оригинал: {language}",

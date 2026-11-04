@@ -814,7 +814,7 @@
     "description": "Settings, consent or sign-in UI: settings.audio.subtitle_language"
   },
   "settings.audio.forced_subtitles": {
-    "value": "Forced subtitles",
+    "value": "On-screen text",
     "description": "Settings, consent or sign-in UI: settings.audio.forced_subtitles"
   },
   "settings.playback.force_body": {
@@ -916,35 +916,35 @@
     "description": "Settings, consent or sign-in UI: settings.audio.always"
   },
   "settings.audio.prefer_regular": {
-    "value": "Prefer non-forced subtitles",
+    "value": "Prefer full subtitles",
     "description": "Settings, consent or sign-in UI: settings.audio.prefer_regular"
   },
   "settings.audio.prefer_regular.short": {
-    "value": "Prefer non-forced",
+    "value": "Prefer full",
     "description": "Settings, consent or sign-in UI: a SHORT trailing value shown beside the 'Forced Subtitles' row label (not the picker, which still uses the long settings.audio.prefer_regular string). Keep it a few words in the same grammatical form as its sibling Forced Subtitles values."
   },
   "settings.audio.prefer_forced": {
-    "value": "Prefer forced subtitles",
+    "value": "Prefer on-screen text",
     "description": "Settings, consent or sign-in UI: settings.audio.prefer_forced"
   },
   "settings.audio.prefer_forced.short": {
-    "value": "Prefer forced",
+    "value": "Prefer on-screen text",
     "description": "Settings, consent or sign-in UI: a SHORT trailing value shown beside the 'Forced Subtitles' row label (not the picker, which still uses the long settings.audio.prefer_forced string). Keep it a few words in the same grammatical form as its sibling Forced Subtitles values."
   },
   "settings.audio.only_forced": {
-    "value": "Only forced subtitles",
+    "value": "Show subtitles only for signs and songs",
     "description": "Settings, consent or sign-in UI: settings.audio.only_forced"
   },
   "settings.audio.only_forced.short": {
-    "value": "Forced only",
-    "description": "Settings, consent or sign-in UI: a SHORT trailing value shown beside the 'Forced Subtitles' row label (not the picker, which still uses the long settings.audio.only_forced string). Keep it a few words in the same grammatical form as its sibling Forced Subtitles values."
+    "value": "On-screen text only",
+    "description": "Settings, consent or sign-in UI: a SHORT trailing value shown beside the 'Forced Subtitles' row label (not the picker, which still uses the long settings.audio.only_forced string). Keep it a few words in the same grammatical form as its sibling On-screen text values."
   },
   "settings.audio.only_regular": {
-    "value": "Only non-forced subtitles",
+    "value": "Only full subtitles",
     "description": "Settings, consent or sign-in UI: settings.audio.only_regular"
   },
   "settings.audio.only_regular.short": {
-    "value": "Non-forced only",
+    "value": "Full only",
     "description": "Settings, consent or sign-in UI: a SHORT trailing value shown beside the 'Forced Subtitles' row label (not the picker, which still uses the long settings.audio.only_regular string). Keep it a few words in the same grammatical form as its sibling Forced Subtitles values."
   },
   "settings.audio.original": {

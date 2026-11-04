@@ -32,7 +32,7 @@
   "widgets.tracks.subtitles": "Feliratok",
   "widgets.tracks.unknown": "Ismeretlen",
   "widgets.tracks.off": "Ki",
-  "widgets.tracks.forced_only": "Csak kényszerített",
+  "widgets.tracks.forced_only": "Csak kiírások",
   "widgets.tracks.mono": "Monó",
   "widgets.tracks.stereo": "Sztereó",
   "widgets.tracks.original": "Eredeti: {language}",
@@ -333,7 +333,7 @@
   "widgets.tracks.bazarr_not_in": "A Bazarr nem ismeri ezt a címet.",
   "widgets.tracks.bazarr_refused": "A Bazarr nem tudott keresni. Ellenőrizze a szolgáltatókat.",
   "widgets.tracks.variant_dub": "szinkron",
-  "widgets.tracks.variant_on_screen": "képernyőszöveg",
+  "widgets.tracks.variant_on_screen": "kiírások",
   "widgets.tracks.variant_commentary": "kommentár",
   "widgets.tracks.variant_downloaded": "letöltött",
   "widgets.tracks.sub_label": "{language} ({detail})"

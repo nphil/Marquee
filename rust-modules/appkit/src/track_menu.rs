@@ -2172,31 +2172,37 @@ impl TrackMenuState {
             None => return Form::new().section(sec),
         };
         let names = plx_media::player::SHARED.track_names.lock().unwrap();
-        for (i, s) in d.audio.iter().enumerate() {
+        // Plain words only: the language, "(commentary)" for a commentary track and the channel
+        // layout, never the file's own title or the codec. Tracks that would still read the same
+        // are told apart by "Track N".
+        let rows: Vec<(String, String)> = d.audio.iter().enumerate().map(|(i, s)| {
             let lang = if s.lang.is_empty() {
                 plx_platform::i18n::msg::widgets_tracks_unknown()
             } else {
                 s.lang.as_str()
             };
-            let label = if s.default {
+            let base = if s.default {
                 plx_platform::i18n::msg::widgets_tracks_original(lang)
             } else {
                 lang.to_string()
             };
-            let mut row = Row::new(label).checked(i as c_int == self.active_audio());
-            // a per-track descriptor so sibling tracks in the same language are distinguishable
-            // (e.g. two Russian tracks: "Дубляж" vs "AC-3 5.1"). Prefer the stream title, else the
-            // codec + channel layout.
-            let name = track_label::track_name(
-                &s.title,
-                names.audio(plx_data::metadata::audio_ordinal(&d.audio, i)),
-                lang,
-            );
-            let sub = if name.is_empty() {
-                audio_descriptor(s)
+            let name = track_label::track_name(&s.title, names.audio(plx_data::metadata::audio_ordinal(&d.audio, i)), lang);
+            let label = if track_label::is_commentary(&name) {
+                plx_platform::i18n::msg::widgets_tracks_sub_label(plx_platform::i18n::msg::widgets_tracks_variant_commentary(), &base)
             } else {
-                name
+                base
             };
+            (label, audio_descriptor(s))
+        }).collect();
+        for (i, (s, (label, descriptor))) in d.audio.iter().zip(&rows).enumerate() {
+            let mut row = Row::new(label.clone()).checked(i as c_int == self.active_audio());
+            let twins: Vec<usize> = (0..rows.len()).filter(|&j| rows[j] == rows[i]).collect();
+            let mut sub = descriptor.clone();
+            if twins.len() > 1 {
+                let n = twins.iter().position(|&j| j == i).map_or(1, |p| p + 1);
+                let nth = plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64);
+                sub = if sub.is_empty() { nth } else { format!("{sub} \u{b7} {nth}") };
+            }
             let sub = audio_sub_line(ps, sub, s);
             if !sub.is_empty() {
                 row = row.detail(sub);
@@ -2858,7 +2864,6 @@ fn format_offset(ms: i64) -> String {
 }
 
 // ---- section building ----
-use plx_data::metadata::friendly_codec; // the ONE codec→display-name map (shared with the Info card)
 
 /// The sub-line under an audio track, saying so when the server would convert it: a track the TV
 /// cannot decode ("AAC 7.1" here) plays through the server's remux with only its audio converted,
@@ -2890,10 +2895,9 @@ fn audio_sub_line_for(sub: String, converted: bool, decoded_in_app: bool) -> Str
     }
 }
 
-/// "AC-3 5.1", "Dolby TrueHD 7.1", "DTS 5.1" — a compact codec + channel-layout descriptor.
+/// "Stereo", "Mono", "5.1": the channel layout alone, with no codec name.
 fn audio_descriptor(s: &metadata::Stream) -> String {
-    let codec = friendly_codec(&s.codec);
-    let ch = if !s.layout.is_empty() {
+    if !s.layout.is_empty() {
         channel_short(&s.layout)
     } else if s.channels > 0 {
         match s.channels {
@@ -2903,12 +2907,6 @@ fn audio_descriptor(s: &metadata::Stream) -> String {
         }
     } else {
         String::new()
-    };
-    match (codec.is_empty(), ch.is_empty()) {
-        (false, false) => format!("{codec} {ch}"),
-        (false, true) => codec,
-        (true, false) => ch,
-        _ => String::new(),
     }
 }
 
@@ -3617,6 +3615,30 @@ mod tests {
                 keep_open: false,
             }
         );
+    }
+
+    /// **Audio rows read in plain words**: the language, "(commentary)" for a commentary, and the
+    /// channel layout; no codec, no file title. Rows that would read the same get "Track N".
+    #[test]
+    fn audio_rows_read_in_plain_words() {
+        let _g = plx_base::testlock::serial();
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let track = |id: i64, title: &str| plx_data::metadata::Stream {
+            id, index: id, lang: "English".into(), lang_code: "eng".into(), codec: "ac3".into(), channels: 6,
+            layout: "5.1(side)".into(), title: title.into(), ..Default::default()
+        };
+        let store = store_with_audio(vec![track(1, "DTS-HD MA 5.1"), track(2, "iAHD"), track(3, "Director's Commentary")]);
+        let menu = TrackMenuState::new(&ps, store.view(), 0, Vec::new());
+        let rows: Vec<(String, String)> = (0..3).map(|i| {
+            let r = &menu.form.table.sections[0].rows[menu.form.index_of(&TrackRow::Audio(i)).unwrap()];
+            (r.label.clone(), r.detail.clone())
+        }).collect();
+        let own = |l: &str, d: &str| (l.to_string(), d.to_string());
+        assert_eq!(rows, [
+            own("English", "5.1 \u{b7} Track 1"),
+            own("English", "5.1 \u{b7} Track 2"),
+            own("English (commentary)", "5.1"),
+        ]);
     }
 
     /// **A subtitle pick says what to remember.** Off commits `SubtitleMemo::Off` (stream 0); a track
@@ -7859,7 +7881,7 @@ mod classic_placement_tests {
         assert_eq!(
             got.iter().map(|(n, r)| (n.as_str(), *r)).collect::<Vec<_>>(),
             [
-                ("audio root (3 dubs)", [1824.0, 764.0, 468.0, 356.0]),
+                ("audio root (3 dubs)", [1824.0, 764.0, 440.0, 260.0]),
                 ("subtitles root (3 dubs)", [1824.0, 764.0, 447.0, 488.0]),
                 ("style page (3 dubs)", [1824.0, 764.0, 470.0, 680.0]),
             ],
@@ -7874,7 +7896,7 @@ mod classic_placement_tests {
         let got = settled(40);
         let (name, [right, bottom, w, h]) = &got[0];
         assert!(name.starts_with("audio root"));
-        assert_eq!((*right, *bottom, *w, *h), (1824.0, 764.0, 468.0, 710.0));
+        assert_eq!((*right, *bottom, *w, *h), (1824.0, 764.0, 440.0, 710.0));
         assert_eq!(*bottom - *h, plx_ui::consts::SAFE.y, "the room is what is left under SAFE's top");
     }
 

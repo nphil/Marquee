@@ -32,7 +32,7 @@
   "widgets.tracks.subtitles": "Ondertitels",
   "widgets.tracks.unknown": "Onbekend",
   "widgets.tracks.off": "Uit",
-  "widgets.tracks.forced_only": "Alleen geforceerde",
+  "widgets.tracks.forced_only": "Alleen tekst in beeld",
   "widgets.tracks.mono": "Mono",
   "widgets.tracks.stereo": "Stereo",
   "widgets.tracks.original": "Origineel: {language}",

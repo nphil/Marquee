@@ -32,7 +32,7 @@
   "widgets.tracks.subtitles": "Legendas",
   "widgets.tracks.unknown": "Desconhecido",
   "widgets.tracks.off": "Desativadas",
-  "widgets.tracks.forced_only": "Só forçadas",
+  "widgets.tracks.forced_only": "Só texto na tela",
   "widgets.tracks.mono": "Mono",
   "widgets.tracks.stereo": "Estéreo",
   "widgets.tracks.original": "Original: {language}",
