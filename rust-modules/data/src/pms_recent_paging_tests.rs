@@ -280,9 +280,11 @@ fn paging_a_sparse_pinned_row_retains_its_selected_visible_card() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
     let server = std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while std::time::Instant::now() < deadline {
+        while std::time::Instant::now() < deadline && !stop_server.load(std::sync::atomic::Ordering::Acquire) {
             let (mut socket, _) = match plx_base::testnet::accept(&listener) {
                 Ok(socket) => socket,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -321,6 +323,8 @@ fn paging_a_sparse_pinned_row_retains_its_selected_visible_card() {
     start_for_test(&mut owner.state,&mut |request| { held=Some(request); true });
     let request=held.unwrap();
     let result=request.fetch_for_test();
+    // Every request the page makes has been answered once the fetch returns.
+    stop.store(true, std::sync::atomic::Ordering::Release);
     let landing=request.complete_for_test(result);
     let _=step_landings_with_scope(&mut owner.state,&owner.adapter,None,||vec![landing],&scope,
         &mut |_| panic!("landing must not launch"));
