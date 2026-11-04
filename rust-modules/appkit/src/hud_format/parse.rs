@@ -3623,6 +3623,8 @@ mod tests {
         }
     }
 
+    /// Parses once: purity (the same bytes give the same answer) is checked by
+    /// `tests::mutation::check` over every mutant it makes.
     fn parse_text_bytes(bytes: &[u8]) {
         let parsed = parse(bytes);
         assert_eq!(
@@ -3631,6 +3633,5 @@ mod tests {
             "{:#?}",
             parsed.findings
         );
-        assert_eq!(parse(bytes), parsed, "the same bytes give the same answer");
     }
 }
