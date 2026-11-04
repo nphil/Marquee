@@ -170,8 +170,8 @@ impl Rows {
         self.access.clear();
         if !d.subs.is_empty() {
             self.access.push((
-                plx_platform::i18n::msg::widgets_badge_cc(),
-                plx_platform::i18n::msg::browse_detail_closed_captions(),
+                plx_platform::i18n::msg::widgets_badge_subtitles(),
+                plx_platform::i18n::msg::browse_detail_subtitles(),
             ));
         }
         if d.subs.iter().any(|s| s.sdh) {
@@ -179,7 +179,7 @@ impl Rows {
         }
         if d.audio.iter().any(|a| a.ad) {
             self.access.push((
-                plx_platform::i18n::msg::widgets_badge_ad(),
+                plx_platform::i18n::msg::widgets_badge_audio_description(),
                 plx_platform::i18n::msg::browse_detail_audio_description(),
             ));
         }
@@ -762,7 +762,7 @@ mod tests {
         let measure = plx_ui::fixture::FixtureMeasure;
         let d = Detail::default();
         let mut rows = Rows::new();
-        rows.access = vec![(plx_platform::i18n::msg::widgets_badge_cc(), plx_platform::i18n::msg::browse_detail_closed_captions())];
+        rows.access = vec![(plx_platform::i18n::msg::widgets_badge_subtitles(), plx_platform::i18n::msg::browse_detail_subtitles())];
         let runs = plx_ui::draw_census::capture_runs(|| {
             rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), &measure)
         });
@@ -772,7 +772,7 @@ mod tests {
         assert!((head - COL_Y).abs() < 0.5, "the heading stands at the column top");
         // The same description drawn where Information's first row would stand its own body.
         let want = plx_ui::draw_census::capture_runs(|| {
-            TextView::new(plx_platform::i18n::msg::browse_detail_closed_captions(), theme::size::CAPTION, theme::TEXT_HEADING)
+            TextView::new(plx_platform::i18n::msg::browse_detail_subtitles(), theme::size::CAPTION, theme::TEXT_HEADING)
                 .with_measure(&measure)
                 .leading(30.0)
                 .max_lines(4)

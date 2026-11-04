@@ -976,17 +976,17 @@
     "value": "This subtitle file has no readable lines",
     "description": "Message drawn in place of an external subtitle file that contains no readable text."
   },
-  "widgets.badge.cc": {
-    "value": "CC",
-    "description": "Badge: the title has closed captions. The mark the explanation text browse.detail.closed_captions defines; keep the two in step. Latin CC is the international mark in Spain and in the be catalog's own explanation."
+  "widgets.badge.subtitles": {
+    "value": "Subtitles",
+    "description": "Badge: the title has subtitles. Plain words, not the CC mark; the explanation text is browse.detail.subtitles."
   },
   "widgets.badge.sdh": {
     "value": "SDH",
     "description": "Badge: subtitles for the deaf and hard of hearing. Must match the abbreviation in browse.detail.sdh, which introduces it."
   },
-  "widgets.badge.ad": {
-    "value": "AD",
-    "description": "Badge: the title has an audio-description track. Must match the abbreviation in browse.detail.audio_description (es: audiodescripción, AD)."
+  "widgets.badge.audio_description": {
+    "value": "Audio description",
+    "description": "Badge: the title has an audio-description track (a narration of what happens on screen). Plain words, not the AD mark; the explanation text is browse.detail.audio_description."
   },
   "widgets.tracks.other_languages": {
     "value": "Other languages",

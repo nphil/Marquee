@@ -135,16 +135,16 @@
     "value": "Accessibility",
     "description": "browse detail accessibility"
   },
-  "browse.detail.closed_captions": {
-    "value": "Closed captions refer to subtitles in available languages with the addition of relevant non-dialogue information.",
-    "description": "browse detail closed_captions"
+  "browse.detail.subtitles": {
+    "value": "Subtitles are available for this title.",
+    "description": "Detail page Accessibility column: the line under the Subtitles badge."
   },
   "browse.detail.sdh": {
     "value": "Subtitles for the deaf and hard of hearing (SDH) refer to subtitles in the original language with the addition of relevant non-dialogue information.",
     "description": "browse detail sdh"
   },
   "browse.detail.audio_description": {
-    "value": "Audio descriptions (AD) refer to a narration track describing what is happening on screen, to provide context for those who are blind or have low vision.",
+    "value": "Audio description is a narration track describing what is happening on screen, to provide context for those who are blind or have low vision.",
     "description": "browse detail audio_description"
   },
   "browse.detail.related": {

@@ -33,10 +33,10 @@ pub enum Badge {
 impl Badge {
     pub fn text(&self) -> &str {
         match self {
-            Badge::Ad => plx_platform::i18n::msg::widgets_badge_ad(),
+            Badge::Ad => plx_platform::i18n::msg::widgets_badge_audio_description(),
             Badge::Forced => plx_platform::i18n::msg::widgets_badge_forced(),
             Badge::Sdh => plx_platform::i18n::msg::widgets_badge_sdh(),
-            Badge::Cc => plx_platform::i18n::msg::widgets_badge_cc(),
+            Badge::Cc => plx_platform::i18n::msg::widgets_badge_subtitles(),
             Badge::Text(s) => s.as_str(),
         }
     }

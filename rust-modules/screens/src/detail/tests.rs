@@ -5273,7 +5273,7 @@ fn the_identity_line_paints_sm_after_the_run_and_xs_between_chips() {
     // as the run, rather than the painter's uninitialized-font width estimate.
     let run_right = kind_run.at.x + plx_machine::machine::Measure::width_str(m, kind, theme::hero::IDENTITY_SIZE, false);
     let res = keyline_left(painted_x(&runs, "1080p").expect("resolution chip"), "1080p", m);
-    let cc_label = plx_platform::i18n::msg::widgets_badge_cc();
+    let cc_label = plx_platform::i18n::msg::widgets_badge_subtitles();
     let sdh_label = plx_platform::i18n::msg::widgets_badge_sdh();
     let cc = keyline_left(painted_x(&runs, cc_label).expect("CC chip"), cc_label, m);
     let sdh = keyline_left(painted_x(&runs, sdh_label).expect("SDH chip"), sdh_label, m);

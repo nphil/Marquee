@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The detail page, the info card and the audio menu label subtitles "Subtitles" and audio description "Audio description" in plain words instead of the CC and AD marks, in all eleven languages. The Tracks panel keeps its technical labels.
 - Automatic subtitles follow the audio: English audio prefers the dub transcript (an SDH/CC track, a `.en.cc.srt` sidecar, or one titled Dub/Dubtitle), other audio the full English translation, a downloaded one over a built-in one, and an audio switch re-picks unless a subtitle was chosen by hand. Subtitle menus name tracks in plain words: "English", "English (dub)", "English (on-screen text)", and "English (built-in)" for a built-in twin of a downloaded track, with no format names, acronyms or file titles.
 - The player's Subtitles menu and settings call forced subtitles on-screen text: the "On-screen text only" row and the On-screen text setting ("Show subtitles only for signs and songs"). Audio rows show the language, "(commentary)" and the channel layout, with no codec names or file titles.
 - Playback preserves non-standard picture aspect ratios by default. More offers Fit, Fill/crop, Original size, Zoom and Stretch without restarting playback.
