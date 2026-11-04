@@ -74,6 +74,8 @@ on:
       - '!docs/**'
       # graded by tests/test_demo_library.py (make check): must stay a trigger
       - 'docs/screenshots/CREDITS.md'
+      # include_str!ed by rust-modules/telemetry tests and read by telemetry/src/diag/schema.rs
+      - 'docs/privacy-data.md'
       # replayed by tools/test_abr_calibrate_plant.py, test_abr_transfer_bound.py and
       # test_scrub_logs.py (make check): must stay a trigger
       - 'docs/measurements/*-logs/*.log'

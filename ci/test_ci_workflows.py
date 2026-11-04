@@ -706,7 +706,7 @@ class CiPathFilter(unittest.TestCase):
         ".claude/hooks/outbound-guard.py", ".claude/hooks/outbound-guard-test.py",
         ".agents/skills/wake-tv/wake-tv.sh",
         "PRIVACY.md", "LICENSE", "LICENSING.md", "TRADEMARKS.md", "THIRD-PARTY-NOTICES.md",
-        "docs/screenshots/CREDITS.md", "site/credits.html", "site/index.html", "site/ci/index.html",
+        "docs/screenshots/CREDITS.md", "docs/privacy-data.md", "site/credits.html", "site/index.html", "site/ci/index.html",
         "docs/measurements/p1b-logs/pipe_abr_pin_320.log",
     )
     # Prose, images and repository metadata: no gate reads them (the evidence is in ci.yml).

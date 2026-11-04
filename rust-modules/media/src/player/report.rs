@@ -1159,7 +1159,7 @@ fn rebuffer_time_class(ms: i64) -> &'static str {
 /// A refused or unresolved plan installs no route (`tsession` stays empty), and "no encoder
 /// session" is how a direct play is recognised — so this read `direct` for every refusal, the same
 /// false claim [`delivery_class`] made until Sentry PLX-NATIVE-14. The usage funnel's `mode`
-/// domain gained `unknown` for it; `diag::schema::MODE` and `PRIVACY.md` carry the value.
+/// domain gained `unknown` for it; `diag::schema::MODE` and `docs/privacy-data.md` carry the value.
 fn mode(ps: &crate::route::PlaybackSession) -> &'static str {
     if crate::route::play_refused(ps) || crate::route::play_resolution_failed(ps) {
         "unknown"

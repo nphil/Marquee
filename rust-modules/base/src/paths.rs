@@ -611,7 +611,7 @@ pub fn session_candidates() -> Vec<PathBuf> {
 /// when that account signs out, so a change of owner IS a fresh question. That is also why the
 /// file holds a DECISION and, only after opt-in, one random identifier PER CHANNEL (the
 /// crash-report id and the analytics id, each owned by its own switch) — and why withdrawing a
-/// channel DELETES its identifier rather than merely disabling it. Recorded in `PRIVACY.md`,
+/// channel DELETES its identifier rather than merely disabling it. Recorded in `docs/privacy-data.md`,
 /// because a user cannot audit a file they cannot reach.
 ///
 /// Outside the `plxnative-` trigger namespace by construction, since it is not in the runtime root

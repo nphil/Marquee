@@ -480,7 +480,7 @@ mod tests {
     }
 
     /// The event name in the body is the SCHEMA's name, not a variant name stringified — the two
-    /// have drifted in other projects, and `PRIVACY.md` documents the schema's.
+    /// have drifted in other projects, and `docs/privacy-data.md` documents the schema's.
     #[test]
     fn the_wire_name_is_the_schema_name() {
         for e in all() {

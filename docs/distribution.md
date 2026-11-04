@@ -718,7 +718,7 @@ profile picker) there is nothing behind it *inside the app* — sign-in is the s
 that cannot be undone — so BACK there is the platform's own root press (`docs/remote-keys.md` §8)
 rather than closing the ceremony: it neither answers nor dismisses the question, and returning to
 the app finds it still there.
-`PRIVACY.md` carries the schemas: usage is generated from
+`docs/privacy-data.md` carries the schemas: usage is generated from
 `diag::schema::EVENT_SPECS`, native crashes are checked against their sanitizer allowlist, and
 handled playback errors use the same typed serializer/key-contract as the consent preview and
 durable Sentry queue).

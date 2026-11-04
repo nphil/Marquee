@@ -1154,14 +1154,14 @@ mod tests {
     fn consent_preview_and_privacy_name_every_refusal_domain_value() {
         use crate::telemetry::classes::{AudioCodecClass, DecisionCodeClass, VideoCodecClass};
         let legend = preview_domains();
-        let privacy = include_str!("../../../../PRIVACY.md");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
         let mut values: Vec<&str> = Vec::new();
         values.extend(DecisionCodeClass::ALL.iter().map(|c| c.code()));
         values.extend(VideoCodecClass::ALL.iter().map(|c| c.code()));
         values.extend(AudioCodecClass::ALL.iter().map(|c| c.code()));
         for value in values {
             assert!(legend.contains(value), "preview domain omitted {value}");
-            assert!(privacy.contains(value), "PRIVACY.md omitted {value}");
+            assert!(privacy.contains(value), "docs/privacy-data.md omitted {value}");
         }
         // The whole domain, in order, once per field: the consent screen lists it as written.
         assert!(legend.contains("absent / 2000 / 2003 / 4007 / other_1xxx / other_2xxx / other_3xxx / other_4xxx / other"));
@@ -1182,19 +1182,19 @@ mod tests {
     fn delivery_reason_codes_are_closed_and_listed() {
         use crate::telemetry::classes::DeliveryReason;
         let legend = preview_domains();
-        let privacy = include_str!("../../../../PRIVACY.md");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
         assert_eq!(DeliveryReason::ALL.len(), 5);
         assert_eq!(DeliveryReason::RefusalRecovery.code(), "refusal_recovery");
         for reason in DeliveryReason::ALL {
             assert!(legend.contains(reason.code()), "the legend omitted {}", reason.code());
         }
-        assert!(privacy.contains("`refusal_recovery`"), "PRIVACY.md omitted the facet rung's reason");
+        assert!(privacy.contains("`refusal_recovery`"), "docs/privacy-data.md omitted the facet rung's reason");
     }
 
     #[test]
     fn consent_preview_and_privacy_name_the_closed_failure_domains() {
         let legend = preview_domains();
-        let privacy = include_str!("../../../../PRIVACY.md");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
         for value in [
             "playback_interrupted",
             "original_rollback",
@@ -1204,7 +1204,7 @@ mod tests {
             "refresh",
         ] {
             assert!(legend.contains(value), "preview domain omitted {value}");
-            assert!(privacy.contains(value), "PRIVACY.md omitted {value}");
+            assert!(privacy.contains(value), "docs/privacy-data.md omitted {value}");
         }
     }
 
@@ -1374,19 +1374,19 @@ mod tests {
     }
 
     /// The consent screen shows the person every value the wire can carry, in their own words, and
-    /// `PRIVACY.md` names them too: a value in the payload that neither lists is a payload nobody
+    /// `docs/privacy-data.md` names them too: a value in the payload that neither lists is a payload nobody
     /// was shown.
     #[test]
     fn consent_preview_and_privacy_name_every_transport_and_age_value() {
         let legend = preview_domains();
-        let privacy = include_str!("../../../../PRIVACY.md");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
         for value in TransportClass::ALL
             .iter()
             .map(|c| c.code())
             .chain(TransferAgeClass::ALL.iter().map(|c| c.code()))
         {
             assert!(legend.contains(value), "preview domain omitted {value}");
-            assert!(privacy.contains(value), "PRIVACY.md omitted {value}");
+            assert!(privacy.contains(value), "docs/privacy-data.md omitted {value}");
         }
         assert!(legend.contains(
             "none / partial / recv_error / send_error / got_nothing / timeout / http2 / reopen_failed / other"
@@ -1509,7 +1509,7 @@ mod tests {
     }
 
     /// The consent screen shows what a report can carry: the sample event holds every new key, the
-    /// legend names each field with its domain, and PRIVACY.md describes them.
+    /// legend names each field with its domain, and docs/privacy-data.md describes them.
     #[test]
     fn the_consent_sample_legend_and_privacy_list_every_attempt_field() {
         use plx_platform::i18n::msg;
@@ -1551,7 +1551,7 @@ mod tests {
         // (including `unknown`), not only the three a refusal can name.
         let all = "unknown / original_direct / original_remux / hls / progressive_transcode";
         assert_eq!(legend.matches(all).count(), 2, "delivery and attempted delivery both list it");
-        let privacy = include_str!("../../../../PRIVACY.md");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
         for key in [
             "attempted_delivery",
             "attempt_started",
@@ -1559,13 +1559,13 @@ mod tests {
             "attempt_ordinal",
             "http_status",
         ] {
-            assert!(privacy.contains(key), "PRIVACY.md omitted {key}");
+            assert!(privacy.contains(key), "docs/privacy-data.md omitted {key}");
         }
         for origin in AttemptOrigin::ALL {
-            // Backticked, as PRIVACY.md writes every wire value: a bare word such as `preview`
+            // Backticked, as docs/privacy-data.md writes every wire value: a bare word such as `preview`
             // already appears in its prose, so a bare match would pass for an omission.
             let quoted = format!("`{}`", origin.code());
-            assert!(privacy.contains(&quoted), "PRIVACY.md omitted the origin {}", origin.code());
+            assert!(privacy.contains(&quoted), "docs/privacy-data.md omitted the origin {}", origin.code());
         }
         assert!(privacy.contains("9+") && privacy.contains("quality_pick"));
         assert!(privacy.contains("refusal_recovery"));
@@ -1607,7 +1607,7 @@ mod tests {
         assert_eq!(v["contexts"]["playback"]["pipeline_error"], 0);
     }
 
-    /// The consent screen lists the field and its whole domain, and `PRIVACY.md` names it: a key in
+    /// The consent screen lists the field and its whole domain, and `docs/privacy-data.md` names it: a key in
     /// the payload that neither mentions is a payload nobody was shown.
     #[test]
     fn consent_preview_and_privacy_name_the_pipeline_error_number() {
@@ -1619,8 +1619,8 @@ mod tests {
             legend.contains(&format!("{} to {}", i32::MIN, i32::MAX)),
             "the legend states the whole integer range: {legend}"
         );
-        let privacy = include_str!("../../../../PRIVACY.md");
-        assert!(privacy.contains("pipeline_error"), "PRIVACY.md omitted pipeline_error");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
+        assert!(privacy.contains("pipeline_error"), "docs/privacy-data.md omitted pipeline_error");
     }
 
     #[test]
@@ -1784,7 +1784,7 @@ mod tests {
     }
 
     /// The consent screen shows a sample of the event and the domain of each of its fields, and
-    /// `PRIVACY.md` names the class: an event neither mentions is an event nobody was shown.
+    /// `docs/privacy-data.md` names the class: an event neither mentions is an event nobody was shown.
     #[test]
     fn consent_preview_and_privacy_name_the_recovered_refusal() {
         let sample: Value = serde_json::from_slice(&preview_refusal_recovered()).expect("preview JSON");
@@ -1794,7 +1794,7 @@ mod tests {
             assert!(legend.contains(code), "the legend omits {code}: {legend}");
         }
         assert!(legend.contains(&format!("{} to {}", i32::MIN, i32::MAX)), "{legend}");
-        let privacy = include_str!("../../../../PRIVACY.md");
-        assert!(privacy.contains("refusal_recovered"), "PRIVACY.md omitted refusal_recovered");
+        let privacy = include_str!("../../../../docs/privacy-data.md");
+        assert!(privacy.contains("refusal_recovered"), "docs/privacy-data.md omitted refusal_recovered");
     }
 }

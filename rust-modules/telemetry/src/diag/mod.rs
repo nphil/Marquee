@@ -14,7 +14,7 @@
 
 // UNGATED for the same reason `eventlog::scrub` is, and it is the same lesson: the guarantee this module
 // provides is its TESTS — that action fields cannot carry runtime strings, that bounded context
-// fields stay within their allowlisted schema, and that `PRIVACY.md` lists every usage event — and
+// fields stay within their allowlisted schema, and that `docs/privacy-data.md` lists every usage event — and
 // tests behind a feature the default gate does not build are tests that never run. `scrub`'s 31
 // assertions sat unexecuted for as long as they existed.
 pub mod schema;

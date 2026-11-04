@@ -2915,7 +2915,7 @@ mod tests {
             "<ok / no_keys / unreadable / unprobed per nyx file>",
             "the fallback report carries `probe` even though the native crash event does not"
         );
-        // A closed value, shown as a real one like the signal name: PRIVACY.md lists both.
+        // A closed value, shown as a real one like the signal name: docs/privacy-data.md lists both.
         assert_eq!(fault["contexts"]["crash"]["native_path"], "no_envelope");
         let images = fault["debug_meta"]["images"].as_array().unwrap();
         assert_eq!(images.len(), 2, "the app's image and a library");

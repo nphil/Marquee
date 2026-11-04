@@ -173,7 +173,7 @@ pub fn account_key(account_token: &str) -> String {
 /// **One insecure-only server, as a read-out needs it** — which server, whose it is, whether the
 /// same-network rule lets the person be asked ([`InsecureEvidence::plaintext_eligibility`]), and
 /// what they already answered. The name and the credit are for the SCREEN only: the report carries
-/// the closed eligibility and consent codes, never these strings (`PRIVACY.md`).
+/// the closed eligibility and consent codes, never these strings (`docs/privacy-data.md`).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlaintextVerdict {
     pub machine_id: String,

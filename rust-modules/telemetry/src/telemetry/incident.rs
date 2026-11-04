@@ -1281,11 +1281,11 @@ mod tests {
         }
     }
 
-    /// `PRIVACY.md` names every key a sign-in report's `incident` context can carry, so a key
+    /// `docs/privacy-data.md` names every key a sign-in report's `incident` context can carry, so a key
     /// added to [`event_body`] without its line in the notice fails here, not in review.
     #[test]
     fn privacy_notice_names_every_sign_in_incident_key() {
-        let notice = include_str!("../../../../PRIVACY.md");
+        let notice = include_str!("../../../../docs/privacy-data.md");
         // A class carries the status OR the CURLcode, never both; the notice names both.
         let mut ctx = IncidentContext::new(IncidentKind::Authorization, Some(Ok(503)))
             .with_link_state(2, Some(Duration::from_secs(9)), 3);
@@ -1296,7 +1296,7 @@ mod tests {
             if key == "type" {
                 continue;
             }
-            assert!(notice.contains(&format!("`{key}`")), "PRIVACY.md does not name `{key}`");
+            assert!(notice.contains(&format!("`{key}`")), "docs/privacy-data.md does not name `{key}`");
         }
         // The discovery evidence ships only on its two kinds; walk both.
         for ctx in [
@@ -1305,7 +1305,7 @@ mod tests {
         ] {
             let v = event_body("a", "", None, ctx, ConsentKind::OneOff);
             for key in keys(&v["contexts"]["incident"]) {
-                assert!(key == "type" || notice.contains(&format!("`{key}`")), "PRIVACY.md does not name `{key}`");
+                assert!(key == "type" || notice.contains(&format!("`{key}`")), "docs/privacy-data.md does not name `{key}`");
             }
         }
         // The save-failure trio ships too, but `dns_context`-shaped fixtures above never set it —
@@ -1318,7 +1318,7 @@ mod tests {
             if key == "type" {
                 continue;
             }
-            assert!(notice.contains(&format!("`{key}`")), "PRIVACY.md does not name `{key}`");
+            assert!(notice.contains(&format!("`{key}`")), "docs/privacy-data.md does not name `{key}`");
         }
     }
 

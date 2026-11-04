@@ -1,6 +1,6 @@
 //! **The allowlist of usage events that may be reported off this television, as a TYPE.**
 //!
-//! `PRIVACY.md` promises that titles, ratingKeys, search terms, subtitle text, server names and
+//! `docs/privacy-data.md` promises that titles, ratingKeys, search terms, subtitle text, server names and
 //! addresses are never sent. This file is what makes that a checkable statement rather than a
 //! good intention for usage telemetry: every usage event is a variant of [`DiagEvent`], every field of every
 //! variant is a number, a bool or a `&'static str` from a fixed table, and one exhaustive
@@ -28,7 +28,7 @@
 //! # Adding a variant
 //!
 //! Three things move together and the tests fail if they do not: the variant, its arm in
-//! [`serialize`], and its row in `PRIVACY.md`'s schema table. That last one is
+//! [`serialize`], and its row in `docs/privacy-data.md`'s schema table. That last one is
 //! [`the_privacy_document_carries_the_generated_table`], and it is the mechanism behind the promise that the
 //! document is written *before* the thing ships rather than after.
 //!
@@ -662,14 +662,14 @@ pub fn serialize(e: DiagEvent) -> (&'static str, Vec<(&'static str, Value)>) {
 }
 
 /// **The registry: one declaration per event, carrying its name, its fields and what each field
-/// may hold.** `PRIVACY.md`'s schema table is rendered from this and checked against it, and so is
+/// may hold.** `docs/privacy-data.md`'s schema table is rendered from this and checked against it, and so is
 /// [`serialize`].
 ///
 /// It replaced a NAME LIST plus a grep. The name list caught a variant that shipped undeclared and
 /// could say nothing about fields — so a field added to an existing event changed what leaves the
 /// television with no document, and no test, noticing. And the in-app notice was guarded by
 /// grepping `src/telemetry` for a call to `net::post_ca`, which is a proxy for "can this build
-/// send" and answers nothing about WHAT. A registry is the thing itself: the promise `PRIVACY.md`
+/// send" and answers nothing about WHAT. A registry is the thing itself: the promise `docs/privacy-data.md`
 /// makes is about fields and their domains, so that is what is declared, once, here.
 ///
 /// `domain` is prose and it is the column a reader of the privacy document actually reads. It is
@@ -681,7 +681,7 @@ pub fn serialize(e: DiagEvent) -> (&'static str, Vec<(&'static str, Value)>) {
 /// nothing needs a second copy of it in the shipped binary. The alternative was an
 /// `#[allow(dead_code)]`, and this file's own doc argues against exactly that: a standing allowance
 /// is how a genuinely dead declaration later hides in plain sight. Every comparison that gives this
-/// registry its value — against `serialize`, against `PRIVACY.md`, against the consent screen's
+/// registry its value — against `serialize`, against `docs/privacy-data.md`, against the consent screen's
 /// preview — is a test, and `make check` runs them all.
 #[cfg(any(test, feature = "test-support"))]
 pub const EVENT_SPECS: &[EventSpec] = &[
@@ -836,7 +836,7 @@ pub struct F {
     pub domain: &'static str,
 }
 
-/// The schema table exactly as `PRIVACY.md` carries it. **The document is the OUTPUT** — a test
+/// The schema table exactly as `docs/privacy-data.md` carries it. **The document is the OUTPUT** — a test
 /// asserts the file contains this verbatim and prints the block on failure, so the fix to a stale
 /// document is a paste rather than an act of authorship.
 #[cfg(any(test, feature = "test-support"))]
@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     /// **THE GUARANTEE.** No variant may carry a `String`, and no field value may be one — that is
-    /// what makes `PRIVACY.md`'s "titles, search terms and server names are not included" a
+    /// what makes `docs/privacy-data.md`'s "titles, search terms and server names are not included" a
     /// statement about the TYPE rather than about how careful the call sites are.
     ///
     /// Greps this file's own source, in the same spirit as
@@ -1142,7 +1142,7 @@ mod tests {
 
     /// The privacy document lists every event this build can emit.
     ///
-    /// `PRIVACY.md` promises, as a binding term, that the literal structure sent is documented
+    /// `docs/privacy-data.md` promises, as a binding term, that the literal structure sent is documented
     /// there *before* it ships. This is that promise as a test: add a variant, and the document
     /// has to gain a row in the same change or `make check` fails. It reads the file from the
     /// repository root rather than embedding a copy, so the two cannot drift.
@@ -1152,26 +1152,26 @@ mod tests {
             .parent()
             .and_then(std::path::Path::parent)
             .expect("rust-modules/telemetry has a repository root above it")
-            .join("PRIVACY.md");
-        let doc = std::fs::read_to_string(&root).expect("PRIVACY.md is readable");
+            .join("docs/privacy-data.md");
+        let doc = std::fs::read_to_string(&root).expect("docs/privacy-data.md is readable");
         let want = privacy_table();
         assert!(
             doc.contains(&want),
-            "PRIVACY.md's schema table is not the one this build would send. The document is the \
+            "docs/privacy-data.md's schema table is not the one this build would send. The document is the \
              OUTPUT of `diag::schema::EVENT_SPECS`, so the fix is to paste the block below over \
-             the table in PRIVACY.md — not to edit the registry to match the document.\n\n{want}"
+             the table in docs/privacy-data.md — not to edit the registry to match the document.\n\n{want}"
         );
         let context = privacy_context_table();
         assert!(
             doc.contains(&context),
-            "PRIVACY.md does not contain the generated usage context table:\n\n{context}"
+            "docs/privacy-data.md does not contain the generated usage context table:\n\n{context}"
         );
     }
 
     /// **`playback.failed`'s declared `kind` domain must name every `FailureClass` code.**
     ///
     /// This is the check that was missing when `FailureClass::JailMissingRtkmem` shipped: nothing
-    /// tied the *documented* domain (this file's `EVENT_SPECS`, and through it `PRIVACY.md`, whose
+    /// tied the *documented* domain (this file's `EVENT_SPECS`, and through it `docs/privacy-data.md`, whose
     /// own test only compares the two against EACH OTHER) to the *actual* enum a `playback.failed`
     /// event's `kind` field is built from — `telemetry::classes::FailureClass::code`, which
     /// `player::FailureKind::code` returns. So a new variant reached production PostHog rows with

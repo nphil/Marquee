@@ -93,7 +93,7 @@ const ALERT_GROUP: GroupId = GroupId(1);
 /// failed and how the connection answered" is the `incident` context (kind, link class, HTTP
 /// status or `CURLcode`, the bucketed counters, the code generation), "the app version" is
 /// `release`; and every category it rules out — the same five `PRIVACY.md`'s onboarding section
-/// names — is not in the body at all. The full field list lives in `PRIVACY.md` and the in-app
+/// names — is not in the body at all. The full field list lives in `docs/privacy-data.md` and the in-app
 /// Privacy Policy, not here.
 
 /// How long a working phase runs before the read-out grows a way out — for the phases whose
