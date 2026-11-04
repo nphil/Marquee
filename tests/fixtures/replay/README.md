@@ -627,3 +627,12 @@ settle) and installed with `tools/plxnative-rec rerecord`, anchors retained. Flo
 Marquee's Subtitles row to reach Privacy, and the alphabet adds Marquee's Settings copy
 (`marquee_copy`). `tests/replay_fixtures.py` replays all three with `verdict=SAME` in Targets and
 Resolve and every difference counter at zero.
+
+The detail page's accessibility chips now read "Subtitles" and "Audio description" where they read
+"CC" and "AD", which moved what Flow 12's Detail measures without moving the shape:
+`12-filmography-detail-return` was refused on the first measurement it had never taken (`replay:
+REFUSED — replay measurement table miss`, both modes), while `1-boot-home-chip-grid` and
+`6-settings-family` stayed SAME. Only the Flow 12 recording segment was replaced
+(`tests/focusfp.sh --rec --only 12`, `tools/plxnative-rec check`), the manifest and anchor flag
+kept; "CC", no longer drawn by any recording, leaves the closed alphabet ("Subtitles" is already in
+it).
