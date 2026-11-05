@@ -166,6 +166,10 @@ const FRESH_PROCESS_ENV: &str = "PLX_TEST_FRESH_PROCESS";
 /// process and whose UNSET state is what the test grades (the `User-Agent` `OnceLock`: any other
 /// test in the same binary may already have installed it, and nothing can take it back).
 ///
+/// It is also how a test that runs for seconds on end stays off the lock: the parent holds nothing
+/// while it waits and the child's guard is the child's own, so the serial tests of this process
+/// are not queued behind the long one (`screens::detail::identity_tests`' frame walk).
+///
 /// Call it first, with `module_path!()` and the test's own name. It answers `true` inside the
 /// child, where the test body goes on to run alone; in the parent it starts the child on
 /// `--exact` that one test, asserts the child ran it and passed, and answers `false`, so the

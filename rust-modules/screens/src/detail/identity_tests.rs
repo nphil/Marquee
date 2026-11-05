@@ -801,6 +801,12 @@ fn back_during_the_hold_for_an_unreadable_window_leaves_the_page_and_leaves_no_s
 #[test]
 fn no_landing_on_the_related_row_ever_moves_the_card_under_the_focus() {
     use plx_machine::machine::{Edge, InputEvent, InputKind, Key, Source};
+    // 240 000 frames: the longest test of the crate by far. Held in this process it would keep the
+    // lock every other serial test queues on for its whole length, so it runs in a process of its
+    // own, where nothing waits on it.
+    if !plx_base::testlock::fresh_process(module_path!(), "no_landing_on_the_related_row_ever_moves_the_card_under_the_focus") {
+        return;
+    }
     let _guard = plx_base::testlock::serial();
     const TAIL: usize = 100;
     let window = |from: usize| {

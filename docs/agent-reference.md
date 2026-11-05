@@ -254,6 +254,12 @@ the pinned Sentry Native cross-build), and `sshpass` (Homebrew; deploy/run use y
   (binaries already built): 78.8 s sequential -> 17.9 s with 4 jobs and 14 s with 6 or more, after
   the fixes to the 16 s test and to `plx_plex`'s TEST-NET connect-timeout test. The remaining long
   pole is `plx_media`'s chain of `serial()` tests (about 12 s end to end even alone).
+  A test that holds `serial()` for seconds does the same to its own binary: libtest runs
+  `RUST_TEST_THREADS` tests at once, so every thread parks on the lock and the tests behind the long
+  one finish together after it (2026-11-04, debug build, 4 threads: `plx_screens` 71 s behind one
+  40 s frame walk, `plx_ui` 30 s behind two pixel sweeps; each queued test takes under 0.1 s alone).
+  Keep the guarded part of a test short, or run a long one in a child process with
+  `testlock::fresh_process`, as the three 240 000-frame walks do.
 - `make lint` — three **named** clippy lints (`ifs_same_cond`, `same_functions_in_if_condition`,
   `if_same_then_else`) over the whole crate, `-A clippy::all` first so nothing else can *fail* the
   gate (rustc's own warnings still print). It exists for one bug class the unit suite cannot reach:

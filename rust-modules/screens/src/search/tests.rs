@@ -1490,6 +1490,11 @@ fn a_row_withdraws_its_slide_when_focus_walks_back_from_the_edge() {
 /// store holds. A held key then reaches the last hit and walks back to the first.
 #[test]
 fn no_landing_on_a_search_row_ever_moves_the_card_under_the_focus() {
+    // In a process of its own for the reason
+    // `detail::identity_tests::no_landing_on_the_related_row_ever_moves_the_card_under_the_focus` is.
+    if !plx_base::testlock::fresh_process(module_path!(), "no_landing_on_a_search_row_ever_moves_the_card_under_the_focus") {
+        return;
+    }
     let _serial = plx_base::testlock::serial();
     const TOTAL: usize = 24 + 12 * 8;
     let publication = |lo: usize, held: usize| Shelf {

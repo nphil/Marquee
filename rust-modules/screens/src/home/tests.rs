@@ -4558,6 +4558,11 @@ use plx_ui::fixture::Walk;
 /// held key then reaches the last card and walks back to the first.
 #[test]
 fn no_landing_ever_leaves_the_focused_card_outside_the_window() {
+    // Another 240 000 frames, in a process of its own for the reason
+    // `detail::identity_tests::no_landing_on_the_related_row_ever_moves_the_card_under_the_focus` is.
+    if !plx_base::testlock::fresh_process(module_path!(), "no_landing_ever_leaves_the_focused_card_outside_the_window") {
+        return;
+    }
     let _guard = plx_base::testlock::serial();
     const TOTAL: usize = 24 + 12 * 8;
     for seed in 1..=8u64 {
