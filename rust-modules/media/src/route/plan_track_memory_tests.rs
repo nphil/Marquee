@@ -482,8 +482,8 @@ fn cc_sidecar(id: i64) -> Stream {
 
 /// **An automatic subtitle follows the audio.** English audio prefers the dub transcript (the `.cc`
 /// sidecar, or a track titled Dub/Dubtitle) over the full translation PMS selected; Japanese audio
-/// the full translation over a selected dub transcript. On-screen text, the account's Forced only
-/// and a remembered choice are left alone, and the server's own sidecar stands when it already fits.
+/// the full translation over a selected dub transcript. On-screen text and the account's Forced only
+/// are left alone, and so is a remembered choice that decided the subtitle.
 #[test]
 fn an_automatic_subtitle_follows_the_audio() {
     let item = episode(vec![text_sub(2, "eng", "Signs / Songs"), server_selected(text_sub(1, "eng", "Dialogue")), cc_sidecar(9)]);
@@ -500,7 +500,7 @@ fn an_automatic_subtitle_follows_the_audio() {
         cc_sidecar(9),
     ]);
     assert_eq!(ladder(&sidecars, "eng", None).pick, Some((9, -1)));
-    assert_eq!(ladder(&sidecars, "jpn", None).pick, None, "the server's own sidecar stands");
+    assert_eq!(ladder(&sidecars, "jpn", None).pick, None, "the server's translation already fits Japanese audio, so it stays");
     let downloaded = episode(vec![
         server_selected(text_sub(1, "eng", "Dialogue")),
         Stream { key: "/library/streams/8".into(), ..sub(8, 8, "eng", true) },
@@ -512,5 +512,55 @@ fn an_automatic_subtitle_follows_the_audio() {
     assert_eq!(ladder(&signs, "eng", None).pick, Some((1, 0)), "on-screen text is not followed");
     let forced_only = SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 2 };
     assert_eq!(pick_subtitle(&item, &NO_SHOW_RULES(), forced_only, "eng", None, None).pick, Some((1, 0)));
-    assert_eq!(ladder(&item, "eng", Some(&track_memo("spa"))).pick, Some((1, 0)), "a remembered choice is not followed");
+}
+
+/// One-Punch Man S02E01 as PMS lists it: the built-in PGS "Signs / Songs" and "Dialogue", Bazarr's
+/// `.en.srt` (166318) and SpeechDock's `.en.cc.srt` (166341, hearing-impaired), the last one
+/// selected on the server.
+fn one_punch_man_s02e01() -> PlayingItem {
+    let pgs = |id, index, title: &str| Stream { codec: "pgs".into(), title: title.into(), ..sub(id, index, "eng", false) };
+    episode(vec![
+        pgs(77178, 3, "Signs / Songs"),
+        pgs(77179, 4, "Dialogue"),
+        server_selected(cc_sidecar(166341)),
+        Stream { key: "/library/streams/166318".into(), ..sub(166318, 6, "eng", true) },
+    ])
+}
+
+/// **The server's selection is an automatic pick: the audio moves it.** PMS (or a tool that rewrites
+/// its selections) had the dub transcript selected, and the profile held a remembered subtitle that
+/// the server's sidecar outranks (`track-memory: not used (a higher rung decided)`). Japanese audio
+/// stayed on the dub transcript instead of the translation, because a withheld memory stopped the
+/// follow. Whatever the withheld memory says, English audio keeps the server's dub and Japanese audio
+/// takes the translation.
+#[test]
+fn the_servers_selection_follows_the_audio_whatever_memory_it_outranks() {
+    let item = one_punch_man_s02e01();
+    let withheld = [
+        None,
+        Some(track_memo("eng")),
+        Some(external_memo("eng", false)),
+        Some(external_memo("eng", true)),
+        Some(SubtitleMemo::Off),
+        Some(SubtitleMemo::ForcedOnly { lang: String::new() }),
+    ];
+    for memo in &withheld {
+        let english = ladder(&item, "eng", memo.as_ref());
+        assert_eq!((english.pick, english.source), (None, SubPickSource::Server), "{memo:?}: English audio: the server's dub transcript stands");
+        let japanese = ladder(&item, "jpn", memo.as_ref());
+        assert_eq!(japanese.pick, Some((166318, -1)), "{memo:?}: Japanese audio: the full translation");
+    }
+}
+
+/// A remembered subtitle that DECIDED is the viewer's choice and is not followed; one that matched
+/// nothing decided nothing, so the automatic pick it fell back to follows the audio as usual.
+#[test]
+fn only_a_memory_that_decided_stops_the_follow() {
+    let item = episode(vec![text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", ""), cc_sidecar(9)]);
+    let decided = ladder(&item, "eng", Some(&external_memo("eng", false)));
+    assert_eq!((decided.pick, decided.source), (Some((8, -1)), SubPickSource::Memory), "English audio would prefer the dub (9)");
+
+    let selected = episode(vec![text_sub(2, "eng", "Signs / Songs"), server_selected(text_sub(1, "eng", "Dialogue")), cc_sidecar(9)]);
+    let declined = ladder(&selected, "eng", Some(&track_memo("spa")));
+    assert_eq!((declined.pick, declined.source, declined.miss), (Some((9, -1)), SubPickSource::Server, Some("language")));
 }

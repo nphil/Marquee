@@ -2029,6 +2029,77 @@ fn an_automatic_subtitle_follows_the_audio_until_the_viewer_picks() {
     tidy_write(&mut ps);
 }
 
+/// One-Punch Man S02E01 as PMS lists it: the built-in PGS "Signs / Songs" and "Dialogue", Bazarr's
+/// `.en.srt` (166318) and SpeechDock's `.en.cc.srt` (166341, hearing-impaired), the last one selected
+/// on the server.
+#[cfg(feature = "devtriggers")]
+fn one_punch_man_s02e01() -> Vec<plx_data::metadata::Stream> {
+    let pgs = |id, index, title: &str| plx_data::metadata::Stream {
+        title: title.into(),
+        ..stream(id, index, "eng", "pgs", 0)
+    };
+    vec![
+        pgs(77178, 3, "Signs / Songs"),
+        pgs(77179, 4, "Dialogue"),
+        plx_data::metadata::Stream { selected: true, sdh: true, ..sidecar_stream(166341, "eng") },
+        sidecar_stream(166318, "eng"),
+    ]
+}
+
+/// **The live failure (S02E01 on the TV, 2026-11-04), end to end.** The profile remembers a subtitle
+/// for the show and the server has the dub transcript selected, so the ladder withholds the memory
+/// (`track-memory: not used (a higher rung decided)`). That withheld memory used to switch the audio
+/// follow off: the switch to Japanese stayed on the dub transcript. The server's selection is an
+/// automatic pick, so it follows the audio, and the viewer's own pick still ends the follow.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn a_withheld_memory_does_not_stop_the_audio_follow_of_the_servers_selection() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    crate::player::sidecar::reset();
+    let record = memory(None, Some(english_sidecar_memo()));
+    let (plan, _, log) = resolve_in(&mut ps, Case::episode(one_punch_man_s02e01(), record), |_, plan| plan);
+    assert!(log.contains("track-memory: not used (a higher rung decided) subtitle"), "setup: the memory is withheld: {log}");
+    apply_plan(&mut ps, plan, "rk-4k");
+    assert_eq!(cur_sub_sid(&ps), 166341, "English audio: the dub transcript the server selected");
+
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(cur_sub_sid(&ps), 166318, "Japanese audio: the full translation");
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 166341, "English audio again: the dub transcript");
+
+    commit_subtitle_pick(&mut ps, -1, 166318, true, None);
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 166318, "the viewer's own pick stays");
+    crate::player::sidecar::reset();
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
+/// **A resumed playback lands on the subtitle its audio asks for.** Switching audio to Japanese
+/// writes the audio memory, so the next landing plays Japanese from the start: the translation, not
+/// the dub transcript the server still has selected. Neither the audio memory nor a subtitle memory
+/// the server's sidecar outranks changes that.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn a_landing_on_remembered_japanese_audio_shows_the_translation() {
+    let eng_jpn = || vec![("eng".to_string(), Some((166341, -1))), ("jpn".to_string(), Some((166318, -1)))];
+    for (what, record) in [
+        ("audio memory only", memory(Some(japanese_eac3()), None)),
+        ("audio and subtitle memory", memory(Some(japanese_eac3()), Some(english_sidecar_memo()))),
+    ] {
+        let (plan, _) = resolve(Case::episode(one_punch_man_s02e01(), record));
+        assert_eq!(plan.audio.as_ref().map(|a| a.sid), Some(36015), "{what}: Japanese audio plays");
+        assert_eq!(plan.memory_sidecar, Some(166318), "{what}: the translation, not the server's dub transcript");
+        assert_eq!(plan.track_ctx.as_ref().and_then(|c| c.auto_subs.clone()), Some(eng_jpn()), "{what}: and an audio switch keeps following");
+    }
+
+    let off = memory(Some(japanese_eac3()), Some(SubtitleMemo::Off));
+    let (plan, _) = resolve(Case::episode(vec![srt(55001, 3, "eng", false, false)], off));
+    assert_eq!(plan.track_ctx.as_ref().map(|c| c.auto_subs.is_none()), Some(true), "control: a remembered Off that decided is not followed");
+}
+
 /// On a live transcode the re-pointed subtitle is a burn, so the audio switch and the subtitle
 /// change both rebuild: they must be ONE Retranscode, and the subtitle the rebuild names is the new
 /// one.

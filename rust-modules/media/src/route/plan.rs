@@ -2019,10 +2019,13 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 if env.subtitle_override.is_some() && env.sub_mode == SubMode::ForcedOnly {
                     ctx.keep_forced_lang(&env.forced_lang);
                 }
-                // Rule 3 of the audio follow: only a subtitle nobody chose by hand follows the audio.
+                // Rule 3 of the audio follow: only a subtitle nobody chose follows the audio. A remembered
+                // choice that DECIDED the landing is the viewer's and stays; the server's selection, the
+                // show's and the account's rules, and a memory that matched nothing or that the server's
+                // sidecar outranked (`track-memory: not used`) decided nothing, so those follow.
                 ctx.auto_subs = if env.subtitle_override.is_some() {
                     env.auto_subs.clone()
-                } else if memory_sub.is_none() {
+                } else if !sub_decision.as_ref().is_some_and(|d| d.source == SubPickSource::Memory) {
                     let account = account_subtitles.as_ref().map(|(language, mode, forced)| SubtitleLangPrefs {
                         language: language.as_deref(), mode: *mode, forced: *forced,
                     }).unwrap_or_default();
@@ -3647,13 +3650,19 @@ pub(super) struct SubDecision {
 /// remembered track, so rungs 1 and 2 outrank all three alike.
 ///   1. this playback's own pick (`override_id`, a known retry);
 ///   2. a subtitle the SERVER has selected and the app draws itself
-///      (`metadata::server_selected_sidecar`): memory is not consulted, and the server's pick stands;
+///      (`metadata::server_selected_sidecar`): memory is not consulted, and the server's pick stands,
+///      as an automatic pick (below);
 ///   3. what the profile remembered for the show: a track (`track_memory::match_subtitle`; a
 ///      remembered sidecar picks this file's same-language sidecar, see [`memory_subtitle`]), Off, or
 ///      Forced only (`track_memory::match_forced_only`, judged by the language of the audio that
 ///      is PLAYING);
 ///   4-7. PMS's embedded selection, the show's settings, the account's, else Off
 ///      ([`pick_dp_subtitle_account`]).
+///
+/// **Everything below rung 3 is an automatic pick and follows the audio** ([`follow_audio`]), whatever
+/// the profile remembered: a rung that picked nothing the viewer chose (PMS's selection may be a tool's
+/// rewrite, not a choice) has nothing to protect. Only a remembered choice that decided, above, is left
+/// as the viewer made it.
 ///
 /// PURE, and the one subtitle decision of a resolve: the MDE handshake, the Original candidate and
 /// the direct-play plan all read this answer.
@@ -3684,7 +3693,7 @@ pub(super) fn pick_subtitle(
         SubPickSource::Account
     };
     let pick = pick_dp_subtitle_account(subs, prefs, account, audio_lang);
-    let pick = if memory.is_none() { follow_audio_pick(item, account, audio_lang, pick) } else { pick };
+    let pick = follow_audio_pick(item, account, audio_lang, pick);
     SubDecision { pick, source, miss }
 }
 
