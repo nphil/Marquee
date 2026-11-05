@@ -1314,9 +1314,11 @@ where
         let will_present = self.present.take(tick.ms) || self.budget.has_queued_work();
         tap.present(f, will_present, why);
         // `prepare_does_not_change_the_logical_state_hash` (§5.4): a prepare pass touches render
-        // resources only — graded on every presenting frame of a debug build
+        // resources only — graded on every presenting frame of a debug build. A frame that does not
+        // present runs no prepare pass and hashes nothing: the pair was a quarter of
+        // `detail::identity_tests`' frame walk (34 of 129 sampled stacks).
         #[cfg(debug_assertions)]
-        let hash_before_prepare = self.state_hash();
+        let hash_before_prepare = will_present.then(|| self.state_hash());
 
         // 9. prepare (only if presenting), then opaque_route on EVERY frame. The activity table:
         //    the top page prepares unless its host fold is Cached or Replaced; every surface does.
@@ -1325,11 +1327,9 @@ where
         }
         rig.opaque_route(self.present.video_plane());
         #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            self.state_hash(),
-            hash_before_prepare,
-            "a prepare pass changed the logical state"
-        );
+        if let Some(before) = hash_before_prepare {
+            debug_assert_eq!(self.state_hash(), before, "a prepare pass changed the logical state");
+        }
 
         // 10. draw, then the tail
         if will_present && draw {

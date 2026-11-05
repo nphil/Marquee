@@ -874,6 +874,21 @@ impl Canon {
         self.len += 1;
     }
 
+    /// FNV-1a over `bytes`, the same as one `byte` after another. An index loop, not `for b in ..`:
+    /// a debug build hashes the whole logical state twice per frame (`Dispatcher::frame_with`), and
+    /// there the iterator adaptors were half the time of `detail::identity_tests`' 240 000-frame
+    /// walk (sampled stacks in `Dispatcher::state_hash`: 97 of 195 before, 34 of 129 after).
+    fn bytes(&mut self, bytes: &[u8]) {
+        let mut h = self.h;
+        let mut i = 0;
+        while i < bytes.len() {
+            h = (h ^ bytes[i] as u64).wrapping_mul(Self::PRIME);
+            i += 1;
+        }
+        self.h = h;
+        self.len += bytes.len() as u64;
+    }
+
     pub fn u8(&mut self, v: u8) -> &mut Self {
         self.tag(1);
         self.byte(v);
@@ -882,17 +897,13 @@ impl Canon {
 
     pub fn u32(&mut self, v: u32) -> &mut Self {
         self.tag(2);
-        for b in v.to_le_bytes() {
-            self.byte(b);
-        }
+        self.bytes(&v.to_le_bytes());
         self
     }
 
     pub fn u64(&mut self, v: u64) -> &mut Self {
         self.tag(3);
-        for b in v.to_le_bytes() {
-            self.byte(b);
-        }
+        self.bytes(&v.to_le_bytes());
         self
     }
 
@@ -905,18 +916,14 @@ impl Canon {
     /// Floats are their BITS: NaN, +0/-0 and Inf are all distinct and all stable.
     pub fn f32(&mut self, v: f32) -> &mut Self {
         self.tag(5);
-        for b in v.to_bits().to_le_bytes() {
-            self.byte(b);
-        }
+        self.bytes(&v.to_bits().to_le_bytes());
         self
     }
 
     pub fn str(&mut self, v: &str) -> &mut Self {
         self.tag(6);
         self.u32(v.len() as u32);
-        for b in v.bytes() {
-            self.byte(b);
-        }
+        self.bytes(v.as_bytes());
         self
     }
 
