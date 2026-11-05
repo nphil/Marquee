@@ -14,8 +14,9 @@
 //! ONE "Other languages" row (a drill-in to [`TrackPage::OtherLanguages`], one row per language
 //! A-Z; a multi-track language there drills in again to [`TrackPage::Language`], its tracks
 //! ranked); and a headerless section holds Timing and Style. A built-in track that a downloaded file
-//! of the same language, region and kind duplicates is not listed: the file is ([`sub_layout::downloaded_twin`]). That
-//! grouping is a pure DATA model, `metadata::sub_layout` (host-tested without a
+//! of the same language, region and kind duplicates is not listed: the file is
+//! ([`sub_layout::downloaded_twin`]). That grouping is a pure DATA model, `metadata::sub_layout`
+//! (host-tested without a
 //! `PlaybackSession`/`MetadataView` fixture); this module only turns it into `TableView` sections
 //! ([`table_form`]) and answers focus/OK by the focused row's [`TrackRow`] identity. "Yours" is
 //! the pref language (if the play resolved under one), the playing audio's language, and the

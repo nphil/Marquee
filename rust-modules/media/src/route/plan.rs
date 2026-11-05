@@ -3659,10 +3659,10 @@ pub(super) struct SubDecision {
 ///   4-7. PMS's embedded selection, the show's settings, the account's, else Off
 ///      ([`pick_dp_subtitle_account`]).
 ///
-/// **Everything below rung 3 is an automatic pick and follows the audio** ([`follow_audio`]), whatever
-/// the profile remembered: a rung that picked nothing the viewer chose (PMS's selection may be a tool's
-/// rewrite, not a choice) has nothing to protect. Only a remembered choice that decided, above, is left
-/// as the viewer made it.
+/// **A pick no remembered choice decided is automatic and follows the audio** ([`follow_audio`]): the
+/// server's selection (not the viewer's choice, whoever wrote it), the show's and the account's rules.
+/// A memory that rung 2 withheld, or that matched nothing, decided nothing; rung 1 and a remembered
+/// choice that decided (rung 3) stay as the viewer made them.
 ///
 /// PURE, and the one subtitle decision of a resolve: the MDE handshake, the Original candidate and
 /// the direct-play plan all read this answer.

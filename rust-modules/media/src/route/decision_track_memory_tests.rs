@@ -2078,6 +2078,33 @@ fn a_withheld_memory_does_not_stop_the_audio_follow_of_the_servers_selection() {
     tidy_write(&mut ps);
 }
 
+/// **A reload of the playback keeps following the audio.** A quality change or a rescue resolves the
+/// same item again with the pair on screen as the viewer's pick; the subtitle on screen stays, and the
+/// table of automatic picks rides the retry, so a later audio switch still re-picks.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn a_reloaded_playback_keeps_following_the_audio() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    crate::player::sidecar::reset();
+    let record = memory(None, Some(english_sidecar_memo()));
+    let plan = resolve_in(&mut ps, Case::episode(one_punch_man_s02e01(), record), |_, plan| plan).0;
+    apply_plan(&mut ps, plan, "rk-4k");
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(cur_sub_sid(&ps), 166318, "setup: Japanese audio, the full translation");
+
+    let mut again = Case::episode(one_punch_man_s02e01(), Vec::new());
+    again.sub_sid = cur_sub_sid(&ps);
+    let plan = resolve_in(&mut ps, again, |_, plan| plan).0;
+    apply_plan(&mut ps, plan, "rk-4k");
+    assert_eq!(cur_sub_sid(&ps), 166318, "the reload shows the same subtitle");
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 166341, "and still follows: English audio, the dub transcript");
+    crate::player::sidecar::reset();
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
 /// **A resumed playback lands on the subtitle its audio asks for.** Switching audio to Japanese
 /// writes the audio memory, so the next landing plays Japanese from the start: the translation, not
 /// the dub transcript the server still has selected. Neither the audio memory nor a subtitle memory
