@@ -706,16 +706,28 @@ fn backing_at_xy(strip: &TabStrip, ground: TabGround, x: f32, y: f32) -> [f32; 4
 /// the 2-D grade the column-only ones could not give.
 fn worst_contrast_2d(strip: &TabStrip, ground: TabGround, pill: (f32, f32), ink_of: fn(f32, f32) -> [f32; 4]) -> (f32, f32, f32) {
     let rect = Rect::new(pill.0, 0.0, pill.1, INK_H);
+    // The pill's regions are one answer for every pixel of it (`ink_at` is `pill_ink(..).at(x, y)`),
+    // and a ratio costs up to six `powf`s but changes only where the backing or the ink does, so the
+    // last one is kept while its inputs repeat. Both are pure: every pixel is graded exactly as before.
+    let inked = strip.pill_ink(rect, ground);
+    let mut last: Option<([f32; 4], [f32; 4], f32)> = None;
     let mut worst = (f32::MAX, pill.0, 0.0);
     for column in (pill.0.floor() as i32)..((pill.0 + pill.1).ceil() as i32) {
         let x = column as f32 + 0.5;
         if x < pill.0 + 12.0 || x >= pill.0 + pill.1 - 12.0 { continue; }
         for k in -17..17 {
             let y = INK_H * 0.5 + k as f32 + 0.5;
-            let (focus, selected) = strip.ink_at(rect, ground, x, y);
+            let (focus, selected) = inked.at(x, y);
             let backing = backing_at_xy(strip, ground, x, y);
             let ink = ink_of(focus, selected);
-            let ratio = contrast(theme::cross(backing, [ink[0], ink[1], ink[2], 1.0], ink[3]), backing);
+            let ratio = match last {
+                Some((b, i, ratio)) if b == backing && i == ink => ratio,
+                _ => {
+                    let ratio = contrast(theme::cross(backing, [ink[0], ink[1], ink[2], 1.0], ink[3]), backing);
+                    last = Some((backing, ink, ratio));
+                    ratio
+                }
+            };
             if ratio < worst.0 { worst = (ratio, x, y - INK_H * 0.5); }
         }
     }
@@ -729,28 +741,36 @@ fn worst_contrast_2d(strip: &TabStrip, ground: TabGround, pill: (f32, f32), ink_
 /// every pill keeps 3:1 against what is under it, on every strip ground.
 #[test]
 fn a_label_a_capsule_is_crossing_stays_readable_on_every_glyph_row_not_only_the_centre_one() {
-    let _g = serial_for_motion();
     let w = widths_for(12);
     let span = |i: usize| (i < w.len()).then(|| span_of(&w, i));
-    for (ground, ink_of) in ink_cases() {
+    // Stepping a strip reports to `plx_machine::idle`'s process-global dirty flag, which is what the
+    // lock is for; grading the strips it passes through is pure and is nearly all of the test's
+    // time, so it runs once the lock is released and does not hold every other serial test up.
+    let (travel, lands) = {
+        let _g = serial_for_motion();
         let mut s = TabStrip::new();
         for _ in 0..90 { s.update(2, 4, span, SelMark::Travels, DT); }
+        let travel: Vec<TabStrip> = (0..90).map(|_| { s.update(2, 5, span, SelMark::Travels, DT); s }).collect();
+        let lands = [(-1, 3), (3, -1)].map(|(from, to)| {
+            let mut s = TabStrip::new();
+            for _ in 0..90 { s.update(3, from, span, SelMark::Lands, DT); }
+            (from, to, (0..60).map(|_| { s.update(3, to, span, SelMark::Lands, DT); s }).collect::<Vec<TabStrip>>())
+        });
+        (travel, lands)
+    };
+    for (ground, ink_of) in ink_cases() {
         let mut worst = (f32::MAX, 0, 0.0, 0.0);
-        for frame in 0..90 {
-            s.update(2, 5, span, SelMark::Travels, DT);
+        for (frame, s) in travel.iter().enumerate() {
             for pill in [4, 5] {
-                let (ratio, x, dy) = worst_contrast_2d(&s, ground, span_of(&w, pill), ink_of);
+                let (ratio, x, dy) = worst_contrast_2d(s, ground, span_of(&w, pill), ink_of);
                 if ratio < worst.0 { worst = (ratio, frame, x, dy); }
             }
         }
         assert!(worst.0 >= 3.0, "travel: worst {:.2}:1 at frame {} x {} row {:+} from the centre (3:1 wanted)", worst.0, worst.1, worst.2, worst.3);
-        for (from, to) in [(-1, 3), (3, -1)] {
-            let mut s = TabStrip::new();
-            for _ in 0..90 { s.update(3, from, span, SelMark::Lands, DT); }
+        for (from, to, frames) in &lands {
             let mut worst = (f32::MAX, 0, 0.0, 0.0);
-            for frame in 0..60 {
-                s.update(3, to, span, SelMark::Lands, DT);
-                let (ratio, x, dy) = worst_contrast_2d(&s, ground, span_of(&w, 3), ink_of);
+            for (frame, s) in frames.iter().enumerate() {
+                let (ratio, x, dy) = worst_contrast_2d(s, ground, span_of(&w, 3), ink_of);
                 if ratio < worst.0 { worst = (ratio, frame, x, dy); }
             }
             assert!(worst.0 >= 3.0, "{from} -> {to}: worst {:.2}:1 at frame {} x {} row {:+} from the centre (3:1 wanted)", worst.0, worst.1, worst.2, worst.3);
@@ -863,17 +883,26 @@ fn every_ink_region_of_a_label_is_drawn_at_the_same_weight() {
 /// ([`every_ink_region_of_a_label_is_drawn_at_the_same_weight`]).
 #[test]
 fn the_top_bar_keeps_three_to_one_on_every_glyph_pixel_of_every_hop() {
-    let _g = serial_for_motion();
     let w = nav_widths();
     let span = |i: usize| (i < w.len()).then(|| span_of(&w, i));
+    // Stepped under the lock and graded after it, as in
+    // `a_label_a_capsule_is_crossing_stays_readable_on_every_glyph_row_not_only_the_centre_one`.
+    let hops: Vec<(i32, i32, Vec<TabStrip>)> = {
+        let _g = serial_for_motion();
+        [(1, 1, 2), (1, 2, 3), (1, 3, 4), (1, 4, 3), (1, 3, 2), (1, 2, 0), (1, 0, 3)]
+            .into_iter()
+            .map(|(sel, from, to)| {
+                let mut s = TabStrip::new();
+                for _ in 0..90 { s.update(sel, from, span, SelMark::Travels, DT); }
+                (from, to, (0..90).map(|_| { s.update(sel, to, span, SelMark::Travels, DT); s }).collect())
+            })
+            .collect()
+    };
     for ground in [TabGround::Tracked { glass: true }, TabGround::Tracked { glass: false }] {
-        for (sel, from, to) in [(1, 1, 2), (1, 2, 3), (1, 3, 4), (1, 4, 3), (1, 3, 2), (1, 2, 0), (1, 0, 3)] {
-            let mut s = TabStrip::new();
-            for _ in 0..90 { s.update(sel, from, span, SelMark::Travels, DT); }
-            for frame in 0..90 {
-                s.update(sel, to, span, SelMark::Travels, DT);
+        for (from, to, frames) in &hops {
+            for (frame, s) in frames.iter().enumerate() {
                 for pill in 0..w.len() {
-                    let (ratio, x, dy) = worst_contrast_2d(&s, ground, span_of(&w, pill), TabPill::mixed_ink);
+                    let (ratio, x, dy) = worst_contrast_2d(s, ground, span_of(&w, pill), TabPill::mixed_ink);
                     assert!(ratio >= 3.0, "{from} -> {to} frame {frame} pill {pill}: {ratio:.2}:1 at x {x} row {dy:+} (3:1 wanted)");
                 }
             }
