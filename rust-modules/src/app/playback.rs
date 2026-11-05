@@ -560,11 +560,14 @@ pub(crate) fn commit_track(
         TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, memo } => {
             plx_media::route::commit_subtitle_and_sidecar(ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, memo);
         }
-        // Forced only (FO): the panel matched the forced track for the playing audio (or nothing),
-        // the route holds the mode and remembers `ForcedOnly { lang }` when it changed, and drops
-        // any sidecar (`route::commit_forced_only_and_sidecar`).
-        TrackCommit::SubtitleForcedOnly { render_ordinal, stream_id, lang, changed } => {
-            plx_media::route::commit_forced_only_and_sidecar(ps, render_ordinal, stream_id, &lang, changed);
+        // Forced only (FO): the panel matched the forced track for the playing audio (or nothing; the
+        // downloaded file that stands for it when the menu lists that instead), the route holds the
+        // mode, remembers `ForcedOnly { lang }` when it changed, and performs the sidecar half
+        // (`route::commit_forced_only_and_sidecar`).
+        TrackCommit::SubtitleForcedOnly { render_ordinal, stream_id, sidecar_key, sidecar_codec, lang, changed } => {
+            plx_media::route::commit_forced_only_and_sidecar(
+                ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, &lang, changed,
+            );
         }
         TrackCommit::SubtitleTone(tone) => plx_media::player::set_subtitle_tone(tone),
         // a preset or one hand edit of the whole look: live first, persisted after, like size and position

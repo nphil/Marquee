@@ -589,11 +589,14 @@ fn a_pick_of_a_built_in_track_lands_on_its_downloaded_twin() {
     let on_screen_only = SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 2 };
     let account = pick_subtitle(&forced_pair, &NO_SHOW_RULES(), on_screen_only, "eng", None, None);
     assert_eq!(account.pick, Some((8, -1)), "the account's On-screen text rule is not followed, but it is mapped");
+
+    let forced_only = SubtitleMemo::ForcedOnly { lang: String::new() };
+    let mode = ladder(&forced_pair, "eng", Some(&forced_only));
+    assert_eq!((mode.pick, mode.source), (Some((8, -1)), SubPickSource::Memory), "On-screen text only draws the downloaded file too");
 }
 
 /// A built-in track keeps its place when nothing downloaded stands for it: the downloaded file is
-/// another kind (a full translation does not stand for on-screen text), or the client cannot draw
-/// it. Forced only is a mode and keeps the embedded forced track it names.
+/// another kind (a full translation does not stand for on-screen text), or the client cannot draw it.
 #[test]
 fn a_built_in_track_without_a_downloaded_twin_stays_the_pick() {
     let signs = episode(vec![server_selected(text_sub(1, "eng", "Signs & Songs")), sidecar(8, "eng", "")]);
@@ -607,7 +610,7 @@ fn a_built_in_track_without_a_downloaded_twin_stays_the_pick() {
         assert_eq!(ladder(&item, "eng", None).pick, Some((1, 0)), "{what}: the client cannot draw the file");
     }
 
-    let forced_pair = episode(vec![forced(text_sub(1, "eng", "")), Stream { forced: true, ..sidecar(8, "eng", "") }]);
+    let full_file = episode(vec![forced(text_sub(1, "eng", "")), sidecar(8, "eng", "")]);
     let forced_only = SubtitleMemo::ForcedOnly { lang: String::new() };
-    assert_eq!(ladder(&forced_pair, "eng", Some(&forced_only)).pick, Some((1, 0)), "Forced only keeps its embedded track");
+    assert_eq!(ladder(&full_file, "eng", Some(&forced_only)).pick, Some((1, 0)), "a full translation is not the forced track's twin");
 }

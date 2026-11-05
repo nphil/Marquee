@@ -263,16 +263,25 @@ fn forced_only_pick_finds_a_track_only_the_containers_name_reveals() {
     );
 }
 
-/// A sidecar is not in the container (its ordinal names no track), and an embedded track in a codec
-/// the demuxer does not render is not a candidate.
+/// A sidecar is not in the container (its ordinal names no track), an embedded track in a codec the
+/// demuxer does not render is not a candidate, and a sidecar is the pick only as the downloaded
+/// twin of an embedded forced track, which the menu lists in its place.
 #[test]
-fn forced_only_pick_never_takes_a_sidecar_or_an_undrawable_codec() {
+fn forced_only_pick_takes_a_sidecar_only_as_the_twin_of_a_forced_track() {
     let mut subs = vec![sub(1, "eng", "Forced"), sub(2, "eng", "Forced")];
     subs[0].external = true;
     subs[1].codec = "dvb_teletext".into();
     assert_eq!(forced_only_pick(&subs, &names(&["Forced"]), "eng", ""), None);
     subs[1].codec = "srt".into();
     assert_eq!(forced_only_pick(&subs, &names(&["Forced"]), "eng", ""), Some(1));
+
+    let drawable = |s: Stream| Stream { external: true, key: format!("/library/streams/{}", s.id), ..s };
+    let twin = vec![sub(1, "eng", "Forced"), drawable(sub(2, "eng", "Forced"))];
+    assert_eq!(forced_only_pick(&twin, &names(&["Forced"]), "eng", ""), Some(1), "the downloaded file stands for the built-in track");
+    let other_language = vec![sub(1, "eng", "Forced"), drawable(sub(2, "spa", "Forced"))];
+    assert_eq!(forced_only_pick(&other_language, &names(&["Forced"]), "eng", ""), Some(0), "another language is no twin");
+    let named_only = vec![sub(1, "eng", ""), drawable(Stream { forced: true, ..sub(2, "eng", "") })];
+    assert_eq!(forced_only_pick(&named_only, &names(&["Forced"]), "eng", ""), Some(1), "by the container's name too");
 }
 
 /// **The first decoded frame's re-match**: what the memo picks over the named streams, when it
@@ -302,6 +311,24 @@ fn rematch_with_names_reports_a_change_only() {
         None,
         "a track memo that still matches nothing leaves the landing alone"
     );
+}
+
+/// The re-match lands on the row the menu lists too: a track the memo names that a downloaded file
+/// stands for is that file (a sidecar: no demuxer ordinal), for Forced only and for a remembered track.
+#[test]
+fn rematch_with_names_lands_on_the_downloaded_twin() {
+    let file = Stream { external: true, key: "/library/streams/55009".into(), forced: true, ..sub(55009, "eng", "") };
+    let subs = vec![sub(55001, "eng", ""), sub(55003, "eng", ""), file];
+    let named = names(&["", "Forced"]);
+    let forced_only = SubtitleMemo::ForcedOnly { lang: "eng".into() };
+    assert_eq!(
+        rematch_with_names(&subs, &named, &forced_only, "eng", 0),
+        Some(Rematched { id: 55009, ordinal: -1 }),
+        "the names reveal the forced track; the file stands for it"
+    );
+    assert_eq!(rematch_with_names(&subs, &named, &forced_only, "eng", 55009), None, "already on screen");
+    let forced_track = SubtitleMemo::Track(SubtitleTrackMemo { forced: true, ..memo_sub("eng") });
+    assert_eq!(rematch_with_names(&subs, &named, &forced_track, "eng", 55001), Some(Rematched { id: 55009, ordinal: -1 }));
 }
 
 /// Forced only can come to NOTHING: the landing showed a stream, and with the names there is no

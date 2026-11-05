@@ -2144,6 +2144,58 @@ fn a_remembered_built_in_track_lands_on_its_downloaded_twin() {
     assert_eq!(memory_lines(&log, 166318).len(), 1, "applied, and named by the twin's id: {log}");
 }
 
+/// **Forced only draws the row the Subtitles menu lists.** This item's forced track is built in and a
+/// downloaded forced file stands for it, so the menu hides the built-in track and every door that picks
+/// the forced track lands on the file: the remembered mode at the landing, an audio switch that follows
+/// it, and the menu's own OK on the row. The sidecar follows the pick (drawn for the file, dropped for
+/// any other track), so the viewer never sees a subtitle that has no row.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn forced_only_lands_on_the_downloaded_twin_of_the_forced_track() {
+    let subs = || {
+        vec![
+            srt(55001, 3, "eng", false, false),
+            srt(55003, 4, "eng", true, false),
+            srt(55004, 5, "jpn", true, false),
+            plx_data::metadata::Stream { forced: true, ..sidecar_stream(55009, "eng") },
+        ]
+    };
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    crate::player::sidecar::reset();
+
+    let (plan, _, log) = resolve_in(&mut ps, Case::episode(subs(), memory(None, Some(forced_only_memo()))), |_, plan| plan);
+    assert_eq!(plan.memory_sidecar, Some(55009), "the file, not the hidden built-in track 55003: {log}");
+    assert_eq!((plan.sub_render_ordinal, plan.sub_mode), (None, SubMode::ForcedOnly));
+    apply_plan(&mut ps, plan, "rk-4k");
+    assert_eq!((cur_sub_sid(&ps), cur_sub_mode(&ps)), (55009, SubMode::ForcedOnly), "the landing shows the file");
+    assert!(crate::player::sidecar::selected(), "and the app draws it");
+
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(
+        (cur_sub_sid(&ps), cur_sub_mode(&ps)),
+        (55004, SubMode::ForcedOnly),
+        "Japanese audio: its forced track has no file standing for it"
+    );
+    assert!(!crate::player::sidecar::selected(), "so the file is no longer drawn");
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55009, "English audio: the file again, not 55003");
+    assert!(crate::player::sidecar::selected());
+
+    let names = plx_data::metadata::track_names::TrackNames::new();
+    let picked = crate::route::forced_only_pick(&subs(), &names, "eng", "eng").expect("the forced track");
+    let file = subs().swap_remove(picked);
+    assert_eq!(file.id, 55009, "the menu is handed the file");
+    commit_subtitle_and_sidecar(&mut ps, -1, 0, None, String::new(), None);
+    assert!(!crate::player::sidecar::selected(), "setup: Off drops the file");
+    commit_forced_only_and_sidecar(&mut ps, -1, file.id, Some(file.key), file.codec, "eng", false);
+    assert_eq!((cur_sub_sid(&ps), cur_sub_mode(&ps)), (55009, SubMode::ForcedOnly));
+    assert!(crate::player::sidecar::selected(), "the menu's OK draws the file it named");
+    crate::player::sidecar::reset();
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
 /// On a live transcode the re-pointed subtitle is a burn, so the audio switch and the subtitle
 /// change both rebuild: they must be ONE Retranscode, and the subtitle the rebuild names is the new
 /// one.

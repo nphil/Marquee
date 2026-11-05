@@ -3681,12 +3681,9 @@ pub(super) fn pick_subtitle(
     let mut miss = None;
     if let Some(memo) = consulted_memory(item, override_id, memory) {
         match memory_subtitle(subs, memo, audio_lang) {
-            Ok(pick) => {
-                // A remembered built-in track the menu no longer lists lands on its downloaded twin. Forced
-                // only is a mode, not a track the menu lists: it keeps its embedded forced track.
-                let pick = if matches!(memo, SubtitleMemo::ForcedOnly { .. }) { pick } else { visible_pick(subs, pick) };
-                return SubDecision { pick, source: SubPickSource::Memory, miss: None };
-            }
+            // The track a memory names may be one the menu hides behind its downloaded twin (Forced
+            // only's forced track too): the pick is the row that is listed.
+            Ok(pick) => return SubDecision { pick: visible_pick(subs, pick), source: SubPickSource::Memory, miss: None },
             Err(reason) => miss = Some(reason),
         }
     }

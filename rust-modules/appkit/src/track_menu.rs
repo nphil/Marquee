@@ -51,7 +51,8 @@
 //! its own row, and Off is not checked. Its value is the language of what it draws (else the playing
 //! audio's), bounded (`sub_layout::forced_only_readout`) so a long name never clips the row's own
 //! words. OK commits [`TrackCommit::SubtitleForcedOnly`]: the forced track for the audio that plays
-//! ([`plx_media::route::forced_only_pick`], with the container's track names) or nothing; for audio
+//! ([`plx_media::route::forced_only_pick`], with the container's track names; the downloaded file
+//! that stands for it when the menu lists that in its place) or nothing; for audio
 //! that names no language it matches in the language the session fell back to
 //! ([`plx_media::route::forced_only_lang`]), as the resolve does. OK on the row that is already the
 //! mode recommits what is on screen and writes nothing.
@@ -683,9 +684,17 @@ pub enum TrackCommit {
     /// (the drawn track's language, else the audio's, else the language the session fell back to).
     /// `changed` is false for OK on the row that is already the mode: the menu closes, the commit
     /// carries what is on screen unchanged (that stream, or `-1`/`0` for nothing) and nothing is
-    /// written. Always an embedded track, never a sidecar: a forced track the client cannot demux is
-    /// not matched.
-    SubtitleForcedOnly { render_ordinal: c_int, stream_id: i64, lang: String, changed: bool },
+    /// written. An embedded track the client demuxes, or the downloaded subtitle the menu lists in
+    /// its place (`sidecar_key`/`sidecar_codec`, as for [`TrackCommit::Subtitle`]; `render_ordinal`
+    /// is then `-1`): a forced track the client cannot draw is not matched.
+    SubtitleForcedOnly {
+        render_ordinal: c_int,
+        stream_id: i64,
+        sidecar_key: Option<String>,
+        sidecar_codec: String,
+        lang: String,
+        changed: bool,
+    },
     /// The caption's tone. Not a track at all, but it is picked in this panel and it is the
     /// loop that performs it (`player::set_subtitle_tone` saves through the one write door, `route::choose`),
     /// like the two above.
@@ -1459,10 +1468,14 @@ impl TrackMenuState {
                 feature: plx_telemetry::diag::schema::Feature::SubtitleTrack,
             });
         }
+        // a downloaded file the client can draw has no demuxer ordinal: the route's sidecar draw takes it
+        let sidecar = drawn.map(|(.., s)| s).filter(|s| s.sidecar_renderable());
         TrackOk::Commit {
             commit: TrackCommit::SubtitleForcedOnly {
                 render_ordinal: drawn.map_or(-1, |(_, ordinal, _)| ordinal),
                 stream_id: drawn.map_or(0, |(.., s)| s.id),
+                sidecar_key: sidecar.map(|s| s.key.clone()),
+                sidecar_codec: sidecar.map(|s| s.codec.clone()).unwrap_or_default(),
                 lang,
                 changed,
             },
@@ -5622,7 +5635,7 @@ mod forced_only_tests {
     fn forced_commit(ok: TrackOk) -> (c_int, i64, String, bool) {
         match ok {
             TrackOk::Commit {
-                commit: TrackCommit::SubtitleForcedOnly { render_ordinal, stream_id, lang, changed },
+                commit: TrackCommit::SubtitleForcedOnly { render_ordinal, stream_id, lang, changed, .. },
                 keep_open: false,
             } => (render_ordinal, stream_id, lang, changed),
             other => panic!("not a Forced only commit: {other:?}"),
@@ -5656,6 +5669,21 @@ mod forced_only_tests {
             (2, 3, "spa".to_string(), true),
             "Spanish audio: the Spanish one"
         );
+        teardown(&ps);
+
+        // a downloaded forced file stands for the built-in forced track: the menu lists the file, and
+        // OK commits it, as a sidecar the route draws
+        let file = metadata::Stream { external: true, key: "/library/streams/9".into(), ..forced(9, 3, "English", "eng") };
+        let subs = vec![stream(1, 0, "English", "eng", ""), forced(2, 1, "English", "eng"), file];
+        let (mut menu, ps, store) = open(SubMode::Track, SubtitleEffect::None, vec![audio(10, "English", "eng")], subs);
+        let TrackOk::Commit { commit: TrackCommit::SubtitleForcedOnly { render_ordinal, stream_id, sidecar_key, sidecar_codec, .. }, .. } =
+            ok_on(&mut menu, &store, TrackRow::SubForcedOnly)
+        else {
+            panic!("not a Forced only commit")
+        };
+        assert_eq!((render_ordinal, stream_id), (-1, 9), "the file, not the hidden built-in track 2");
+        assert_eq!((sidecar_key.as_deref(), sidecar_codec.as_str()), (Some("/library/streams/9"), "srt"));
+        assert_eq!(menu.active_sub(), 2, "and the session reads the file's row");
         teardown(&ps);
     }
 

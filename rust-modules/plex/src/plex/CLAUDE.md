@@ -555,7 +555,8 @@ a dead source is **absent** from Home and states itself in its own library secti
   (else the playing audio's, else the one the session fell back to). It ranks exactly as a remembered
   Off does: a retry's own pick and a server-selected sidecar the app can draw still outrank it (the
   withholding in `pick_subtitle` is of the memory, whichever of the three it is), and below those the
-  next episode shows its forced, non-commentary, renderable subtitle in the
+  next episode shows its forced, non-commentary, renderable subtitle (the downloaded file that stands
+  for it, when the Subtitles menu lists that in its place) in the
   language of the audio that PLAYS (`route::track_memory::match_forced_only`), or nothing, and never
   falls to a full track or to the lower rungs. `PlaybackSession::sub_mode` (`SubMode`) holds which
   state the playback is in, because a stream id cannot say it (a retry carries it in

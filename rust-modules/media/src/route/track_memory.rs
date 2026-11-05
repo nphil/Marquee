@@ -40,7 +40,7 @@
 //! instead would write `forced: false` for a track the menu badges FORCED by its name, and the
 //! next episode's hard constraint would decline that very track.
 use std::borrow::Cow;
-use plx_data::metadata::sub_layout::{is_image_sub_codec, sub_traits, SubTraits};
+use plx_data::metadata::sub_layout::{downloaded_twin, is_image_sub_codec, sub_traits, SubTraits};
 use plx_data::metadata::track_label;
 use plx_data::metadata::track_names::TrackNames;
 use plx_data::metadata::{lang_matches, sub_render_ordinal, PlayingItem, Stream};
@@ -383,27 +383,38 @@ fn with_container_names<'a>(subs: &'a [Stream], names: &TrackNames) -> Cow<'a, [
     Cow::Owned(subs.iter().zip(merged).map(|(s, title)| Stream { title, ..s.clone() }).collect())
 }
 
+/// **The row the Subtitles menu lists for `subs[i]`**: its downloaded twin ([`downloaded_twin`]) when it
+/// has one, else itself. The matchers find a track by what it IS and may name a built-in track the
+/// menu hides, so a pick lands on the row that is there. `subs` carries the merged names where they are
+/// known ([`with_container_names`]), so the twin is judged by the names the menu reads.
+fn listed(subs: &[Stream], i: usize) -> usize {
+    downloaded_twin(subs, i, &TrackNames::new()).unwrap_or(i)
+}
+
 /// **The forced track Forced only means, with the container's names**: an index into `subs`, or
-/// `None` for nothing. The menu's choice (the row's read-out and what OK commits) and the audio
-/// follow use this; the resolve, which has no names yet, uses [`match_forced_only`] directly.
+/// `None` for nothing. It is the forced track's listed row: the downloaded file that stands for it,
+/// when it has one ([`listed`]). The menu's choice (the row's read-out and what OK commits) and the
+/// audio follow use this; the resolve, which has no names yet, uses [`match_forced_only`] directly.
 pub fn forced_only_pick(subs: &[Stream], names: &TrackNames, audio_lang: &str, memo_lang: &str) -> Option<usize> {
-    match_forced_only(&with_container_names(subs, names), audio_lang, memo_lang, drawable_embedded)
+    let named = with_container_names(subs, names);
+    match_forced_only(&named, audio_lang, memo_lang, drawable_embedded).map(|i| listed(&named, i))
 }
 
 /// What a re-match with the container's names concluded, as the stream to show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Rematched {
-    /// The stream id to show (`0` = none) and its demuxer ordinal (`-1` = none).
+    /// The stream id to show (`0` = none) and its demuxer ordinal (`-1` = none, or a downloaded
+    /// subtitle, which the container has no track for).
     pub id: i64,
     pub ordinal: i32,
 }
 
-/// The stream to show for a matcher's `picked` index into `subs`: its id and demuxer ordinal, or
-/// `(0, -1)` (nothing) for no pick or a stream the demuxer has no ordinal for.
+/// The stream to show for a matcher's `picked` index into `subs`: its id and demuxer ordinal (`-1`
+/// for a sidecar the app draws), or `(0, -1)` (nothing) for no pick or a stream nothing can draw.
 fn shown(subs: &[Stream], picked: Option<usize>) -> Rematched {
     let (id, ordinal) = picked
+        .filter(|&i| subs[i].id > 0 && (!subs[i].external || subs[i].sidecar_renderable()))
         .map(|i| (subs[i].id, sub_render_ordinal(subs, i)))
-        .filter(|&(id, ordinal)| id > 0 && ordinal >= 0)
         .unwrap_or((0, -1));
     Rematched { id, ordinal }
 }
@@ -418,7 +429,8 @@ pub(super) fn forced_only_shown(
 /// **The first-frame re-match** (FO): what `memo` picks over streams the
 /// container's names have now been joined to, when that differs from `landed_sub`, what the landing
 /// showed. A Forced only memo can come to nothing (`id` 0); a Track memo that still matches nothing
-/// leaves the landing as it was. `audio_lang` is the language of the audio that plays.
+/// leaves the landing as it was. `audio_lang` is the language of the audio that plays. What a memo
+/// picks lands on the row the menu lists for it ([`listed`]).
 pub(super) fn rematch_with_names(
     subs: &[Stream], names: &TrackNames, memo: &SubtitleMemo, audio_lang: &str, landed_sub: i64,
 ) -> Option<Rematched> {
@@ -428,7 +440,7 @@ pub(super) fn rematch_with_names(
         SubtitleMemo::ForcedOnly { lang } => Some(match_forced_only(&named, audio_lang, lang, drawable_embedded)),
         SubtitleMemo::Track(track) => match_subtitle(&named, track, drawable_embedded).ok().map(Some),
     }?;
-    let rematched = shown(subs, picked);
+    let rematched = shown(subs, picked.map(|i| listed(&named, i)));
     (rematched.id != landed_sub).then_some(rematched)
 }
 

@@ -446,41 +446,63 @@ pub fn commit_subtitle_and_sidecar(
     // what an Original route (issue #266's candidate) can carry without a burn.
     let client_renderable = render_ordinal >= 0 || sidecar_key.is_some();
     commit_subtitle_pick(ps, render_ordinal, stream_id, client_renderable, memo);
-    // An EXTERNAL pick has no demuxer ordinal (`render_ordinal` is -1, so the embedded
-    // renderer is off) — on direct play `player::sidecar` fetches and draws it instead.
-    // While transcoding the commit above already asked for a burn and the sidecar draw
-    // is silenced for as long as that is true, so selecting here is harmless and means
-    // the line survives the playback going BACK to direct play.
-    match sidecar_key {
-        Some(key) => crate::player::sidecar::select(cur_sid(ps), stream_id, key, sidecar_codec),
-        None => crate::player::sidecar::deselect(),
-    }
+    draw_sidecar(ps, stream_id, sidecar_key.map(|key| (key, sidecar_codec)));
 }
 
-/// **The track menu's Forced only pick, together with the sidecar it drops**: [`commit_forced_only_pick`]
-/// and then the deselect of any sidecar an earlier pick drew. The track is always an embedded one
-/// the demuxer draws (a forced track the client cannot demux is not matched), so a sidecar from an
-/// earlier pick is dropped as for Off.
+/// **The track menu's Forced only pick, together with the sidecar it may name**: [`commit_forced_only_pick`]
+/// and then the sidecar half of the pick, as [`commit_subtitle_and_sidecar`] does it. The track is the
+/// forced track the demuxer draws, or the downloaded file that stands for it (`sidecar_key`: the menu
+/// lists that file in the built-in track's place); `None` (an embedded track, or nothing) drops any
+/// sidecar an earlier pick drew.
 pub fn commit_forced_only_and_sidecar(
     ps: &mut PlaybackSession,
     render_ordinal: i32,
     stream_id: i64,
+    sidecar_key: Option<String>,
+    sidecar_codec: String,
     lang: &str,
     changed: bool,
 ) {
-    commit_forced_only_pick(ps, render_ordinal, stream_id, render_ordinal >= 0, lang, changed);
-    crate::player::sidecar::deselect();
+    let client_renderable = render_ordinal >= 0 || sidecar_key.is_some();
+    commit_forced_only_pick(ps, render_ordinal, stream_id, client_renderable, lang, changed);
+    draw_sidecar(ps, stream_id, sidecar_key.map(|key| (key, sidecar_codec)));
 }
 
-/// A subtitle commit the PLAYBACK derives from the mode, not one the viewer made: the audio follow
+/// **The sidecar half of a subtitle pick**: draw the downloaded file `(key, codec)`, or stop drawing
+/// one (`None`: Off, or an embedded track). An EXTERNAL pick has no demuxer ordinal, so the embedded
+/// renderer is off and on direct play `player::sidecar` fetches and draws it instead. While
+/// transcoding the commit already asked for a burn and the sidecar draw is silenced for as long as
+/// that is true, so selecting here is harmless and means the line survives the playback going BACK
+/// to direct play.
+fn draw_sidecar(ps: &PlaybackSession, stream_id: i64, sidecar: Option<(String, String)>) {
+    match sidecar {
+        Some((key, codec)) => crate::player::sidecar::select(cur_sid(ps), stream_id, key, codec),
+        None => crate::player::sidecar::deselect(),
+    }
+}
+
+/// The key and codec of the downloaded subtitle `id` among the landing's streams, when `ordinal` says
+/// it is one (a sidecar has no container ordinal) and the app can draw it.
+fn landed_sidecar(ps: &PlaybackSession, id: i64, ordinal: i32) -> Option<(String, String)> {
+    let ctx = ps.track_ctx.as_ref()?;
+    ctx.subs
+        .iter()
+        .find(|s| ordinal < 0 && s.id == id && s.id > 0 && s.sidecar_renderable())
+        .map(|s| (s.key.clone(), s.codec.clone()))
+}
+
+/// A subtitle commit the PLAYBACK derives from the mode, not one the viewer made: the audio follows
 /// and the container-name re-match. It goes through the one commit every pick does (the burn
-/// refresh, the selection PUT, the side reader) and writes no memory; `forced_only` puts the mode
-/// back, which the ordinary commit settles from the stream alone. `put` is the commit's own
-/// direct-play selection PUT: the audio follow sends it, the re-match does not while a live
-/// write-back that carries its result is parked, nor over a Part with an external stream (W5).
+/// refresh, the selection PUT, the side reader) and its sidecar half (a downloaded file is drawn,
+/// anything else stops one), and writes no memory; `forced_only` puts the mode back, which the
+/// ordinary commit settles from the stream alone. `put` is the commit's own direct-play selection
+/// PUT: no derived commit sends it over a Part with an external stream (W5), and the re-match does
+/// not while a live write-back that carries its result is parked.
 fn commit_derived_subtitle(ps: &mut PlaybackSession, picked: (i64, i32), forced_only: bool, put: bool) {
     let (id, ordinal) = picked;
-    commit_subtitle_selection_inner(ps, ordinal, id, ordinal >= 0, put);
+    let sidecar = landed_sidecar(ps, id, ordinal);
+    commit_subtitle_selection_inner(ps, ordinal, id, ordinal >= 0 || sidecar.is_some(), put);
+    draw_sidecar(ps, id, sidecar);
     if forced_only {
         ps.sub_mode = SubMode::ForcedOnly;
     }
@@ -488,10 +510,10 @@ fn commit_derived_subtitle(ps: &mut PlaybackSession, picked: (i64, i32), forced_
 
 /// **The audio follow**: while Forced only is the mode, a new audio re-points it at the forced
 /// track in that audio's language (English audio the English forced track, Japanese the Japanese
-/// one), or at nothing when there is none. Nothing happens off Forced only; while the landing's
-/// note says a copy remux shows no remembered subtitle, since a derived pick would turn that into a
-/// re-encode; or while the audio is only deferred behind an Original handoff (the deferred commit
-/// follows when it lands).
+/// one), or at nothing when there is none; a forced track a downloaded file stands for is that file.
+/// Nothing happens off Forced only; while the landing's note says a copy remux shows no remembered
+/// subtitle, since a derived pick would turn that into a re-encode; or while the audio is only
+/// deferred behind an Original handoff (the deferred commit follows when it lands).
 pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid: i64) {
     if ps.sub_mode != SubMode::ForcedOnly || ps.cur_memory_note || original_recovery_pending() {
         return;
@@ -501,8 +523,11 @@ pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid:
         let names = crate::player::SHARED.track_names_lenient();
         forced_only_shown(&ctx.subs, &names, ctx.audio_lang_of(audio_sid), &ctx.forced_lang)
     };
+    // W5: the selection never moves off a download the Part carries (PMS would discard it), and the
+    // forced track may be that download; the follow changes what is on screen.
+    let put = !external_on_part(&ctx.subs);
     if shown.id != ps.cur_sub_sid {
-        commit_derived_subtitle(ps, (shown.id, shown.ordinal), true, true);
+        commit_derived_subtitle(ps, (shown.id, shown.ordinal), true, put);
     }
 }
 
@@ -523,13 +548,8 @@ pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_si
     if id == ps.cur_sub_sid {
         return;
     }
-    let sidecar = ctx.subs.iter().find(|s| ordinal < 0 && s.id == id && s.id > 0).map(|s| (s.key.clone(), s.codec.clone()));
     let put = !external_on_part(&ctx.subs);
-    commit_subtitle_selection_inner(ps, ordinal, id, ordinal >= 0 || sidecar.is_some(), put);
-    match sidecar {
-        Some((key, codec)) => crate::player::sidecar::select(cur_sid(ps), id, key, codec),
-        None => crate::player::sidecar::deselect(),
-    }
+    commit_derived_subtitle(ps, (id, ordinal), false, put);
 }
 
 /// **The first decoded frame's re-match** (FO; the pump calls it once per frame, and it does
