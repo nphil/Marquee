@@ -340,6 +340,5 @@
   "widgets.tracks.variant_dub": "doblaje",
   "widgets.tracks.variant_on_screen": "rótulos",
   "widgets.tracks.variant_commentary": "comentarios",
-  "widgets.tracks.sub_label": "{language} ({detail})",
-  "widgets.tracks.variant_built_in": "integrados"
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

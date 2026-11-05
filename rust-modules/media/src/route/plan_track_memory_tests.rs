@@ -243,12 +243,17 @@ fn only_a_sidecar_the_app_can_draw_is_selected_and_only_for_an_external_memo() {
 }
 
 /// Both an embedded and an external English track on this episode: the memo's own kind of file is
-/// the answer, so the external memo takes the sidecar and the embedded memo the embedded track.
+/// the answer, so the external memo takes the sidecar and the embedded memo the embedded track,
+/// unless the sidecar is the track's downloaded twin (same language and kind), which the menu lists
+/// in its place: then the embedded memo lands on the sidecar too.
 #[test]
 fn an_external_memo_prefers_the_sidecar_and_an_embedded_memo_the_embedded_track() {
-    let item = episode(vec![text_sub(1, "eng", ""), sidecar(83, "eng", "")]);
-    assert_eq!(ladder(&item, "jpn", Some(&external_memo("eng", false))).pick, Some((83, -1)));
-    assert_eq!(ladder(&item, "jpn", Some(&track_memo("eng"))).pick, Some((1, 0)));
+    let dub = episode(vec![text_sub(1, "eng", ""), cc_sidecar(84)]);
+    assert_eq!(ladder(&dub, "jpn", Some(&track_memo("eng"))).pick, Some((1, 0)), "a dub transcript is not its twin");
+
+    let twin = episode(vec![text_sub(1, "eng", ""), sidecar(83, "eng", "")]);
+    assert_eq!(ladder(&twin, "jpn", Some(&external_memo("eng", false))).pick, Some((83, -1)));
+    assert_eq!(ladder(&twin, "jpn", Some(&track_memo("eng"))).pick, Some((83, -1)), "the built-in twin stands aside");
 }
 
 // ---- the rungs above memory --------------------------------------------------------------------
@@ -563,4 +568,46 @@ fn only_a_memory_that_decided_stops_the_follow() {
     let selected = episode(vec![text_sub(2, "eng", "Signs / Songs"), server_selected(text_sub(1, "eng", "Dialogue")), cc_sidecar(9)]);
     let declined = ladder(&selected, "eng", Some(&track_memo("spa")));
     assert_eq!((declined.pick, declined.source, declined.miss), (Some((9, -1)), SubPickSource::Server, Some("language")));
+}
+
+// ---- a downloaded track stands for its built-in twin -------------------------------------------
+
+/// **No pick lands on a built-in track the Subtitles menu hides** behind a downloaded file of the same
+/// language and kind: PMS's selection, a remembered descriptor and the account's rule all name the
+/// built-in track, and the pick is its downloaded twin (`sub_layout::downloaded_twin`).
+#[test]
+fn a_pick_of_a_built_in_track_lands_on_its_downloaded_twin() {
+    let selected = episode(vec![server_selected(text_sub(1, "eng", "Dub (SDH)")), cc_sidecar(9)]);
+    assert_eq!(ladder(&selected, "eng", None).pick, Some((9, -1)), "English audio: the dub transcript, downloaded");
+    assert_eq!(ladder(&selected, "jpn", None).pick, Some((9, -1)), "no translation to follow to: the dub stays, as its twin");
+
+    let remembered = episode(vec![text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", "")]);
+    let decision = ladder(&remembered, "eng", Some(&track_memo("eng")));
+    assert_eq!((decision.pick, decision.source), (Some((8, -1)), SubPickSource::Memory), "a remembered built-in track falls back to its twin");
+
+    let forced_pair = episode(vec![forced(text_sub(1, "eng", "")), Stream { forced: true, ..sidecar(8, "eng", "") }]);
+    let on_screen_only = SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 2 };
+    let account = pick_subtitle(&forced_pair, &NO_SHOW_RULES(), on_screen_only, "eng", None, None);
+    assert_eq!(account.pick, Some((8, -1)), "the account's On-screen text rule is not followed, but it is mapped");
+}
+
+/// A built-in track keeps its place when nothing downloaded stands for it: the downloaded file is
+/// another kind (a full translation does not stand for on-screen text), or the client cannot draw
+/// it. Forced only is a mode and keeps the embedded forced track it names.
+#[test]
+fn a_built_in_track_without_a_downloaded_twin_stays_the_pick() {
+    let signs = episode(vec![server_selected(text_sub(1, "eng", "Signs & Songs")), sidecar(8, "eng", "")]);
+    assert_eq!(ladder(&signs, "eng", None).pick, Some((1, 0)), "another kind");
+
+    for (what, file) in [
+        ("an image format", Stream { codec: "pgs".into(), sdh: true, ..sidecar(9, "eng", "") }),
+        ("no delivery key", Stream { key: String::new(), sdh: true, ..sidecar(9, "eng", "") }),
+    ] {
+        let item = episode(vec![server_selected(text_sub(1, "eng", "Dub (SDH)")), file]);
+        assert_eq!(ladder(&item, "eng", None).pick, Some((1, 0)), "{what}: the client cannot draw the file");
+    }
+
+    let forced_pair = episode(vec![forced(text_sub(1, "eng", "")), Stream { forced: true, ..sidecar(8, "eng", "") }]);
+    let forced_only = SubtitleMemo::ForcedOnly { lang: String::new() };
+    assert_eq!(ladder(&forced_pair, "eng", Some(&forced_only)).pick, Some((1, 0)), "Forced only keeps its embedded track");
 }

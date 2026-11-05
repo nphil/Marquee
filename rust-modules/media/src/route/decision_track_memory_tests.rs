@@ -496,10 +496,11 @@ fn write_back_provenance_stand_in_has_no_audio_half() {
 #[test]
 #[cfg(feature = "devtriggers")]
 fn write_back_provenance_external_on_part_withholds_the_subtitle_half() {
+    // Not the embedded English track's twin (which the remembered pick would land on): another language.
     let download = plx_data::metadata::Stream {
         key: "/library/streams/9".into(),
         external: true,
-        ..stream(9, 9, "eng", "srt", 0)
+        ..stream(9, 9, "spa", "srt", 0)
     };
     let subs = || vec![srt(55001, 3, "eng", false, false), download.clone()];
     let (plan, _) = resolve(Case::episode(subs(), memory(Some(japanese_eac3()), Some(english_track()))));
@@ -2098,6 +2099,22 @@ fn a_landing_on_remembered_japanese_audio_shows_the_translation() {
     let off = memory(Some(japanese_eac3()), Some(SubtitleMemo::Off));
     let (plan, _) = resolve(Case::episode(vec![srt(55001, 3, "eng", false, false)], off));
     assert_eq!(plan.track_ctx.as_ref().map(|c| c.auto_subs.is_none()), Some(true), "control: a remembered Off that decided is not followed");
+}
+
+/// **A remembered built-in track lands on its downloaded twin.** The profile remembered the built-in
+/// dialogue track (the descriptor of the row it was picked on, before the menu stopped listing it);
+/// the next landing shows the downloaded translation that stands for it, not a track the menu does
+/// not list.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn a_remembered_built_in_track_lands_on_its_downloaded_twin() {
+    let mut subs = one_punch_man_s02e01();
+    subs[2].selected = false;
+    let dialogue = memo_of_subtitle(&subs[1]);
+    assert!(matches!(&dialogue, SubtitleMemo::Track(t) if !t.external && t.kind == "image"), "setup: {dialogue:?}");
+    let (plan, _, log) = resolve_logged(Case::episode(subs, memory(None, Some(dialogue))));
+    assert_eq!((plan.memory_sidecar, plan.sub_render_ordinal), (Some(166318), None), "the downloaded translation, drawn by the app");
+    assert_eq!(memory_lines(&log, 166318).len(), 1, "applied, and named by the twin's id: {log}");
 }
 
 /// On a live transcode the re-pointed subtitle is a burn, so the audio switch and the subtitle

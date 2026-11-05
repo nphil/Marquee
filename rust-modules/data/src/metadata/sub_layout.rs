@@ -21,6 +21,9 @@
 //! under a transcode while no subtitle is on; once the server burns one they stay, dimmed). "Yours" is the pref language (if the play resolved under
 //! one), the playing audio's language, and the current subtitle's own language, in that order
 //! (`route::cur_sub_pref_lang`, gathered by `screens::player::overlay`).
+//!
+//! A built-in track that a downloaded file of the same language, region and kind duplicates is no
+//! row: the file is ([`downloaded_twin`]), and `route`'s picks land on it too.
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -72,9 +75,8 @@ pub struct SubTrack {
     /// The display language (`Stream.lang`, or the catalog's "Unknown").
     pub lang: String,
     /// What the row reads, in plain words: the language, then in brackets only what tells it
-    /// apart: a region, what the track carries ("English (dub)", "English (on-screen text)") and,
-    /// when a downloaded track would otherwise read the same, "built-in". Never a format, an
-    /// acronym or the file's own title.
+    /// apart: a region, and what the track carries ("English (dub)", "English (on-screen text)").
+    /// Never a format, an acronym or the file's own title.
     pub label: String,
     /// The rank kind: a title naming a dub or signs and songs counts as dub or on-screen text.
     pub kind: Kind,
@@ -255,48 +257,70 @@ fn group_firsts(subs: &[Stream]) -> HashMap<LangGroup, i64> {
     firsts
 }
 
-/// Parse every offered track once, fill in [`SubTrack::ordinal`] for tracks that would otherwise
-/// draw the exact same row, and pair each with its [`LangGroup`] and its code's canonical key.
+/// One track as the menu reads it: the parse every row and every twin test ([`downloaded_twin`])
+/// starts from.
+struct Reading {
+    lang: String,
+    region: Option<String>,
+    kind: Kind,
+    group: LangGroup,
+    key: Option<Cow<'static, str>>,
+}
+
+fn reading(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) -> Option<Reading> {
+    let s = subs.get(i)?;
+    let lang = display_lang(s);
+    let container = names.sub(super::sub_render_ordinal(subs, i));
+    let merged = track_label::track_name(&s.title, container, &lang);
+    let kind = match track_label::parse(&merged, &lang, s.forced, s.sdh).kind {
+        Kind::Full if track_label::names_signs_and_songs(&merged) => Kind::Forced,
+        Kind::Full if track_label::names_dub(&merged) => Kind::Sdh,
+        k => k,
+    };
+    let (group, key) = group_of(s, i, &lang);
+    Some(Reading { region: track_label::region_detail(&s.language_tag), kind, group, key, lang })
+}
+
+/// **The downloaded subtitle that stands for a built-in track.** `subs[i]` is a built-in track and a
+/// downloaded file the client can draw ([`Stream::sidecar_renderable`]) has the same language, region
+/// and kind, so the two would read as one row. [`sub_sections`] lists only the downloaded one, and a
+/// pick of the built-in lands on it (`route::plan::visible_pick`). A built-in with no such twin stays:
+/// one whose downloaded file is another kind (a downloaded full translation does not stand for the
+/// built-in signs and songs) or one only a server burn could show (an image sidecar, a keyless one).
+pub fn downloaded_twin(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) -> Option<usize> {
+    if subs.get(i)?.external {
+        return None;
+    }
+    // Most items carry no downloaded subtitle at all: nothing to compare, nothing parsed.
+    let drawable = |s: &Stream| s.id > 0 && s.sidecar_renderable();
+    if !subs.iter().any(drawable) {
+        return None;
+    }
+    let mine = reading(subs, i, names)?;
+    (0..subs.len()).find(|&j| {
+        drawable(&subs[j])
+            && reading(subs, j, names).is_some_and(|o| o.group == mine.group && o.region == mine.region && o.kind == mine.kind)
+    })
+}
+
+/// Parse every listed track once, fill in [`SubTrack::ordinal`] for tracks that would otherwise
+/// draw the exact same row, and pair each with its [`LangGroup`] and its code's canonical key. A
+/// built-in track whose downloaded twin is offered is not listed ([`downloaded_twin`]).
 fn sub_tracks(
     subs: &[Stream],
     offered: &[usize],
     names: &super::track_names::TrackNames,
 ) -> Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> {
-    // The label before any "built-in": language, region, variant.
-    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>, Vec<&'static str>, Option<String>, bool)> = offered
+    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> = offered
         .iter()
+        .filter(|&&i| downloaded_twin(subs, i, names).is_none_or(|twin| !offered.contains(&twin)))
         .filter_map(|&i| {
-            let s = subs.get(i)?;
-            let lang = display_lang(s);
-            let container = names.sub(super::sub_render_ordinal(subs, i));
-            let merged = track_label::track_name(&s.title, container, &lang);
-            let kind = match track_label::parse(&merged, &lang, s.forced, s.sdh).kind {
-                Kind::Full if track_label::names_signs_and_songs(&merged) => Kind::Forced,
-                Kind::Full if track_label::names_dub(&merged) => Kind::Sdh,
-                k => k,
-            };
-            let region = track_label::region_detail(&s.language_tag);
+            let Reading { lang, region, kind, group, key } = reading(subs, i, names)?;
             let words: Vec<&'static str> = kind.variant_word().into_iter().collect();
             let label = natural_label(&lang, region.as_deref(), &words);
-            let (group, key) = group_of(s, i, &lang);
-            let track = SubTrack { i, lang, label, kind, ordinal: None };
-            Some((track, group, key, words, region, s.external))
+            Some((SubTrack { i, lang, label, kind, ordinal: None }, group, key))
         })
         .collect();
-    // A built-in track that reads like a downloaded one says so: the downloaded one is the
-    // automatic pick (`route::plan::follow_audio`), so it keeps the plain name.
-    let mixed: Vec<bool> = out
-        .iter()
-        .map(|(t, .., ext)| out.iter().any(|(o, .., o_ext)| o.i != t.i && o.label == t.label && o_ext != ext))
-        .collect();
-    for ((t, _, _, words, region, external), mixed) in out.iter_mut().zip(mixed) {
-        if mixed && !*external {
-            words.push(plx_platform::i18n::msg::widgets_tracks_variant_built_in());
-            t.label = natural_label(&t.lang, region.as_deref(), words);
-        }
-    }
-    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> =
-        out.into_iter().map(|(t, g, k, ..)| (t, g, k)).collect();
 
     type Identity = String;
     let identity = |t: &SubTrack| -> Identity { t.label.clone() };
@@ -646,23 +670,40 @@ mod tests {
         assert_eq!((french.id.stream, french.tracks.len()), (1, 1), "the member that gave the key is not offered");
     }
 
+    /// A downloaded subtitle file: external, with the key PMS delivers it by, which is what lets the
+    /// client draw it.
+    fn downloaded(id: i64, index: i64, lang: &str, lang_code: &str, title: &str) -> Stream {
+        Stream { external: true, key: format!("/library/streams/{id}"), ..stream(id, index, lang, lang_code, title) }
+    }
+
+    /// Every listed track in drawn order, as `(label, index into the item's subs)`.
+    fn listed(m: &SubModel) -> Vec<(String, usize)> {
+        let rows = m.sections.iter().flat_map(|s| &s.rows).filter_map(|r| match r {
+            SubRow::Flat(t) | SubRow::InLanguage(t) => Some((t.label.clone(), t.i)),
+            _ => None,
+        });
+        rows.chain(m.other.iter().flat_map(|o| &o.tracks).map(|t| (t.label.clone(), t.i))).collect()
+    }
+
+    fn own(rows: &[(&str, usize)]) -> Vec<(String, usize)> {
+        rows.iter().map(|&(label, i)| (label.to_string(), i)).collect()
+    }
+
     /// **Rows read in plain words**: the full translation is its language; a dub transcript (an
-    /// SDH flag, or a title naming SDH or a dub), a forced or signs-and-songs track, a region and a
-    /// built-in twin of a downloaded track each add a word; no format, acronym or title shows.
+    /// SDH flag, or a title naming SDH or a dub), a forced or signs-and-songs track and a region each
+    /// add a word; no format, acronym or title shows.
     #[test]
     fn rows_read_in_plain_words() {
         let mut subs = vec![
             stream(1, 0, "English", "eng", "Signs / Songs"),
-            stream(2, 1, "English", "eng", "Dialogue"),
+            stream(2, 1, "English", "eng", ""),
             stream(3, 2, "English", "eng", ""),
-            stream(4, 3, "English", "eng", ""),
-            stream(5, 4, "English", "eng", "Dubtitle"),
-            stream(6, 5, "Portuguese", "por", "PGS iAHD"),
+            stream(4, 3, "English", "eng", "Dubtitle"),
+            stream(5, 4, "Portuguese", "por", "PGS iAHD"),
         ];
         subs[0].codec = "pgs".into();
-        subs[2].external = true;
-        subs[3].sdh = true;
-        subs[5].language_tag = "pt-BR".into();
+        subs[2].sdh = true;
+        subs[4].language_tag = "pt-BR".into();
         let m = model(&subs, &[]);
         let labels = |name: &str| -> Vec<(usize, String, Option<u32>)> {
             let lang = m.other.iter().find(|o| o.name == name).unwrap();
@@ -670,13 +711,100 @@ mod tests {
         };
         let own = |s: &str| s.to_string();
         assert_eq!(labels("English"), [
-            (1, own("English (built-in)"), None),
-            (2, own("English"), None),
-            (3, own("English (dub)"), Some(1)),
-            (4, own("English (dub)"), Some(2)),
+            (1, own("English"), None),
+            (2, own("English (dub)"), Some(1)),
+            (3, own("English (dub)"), Some(2)),
             (0, own("English (on-screen text)"), None),
         ]);
-        assert_eq!(labels("Portuguese"), [(5, own("Portuguese (Brazil)"), None)]);
+        assert_eq!(labels("Portuguese"), [(4, own("Portuguese (Brazil)"), None)]);
+    }
+
+    /// **A downloaded track stands for its built-in twin.** One-Punch Man S02E01: two built-in image
+    /// tracks (dialogue, signs and songs), Bazarr's translation and SpeechDock's dub transcript. The
+    /// built-in dialogue would read exactly as the downloaded translation, so only the downloaded one
+    /// is listed; the on-screen text has no downloaded twin and stays.
+    #[test]
+    fn a_downloaded_track_hides_its_built_in_twin() {
+        let mut subs = vec![
+            stream(77178, 3, "English", "eng", "Signs / Songs"),
+            stream(77179, 4, "English", "eng", "Dialogue"),
+            downloaded(166341, 5, "English", "eng", ""),
+            downloaded(166318, 6, "English", "eng", ""),
+        ];
+        subs[0].codec = "pgs".into();
+        subs[1].codec = "pgs".into();
+        subs[2].sdh = true;
+        let drawn = own(&[("English", 3), ("English (dub)", 2), ("English (on-screen text)", 0)]);
+        assert_eq!(listed(&model(&subs, &["eng"])), drawn, "a language the viewer reads");
+        assert_eq!(listed(&model(&subs, &[])), drawn, "and behind Other languages");
+
+        let mut with_downloaded_dub =
+            vec![stream(1, 0, "English", "eng", "Dub (SDH)"), downloaded(2, 1, "English", "eng", "")];
+        with_downloaded_dub[1].sdh = true;
+        assert_eq!(listed(&model(&with_downloaded_dub, &[])), own(&[("English (dub)", 1)]), "a dub transcript has a twin too");
+    }
+
+    /// **A twin is the same language, region and kind.** The downloaded full translation does not
+    /// stand for the built-in on-screen text or dub transcript, a commentary, another language or
+    /// another region of the language; it does stand for the built-in full translation.
+    #[test]
+    fn only_a_downloaded_track_of_the_same_language_region_and_kind_hides_a_built_in_one() {
+        let mut subs = vec![
+            stream(1, 0, "English", "eng", "Signs / Songs"),
+            stream(2, 1, "English", "eng", "Dub (SDH)"),
+            stream(3, 2, "English", "eng", "Director's Commentary"),
+            stream(4, 3, "French", "fra", ""),
+            stream(5, 4, "Portuguese", "por", ""),
+            stream(6, 5, "English", "eng", ""),
+            downloaded(9, 6, "English", "eng", ""),
+            downloaded(10, 7, "Portuguese", "por", ""),
+        ];
+        subs[4].language_tag = "pt-PT".into();
+        let m = model(&subs, &[]);
+        let kept: Vec<usize> = listed(&m).into_iter().map(|(_, i)| i).collect();
+        assert!(!kept.contains(&5), "the built-in full English translation is hidden: {kept:?}");
+        for i in [0, 1, 2, 3, 4, 6, 7] {
+            assert!(kept.contains(&i), "track {i} has no downloaded twin and is listed: {kept:?}");
+        }
+    }
+
+    /// A downloaded file only a server burn can show (an image format, no delivery key) is not a
+    /// twin: the built-in track is the one the client draws, so both stay listed.
+    #[test]
+    fn a_downloaded_file_the_client_cannot_draw_hides_nothing() {
+        let keyless = Stream { key: String::new(), ..downloaded(9, 1, "English", "eng", "") };
+        let image = Stream { codec: "pgs".into(), ..downloaded(9, 1, "English", "eng", "") };
+        for (what, sidecar) in [("no delivery key", keyless), ("an image format", image)] {
+            let subs = vec![stream(1, 0, "English", "eng", ""), sidecar];
+            assert_eq!(downloaded_twin(&subs, 0, &TrackNames::new()), None, "{what}");
+            let offered: Vec<usize> = (0..subs.len()).collect();
+            let m = sub_sections(&subs, &offered, &TrackNames::new(), &yours(&["eng"]), true);
+            assert_eq!(listed(&m).len(), 2, "{what}: both rows stay");
+        }
+    }
+
+    /// The twin is what the menu answers for the built-in track, by the names the container gives
+    /// its tracks: an unnamed track whose file says "Signs / Songs" is on-screen text, which a
+    /// downloaded full translation does not stand for. A twin the route does not offer hides nothing.
+    #[test]
+    fn a_built_in_track_reads_as_its_visible_downloaded_twin() {
+        let subs = vec![
+            stream(1, 0, "English", "eng", ""),
+            stream(2, 1, "English", "eng", "Dub (SDH)"),
+            downloaded(3, 2, "English", "eng", ""),
+        ];
+        let none = TrackNames::new();
+        assert_eq!(downloaded_twin(&subs, 0, &none), Some(2));
+        assert_eq!(downloaded_twin(&subs, 1, &none), None, "another kind");
+        assert_eq!(downloaded_twin(&subs, 2, &none), None, "a downloaded track stands for itself");
+        assert_eq!(downloaded_twin(&subs, 9, &none), None, "no such track");
+
+        let mut named = TrackNames::new();
+        named.subs = vec!["Signs / Songs".into(), String::new()];
+        assert_eq!(downloaded_twin(&subs, 0, &named), None, "the container's name makes it on-screen text");
+
+        let m = sub_sections(&subs, &[0, 1], &none, &yours(&["eng"]), true);
+        assert_eq!(listed(&m), own(&[("English", 0), ("English (dub)", 1)]), "the twin is not offered: the built-in stays");
     }
 
     /// A language's identity is the stream id, so removing an earlier track moves its list

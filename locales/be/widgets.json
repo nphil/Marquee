@@ -344,6 +344,5 @@
   "widgets.tracks.variant_dub": "дубляж",
   "widgets.tracks.variant_on_screen": "надпісы",
   "widgets.tracks.variant_commentary": "каментарый",
-  "widgets.tracks.sub_label": "{language} ({detail})",
-  "widgets.tracks.variant_built_in": "убудаваныя"
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

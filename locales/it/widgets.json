@@ -340,6 +340,5 @@
   "widgets.tracks.variant_dub": "doppiaggio",
   "widgets.tracks.variant_on_screen": "scritte",
   "widgets.tracks.variant_commentary": "commento",
-  "widgets.tracks.sub_label": "{language} ({detail})",
-  "widgets.tracks.variant_built_in": "integrati"
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

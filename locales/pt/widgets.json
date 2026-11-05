@@ -340,6 +340,5 @@
   "widgets.tracks.variant_dub": "dublagem",
   "widgets.tracks.variant_on_screen": "texto na tela",
   "widgets.tracks.variant_commentary": "comentários",
-  "widgets.tracks.sub_label": "{language} ({detail})",
-  "widgets.tracks.variant_built_in": "embutidas"
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

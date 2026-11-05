@@ -10,7 +10,7 @@
 //! belongs in `decision.rs`.
 
 use plx_data::metadata::lang_matches;
-use plx_data::metadata::sub_layout::{sub_traits, SubTraits};
+use plx_data::metadata::sub_layout::{downloaded_twin, sub_traits, SubTraits};
 use plx_plex::plex::session::prefs::{SubtitleMemo, TrackMemoryEntry};
 use super::track_memory::{blank_lang, match_audio, memory_subtitle, Miss, SubMode, TrackContext};
 
@@ -3681,7 +3681,12 @@ pub(super) fn pick_subtitle(
     let mut miss = None;
     if let Some(memo) = consulted_memory(item, override_id, memory) {
         match memory_subtitle(subs, memo, audio_lang) {
-            Ok(pick) => return SubDecision { pick, source: SubPickSource::Memory, miss: None },
+            Ok(pick) => {
+                // A remembered built-in track the menu no longer lists lands on its downloaded twin. Forced
+                // only is a mode, not a track the menu lists: it keeps its embedded forced track.
+                let pick = if matches!(memo, SubtitleMemo::ForcedOnly { .. }) { pick } else { visible_pick(subs, pick) };
+                return SubDecision { pick, source: SubPickSource::Memory, miss: None };
+            }
             Err(reason) => miss = Some(reason),
         }
     }
@@ -3693,7 +3698,7 @@ pub(super) fn pick_subtitle(
         SubPickSource::Account
     };
     let pick = pick_dp_subtitle_account(subs, prefs, account, audio_lang);
-    let pick = follow_audio_pick(item, account, audio_lang, pick);
+    let pick = visible_pick(subs, follow_audio_pick(item, account, audio_lang, pick));
     SubDecision { pick, source, miss }
 }
 
@@ -3718,6 +3723,21 @@ fn auto_subtitles(
 
 fn server_sidecar_pick(item: &plx_data::metadata::PlayingItem) -> Option<(i64, i32)> {
     plx_data::metadata::server_selected_sidecar(item).map(|s| (s.id, -1))
+}
+
+/// **No pick lands on a built-in track the Subtitles menu hides** behind its downloaded twin
+/// ([`downloaded_twin`]): it lands on the twin, a sidecar the app draws itself (ordinal -1). The
+/// server's selection, a remembered descriptor and the account's rule may all name the built-in
+/// track; the menu shows, and the viewer chooses among, the downloaded file.
+fn visible_pick(subs: &[plx_data::metadata::Stream], pick: Option<(i64, i32)>) -> Option<(i64, i32)> {
+    let Some((id, _)) = pick else { return pick };
+    // The container's track names are not known at a resolve: the PMS titles are all there is.
+    let names = plx_data::metadata::track_names::TrackNames::new();
+    let twin = subs.iter().position(|s| s.id == id).and_then(|i| downloaded_twin(subs, i, &names));
+    match twin {
+        Some(j) => Some((subs[j].id, plx_data::metadata::sub_render_ordinal(subs, j))),
+        None => pick,
+    }
 }
 
 /// [`follow_audio`] over the ladder's automatic answer, or over the sidecar the server selected

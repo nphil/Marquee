@@ -336,6 +336,5 @@
   "widgets.tracks.variant_dub": "szinkron",
   "widgets.tracks.variant_on_screen": "kiírások",
   "widgets.tracks.variant_commentary": "kommentár",
-  "widgets.tracks.sub_label": "{language} ({detail})",
-  "widgets.tracks.variant_built_in": "beépített"
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

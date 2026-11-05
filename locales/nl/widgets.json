@@ -336,6 +336,5 @@
   "widgets.tracks.variant_dub": "nasynchronisatie",
   "widgets.tracks.variant_on_screen": "tekst in beeld",
   "widgets.tracks.variant_commentary": "commentaar",
-  "widgets.tracks.sub_label": "{language} ({detail})",
-  "widgets.tracks.variant_built_in": "ingebouwd"
+  "widgets.tracks.sub_label": "{language} ({detail})"
 }

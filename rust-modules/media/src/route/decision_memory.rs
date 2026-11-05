@@ -507,10 +507,11 @@ pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid:
 }
 
 /// **The audio follow of an automatic subtitle**: while the landing's subtitle is one nobody chose
-/// by hand (`TrackContext::auto_subs`, cleared by the viewer's own pick), a new audio puts on what
-/// the ladder would have landed for that audio's language: the dub transcript for audio in the
-/// subtitle's language, the full translation otherwise, or Off. Derived like the Forced only follow:
-/// no memory is written, and no selection PUT goes over a Part with an external stream (W5).
+/// (`TrackContext::auto_subs`: absent when a remembered choice decided the landing, cleared by the
+/// viewer's own pick), a new audio puts on what the ladder would have landed for that audio's
+/// language: the dub transcript for audio in the subtitle's language, the full translation otherwise,
+/// or Off. Derived like the Forced only follow: no memory is written, and no selection PUT goes over
+/// a Part with an external stream (W5).
 pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_sid: i64) {
     if ps.sub_mode == SubMode::ForcedOnly || ps.cur_memory_note || original_recovery_pending() {
         return;

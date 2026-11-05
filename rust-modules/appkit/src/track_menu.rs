@@ -13,7 +13,8 @@
 //! everything else is
 //! ONE "Other languages" row (a drill-in to [`TrackPage::OtherLanguages`], one row per language
 //! A-Z; a multi-track language there drills in again to [`TrackPage::Language`], its tracks
-//! ranked); and a headerless section holds Timing and Style. That
+//! ranked); and a headerless section holds Timing and Style. A built-in track that a downloaded file
+//! of the same language, region and kind duplicates is not listed: the file is ([`sub_layout::downloaded_twin`]). That
 //! grouping is a pure DATA model, `metadata::sub_layout` (host-tested without a
 //! `PlaybackSession`/`MetadataView` fixture); this module only turns it into `TableView` sections
 //! ([`table_form`]) and answers focus/OK by the focused row's [`TrackRow`] identity. "Yours" is
@@ -964,15 +965,18 @@ impl TrackMenuState {
     }
 
     /// The Subtitles tab's half of [`Self::derive_active`] — what the live poll scans alone, the
-    /// audio half being discarded there.
+    /// audio half being discarded there. A built-in track the menu does not list stands for its
+    /// downloaded twin ([`sub_layout::downloaded_twin`]), so the checkmark lands on a row that is there.
     fn derive_active_sub(ps: &plx_media::route::PlaybackSession, meta: metadata::MetadataView<'_>) -> c_int {
         let Some(t) = tracks(meta) else { return -1 };
         let ssid = plx_media::route::cur_sub_sid(ps);
-        (ssid > 0)
-            .then(|| t.subs.iter().position(|s| s.id == ssid))
-            .flatten()
-            .map(|i| i as c_int)
-            .unwrap_or(-1)
+        let Some(i) = (ssid > 0).then(|| t.subs.iter().position(|s| s.id == ssid)).flatten() else { return -1 };
+        // The poll asks every frame: an item with no downloaded file takes no lock and parses nothing.
+        let may_have_twin = !t.subs[i].external && t.subs.iter().any(|s| s.sidecar_renderable());
+        let twin = may_have_twin
+            .then(|| sub_layout::downloaded_twin(&t.subs, i, &plx_media::player::SHARED.track_names_lenient()))
+            .flatten();
+        twin.unwrap_or(i) as c_int
     }
 
     /// [`Self::derive_active`] on every open — the menu can never show a stale or desynced
@@ -5309,6 +5313,53 @@ mod enhancement_menu_tests {
         assert!(!plx_media::route::cur_memory_note(&ps), "a sidecar is on screen now");
         menu.update(0.016, &plx_ui::fixture::FixtureMeasure, &ps, store.view());
         assert!(notes(&menu).is_empty(), "{:?}", notes(&menu));
+        teardown(&ps);
+    }
+
+    /// **A downloaded track stands for its built-in twin in the menu, and the checkmark follows.**
+    /// One-Punch Man S02E01: the built-in dialogue track is not listed (the downloaded translation is
+    /// the same row), so a session that shows it checks the downloaded row instead; the built-in
+    /// on-screen text has no downloaded twin and keeps its own row and its own check.
+    #[test]
+    fn the_checkmark_of_a_hidden_built_in_track_lands_on_its_downloaded_twin() {
+        let _g = plx_base::testlock::serial();
+        plx_media::player::sidecar::reset();
+        let (mut ps, _sid) = enhancement_test_session(EnhTestFixture { remux: None, ..Default::default() });
+        let sidecar = |id: i64, sdh: bool| plx_data::metadata::Stream {
+            external: true,
+            key: format!("/library/streams/{id}"),
+            sdh,
+            ..super::tests::stream(id, 5, "English", "eng", "")
+        };
+        let store = super::tests::store_with(vec![
+            super::tests::stream(77178, 3, "English", "eng", "Signs / Songs"),
+            super::tests::stream(77179, 4, "English", "eng", "Dialogue"),
+            sidecar(166341, true),
+            sidecar(166318, false),
+        ]);
+        let listed_and_checked = |ps: &plx_media::route::PlaybackSession| {
+            let menu = TrackMenuState::new(ps, store.view(), 1, vec!["eng".into()]);
+            let tracks: Vec<(TrackRow, String, bool)> = flat_rows(&menu)
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| match menu.form.id_at(i) {
+                    Some(&id @ TrackRow::Sub(_)) => Some((id, r.label.clone(), r.checked)),
+                    _ => None,
+                })
+                .collect();
+            tracks
+        };
+
+        plx_media::route::commit_subtitle_pick(&mut ps, 1, 77179, true, None);
+        let tracks = listed_and_checked(&ps);
+        let labels: Vec<&str> = tracks.iter().map(|(_, label, _)| label.as_str()).collect();
+        assert_eq!(labels, ["English", "English (dub)", "English (on-screen text)"], "no built-in twin row");
+        let checked: Vec<TrackRow> = tracks.iter().filter(|t| t.2).map(|t| t.0).collect();
+        assert_eq!(checked, [TrackRow::Sub(3)], "the built-in dialogue the session shows: the downloaded translation's row");
+
+        plx_media::route::commit_subtitle_pick(&mut ps, 0, 77178, true, None);
+        let checked: Vec<TrackRow> = listed_and_checked(&ps).iter().filter(|t| t.2).map(|t| t.0).collect();
+        assert_eq!(checked, [TrackRow::Sub(0)], "the built-in on-screen text has no twin: its own row");
         teardown(&ps);
     }
 

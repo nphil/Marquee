@@ -11497,7 +11497,8 @@ pub fn enhancement_test_session(route: EnhTestFixture) -> (PlaybackSession, Serv
 /// track in the language of the audio just chosen is committed as a derived selection
 /// ([`follow_audio_with_forced_only`]), which PUTs like any in-playback subtitle change and writes
 /// NO memory: the memo stays Forced only. **An automatic subtitle re-picks by the same rule**
-/// ([`follow_audio_with_auto_subtitle`]), unless the viewer chose one by hand.
+/// ([`follow_audio_with_auto_subtitle`]), unless the viewer chose one by hand or a remembered choice
+/// decided the landing.
 pub fn commit_audio_selection(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
     let sid = audio.sid;
     let accepted = commit_audio_route(ps, audio);
