@@ -1166,7 +1166,7 @@ TURBOJPEG_SO := $(firstword $(wildcard $(SYSROOT)/usr/lib/libturbojpeg.so.0.*))
 #
 # THE THREE FLAVOUR-DEPENDENT ENTRIES ARE SOURCE PATHS ONLY. Everything here is staged with a plain
 # `cp … $(STAGE)/`, which preserves BASENAMES — and that is exactly what is wanted, because
-# `appinfo.json`'s own `icon`/`largeIcon` fields name `icon.png`/`largeIcon.png` and
+# `appinfo.json`'s own `icon`/`largeIcon`/`extraLargeIcon` fields name `icon.png`/`largeIcon.png`/`extraLargeIcon.png` and
 # ci/check-package.py grades the payload by basename. So the flavour lives in the directory a file
 # is read FROM and never in the name it is packaged UNDER. (A `pkg/appinfo.debug.json` would ship
 # under that name and fail an otherwise correct package.)
@@ -1174,7 +1174,7 @@ APPINFO   = $(if $(filter stable,$(FLAVOR)),pkg/appinfo.json,pkg/.flavor/$(FLAVO
 # Each non-stable flavour wears its OWN badge — `pkg/dev/` (amber DEV) for debug, `pkg/nightly/`
 # (grey NIGHTLY) for nightly — because all three tiles sit side by side in one launcher.
 ICONDIR   = $(if $(filter nightly,$(FLAVOR)),pkg/nightly,pkg/dev)
-ICONS     = $(if $(filter stable,$(FLAVOR)),pkg/icon.png pkg/largeIcon.png,$(ICONDIR)/icon.png $(ICONDIR)/largeIcon.png)
+ICONS     = $(if $(filter stable,$(FLAVOR)),pkg/icon.png pkg/largeIcon.png pkg/extraLargeIcon.png,$(ICONDIR)/icon.png $(ICONDIR)/largeIcon.png $(ICONDIR)/extraLargeIcon.png)
 # `pkg/lab.json` is in this list ONLY under LAB=1, and it is the whole handoff between the two
 # halves of the Cloud Lab bridge: `tools/plxnative-lab start` writes it (endpoint, session,
 # secret, certificate pin), and the app reads it out of its own install directory at boot, because
@@ -1341,7 +1341,7 @@ deploy: pkg/plxnative pkg/plxnative-storage $(FFMPEG_STAGED) $(SENTRY_NATIVE_STA
 	# from `DEPLOY_FILES`: the SAME list `ipk` stages via `cp $(APP_FILES) $(STAGE)/`. `scp` to a
 	# DIRECTORY preserves each source's basename, which is exactly what `ipk`'s plain `cp` does too
 	# and is why the flavour-dependent entries (`$(APPINFO)`, `$(ICONS)`) are safe to mix in here:
-	# their basenames (`appinfo.json`, `icon.png`, `largeIcon.png`) are the same regardless of which
+	# their basenames (`appinfo.json`, `icon.png`, `largeIcon.png`, `extraLargeIcon.png`) are the same regardless of which
 	# flavour's directory they were read from. A file added to `APP_FILES` now reaches the
 	# television with no separate line to remember here — which is what `pkg/splash.png` needed and
 	# never got: it was staged into every `.ipk` and never scp'd by this recipe.

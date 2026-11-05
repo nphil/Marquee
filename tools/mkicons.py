@@ -3,8 +3,8 @@
 
     python3 tools/mkicons.py assets/logo-master.png [--band=N] [--splash=assets/splash-master.png]
     python3 tools/mkicons.py assets/logo-master.png --bleed
-    python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/dev --sizes=80,130 --badge=DEV
-    python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/nightly --sizes=80,130 \
+    python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/dev --sizes=80,130,240 --badge=DEV
+    python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/nightly --sizes=80,130,240 \
         --badge=NIGHTLY --badge-fill=#cdd3dd
 
 **`--bleed`** is for a master that is already a finished full-bleed tile (gradient and gloss
@@ -13,7 +13,7 @@ resized straight to each size with no ink fit, and `iconColor` becomes the tile'
 one `ci/check-package.py` compares. The Marquee master uses a lavender-and-gold folded M on
 Rosé Pine plum; regenerate with `--bleed`. Without it the master must be a glyph on one flat colour.
 
-Emits `pkg/icon.png` (80), `pkg/largeIcon.png` (130) and, for the webosbrew channel listing,
+Emits `pkg/icon.png` (80), `pkg/largeIcon.png` (130), `pkg/extraLargeIcon.png` (240) and, for the webosbrew channel listing,
 `pkg/icon160.png` / `pkg/icon320.png`. With `--splash` it also emits `pkg/splash.png` at exactly
 1920x1080, the size `splashBackground` requires and the size all four native-app splashes on the
 dev TV actually are (Amazon, Apple TV, Netflix, YouTube — checked, since the field is documented
@@ -92,12 +92,14 @@ from PIL import Image, ImageDraw, ImageFont
 # Fraction of the tile the logo's ink should span horizontally. Mid-pack against the four store
 # icons measured above; also keeps >=5px padding at 130 (130*0.78 -> 101 wide, 14 px each side).
 INK_FRACTION = 0.78
-# (filename, size). 80/130 are LG's launcher pair; 160/320 are the webosbrew channel's
-# iconUri/detailIconUri; 400 is the LG Content Store listing icon, whose uploader refuses anything
-# under 400x400 ("Upload 400 x 400 pixels and greater icons only"). Only the first two are staged
-# into the ipk (the Makefile's ICONS/APP_FILES name them explicitly) — the rest are listing assets.
-TARGETS = (("icon.png", 80), ("largeIcon.png", 130), ("icon160.png", 160), ("icon320.png", 320),
-           ("icon400.png", 400))
+# (filename, size). 80/130 are LG's launcher pair; 240 is `extraLargeIcon`, which LumaTV's dock
+# prefers (its tiles are 240 px on a 4K panel, so a 130 px icon is upscaled there); 160/320 are the
+# webosbrew channel's iconUri/detailIconUri; 400 is the LG Content Store listing icon, whose uploader
+# refuses anything under 400x400 ("Upload 400 x 400 pixels and greater icons only"). Only 80, 130
+# and 240 are staged into the ipk (the Makefile's ICONS/APP_FILES name them explicitly) — the rest
+# are listing assets.
+TARGETS = (("icon.png", 80), ("largeIcon.png", 130), ("extraLargeIcon.png", 240), ("icon160.png", 160),
+           ("icon320.png", 320), ("icon400.png", 400))
 
 # --- the flavour badge -------------------------------------------------------------------------
 # `theme::RESUME_FILL` (AMBER_300) over `AMBER_950` — the design system's own filled-control pair.
@@ -274,8 +276,8 @@ def main() -> int:
     # descriptor behind it. The flavour lives in the source path and nowhere else.
     out_dir = repo / opt("--out-dir=", "pkg")
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Which sizes. 80 and 130 are the launcher's; 160/320 exist only for the webosbrew channel
-    # listing, which a second install is never in — so `--sizes=80,130` for a flavour.
+    # Which sizes. 80, 130 and 240 are the launcher's; 160/320 exist only for the webosbrew channel
+    # listing, which a second install is never in — so `--sizes=80,130,240` for a flavour.
     want = opt("--sizes=")
     targets = TARGETS if want is None else tuple(t for t in TARGETS if str(t[1]) in want.split(","))
     if not targets:

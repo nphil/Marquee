@@ -1553,6 +1553,10 @@ print("== icons ==")
 # itself what appinfo's `icon`/`largeIcon` fields and the payload gate below both require.)
 check(png_size(PAYLOAD / "icon.png") == (80, 80), "icon.png is 80x80")
 check(png_size(PAYLOAD / "largeIcon.png") == (130, 130), "largeIcon.png is 130x130")
+# LumaTV's dock draws a tile at 240 px on a 4K panel and takes `extraLargeIcon` first, so without a
+# 240 px file it upscales the 130 px one.
+check(appinfo.get("extraLargeIcon") == "extraLargeIcon.png", "appinfo declares extraLargeIcon: extraLargeIcon.png")
+check(png_size(PAYLOAD / "extraLargeIcon.png") == (240, 240), "extraLargeIcon.png is 240x240")
 # `iconColor` paints the launcher tile BEHIND the icon, so a disagreement draws the icon as a
 # hard-edged rectangle floating in a differently-coloured tile. Shipped that way until 2026-08-02
 # (gold tile, black icon) and invisible in every file — it only exists once the system composites.
@@ -1581,6 +1585,7 @@ for badged in ("pkg/dev", "pkg/nightly"):
         continue
     check(png_size(ROOT / badged / "icon.png") == (80, 80), f"{badged}/icon.png is 80x80")
     check(png_size(ROOT / badged / "largeIcon.png") == (130, 130), f"{badged}/largeIcon.png is 130x130")
+    check(png_size(ROOT / badged / "extraLargeIcon.png") == (240, 240), f"{badged}/extraLargeIcon.png is 240x240")
     if corner is not None:
         # Same rule as above, and the same failure it prevents: iconColor paints the launcher tile
         # BEHIND the icon, so a badge that changed the tile's own background without moving
@@ -1731,7 +1736,7 @@ for loc in staged_locales:
 
 print("== ipk payload ==")
 expected = {
-    "plxnative", "sentry-crash", "libass-plx.so.0", "appinfo.json", "icon.png", "largeIcon.png", "splash.png",
+    "plxnative", "sentry-crash", "libass-plx.so.0", "appinfo.json", "icon.png", "largeIcon.png", "extraLargeIcon.png", "splash.png",
     # appfont-cjk.ttf is the fallback face. Its absence is not a cosmetic loss: every Korean,
     # Japanese and Chinese title in the library becomes tofu, which is LG checklist #6 and #48.
     "appfont.ttf", "appfont-bold.ttf", "appfont-cjk.ttf", "OFL.txt",

@@ -5,10 +5,13 @@
 #   tools/import-bazarr-link.sh --dry-run KEY_FILE [URL]     (checks the file and the address, writes nothing)
 #
 # Builds {"url": ..., "api_key": ...} from KEY_FILE and writes it, over ssh's stdin, to
-# /tmp/marquee-bazarr-import.json on SSH_HOST with mode 0600. The key is never on a command line, in an
-# environment variable or in this script's output. The app takes the file ONCE at its next start (sign in
-# first; a signed-out start leaves it for the next one), stores the link in its sealed session record
-# and deletes the file: rust-modules/plex/src/plex/session/bazarr_import.rs. Restart the app after this.
+# /tmp/marquee-bazarr-import.json on SSH_HOST, mode 0600, owned by the uid and group of the app's jail
+# directory (/var/palm/jail/com.beb.plxnative, the owner of every file the app creates). The app runs
+# jailed under that uid, not root, and refuses a file it does not own, so a root-owned file would be
+# deleted unread. The key is never on a command line, in an environment variable or in this script's
+# output. The app takes the file ONCE at its next start (sign in first; a signed-out start leaves it for
+# the next one), stores the link in its sealed session record and deletes the file:
+# rust-modules/plex/src/plex/session/bazarr_import.rs. Restart the app after this.
 set -eu
 
 dry=0
@@ -19,6 +22,7 @@ else
   host=${1:?usage: import-bazarr-link.sh SSH_HOST KEY_FILE [URL]}; keyfile=${2:?key file}; url=${3:-https://bazarr.nateshome.net}
 fi
 remote=/tmp/marquee-bazarr-import.json
+jail=/var/palm/jail/com.beb.plxnative
 
 [ -r "$keyfile" ] || { echo "import-bazarr-link: no readable key file" >&2; exit 1; }
 case "$(stat -c %a "$keyfile")" in
@@ -43,5 +47,9 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 
-payload | ${SSH:-ssh} "$host" "umask 077; cat > $remote && chmod 600 $remote"
+# The owner is read off the jail directory on the set, never hard-coded: the uid is assigned at install.
+# `rm -f` first so a planted link or a stale file of another owner is replaced, not written through.
+# A failed stat or chown removes the file rather than leaving a key behind.
+payload | ${SSH:-ssh} "$host" "umask 077; rm -f $remote; cat > $remote && \
+own=\$(stat -c %u:%g $jail) && chown \"\$own\" $remote && chmod 600 $remote || { rm -f $remote; exit 1; }"
 echo "import-bazarr-link: wrote $remote on $host; restart the app to take it"

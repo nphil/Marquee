@@ -1527,7 +1527,7 @@ the app to write one anyway).
 
 ## 10. App icons (built 2026-08-02, verified in the launcher)
 
-`tools/mkicons.py` cuts `pkg/icon.png` (80), `pkg/largeIcon.png` (130) and the channel listing's
+`tools/mkicons.py` cuts `pkg/icon.png` (80), `pkg/largeIcon.png` (130), `pkg/extraLargeIcon.png` (240, the one LumaTV's dock prefers) and the channel listing's
 `icon160.png` / `icon320.png` from one square master (`assets/logo-master.png`). It measures the
 master's **ink** and scales until that ink lands where LG wants it, because the geometry is not
 "the logo, scaled": the guide specifies a **126×126 background panel** with the logo inside
@@ -1627,7 +1627,7 @@ the two tiles sit side by side in the launcher. `pkg/dev/icon.png` and `pkg/dev/
 tracked, cut from the SAME master by the same script:
 
 ```sh
-python3 tools/mkicons.py assets/logo-master.png --out-dir=pkg/dev --sizes=80,130 --badge=DEV
+python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/dev --sizes=80,130,240 --badge=DEV
 ```
 
 The nightly install (`com.beb.plxnative.nightly`) is a third tile beside both, so it wears its own
@@ -1635,7 +1635,7 @@ set, `pkg/nightly/`, in the palette's cool grey (`COOL_200`, `#cdd3dd`) with the
 cut the same way:
 
 ```sh
-python3 tools/mkicons.py assets/logo-master.png --out-dir=pkg/nightly --sizes=80,130 \
+python3 tools/mkicons.py assets/logo-master.png --bleed --out-dir=pkg/nightly --sizes=80,130,240 \
   --badge=NIGHTLY --badge-fill=#cdd3dd
 ```
 

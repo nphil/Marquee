@@ -23,7 +23,7 @@ ROOT_DIRS = {'src', 'include', 'rust-modules', 'assets', 'ci', 'tools', 'docs', 
 PKG_FILES = {'OFL.txt', 'appfont.ttf', 'appfont-bold.ttf', 'appfont-cjk.ttf', 'appfont-emoji.ttf', 'le-roots.pem',
              'appfont-arabic.ttf', 'appfont-arabic-bold.ttf', 'appfont-hebrew.ttf', 'appfont-hebrew-bold.ttf',
              'appinfo.json', 'icon.png', 'icon160.png', 'icon320.png', 'icon400.png',
-             'largeIcon.png', 'splash.png', 'telemetry.local.json.example'}
+             'largeIcon.png', 'extraLargeIcon.png', 'splash.png', 'telemetry.local.json.example'}
 # `tv-host`/`tv-mac` (no dot) are the per-user copies of the first two (tools/tv-config.sh,
 # ~/.config/plxnative/): outside every checkout, but a copy dropped into the tree must not ship.
 PRIVATE_NAMES = {'.tv-host', '.tv-mac', 'tv-host', 'tv-mac', '.tv-dpad-pass', '.tv-remote-url',
@@ -75,8 +75,8 @@ def allowed(name):
                 (len(p.parts) == 4 and p.parts[1:3] == ('fonts', 'subs') and
                  (p.suffix == '.ttf' or p.name in {'manifest.json', 'families.json'})) or
                 (len(p.parts) == 4 and p.parts[1] == 'resources' and p.name == 'appinfo.json') or
-                name in {'pkg/dev/icon.png', 'pkg/dev/largeIcon.png',
-                         'pkg/nightly/icon.png', 'pkg/nightly/largeIcon.png'})
+                name in {'pkg/dev/icon.png', 'pkg/dev/largeIcon.png', 'pkg/dev/extraLargeIcon.png',
+                         'pkg/nightly/icon.png', 'pkg/nightly/largeIcon.png', 'pkg/nightly/extraLargeIcon.png'})
     return name.startswith('.github/')
 
 
