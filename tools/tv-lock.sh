@@ -52,7 +52,8 @@
 # held; the owner says go, then PLX_TV_IN_USE_OK=1). `with` otherwise exits with its command's own status.
 #
 # ENVIRONMENT. PLX_TV_LOCK_PATH / PLX_TV_LOCK_STATE / PLX_TV_LOCK_LANE / PLX_TV_LOCK_TTL move the lock, the
-# lease mirror, the lane and the lease length; PLX_TV_LOCK_BYPASS=1 skips the check (`require`);
+# lease mirror, the lane and the lease length; PLX_TV_LOCK_AGENT names the agent inside the lane (see identity
+# below); PLX_TV_LOCK_BYPASS=1 skips the check (`require`);
 # PLX_TV_IN_USE_OK=1 lets `with` and tests/run.py go on an IN USE set, on a lease they take or one this
 # lane already holds (only after the owner said go);
 # PLX_TV_PREFLIGHT_SECS (default 10) bounds the whole pre-flight read, and PLX_TV_RENEW_SECS (default 240)
@@ -84,6 +85,19 @@ lane_slug() {
 }
 LEASE="$STATE_DIR/$(lane_slug).lease"
 SESSIONS=""     # the Claude Code sessions that have used this lane's lease (see lease_write)
+
+# The AGENT inside the lane. Agents in one container share the checkout, $HOME and the uid, so the lane
+# alone let a second agent read the first one's mirror and "renew" a lease it never took: both then owned
+# the set. A lease is held by one agent: PLX_TV_LOCK_AGENT, else the Claude Code session id. Under an agent
+# harness (CLAUDECODE, OMPCODE or AGENT set) an agent with neither takes and holds nothing, because it
+# cannot be told from the next one; a person's terminal, with no harness, is the lane's as before.
+agent_id() { printf '%s' "${PLX_TV_LOCK_AGENT:-${CLAUDE_CODE_SESSION_ID:-}}" | tr -cd 'A-Za-z0-9_-' | cut -c1-64; }
+in_harness() { [ -n "${CLAUDECODE:-}${OMPCODE:-}${AGENT:-}" ]; }
+need_agent() {
+  [ -n "$(agent_id)" ] || ! in_harness && return 0
+  bad "no agent identity: set PLX_TV_LOCK_AGENT=<a name only this agent uses> (agents in one container share a lane)"
+  return 1
+}
 
 now()  { date +%s; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$*" >&2; }
@@ -201,6 +215,7 @@ ttl=$ttl_s
 user=$(sane "${USER:-unknown}")
 host=$(sane "$(hostname -s 2>/dev/null || hostname)")
 lane=$(sane "$LANE")
+agent=$(agent_id)
 branch=$(sane "$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)")
 label=$(sane "${LABEL:-}")
 why=$(sane "${WHY:-}")
@@ -299,10 +314,10 @@ fld() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # "gleb@studio [bridge-cse] since 12m, 33m left — why: fps suite" — one line, because it is
 # printed by tools that are in the middle of saying something else.
 describe() {
-  local blk="$1" u h l w lab exp acq n
+  local blk="$1" u h l w lab ag exp acq n
   u=$(fld user "$blk"); h=$(fld host "$blk"); l=$(fld lane "$blk"); w=$(fld why "$blk")
-  lab=$(fld label "$blk"); exp=$(fld expires "$blk"); acq=$(fld acquired "$blk"); n=$(now)
-  local who="$u@$h"; [ -n "$lab" ] && who="$who ($lab)"
+  lab=$(fld label "$blk"); ag=$(fld agent "$blk"); exp=$(fld expires "$blk"); acq=$(fld acquired "$blk"); n=$(now)
+  local who="$u@$h"; [ -n "$lab" ] && who="$who ($lab)"; [ -n "$ag" ] && who="$who, agent $ag"
   local held="" left=""
   [ -n "$acq" ] && held=" held $(fmt_dur $((n - acq)))"
   if [ -n "$exp" ]; then
@@ -326,6 +341,7 @@ describe() {
 # a cd rather than by the cwd, so session A cannot run /B/tools/... on the strength of B's lease.
 # `acquire` and `break` (and so `with`) reset it to the current session, `renew` appends it, and a
 # new TOKEN starts it afresh. Unset id, no line; a lease with no line is the owner's terminal's.
+# HOLDER is the agent that took the lease (agent_id); no line for a terminal's.
 cur_session() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-}" | tr -cd 'A-Za-z0-9_-'; }
 lease_write() {
   mkdir -p "$STATE_DIR" 2>/dev/null; chmod 700 "$STATE_DIR" 2>/dev/null
@@ -339,11 +355,14 @@ TV='$HOST'
 LANE='$LANE'
 EOF
   [ -z "$SESSIONS" ] || printf "SESSIONS='%s'\n" "$SESSIONS" >> "$LEASE"
+  [ -z "$(agent_id)" ] || printf "HOLDER='%s'\n" "$(agent_id)" >> "$LEASE"
 }
 lease_clear() { rm -f "$LEASE"; }
 lease_load() {
-  TOKEN=""; EXPIRES=0; ACQUIRED=0; VERIFIED=0; SESSIONS=""
+  TOKEN=""; EXPIRES=0; ACQUIRED=0; VERIFIED=0; SESSIONS=""; HOLDER=""
   [ -f "$LEASE" ] && . "$LEASE" 2>/dev/null
+  # Another agent's lease in this lane is not this one's, and an agent with no identity holds none.
+  if [ "$HOLDER" != "$(agent_id)" ] || { [ -z "$HOLDER" ] && in_harness; }; then TOKEN=""; SESSIONS=""; fi
   FILE_TOKEN="$TOKEN"
   # An inherited token beats the file: inside `with`, or inside anything it spawned, the lease is
   # the parent's and may not have been written for this lane at all.
@@ -420,6 +439,7 @@ do_acquire() {  # $1 = ttl minutes, $2 = force ; assumes TOKEN set
 cmd_acquire() {
   parse_opts "$@"
   need_host || exit 2
+  need_agent || exit 2
   local ttl="${TTL_OVERRIDE:-$TTL_MIN}"
   ensure_awake || { bad "TV unreachable — cannot take the lock (see the wake-tv skill)"; exit 2; }
 
@@ -713,6 +733,7 @@ cmd_status() {
 cmd_break() {
   parse_opts "$@"
   need_host || exit 2
+  need_agent || exit 2
   # remote_op writes $TOKEN into its owner record and `set -u` kills it when nothing bound it: with no
   # lease_load here a lane that holds no lease (the one that breaks) got an empty reply, read it as
   # "not held", and skipped the live-lease refusal below. cmd_status binds it the same way.
@@ -794,6 +815,7 @@ cmd_require() {
   # free or expired: take the short implicit lease. No HEADS-UP here: tv-lock-guard.py refuses an unleased device
   # command before it gets here, so this branch is normally a script or a human; the exceptions are a lease the TV
   # lost (a reboot) while the local mirror still reads live, and a hand-typed `require`.
+  need_agent || exit 2
   new_token; WHY="${WHY:-implicit lease (an unattended TV command)}"; LABEL="${LABEL:-auto}"
   if do_acquire "$AUTO_TTL_MIN" 0; then
     # ALWAYS said out loud, `--quiet` or not: `--quiet` means "do not narrate the lease I already
@@ -916,11 +938,13 @@ cmd_selftest() {
   # preflight_note off the network, and TV is a placeholder so no tv-config lookup happens either.
   local self="${BASH_SOURCE[0]}" out rc
   hu() {  # hu <lane> <tv-lock.sh args…>  ->  $out (stdout+stderr), $rc. HU_SID is the session id
-          # the child sees as CLAUDE_CODE_SESSION_ID; unset, it sees none (a run inside a Claude session
-          # exports one, and the cases must not depend on it).
+          # the child sees as CLAUDE_CODE_SESSION_ID, HU_AGENT its PLX_TV_LOCK_AGENT, and HU_HARNESS set runs
+          # it as under an agent harness; unset, it sees none of them (a run inside an agent exports
+          # them, and the cases must not depend on it).
     local lane="$1"; shift
     out="$(env -u PLX_TV_LOCK_TOKEN -u PLX_TV_LOCK_INHERITED -u PLX_TV_LOCK_BYPASS \
-      -u CLAUDE_CODE_SESSION_ID ${HU_SID:+CLAUDE_CODE_SESSION_ID=$HU_SID} \
+      -u CLAUDE_CODE_SESSION_ID -u PLX_TV_LOCK_AGENT -u CLAUDECODE -u OMPCODE -u AGENT \
+      ${HU_SID:+CLAUDE_CODE_SESSION_ID=$HU_SID} ${HU_AGENT:+PLX_TV_LOCK_AGENT=$HU_AGENT} ${HU_HARNESS:+AGENT=1} \
       TV=selftest.invalid PLX_TV_LOCK_LOCAL="$d" PLX_TV_LOCK_PATH="$d/headsup.lock" \
       PLX_TV_LOCK_STATE="$d/headsup-state" PLX_TV_LOCK_LANE="$d/lane-$lane" "$self" "$@" 2>&1)"
     rc=$?
@@ -979,6 +1003,9 @@ cmd_selftest() {
       fails=$((fails+1))
     fi
   }
+  # One agent throughout, so the sessions below are of one holder (another agent would hold nothing of A's).
+  hu A release
+  HU_AGENT=agent-a
   HU_SID=sess-1 hu A acquire --ttl 7
   sess "acquiring what you hold records this session" A "sess-1"
   HU_SID=sess-2 hu A renew --ttl 7
@@ -1007,6 +1034,29 @@ cmd_selftest() {
   sess "an acquire with no id clears it" A ""
   HU_SID="s1;'x\$y" hu A acquire --ttl 7
   sess "an id with quotes and shell metacharacters is cut to its safe characters" A "s1xy"
+  hu A release
+  HU_AGENT=
+
+  # ONE LANE, TWO AGENTS: the lease is the agent's that took it, whoever else shares the checkout and
+  # its mirror; under an agent harness an agent with no identity takes nothing.
+  HU_AGENT=one hu C acquire --why "agent one" --ttl 7
+  want "agent one takes the lane's lease" 0 1 "HEADS-UP: agent one, lease 7 min"
+  HU_AGENT=two hu C acquire --why "agent two" --ttl 7
+  want "agent two in the same lane is refused, not handed agent one's lease" 1 0
+  HU_AGENT=two hu C renew --ttl 7
+  want "agent two cannot renew it" 1 0
+  HU_AGENT=two hu C require
+  want "require refuses agent two" 1 0
+  HU_AGENT=two hu C release
+  HU_AGENT=one hu C renew --ttl 7
+  want "agent two's release leaves it, and agent one still holds it" 0 0
+  HU_HARNESS=1 hu C acquire --why "nameless"
+  want "an agent with no identity is refused" 2 0
+  HU_HARNESS=1 HU_SID=sess-c hu C require
+  want "an agent named by its session is another holder" 1 0
+  HU_AGENT=one hu C release
+  HU_HARNESS=1 hu C require
+  want "an agent with no identity takes no implicit lease either" 2 0
 
   local got marker sig
   # IS ANYBODY WATCHING: the verdict preflight_note prints, and the note around it, on fixture replies

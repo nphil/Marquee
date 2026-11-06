@@ -173,6 +173,12 @@ plan the work so only one lane needs the device.
 A lane is a **checkout**: the lease belongs to the worktree, so every Bash call, `make` and nested
 tool inside it inherits the same lease, and a second worktree on the same Mac is a different lane.
 
+Inside a lane the lease is the **agent's** that took it. Agents in one container share the
+checkout, `$HOME` and the uid, so every agent names itself: `PLX_TV_LOCK_AGENT=<a name only it
+uses>` on its device commands (a Claude Code session's `CLAUDE_CODE_SESSION_ID` stands in when it is
+unset). Another agent in the same lane is refused as a different holder, and under an agent harness
+(`CLAUDECODE`, `OMPCODE` or `AGENT` set) an agent with no name takes no lease at all.
+
 **A subagent names its OWN lane by prefixing `PLX_TV_LOCK_LANE=<its worktree path>` on each
 device command**, not by exporting it once for the session. The harness reports the SESSION's own
 checkout as the Bash `cwd` for a plain subagent's call, whatever worktree that agent is actually
