@@ -280,6 +280,12 @@ pub struct DetailScreen {
     /// is still leaving would withdraw it, so `Enter` re-arms it for the uncover instead. Not
     /// hashed: lifecycle bookkeeping, like `teardown_cleared`.
     left_deleted: bool,
+    /// Where the episode or season this page shows sits in its show, as `(PmsMovie::kind, the
+    /// show's rk, the season number)`, noted whenever the page holds its item. The store holds one
+    /// item at a time, so a covered page cannot ask it, yet a deletion of the show or season above
+    /// the item takes it too ([`plx_data::metadata::MetadataView::deleted_under`]). Not hashed:
+    /// lifecycle bookkeeping, like `left_deleted`.
+    lineage: (i32, String, i64),
 
     // Render state.
     scroll: Spring,
@@ -581,6 +587,7 @@ impl DetailScreen {
             teardown_cleared: false,
             withdrawn: false,
             left_deleted: false,
+            lineage: (0, String::new(), 0),
             scroll: Spring::at(0.0),
             scroll_target: 0.0,
             free: false,
@@ -612,6 +619,24 @@ impl DetailScreen {
             layout_pinned: Cell::new(false),
             spot_facts: SpotFacts::default(),
             hold_hint: plx_ui::hold_hint::HoldHint::new(),
+        }
+    }
+
+    /// Did the server delete this page's item, or the show or season it sits under? A covered page
+    /// asks by where it sat when it last held its item ([`Self::note_lineage`]).
+    fn lineage_deleted(&self, meta: plx_data::metadata::MetadataView<'_>) -> bool {
+        let (kind, show_rk, season) = &self.lineage;
+        meta.deleted_under(self.sid, &self.rk, *kind, show_rk, *season)
+    }
+
+    fn note_lineage(&mut self, d: &Detail) {
+        let (kind, show_rk, season) = match d.kind.as_str() {
+            "season" => (2, d.parent_rk.as_str(), d.index),
+            "episode" => (3, d.show_rk.as_str(), d.season),
+            _ => return,
+        };
+        if (self.lineage.0, self.lineage.1.as_str(), self.lineage.2) != (kind, show_rk, season) {
+            self.lineage = (kind, show_rk.to_owned(), season);
         }
     }
 
@@ -2110,9 +2135,10 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
                 // resumes from what the stop committed, not from the `viewOffset` the page
                 // opened with.
                 let fresh_open = matches!(kind, Enter::Fresh { .. });
-                // An item the server deleted while this page was covered is not read again: the
-                // read would answer 404 and show an error, and the page leaves on its next tick.
-                let request = !meta.deleted(self.sid, &self.rk)
+                // An item the server deleted while this page was covered, or the show or season it
+                // sits under, is not read again: the read would answer 404 and show an error, and
+                // the page leaves on its next tick.
+                let request = !self.lineage_deleted(meta)
                     && (refresh == DetailRefreshPhase::Deferred
                         || refresh == DetailRefreshPhase::Requested && request_status.is_none()
                         || refresh == DetailRefreshPhase::None
@@ -3801,13 +3827,15 @@ impl DetailScreen {
         self.pump_seek(meta, t.ms, fx);
         let d = self.detail(meta);
         let loaded = d.is_some();
-        // The item this page shows is gone from the server: nothing is left to read or show, so the
-        // page leaves ([`plx_data::metadata::MetadataView::deleted`]).
-        if d.is_none() && !self.left_deleted && meta.deleted(self.sid, &self.rk) {
+        // The item this page shows, or the show or season it sits under, is gone from the server:
+        // nothing is left to read or show, so the page leaves
+        // ([`plx_data::metadata::MetadataView::deleted_under`]).
+        if d.is_none() && !self.left_deleted && self.lineage_deleted(meta) {
             self.left_deleted = true;
             self.content(fx, ContentReq::Back);
         }
         if let Some(d) = d {
+            self.note_lineage(d);
             self.season_metrics.update(d, cx.measure);
             self.about_rows.update(d);
         }

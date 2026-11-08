@@ -41,6 +41,14 @@ impl<'a> MetadataView<'a> {
         self.state.gone.as_ref().is_some_and(|(s, r)| plx_plex::plex::same_item((*s, r), (sid, rk)))
             || self.state.tombstones.iter().any(|at| at.is_item(sid, rk))
     }
+    /// [`Self::deleted`] for an episode or a season, which a deletion also reaches through its show
+    /// or, for an episode, its season. `kind` is `PmsMovie::kind` (2 season, 3 episode), `show_rk`
+    /// the show and `season_index` the season's number. A page that was covered when the show or
+    /// season was deleted from the page above it finds out on its uncover.
+    pub fn deleted_under(&self, sid: plx_plex::plex::ServerId, rk: &str, kind: i32, show_rk: &str, season_index: i64) -> bool {
+        self.deleted(sid, rk)
+            || self.state.tombstones.iter().any(|at| at.covers_parts(sid, rk, kind, show_rk, season_index))
+    }
     /// The episodes the loaded Detail lists in its current season window, when the loaded item IS
     /// `(sid, rk)`. The store is single-current, so the identity check keeps a covered Detail page
     /// from naming the episodes of the one that replaced it. An episode's change moves the season's

@@ -137,6 +137,7 @@ pub(super) fn bare_held(sid: ServerId, rk: &str) -> DetailScreen {
         teardown_cleared: false,
         withdrawn: false,
         left_deleted: false,
+        lineage: (0, String::new(), 0),
         scroll: Spring::at(0.0),
         scroll_target: 0.0,
         free: false,
@@ -4778,6 +4779,65 @@ fn a_covered_page_whose_item_was_deleted_above_it_leaves_on_the_uncover_without_
         .count();
     assert_eq!(leaves, 1, "the uncovered page leaves");
     clear();
+}
+
+/// A show or a season deleted from a page above takes the episodes and seasons under it: a covered
+/// episode or season page, which the store no longer holds, leaves on the uncover without a read
+/// instead of asking for an item the server no longer has. It goes by where it sat in its show
+/// when it last held its item.
+#[test]
+fn a_covered_episode_or_season_page_leaves_when_its_show_or_season_was_deleted_above_it() {
+    use plx_data::viewstate::{Scope, ViewAt, ViewEdit};
+    let sid = ServerId::UNSET;
+    let episode = |rk: &str, show: &str| Detail {
+        sid,
+        rk: rk.into(),
+        kind: "episode".into(),
+        show_rk: show.into(),
+        season: 2,
+        ..Default::default()
+    };
+    let season_3 = Detail {
+        sid,
+        rk: "season-3".into(),
+        kind: "season".into(),
+        parent_rk: "show-3".into(),
+        index: 2,
+        ..Default::default()
+    };
+    let cases = [
+        (episode("e1", "show-1"), ViewAt { sid, rk: "show-1".into(), scope: Scope::Show }),
+        (
+            episode("e2", "show-2"),
+            ViewAt { sid, rk: "season-2".into(), scope: Scope::Season { show_rk: "show-2".into(), index: 2 } },
+        ),
+        (season_3, ViewAt { sid, rk: "show-3".into(), scope: Scope::Show }),
+    ];
+    let leaves = |effects: &[plx_machine::machine::Stamped<TestHost>]| {
+        effects.iter().filter(|e| matches!(e.fx, Fx::App(AppFx::Content(ContentReq::Back)))).count()
+    };
+    for (page, deleted) in cases {
+        let rk = page.rk.clone();
+        let _guard = install(page);
+        let mut screen = bare(&_guard, sid, &rk);
+        // Holding its item the page learns where it sits; then a page above takes the store.
+        tick_page(&mut screen, None, 0);
+        plx_data::metadata::set_current_for_test(
+            test_store().state_mut(),
+            Some(Detail { sid, rk: "above".into(), kind: "movie".into(), ..Default::default() }),
+        );
+        test_store().run(MetadataCmd::ApplyView { at: deleted, edit: ViewEdit::Deleted { watched: false } });
+        let (_, entered) = step(&mut screen, &ScreenEvent::Enter(plx_ui::screen::Enter::Restored), None);
+        assert!(
+            !entered.iter().any(|e| matches!(
+                &e.fx,
+                Fx::App(AppFx::Store(StoreId::Metadata, StoreCmd::Metadata(MetadataCmd::RequestDetail { .. })))
+            )),
+            "{rk}: an item the server no longer has is not read again"
+        );
+        assert_eq!(leaves(&tick_page(&mut screen, None, 16)), 1, "{rk}: the uncovered page leaves");
+        clear();
+    }
 }
 
 /// Opening a show the viewer is part way through leaves the page where it always opened, on the
