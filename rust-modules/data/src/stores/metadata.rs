@@ -615,6 +615,27 @@ mod view_edit_notice_tests {
         assert!(!store.view().deleted(sid, "other"));
     }
 
+    /// A deletion is remembered for its item whichever page was loaded when it came, so a page that
+    /// was covered then can tell on its uncover that its item is gone.
+    #[test]
+    fn a_deletion_made_while_another_item_was_loaded_is_still_reported_for_its_own_item() {
+        let _serial = plx_base::testlock::serial();
+        let sid = plx_plex::plex::ServerId::UNSET;
+        let mut store = MetadataStore::default();
+        crate::metadata::install_for_test(store.state_mut(), Some(Detail {
+            sid, rk: "other".into(), kind: "movie".into(), ..Default::default()
+        }));
+        let _ = store.take_notice();
+        let at = ViewAt::leaf(sid, "film");
+        let edit = ViewEdit::Deleted { watched: false };
+        store.state().ledger.record(&at, edit);
+        assert!(!store.run(MetadataCmd::ApplyView { at, edit }), "the loaded page held nothing of it");
+        assert!(store.view().current().is_some(), "and stays");
+        assert!(store.view().deleted(sid, "film"), "yet the deleted item is known");
+        assert!(!store.view().deleted(sid, "other"));
+        crate::metadata::install_for_test(store.state_mut(), None);
+    }
+
     /// The read of the page was out when its item was deleted: it lands on nothing, and the page is
     /// as empty and as deleted as if the deletion had found it loaded. Finishing the read is the
     /// news that wakes the screen, though no page was installed.

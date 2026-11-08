@@ -2110,11 +2110,14 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
                 // resumes from what the stop committed, not from the `viewOffset` the page
                 // opened with.
                 let fresh_open = matches!(kind, Enter::Fresh { .. });
-                let request = refresh == DetailRefreshPhase::Deferred
-                    || refresh == DetailRefreshPhase::Requested && request_status.is_none()
-                    || refresh == DetailRefreshPhase::None
-                        && request_status != Some(true)
-                        && (fresh_open || self.detail(meta).is_none());
+                // An item the server deleted while this page was covered is not read again: the
+                // read would answer 404 and show an error, and the page leaves on its next tick.
+                let request = !meta.deleted(self.sid, &self.rk)
+                    && (refresh == DetailRefreshPhase::Deferred
+                        || refresh == DetailRefreshPhase::Requested && request_status.is_none()
+                        || refresh == DetailRefreshPhase::None
+                            && request_status != Some(true)
+                            && (fresh_open || self.detail(meta).is_none()));
                 if request && refresh == DetailRefreshPhase::None {
                     fx.push(Fx::App(AppFx::Store(
                         StoreId::Metadata,

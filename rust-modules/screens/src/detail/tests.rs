@@ -4753,6 +4753,33 @@ fn a_page_whose_own_item_was_deleted_leaves_once_and_asks_again_after_an_uncover
     clear();
 }
 
+/// The item was deleted from a page above while this one was covered and the store held another
+/// item: the uncovered page leaves without reading it again, which would answer 404 and show an error.
+#[test]
+fn a_covered_page_whose_item_was_deleted_above_it_leaves_on_the_uncover_without_a_read() {
+    let sid = ServerId::UNSET;
+    let _guard = install(Detail { sid, rk: "other".into(), kind: "movie".into(), ..Default::default() });
+    let mut screen = bare(&_guard, sid, "film");
+    test_store().run(MetadataCmd::ApplyView {
+        at: plx_data::viewstate::ViewAt::leaf(sid, "film"),
+        edit: plx_data::viewstate::ViewEdit::Deleted { watched: false },
+    });
+    let (_, entered) = step(&mut screen, &ScreenEvent::Enter(plx_ui::screen::Enter::Restored), None);
+    assert!(
+        !entered.iter().any(|e| matches!(
+            &e.fx,
+            Fx::App(AppFx::Store(StoreId::Metadata, StoreCmd::Metadata(MetadataCmd::RequestDetail { .. })))
+        )),
+        "an item the server no longer has is not read again"
+    );
+    let leaves = tick_page(&mut screen, None, 0)
+        .iter()
+        .filter(|e| matches!(e.fx, Fx::App(AppFx::Content(ContentReq::Back))))
+        .count();
+    assert_eq!(leaves, 1, "the uncovered page leaves");
+    clear();
+}
+
 /// Opening a show the viewer is part way through leaves the page where it always opened, on the
 /// hero, and only the two strips sit where they left off: season 12 of 20 is on its tab strip and
 /// episode 14 of the season is in the filmstrip.

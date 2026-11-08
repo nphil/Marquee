@@ -32,11 +32,14 @@ impl<'a> MetadataView<'a> {
     pub fn current(&self) -> Option<&'a Detail> {
         self.state.current.as_ref()
     }
-    /// Did the server delete `(sid, rk)` while it was the loaded item? Its page is empty then
+    /// Did the server delete `(sid, rk)`? While it was the loaded item its page is empty
     /// ([`Self::current`] is `None`) and there is nothing to read again: the screen leaves it.
-    /// Reported for a deletion applied to the loaded page and for a read that landed after it.
+    /// Reported for a deletion applied to the loaded page, for a read that landed after it, and for
+    /// any item whose deletion the store was told of while another item was loaded, so a page that
+    /// was covered then finds out on its uncover instead of reading an item that is gone.
     pub fn deleted(&self, sid: plx_plex::plex::ServerId, rk: &str) -> bool {
         self.state.gone.as_ref().is_some_and(|(s, r)| plx_plex::plex::same_item((*s, r), (sid, rk)))
+            || self.state.tombstones.iter().any(|at| at.is_item(sid, rk))
     }
     /// The episodes the loaded Detail lists in its current season window, when the loaded item IS
     /// `(sid, rk)`. The store is single-current, so the identity check keeps a covered Detail page
@@ -149,6 +152,9 @@ pub struct MetadataState {
     /// Kept until that page closes or another item loads, so a screen that was not looking at the
     /// moment still finds out why its item is missing.
     gone: Option<(plx_plex::plex::ServerId, String)>,
+    /// Every deletion the store was told of this session, whichever page was loaded when it came.
+    /// Bounded by the items deleted; dropped with the profile ([`reset`]).
+    tombstones: Vec<crate::viewstate::ViewAt>,
     now: Option<NowPlaying>,
     playing: Option<PlayingItem>,
     /// Segments the user has already skipped in THIS playback — see the retired `SKIPPED` static's
@@ -2009,6 +2015,9 @@ enum Deletion {
 /// When the page's OWN item is the one deleted the page empties ([`page_gone`]) and the
 /// application leaves it, told by [`MetadataView::deleted`].
 fn deleted_local(state: &mut MetadataState, adapter: &MetadataAdapter, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    if !state.tombstones.contains(at) {
+        state.tombstones.push(at.clone());
+    }
     let Some(d) = state.current.as_mut() else { return false };
     match deleted_in(d, at, watched) {
         Deletion::Untouched => false,
@@ -2313,6 +2322,7 @@ fn reset(state: &mut MetadataState, adapter: &MetadataAdapter) {
     supersede_detail(adapter);
     state.current = None;
     state.gone = None;
+    state.tombstones.clear();
     state.now = None;
     state.playing = None;
     state.played_since_load = None;
