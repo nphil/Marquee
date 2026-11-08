@@ -1,6 +1,9 @@
 # Marquee: TV status and maintenance
 
-## Resume here
+## Acceptance history
+
+The installed build and its latest on-screen checks are in `/data/home/Marquee-BUILD-NOTES.md`
+("Installed now"). The sections below run up to 2026-11-02.
 
 ### Subtitle-safe volume popup
 

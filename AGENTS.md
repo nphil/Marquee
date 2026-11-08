@@ -12,6 +12,9 @@ the macOS simulator are valuable, but they cannot prove every device behavior.
 
 ## Load the right context
 
+- This checkout is Marquee, a fork. Read `docs/marquee/agent-guide.md` first: its workflow (no
+  pull requests, CI gating, the shared build host, the TV lane and who else uses the TV) takes
+  precedence over the upstream rules below, which still describe the architecture.
 - `docs/agent-reference.md` is the detailed architecture, build, portability, and verification
   reference. Read the relevant section before changing a subsystem; do not load the whole file
   when a narrower section is enough.
