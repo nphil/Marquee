@@ -1,0 +1,46 @@
+{
+  "media.delete.done": {
+    "value": "Deleted.",
+    "description": "Toast after a movie, show or episode was deleted from the Plex server and, where it applied, taken off the viewer's Plex Watchlist. Keep it short: the toast wraps at roughly 40 characters per line and shows up to three lines."
+  },
+  "media.delete.already": {
+    "value": "Already deleted.",
+    "description": "Toast when the item was already gone from the Plex server when the viewer confirmed deleting it (for example another device deleted it first). Its Watchlist entry is cleaned up without a word. Keep it under 120 characters."
+  },
+  "media.delete.watchlist_failed": {
+    "value": "Deleted, but it couldn't be removed from your Watchlist.",
+    "description": "Toast when the item was deleted from the Plex server but the Plex Watchlist (the viewer's account-wide list of things to watch) could not be updated after several tries. Use the same word for Watchlist as the rest of the app. Keep it under 120 characters."
+  },
+  "media.delete.show_unknown": {
+    "value": "Episode deleted. Check your Watchlist for the show.",
+    "description": "Toast after an episode was deleted and the app could not tell whether anything of its show is left on the server, so it left the show on the Watchlist alone. Asks the viewer to look at their Watchlist. Use the same word for Watchlist as the rest of the app. Keep it under 120 characters."
+  },
+  "media.delete.not_allowed": {
+    "value": "Deleting isn't allowed. The owner of the Plex server has to turn on Allow media deletion.",
+    "description": "Toast when the Plex server refused the deletion. Only the server's owner can allow deleting media, in the server's own settings; say who can fix it, in plain words. Keep it under 120 characters."
+  },
+  "media.delete.server_problem": {
+    "value": "The Plex server had a problem. Try again in a moment.",
+    "description": "Toast when the Plex server did not answer or failed while deleting. Trying again is safe. No error codes. Keep it under 120 characters."
+  },
+  "media.delete.invalid": {
+    "value": "This item can't be deleted.",
+    "description": "Toast when the chosen item is not a movie, show or episode the server can delete. Keep it under 120 characters."
+  },
+  "media.delete.busy": {
+    "value": "A deletion is already in progress.",
+    "description": "Toast when the viewer confirms a second deletion while the first is still running. Keep it under 120 characters."
+  },
+  "media.delete.unreachable": {
+    "value": "Can't reach this Plex server. Nothing was deleted.",
+    "description": "Toast when the app has no connection to the Plex server the item belongs to. Keep it under 120 characters."
+  },
+  "media.delete.working": {
+    "value": "Deleting…",
+    "description": "Toast shown the moment a deletion starts. The server removes the files before it answers, which can take a while."
+  },
+  "media.delete.not_started": {
+    "value": "Couldn't start the deletion. Nothing was deleted.",
+    "description": "Toast when the app could not start the background work for a deletion. Keep it under 120 characters."
+  }
+}

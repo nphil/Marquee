@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Gelöscht.",
+  "media.delete.already": "Bereits gelöscht.",
+  "media.delete.watchlist_failed": "Gelöscht, konnte aber nicht von der Merkliste entfernt werden.",
+  "media.delete.show_unknown": "Folge gelöscht. Prüfe in deiner Merkliste, ob die Serie noch dort steht.",
+  "media.delete.not_allowed": "Löschen ist nicht erlaubt. Der Besitzer des Plex-Servers muss das Löschen von Medien erlauben.",
+  "media.delete.server_problem": "Beim Plex-Server ist ein Problem aufgetreten. Versuche es gleich noch einmal.",
+  "media.delete.invalid": "Dieses Element kann nicht gelöscht werden.",
+  "media.delete.busy": "Es läuft bereits ein Löschvorgang.",
+  "media.delete.unreachable": "Der Plex-Server ist nicht erreichbar. Es wurde nichts gelöscht.",
+  "media.delete.working": "Wird gelöscht…",
+  "media.delete.not_started": "Das Löschen konnte nicht gestartet werden. Es wurde nichts gelöscht."
+}

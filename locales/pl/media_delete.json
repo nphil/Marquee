@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Usunięto.",
+  "media.delete.already": "Już usunięto.",
+  "media.delete.watchlist_failed": "Usunięto, ale nie udało się zdjąć z listy do obejrzenia.",
+  "media.delete.show_unknown": "Odcinek usunięty. Sprawdź na liście do obejrzenia, czy serial nadal tam jest.",
+  "media.delete.not_allowed": "Usuwanie jest niedozwolone. Właściciel serwera Plex musi włączyć usuwanie multimediów.",
+  "media.delete.server_problem": "Serwer Plex miał problem. Spróbuj ponownie za chwilę.",
+  "media.delete.invalid": "Tego elementu nie można usunąć.",
+  "media.delete.busy": "Usuwanie już trwa.",
+  "media.delete.unreachable": "Nie można połączyć się z tym serwerem Plex. Nic nie usunięto.",
+  "media.delete.working": "Usuwanie…",
+  "media.delete.not_started": "Nie udało się rozpocząć usuwania. Nic nie usunięto."
+}

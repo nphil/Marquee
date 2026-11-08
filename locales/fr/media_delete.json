@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Suppression effectuée.",
+  "media.delete.already": "Suppression déjà effectuée.",
+  "media.delete.watchlist_failed": "Suppression effectuée, mais le retrait de votre liste de suivi a échoué.",
+  "media.delete.show_unknown": "Épisode supprimé. Vérifiez dans votre liste de suivi si la série y figure encore.",
+  "media.delete.not_allowed": "Suppression non autorisée. Le propriétaire du serveur Plex doit activer la suppression de médias.",
+  "media.delete.server_problem": "Le serveur Plex a rencontré un problème. Réessayez dans un instant.",
+  "media.delete.invalid": "Cet élément ne peut pas être supprimé.",
+  "media.delete.busy": "Une suppression est déjà en cours.",
+  "media.delete.unreachable": "Impossible de joindre ce serveur Plex. Rien n’a été supprimé.",
+  "media.delete.working": "Suppression…",
+  "media.delete.not_started": "Impossible de lancer la suppression. Rien n’a été supprimé."
+}

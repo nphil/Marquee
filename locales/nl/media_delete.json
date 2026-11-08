@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Verwijderd.",
+  "media.delete.already": "Al verwijderd.",
+  "media.delete.watchlist_failed": "Verwijderd, maar het kon niet van je Kijklijst worden gehaald.",
+  "media.delete.show_unknown": "Aflevering verwijderd. Kijk in je Kijklijst of de serie er nog op staat.",
+  "media.delete.not_allowed": "Verwijderen mag niet. De eigenaar van de Plex-server moet het verwijderen van media toestaan.",
+  "media.delete.server_problem": "De Plex-server had een probleem. Probeer het zo meteen opnieuw.",
+  "media.delete.invalid": "Dit item kan niet worden verwijderd.",
+  "media.delete.busy": "Er is al een verwijdering bezig.",
+  "media.delete.unreachable": "Deze Plex-server is niet bereikbaar. Er is niets verwijderd.",
+  "media.delete.working": "Verwijderen…",
+  "media.delete.not_started": "Het verwijderen kon niet worden gestart. Er is niets verwijderd."
+}

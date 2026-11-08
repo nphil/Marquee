@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Törölve.",
+  "media.delete.already": "Már törölve.",
+  "media.delete.watchlist_failed": "Törölve, de nem sikerült eltávolítani a Figyelőlistáról.",
+  "media.delete.show_unknown": "Epizód törölve. Ellenőrizze a Figyelőlistán, hogy a sorozat még szerepel-e.",
+  "media.delete.not_allowed": "A törlés nem engedélyezett. A Plex-szerver tulajdonosának engedélyeznie kell a média törlését.",
+  "media.delete.server_problem": "A Plex-szerveren hiba történt. Próbálja újra egy pillanat múlva.",
+  "media.delete.invalid": "Ez az elem nem törölhető.",
+  "media.delete.busy": "Már folyamatban van egy törlés.",
+  "media.delete.unreachable": "Nem érhető el ez a Plex-szerver. Semmi sem lett törölve.",
+  "media.delete.working": "Törlés…",
+  "media.delete.not_started": "A törlést nem sikerült elindítani. Semmi sem lett törölve."
+}

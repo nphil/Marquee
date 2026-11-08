@@ -900,7 +900,8 @@ pub(super) unsafe fn apply_item_action<R: super::playback::PlaybackResources>(
         // no row and is not the loaded filmstrip, so neither of those could have said so.
         Action::DeleteMedia(rk, kind) => {
             if !bridge.is_controlled_replay() {
-                bridge.delete_media.start(sid, rk, kind);
+                let listed = super::delete_media::listed(item.as_ref(), &rk, kind);
+                bridge.delete_media.start(sid, rk, kind, listed);
             }
         }
         Action::GoToItem(rk) => {

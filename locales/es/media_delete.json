@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Eliminado.",
+  "media.delete.already": "Ya estaba eliminado.",
+  "media.delete.watchlist_failed": "Eliminado, pero no se pudo quitar de tu lista de seguimiento.",
+  "media.delete.show_unknown": "Episodio eliminado. Mira en tu lista de seguimiento si la serie sigue ahí.",
+  "media.delete.not_allowed": "No se permite eliminar. El propietario del servidor Plex debe activar la eliminación de contenido.",
+  "media.delete.server_problem": "El servidor Plex tuvo un problema. Inténtalo de nuevo en un momento.",
+  "media.delete.invalid": "Este elemento no se puede eliminar.",
+  "media.delete.busy": "Ya hay una eliminación en curso.",
+  "media.delete.unreachable": "No se puede conectar con este servidor Plex. No se eliminó nada.",
+  "media.delete.working": "Eliminando…",
+  "media.delete.not_started": "No se pudo iniciar la eliminación. No se eliminó nada."
+}

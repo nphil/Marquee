@@ -1,0 +1,13 @@
+{
+  "media.delete.done": "Удалено.",
+  "media.delete.already": "Уже удалено.",
+  "media.delete.watchlist_failed": "Удалено, но убрать из списка просмотра не удалось.",
+  "media.delete.show_unknown": "Серия удалена. Проверьте в списке просмотра, остался ли там сериал.",
+  "media.delete.not_allowed": "Удалять нельзя. Владелец сервера Plex должен разрешить удаление медиа.",
+  "media.delete.server_problem": "На сервере Plex возникла проблема. Повторите попытку через минуту.",
+  "media.delete.invalid": "Этот элемент нельзя удалить.",
+  "media.delete.busy": "Удаление уже выполняется.",
+  "media.delete.unreachable": "Не удаётся связаться с этим сервером Plex. Ничего не удалено.",
+  "media.delete.working": "Удаление…",
+  "media.delete.not_started": "Не удалось начать удаление. Ничего не удалено."
+}

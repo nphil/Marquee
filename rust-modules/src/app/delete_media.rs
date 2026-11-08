@@ -2,7 +2,8 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use plx_data::viewstate::{Scope, ViewAt};
-use plx_plex::plex::delete_media::{self, DeleteError, DeleteOutcome, EpisodeParent, MediaKind, WatchlistOutcome};
+use plx_data::pms::PmsMovie;
+use plx_plex::plex::delete_media::{self, DeleteError, DeleteOutcome, EpisodeParent, Listed, MediaKind, WatchlistOutcome};
 use plx_plex::plex::ServerId;
 
 /// Does an item menu on this server offer Delete? Also starts the background re-read of the
@@ -62,30 +63,49 @@ fn notice(text: &'static str) {
     });
 }
 
-/// What the person is told: never a status code, only what they can act on.
-fn words(result: &Result<DeleteOutcome, DeleteError>, kind: MediaKind) -> &'static str {
+/// What the person is told: never a status code, only what they can act on. A deletion that
+/// left the Watchlist alone says nothing about it.
+fn words(result: &Result<DeleteOutcome, DeleteError>) -> &'static str {
+    use plx_platform::i18n::msg;
     match result {
         Ok(outcome) => match outcome.watchlist {
-            WatchlistOutcome::Failed if kind == MediaKind::Episode =>
-                "Episode deleted. Could not confirm whether the show should leave Watchlist; check Plex.",
-            WatchlistOutcome::Failed => "Media deleted. Watchlist cleanup could not be confirmed; check Plex.",
-            WatchlistOutcome::Skipped => "Already deleted.",
-            _ => "Media deleted.",
+            WatchlistOutcome::Failed => msg::media_delete_watchlist_failed(),
+            WatchlistOutcome::Unknown => msg::media_delete_show_unknown(),
+            _ if outcome.already_gone => msg::media_delete_already(),
+            _ => msg::media_delete_done(),
         },
-        Err(DeleteError::NotAllowed) => "Deleting is not allowed. The Plex server owner has to turn on Allow media deletion.",
-        Err(DeleteError::ServerProblem) => "The Plex server had a problem. Try again in a moment.",
-        Err(DeleteError::InvalidItem) => "This item cannot be deleted.",
+        Err(DeleteError::NotAllowed) => msg::media_delete_not_allowed(),
+        Err(DeleteError::ServerProblem) => msg::media_delete_server_problem(),
+        Err(DeleteError::InvalidItem) => msg::media_delete_invalid(),
+    }
+}
+
+/// The Watchlist identity of the item the menu acted on, for a deletion whose item the server no
+/// longer has: the guid of the movie or show (an episode's is its show's) and an episode's show key.
+/// Only the row the menu was opened on carries it; the on-deck episode's menu has no row, and its
+/// deletion reads the identity from the server's own record instead.
+pub(super) fn listed(item: Option<&PmsMovie>, rk: &str, kind: MediaKind) -> Option<Listed> {
+    use plx_data::watchlist::{guid_of, model::Kind};
+    let item = item.filter(|item| item.rk == rk)?;
+    match kind {
+        MediaKind::Movie => Some(Listed { guid: guid_of(Kind::Movie, &item.guid?), show_rk: None }),
+        MediaKind::Show => Some(Listed { guid: guid_of(Kind::Show, &item.guid?), show_rk: None }),
+        MediaKind::Episode => Some(Listed {
+            guid: guid_of(Kind::Show, &item.show_guid?),
+            show_rk: Some(item.show_rk.clone()).filter(|show_rk| !show_rk.is_empty()),
+        }),
     }
 }
 
 impl Manager {
-    pub(super) fn start(&mut self, sid: ServerId, rk: String, kind: MediaKind) {
+    pub(super) fn start(&mut self, sid: ServerId, rk: String, kind: MediaKind, listed: Option<Listed>) {
+        use plx_platform::i18n::msg;
         if self.pending.is_some() {
-            notice("A deletion is already in progress.");
+            notice(msg::media_delete_busy());
             return;
         }
         let Some(client) = plx_plex::plex::client_for(sid) else {
-            notice("Cannot reach this Plex server. Nothing was deleted.");
+            notice(msg::media_delete_unreachable());
             return;
         };
         let client_key = plx_plex::plex::ClientKey::of(client);
@@ -94,16 +114,16 @@ impl Manager {
         let (tx, answer) = mpsc::channel();
         let started = plx_base::task::spawn_small("delete media", move || {
             let account = auth.as_ref().map(|auth| plx_plex::plex::account::AccountClient::new(&auth.client_id, Some(&auth.credential)));
-            let outcome = delete_media::delete(client, client_key, account.as_ref(), &key, kind);
+            let outcome = delete_media::delete(client, client_key, account.as_ref(), &key, kind, listed.as_ref());
             let _ = tx.send(outcome);
             plx_machine::idle::invalidate();
         });
         if started {
             self.pending = Some(Pending { sid, rk, kind, answer });
             // The server removes the files before it answers, which on a spinning array takes a while.
-            notice("Deleting...");
+            notice(msg::media_delete_working());
         } else {
-            notice("Could not start deletion. Nothing was deleted.");
+            notice(msg::media_delete_not_started());
         }
     }
 
@@ -118,7 +138,7 @@ impl Manager {
             Err(TryRecvError::Disconnected) => Err(DeleteError::ServerProblem),
         };
         let Pending { sid, rk, kind, .. } = self.pending.take()?;
-        notice(words(&result, kind));
+        notice(words(&result));
         match result {
             Ok(outcome) => Some(Completion {
                 sid,
@@ -144,7 +164,7 @@ mod tests {
     }
 
     fn outcome(watchlist: WatchlistOutcome) -> DeleteOutcome {
-        DeleteOutcome { watchlist, parent: None, watched: false }
+        DeleteOutcome { watchlist, parent: None, watched: false, already_gone: false }
     }
 
     #[test]
@@ -157,6 +177,7 @@ mod tests {
             watchlist: WatchlistOutcome::Preserved,
             parent: Some(EpisodeParent { show_rk: "7".into(), season_index: 2 }),
             watched: true,
+            already_gone: false,
         };
         let done = complete(Ok(episode.clone())).unwrap().deleted.unwrap();
         assert_eq!((done.parent, done.watched), (episode.parent, true));
@@ -179,21 +200,84 @@ mod tests {
 
     #[test]
     fn each_failure_is_told_in_plain_words_never_as_a_status_code() {
-        let told = |error| words(&Err(error), MediaKind::Movie);
+        let _en = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+        let told = |error| words(&Err(error));
         assert!(told(DeleteError::NotAllowed).contains("owner"), "who can fix it");
         assert!(told(DeleteError::ServerProblem).contains("Try again"));
-        assert_eq!(told(DeleteError::InvalidItem), "This item cannot be deleted.");
+        assert_eq!(told(DeleteError::InvalidItem), "This item can't be deleted.");
         for error in [DeleteError::NotAllowed, DeleteError::ServerProblem, DeleteError::InvalidItem] {
             assert!(!told(error).chars().any(|c| c.is_ascii_digit()), "{error:?}: {}", told(error));
         }
     }
 
     #[test]
-    fn already_deleted_is_a_success_in_words_and_in_effect() {
-        assert_eq!(words(&Ok(outcome(WatchlistOutcome::Skipped)), MediaKind::Movie), "Already deleted.");
-        assert!(complete(Ok(outcome(WatchlistOutcome::Skipped))).unwrap().deleted.is_some());
-        assert_eq!(words(&Ok(outcome(WatchlistOutcome::Removed)), MediaKind::Movie), "Media deleted.");
-        assert!(words(&Ok(outcome(WatchlistOutcome::Failed)), MediaKind::Episode).starts_with("Episode deleted."));
+    fn a_deletion_says_what_happened_to_the_item_and_to_the_watchlist() {
+        let _en = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+        let said = |watchlist, already_gone| words(&Ok(DeleteOutcome { already_gone, ..outcome(watchlist) }));
+        for watchlist in [WatchlistOutcome::Removed, WatchlistOutcome::NotListed, WatchlistOutcome::Preserved] {
+            assert_eq!(said(watchlist, false), "Deleted.", "{watchlist:?}");
+            assert_eq!(said(watchlist, true), "Already deleted.", "{watchlist:?}: the Watchlist is cleaned without a word");
+        }
+        assert_eq!(said(WatchlistOutcome::Skipped, true), "Already deleted.");
+        for already_gone in [false, true] {
+            assert_eq!(said(WatchlistOutcome::Failed, already_gone), "Deleted, but it couldn't be removed from your Watchlist.");
+            assert_eq!(said(WatchlistOutcome::Unknown, already_gone), "Episode deleted. Check your Watchlist for the show.");
+        }
+        assert!(complete(Ok(DeleteOutcome { already_gone: true, ..outcome(WatchlistOutcome::Removed) })).unwrap().deleted.is_some(),
+            "already deleted is a success in effect too");
+    }
+
+    /// The toast wraps at about 40 characters a line and shows three lines (`clock_notice`).
+    #[test]
+    fn every_shipped_language_fits_every_deletion_toast() {
+        use plx_platform::i18n::msg;
+        const LIMIT: usize = 120;
+        const LINE: usize = 40;
+        const LINES: usize = 3;
+        for language in plx_platform::i18n::SHIPPED {
+            let _guard = plx_platform::i18n::language_on_this_thread_for_test(language);
+            for text in [
+                msg::media_delete_done(), msg::media_delete_already(), msg::media_delete_watchlist_failed(),
+                msg::media_delete_show_unknown(), msg::media_delete_not_allowed(), msg::media_delete_server_problem(),
+                msg::media_delete_invalid(), msg::media_delete_busy(), msg::media_delete_unreachable(),
+                msg::media_delete_working(), msg::media_delete_not_started(),
+            ] {
+                let tag = language.tag();
+                assert!(!text.trim().is_empty(), "{tag}: empty");
+                let length = text.chars().count();
+                assert!(length <= LIMIT, "{tag}: {length} characters, over {LIMIT}: {text}");
+                let (mut lines, mut width) = (1, 0);
+                for word in text.split_whitespace() {
+                    let w = word.chars().count();
+                    if width != 0 && width + 1 + w > LINE {
+                        lines += 1;
+                        width = w;
+                    } else {
+                        width += if width == 0 { w } else { 1 + w };
+                    }
+                }
+                assert!(lines <= LINES, "{tag}: wraps to {lines} lines at {LINE}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_watchlist_identity_comes_from_the_row_the_menu_acted_on() {
+        let hex = |n: u8| [n; 12];
+        let id = |n: u8| format!("{n:02x}").repeat(12);
+        let row = |rk: &str, guid, show_guid| PmsMovie { rk: rk.into(), show_rk: "7".into(), guid, show_guid, ..Default::default() };
+        let listed = |item: &PmsMovie, rk, kind| listed(Some(item), rk, kind);
+        assert_eq!(listed(&row("42", Some(hex(1)), Some(hex(2))), "42", MediaKind::Movie),
+            Some(Listed { guid: format!("plex://movie/{}", id(1)), show_rk: None }));
+        assert_eq!(listed(&row("42", Some(hex(1)), None), "42", MediaKind::Show),
+            Some(Listed { guid: format!("plex://show/{}", id(1)), show_rk: None }));
+        assert_eq!(listed(&row("42", Some(hex(1)), Some(hex(2))), "42", MediaKind::Episode),
+            Some(Listed { guid: format!("plex://show/{}", id(2)), show_rk: Some("7".into()) }), "an episode names its show");
+        let no_show_rk = PmsMovie { show_rk: String::new(), ..row("42", None, Some(hex(2))) };
+        assert_eq!(listed(&no_show_rk, "42", MediaKind::Episode).map(|l| l.show_rk), Some(None));
+        assert_eq!(listed(&row("42", None, None), "42", MediaKind::Movie), None, "a row without a catalog id has none");
+        assert_eq!(listed(&row("42", Some(hex(1)), None), "43", MediaKind::Movie), None, "another item's row is not this one's");
+        assert_eq!(super::listed(None, "42", MediaKind::Episode), None, "the on-deck episode's menu has no row");
     }
 
     #[test]
