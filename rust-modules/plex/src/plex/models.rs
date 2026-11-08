@@ -123,6 +123,12 @@ pub struct MediaContainer {
         deserialize_with = "de_opt_i64"
     )]
     pub my_plex_subscription: Option<i64>,
+    /// `GET /` only: the server's "Allow media deletion" setting (probed live on PMS 1.43.5 with the
+    /// owner's token: `true`; a bad token answers 401 with no container). `Option` for the reason
+    /// `myPlexSubscription` is one: a server that never says must stay UNKNOWN, not read as a
+    /// confident "off". Consumed by `serverinfo.rs`.
+    #[serde(rename = "allowMediaDeletion", default, deserialize_with = "de_opt_i64")]
+    pub allow_media_deletion: Option<i64>,
     /// `GET /` only: the PMS build string ("1.43.3.10861-cd85035e7"). Diagnostics
     /// (`serverinfo.rs`); every other endpoint simply omits it.
     #[serde(default)]
@@ -1216,7 +1222,11 @@ fn de_opt_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::
     }
     Ok(match Option::<IntStrBool>::deserialize(d)? {
         Some(IntStrBool::I(n)) => Some(n),
-        Some(IntStrBool::S(s)) => s.trim().parse().ok(),
+        Some(IntStrBool::S(s)) => match s.trim() {
+            t if t.eq_ignore_ascii_case("true") => Some(1),
+            t if t.eq_ignore_ascii_case("false") => Some(0),
+            t => t.parse().ok(),
+        },
         Some(IntStrBool::B(b)) => Some(b as i64),
         None => None,
     })

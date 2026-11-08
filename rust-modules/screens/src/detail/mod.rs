@@ -275,6 +275,11 @@ pub struct DetailScreen {
     /// own item too, and nested presented copies (a copy presented from inside another copy) are
     /// not covered. Not hashed: lifecycle bookkeeping, like `teardown_cleared`.
     withdrawn: bool,
+    /// The server deleted the item this page shows and the page has asked to leave (BACK). Once: the
+    /// loop drops the request while another page covers this one, and a second BACK while the first
+    /// is still leaving would withdraw it, so `Enter` re-arms it for the uncover instead. Not
+    /// hashed: lifecycle bookkeeping, like `teardown_cleared`.
+    left_deleted: bool,
 
     // Render state.
     scroll: Spring,
@@ -575,6 +580,7 @@ impl DetailScreen {
             restore_intent: None,
             teardown_cleared: false,
             withdrawn: false,
+            left_deleted: false,
             scroll: Spring::at(0.0),
             scroll_target: 0.0,
             free: false,
@@ -2083,6 +2089,7 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
                 Handled::Yes
             }
             ScreenEvent::Enter(kind) => {
+                self.left_deleted = false;
                 let refresh = self.refresh;
                 let request_status = meta.detail_request_status(self.sid, &self.rk);
                 // Deferred is newer than every request that could already occupy this address:
@@ -3791,6 +3798,12 @@ impl DetailScreen {
         self.pump_seek(meta, t.ms, fx);
         let d = self.detail(meta);
         let loaded = d.is_some();
+        // The item this page shows is gone from the server: nothing is left to read or show, so the
+        // page leaves ([`plx_data::metadata::MetadataView::deleted`]).
+        if d.is_none() && !self.left_deleted && meta.deleted(self.sid, &self.rk) {
+            self.left_deleted = true;
+            self.content(fx, ContentReq::Back);
+        }
         if let Some(d) = d {
             self.season_metrics.update(d, cx.measure);
             self.about_rows.update(d);

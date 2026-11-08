@@ -1450,10 +1450,16 @@ impl Bridge {
         outcome
     }
 
-    pub(crate) fn deleted_media(&mut self, at: &plx_data::viewstate::ViewAt) {
-        self.stores.search.deleted_media(at);
-        self.stores.person.deleted_media(at);
-        self.stores.collection.deleted_media(at);
+    /// The server took a deletion, or found the item already gone: every store drops what it took
+    /// with it at once (`Stores::media_deleted`). The Hubs step settles refused launches, so the
+    /// endpoint refreshes it owes are returned for the caller to carry.
+    pub(crate) fn deleted_media(&mut self, at: plx_data::viewstate::ViewAt, watched: bool)
+        -> plx_data::stores::EndpointRefreshSet
+    {
+        super::adapters::stores::refill_client_keys(&mut self.client_keys);
+        let endpoints = self.stores.media_deleted(at, watched, self.directory.view(), &self.client_keys);
+        plx_machine::idle::invalidate();
+        endpoints
     }
 
     pub(crate) fn person_run(&mut self, cmd: plx_data::stores::person::PersonCmd) -> bool {
@@ -3506,6 +3512,7 @@ pub(crate) fn card_menu_arg(
         from_home,
         catalog: None,
         watchlist: None,
+        can_delete: super::delete_media::offered(item.sid),
     }
 }
 
@@ -3531,6 +3538,7 @@ fn strip_menu_arg(
         from_home: false,
         catalog: None,
         watchlist: None,
+        can_delete: super::delete_media::offered(sid),
     }
 }
 

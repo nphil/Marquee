@@ -726,3 +726,518 @@ fn pdf_proposal_on_deck_watch_flip_is_immediate_outside_the_loaded_season() {
     assert!(set_watched_local(&mut state, &at, false));
     assert!(!state.current.as_ref().unwrap().on_deck.as_ref().unwrap().watched);
 }
+
+// ---- a deleted item leaves the page ------------------------------------------------------------
+
+/// The server confirmed the deletion of `at`: noted in the publish order the reads in flight are
+/// replayed from, then made on the loaded page.
+fn delete(at: crate::viewstate::ViewAt, watched: bool) -> bool {
+    use crate::stores::metadata::MetadataCmd;
+    let edit = crate::viewstate::ViewEdit::Deleted { watched };
+    test_state().ledger.record(&at, edit);
+    run(test_state(), test_adapter(), MetadataCmd::ApplyView { at, edit })
+}
+
+/// One episode of season `index` of `show`, whose parentage the deleting screen knew.
+fn episode_of(show: &str, rk: &str, index: i64) -> crate::viewstate::ViewAt {
+    crate::viewstate::ViewAt {
+        sid: SRV_A,
+        rk: rk.into(),
+        scope: crate::viewstate::Scope::Episode { show_rk: show.into(), index },
+    }
+}
+
+fn season_of(rk: &str, index: i64, leaf_count: i64, viewed_leaf_count: i64) -> Season {
+    Season { rk: rk.into(), index, title: format!("S{index}"), leaf_count, viewed_leaf_count }
+}
+
+/// What the season tabs say: season number, episodes, episodes watched.
+fn tabs() -> Vec<(i64, i64, i64)> {
+    current(test_state()).unwrap().seasons.iter().map(|s| (s.index, s.leaf_count, s.viewed_leaf_count)).collect()
+}
+
+fn related_tiles(rks: &[&str]) -> Vec<crate::pms::PmsMovie> {
+    rks.iter().map(|rk| related_tile(SRV_A, rk)).collect()
+}
+
+fn related_rks() -> Vec<String> {
+    current(test_state()).unwrap().related.iter().map(|m| m.rk.clone()).collect()
+}
+
+/// A show on its first season, which lists three of the season's episodes (two of them watched);
+/// the second season is watched throughout.
+fn show_page() -> Detail {
+    Detail {
+        sid: SRV_A,
+        rk: "show".into(),
+        kind: "show".into(),
+        is_show: true,
+        seasons: vec![season_of("sk1", 1, 3, 2), season_of("sk2", 2, 2, 2)],
+        episodes: vec![
+            Episode { rk: "e1".into(), season: 1, watched: true, ..Default::default() },
+            Episode { rk: "e2".into(), season: 1, watched: true, ..Default::default() },
+            Episode { rk: "e3".into(), season: 1, ..Default::default() },
+        ]
+        .into(),
+        ..Default::default()
+    }
+}
+
+/// A tile of the Related row the server deleted leaves the shelf, and the tail window's bookkeeping
+/// follows: a head card moves the head, a window card gives up its position and one of the
+/// listing's total. The window's own edges stay where the server put them.
+#[test]
+fn a_deleted_related_tile_leaves_the_shelf_and_the_windows_bookkeeping_follows() {
+    use crate::viewstate::ViewAt;
+    let _serial = plx_base::testlock::serial();
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "film".into(),
+        kind: "movie".into(),
+        related: related_tiles(&["h0", "h1", "w10", "w11", "w12"]),
+        related_tail: RelatedTail { head: 2, positions: vec![10, 11, 12], offset: 10, end: 13, total: 30, ..Default::default() },
+        ..Default::default()
+    }));
+    let window = || {
+        let t = &current(test_state()).unwrap().related_tail;
+        (t.head, t.positions.clone(), t.total, (t.offset, t.end))
+    };
+
+    assert!(delete(ViewAt::leaf(SRV_A, "h1"), false));
+    assert_eq!(related_rks(), ["h0", "w10", "w11", "w12"]);
+    assert_eq!(window(), (1, vec![10, 11, 12], 30, (10, 13)), "a head card moves only the head");
+
+    assert!(delete(ViewAt::leaf(SRV_A, "w11"), false));
+    assert_eq!(related_rks(), ["h0", "w10", "w12"]);
+    assert_eq!(window(), (1, vec![10, 12], 29, (10, 13)), "a window card takes its position and one of the total");
+
+    assert!(!delete(ViewAt::leaf(SRV_B, "w12"), false), "another server's w12 names nothing here");
+    assert!(!delete(ViewAt::leaf(SRV_A, "w11"), false), "a card that already left changes nothing");
+    assert_eq!(related_rks(), ["h0", "w10", "w12"]);
+    clear(test_state(), test_adapter());
+}
+
+/// A deleted collection member leaves the shelf and the heading's count. A shelf left holding only
+/// the page's own tile is no way to a collection, and ends.
+#[test]
+fn a_deleted_collection_member_leaves_its_shelf_and_a_shelf_of_only_the_page_item_ends() {
+    use crate::viewstate::ViewAt;
+    let _serial = plx_base::testlock::serial();
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "m1".into(),
+        kind: "movie".into(),
+        collection: Some(CollectionShelf { members: related_tiles(&["m1", "m2", "m3"]), count: 25, ..Default::default() }),
+        ..Default::default()
+    }));
+    let shelf = || {
+        current(test_state()).unwrap().collection.as_ref()
+            .map(|c| (c.members.iter().map(|m| m.rk.clone()).collect::<Vec<_>>(), c.count))
+    };
+
+    assert!(delete(ViewAt::leaf(SRV_A, "m3"), false));
+    assert_eq!(shelf(), Some((vec!["m1".to_string(), "m2".to_string()], 24)));
+    assert!(delete(ViewAt::leaf(SRV_A, "m2"), false));
+    assert_eq!(shelf(), None, "what is left is the page's own tile, which is no way to a collection");
+    clear(test_state(), test_adapter());
+}
+
+/// A deleted episode lowers the episode counts of the show tiles that held it, as it does in every
+/// other store (`ViewAt::deleted_row`): a show left with no episode leaves the shelf, and a show
+/// the server sent no count for is not guessed at.
+#[test]
+fn a_deleted_episode_counts_in_the_show_tiles_on_the_page() {
+    let _serial = plx_base::testlock::serial();
+    let show_tile = |rk: &str, leaves, viewed| crate::pms::PmsMovie {
+        kind: 1,
+        leaf_count: leaves,
+        viewed_leaf_count: viewed,
+        ..related_tile(SRV_A, rk)
+    };
+    let related = vec![
+        show_tile("tv", Some(5), Some(2)),
+        show_tile("other", Some(5), Some(2)),
+        show_tile("lone", Some(1), Some(0)),
+        show_tile("bare", None, None),
+    ];
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "film".into(),
+        kind: "movie".into(),
+        related_tail: RelatedTail { head: related.len(), ..Default::default() },
+        related,
+        ..Default::default()
+    }));
+    let counts = |rk: &str| {
+        current(test_state()).unwrap().related.iter().find(|m| m.rk == rk)
+            .map(|m| (m.leaf_count, m.viewed_leaf_count, m.watched, m.unwatched))
+    };
+
+    assert!(delete(episode_of("tv", "tv-e1", 1), true));
+    assert_eq!(counts("tv"), Some((Some(4), Some(1), false, false)), "one episode fewer and one watched fewer");
+    assert_eq!(counts("other"), Some((Some(5), Some(2), false, true)), "another show's tile is not the episode's");
+
+    assert!(delete(episode_of("lone", "lone-e1", 1), false));
+    assert_eq!(related_rks(), ["tv", "other", "bare"], "a show left with no episode leaves the shelf");
+
+    assert!(!delete(episode_of("bare", "bare-e1", 1), false), "a show that sent no count is left alone");
+    assert_eq!(counts("bare"), Some((None, None, false, true)));
+    clear(test_state(), test_adapter());
+}
+
+/// A deleted episode of the loaded show leaves the strip and lowers its season's counts, and the
+/// show's own watched flag follows the counts. A season left with no episode leaves the tabs.
+#[test]
+fn a_deleted_episode_leaves_the_strip_and_its_season_and_show_count_one_less() {
+    let _serial = plx_base::testlock::serial();
+    set_current_for_test(test_state(), Some(show_page()));
+    let watched = || current(test_state()).unwrap().watched;
+    assert!(!watched(), "one episode of five is still to watch");
+
+    assert!(delete(episode_of("show", "e3", 1), false));
+    assert_eq!(listed_eps(), ["e1", "e2"]);
+    assert_eq!(tabs(), [(1, 2, 2), (2, 2, 2)]);
+    assert!(watched(), "the one episode still to watch is gone, so the show is watched");
+
+    assert!(delete(episode_of("show", "e2", 1), true));
+    assert_eq!(listed_eps(), ["e1"]);
+    assert_eq!(tabs(), [(1, 1, 1), (2, 2, 2)], "a watched episode takes a watched count with it");
+    assert!(watched());
+
+    assert!(delete(episode_of("show", "e1", 1), true));
+    assert_eq!(tabs(), [(2, 2, 2)], "a season with no episode left leaves the tabs");
+    assert_eq!(selected_tab(), 0);
+    assert!(listed_eps().is_empty());
+    clear(test_state(), test_adapter());
+}
+
+/// `cur_season` is a position in the tabs, which shift when a season before the one on screen is
+/// emptied: the tab stays on the season it showed, and falls to a neighbour only when that season
+/// is the one that went.
+#[test]
+fn the_season_on_screen_stays_selected_when_an_earlier_season_is_emptied() {
+    let _serial = plx_base::testlock::serial();
+    let third = |rk: &str| Episode { rk: rk.into(), season: 3, ..Default::default() };
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "show".into(),
+        kind: "show".into(),
+        is_show: true,
+        seasons: vec![season_of("sk1", 1, 1, 0), season_of("sk2", 2, 2, 0), season_of("sk3", 3, 2, 0)],
+        cur_season: 2,
+        episodes: vec![third("y1"), third("y2")].into(),
+        ..Default::default()
+    }));
+
+    assert!(delete(episode_of("show", "x1", 1), false));
+    assert_eq!(tabs(), [(2, 2, 0), (3, 2, 0)]);
+    assert_eq!(selected_tab(), 1, "the tab follows its season to the place the season moved to");
+    assert_eq!(listed_eps(), ["y1", "y2"]);
+
+    assert!(delete(episode_of("show", "y1", 3), false));
+    assert!(delete(episode_of("show", "y2", 3), false));
+    assert_eq!(tabs(), [(2, 2, 0)]);
+    assert_eq!(selected_tab(), 0, "the tab falls to the season that is left");
+    assert!(listed_eps().is_empty(), "and lists nothing until the page is read again");
+    clear(test_state(), test_adapter());
+}
+
+/// A deleted season leaves the tabs with its episodes. A season the page does not list changes
+/// nothing.
+#[test]
+fn a_deleted_season_leaves_its_tab_and_its_episodes() {
+    use crate::viewstate::{Scope, ViewAt};
+    let _serial = plx_base::testlock::serial();
+    let season_at = |rk: &str, index| ViewAt {
+        sid: SRV_A,
+        rk: rk.into(),
+        scope: Scope::Season { show_rk: "show".into(), index },
+    };
+    set_current_for_test(test_state(), Some(show_page()));
+    assert!(delete(season_at("sk1", 1), false));
+    assert_eq!(tabs(), [(2, 2, 2)]);
+    assert!(listed_eps().is_empty(), "the episodes of the season went with it");
+    assert!(current(test_state()).unwrap().watched, "what is left of the show is watched");
+
+    // a season that is not on screen takes only its tab
+    let mut page = show_page();
+    page.cur_season = 1;
+    page.episodes = vec![Episode { rk: "y1".into(), season: 2, ..Default::default() }].into();
+    set_current_for_test(test_state(), Some(page));
+    assert!(delete(season_at("sk1", 1), false));
+    assert_eq!(selected_tab(), 0);
+    assert_eq!(listed_eps(), ["y1"]);
+
+    assert!(!delete(season_at("sk7", 7), false), "a season the page does not list names nothing here");
+    clear(test_state(), test_adapter());
+}
+
+/// A page whose own item was deleted has nothing left to show, and so has the page of an episode or
+/// season whose season or show was. The page empties and remembers whose it was, so the screen can
+/// tell a deletion from a page that has not loaded.
+#[test]
+fn a_page_whose_own_item_or_whose_show_was_deleted_empties_and_remembers_why() {
+    use crate::viewstate::{Scope, ViewAt};
+    let _serial = plx_base::testlock::serial();
+    let on = |sid, rk: &str, scope| ViewAt { sid, rk: rk.into(), scope };
+    let season_of_show = |rk: &str, index| on(SRV_A, rk, Scope::Season { show_rk: "show".into(), index });
+    let film = || Detail { sid: SRV_A, rk: "film".into(), kind: "movie".into(), ..Default::default() };
+    let show = || Detail { sid: SRV_A, rk: "show".into(), kind: "show".into(), is_show: true, ..Default::default() };
+    let season_page = || Detail {
+        sid: SRV_A,
+        rk: "sk1".into(),
+        kind: "season".into(),
+        parent_rk: "show".into(),
+        index: 1,
+        ..Default::default()
+    };
+    let episode_page = || Detail {
+        sid: SRV_A,
+        rk: "ep".into(),
+        kind: "episode".into(),
+        show_rk: "show".into(),
+        season: 1,
+        ..Default::default()
+    };
+    let cases = [
+        ("the film itself", film(), on(SRV_A, "film", Scope::Leaf), true),
+        ("the show itself", show(), on(SRV_A, "show", Scope::Show), true),
+        ("the season itself", season_page(), on(SRV_A, "sk1", Scope::Leaf), true),
+        ("the show of a season", season_page(), on(SRV_A, "show", Scope::Show), true),
+        ("the episode itself", episode_page(), on(SRV_A, "ep", Scope::Leaf), true),
+        ("the season of an episode", episode_page(), season_of_show("sk1", 1), true),
+        ("the show of an episode", episode_page(), on(SRV_A, "show", Scope::Show), true),
+        ("another server's film", film(), on(SRV_B, "film", Scope::Leaf), false),
+        ("a sibling episode", episode_page(), episode_of("show", "other", 1), false),
+        ("another season", episode_page(), season_of_show("sk2", 2), false),
+    ];
+    for (what, page, at, gone) in cases {
+        let (sid, rk) = (page.sid, page.rk.clone());
+        set_current_for_test(test_state(), Some(page));
+        assert_eq!(delete(at, false), gone, "{what}");
+        if gone {
+            assert!(current(test_state()).is_none(), "{what}: the page empties");
+            assert!(test_state().gone == Some((sid, rk)), "{what}: and remembers whose it was");
+        } else {
+            assert!(current(test_state()).is_some(), "{what}: the page stays");
+            assert!(test_state().gone.is_none(), "{what}: nothing is remembered");
+        }
+        clear(test_state(), test_adapter());
+    }
+}
+
+/// The on-deck episode is a second copy of an episode, independent of the season on screen.
+#[test]
+fn a_deleted_on_deck_episode_leaves_the_hero() {
+    let _serial = plx_base::testlock::serial();
+    let mut page = show_page();
+    page.seasons = vec![season_of("sk1", 1, 3, 2), season_of("sk2", 2, 2, 1)];
+    page.on_deck = Some(Episode { rk: "next".into(), season: 2, ..Default::default() });
+    set_current_for_test(test_state(), Some(page));
+
+    let other_server = crate::viewstate::ViewAt { sid: SRV_B, ..episode_of("show", "next", 2) };
+    assert!(!delete(other_server, false), "another server's next names nothing here");
+    assert!(current(test_state()).unwrap().on_deck.is_some());
+
+    assert!(delete(episode_of("show", "next", 2), false));
+    assert!(current(test_state()).unwrap().on_deck.is_none());
+    assert_eq!(tabs(), [(1, 3, 2), (2, 1, 1)]);
+    assert_eq!(listed_eps(), ["e1", "e2", "e3"], "the strip is the first season's and keeps its episodes");
+    clear(test_state(), test_adapter());
+}
+
+/// A deletion that names nothing the page holds changes nothing and says so, which keeps a mounted
+/// page from relaying out for it. A season the server sent no count for keeps its tab as it was.
+#[test]
+fn a_deletion_that_names_nothing_on_the_page_changes_nothing() {
+    use crate::viewstate::ViewAt;
+    let _serial = plx_base::testlock::serial();
+    set_current_for_test(test_state(), Some(show_page()));
+    let other_server = ViewAt { sid: SRV_B, ..episode_of("show", "e1", 1) };
+    assert!(!delete(other_server, true), "another server's e1 is another item");
+    assert!(!delete(ViewAt::leaf(SRV_A, "elsewhere"), false));
+    assert!(!delete(episode_of("other-show", "x", 1), false), "an episode of another show");
+    assert_eq!(listed_eps(), ["e1", "e2", "e3"]);
+    assert_eq!(tabs(), [(1, 3, 2), (2, 2, 2)]);
+    assert!(!current(test_state()).unwrap().watched);
+
+    let mut page = show_page();
+    page.seasons = vec![season_of("sk1", 1, 0, 0)];
+    set_current_for_test(test_state(), Some(page));
+    assert!(delete(episode_of("show", "e1", 1), false), "the episode still leaves the strip");
+    assert_eq!(tabs(), [(1, 0, 0)]);
+    assert_eq!(listed_eps(), ["e2", "e3"]);
+    clear(test_state(), test_adapter());
+}
+
+/// The detail read was requested, the server then deleted an episode and a related film, and the
+/// read installs the page as the server described it before. The ledger makes the deletions again
+/// in publish order: the press that marked the episode watched comes first, so the deletion takes
+/// a watched count away with it.
+#[test]
+fn a_detail_read_in_flight_across_a_deletion_installs_without_what_was_deleted() {
+    use crate::stores::metadata::MetadataCmd;
+    use crate::viewstate::{ViewAt, ViewEdit};
+    let _serial = plx_base::testlock::serial();
+    let mut state = MetadataState::default();
+    let adapter = test_adapter();
+    let fresh = || Detail { related: related_tiles(&["kept", "gone"]), ..show_page() };
+    let strings = |rks: &[&str]| rks.iter().map(|rk| rk.to_string()).collect::<Vec<_>>();
+    let page = |state: &MetadataState| {
+        let d = state.current.as_ref().unwrap();
+        (
+            d.episodes.iter_loaded().map(|(_, e)| e.rk.clone()).collect::<Vec<_>>(),
+            d.seasons.iter().map(|s| (s.index, s.leaf_count, s.viewed_leaf_count)).collect::<Vec<_>>(),
+            d.related.iter().map(|m| m.rk.clone()).collect::<Vec<_>>(),
+            d.watched,
+        )
+    };
+
+    assert!(run(&mut state, adapter, MetadataCmd::RequestDetail { sid: SRV_A, rk: "show".into() }));
+    state.ledger.record(&ViewAt::leaf(SRV_A, "e3"), ViewEdit::Watched(true));
+    state.ledger.record(&episode_of("show", "e3", 1), ViewEdit::Deleted { watched: true });
+    state.ledger.record(&ViewAt::leaf(SRV_A, "gone"), ViewEdit::Deleted { watched: false });
+    assert!(install_landed_detail(&mut state, adapter, Some(fresh())));
+    assert_eq!(
+        page(&state),
+        (strings(&["e1", "e2"]), vec![(1, 2, 2), (2, 2, 2)], strings(&["kept"]), true),
+    );
+
+    // a read requested after the deletion is the server's answer to it, and stands as it is
+    assert!(run(&mut state, adapter, MetadataCmd::RequestDetail { sid: SRV_A, rk: "show".into() }));
+    assert!(install_landed_detail(&mut state, adapter, Some(fresh())));
+    assert_eq!(page(&state).0, strings(&["e1", "e2", "e3"]));
+}
+
+/// The read describes a page whose own item was deleted since it was requested: nothing installs,
+/// and the page says why instead of staying "not loaded". The next item that loads ends that.
+#[test]
+fn a_detail_read_in_flight_across_the_deletion_of_its_own_item_installs_nothing() {
+    use crate::stores::metadata::MetadataCmd;
+    use crate::viewstate::{ViewAt, ViewEdit};
+    let _serial = plx_base::testlock::serial();
+    let mut state = MetadataState::default();
+    let adapter = test_adapter();
+    let film = |rk: &str| Detail { sid: SRV_A, rk: rk.into(), kind: "movie".into(), ..Default::default() };
+
+    assert!(run(&mut state, adapter, MetadataCmd::RequestDetail { sid: SRV_A, rk: "film".into() }));
+    let at = ViewAt::leaf(SRV_A, "film");
+    let edit = ViewEdit::Deleted { watched: false };
+    state.ledger.record(&at, edit);
+    assert!(!run(&mut state, adapter, MetadataCmd::ApplyView { at, edit }), "nothing is loaded to take it off");
+    assert!(!install_landed_detail(&mut state, adapter, Some(film("film"))), "the page the read describes is gone");
+    assert!(state.current.is_none());
+    assert!(state.gone == Some((SRV_A, "film".to_string())), "the screen can tell a deletion from a page not loaded");
+
+    assert!(install_landed_detail(&mut state, adapter, Some(film("other"))));
+    assert!(state.gone.is_none());
+    assert!(state.current.is_some());
+}
+
+/// An episode page read before a deletion holds rows at the places they had, which the strip has
+/// left: it stays a hole and is asked for again, and the page read after the deletion lands.
+#[test]
+fn an_episode_page_read_before_a_deletion_stays_a_hole_and_one_read_after_it_lands() {
+    let _serial = plx_base::testlock::serial();
+    let (p, total) = (EPISODE_PAGE, 2 * EPISODE_PAGE + 10);
+    let numbered = |lo: usize, hi: usize| -> Vec<Episode> {
+        (lo..hi).map(|i| Episode { rk: format!("a{i}"), season: 1, ..Default::default() }).collect()
+    };
+    let mut list = EpisodeList::with_total(total);
+    list.set_page(0, numbered(0, p));
+    list.set_page(1, numbered(p, 2 * p));
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "show".into(),
+        kind: "show".into(),
+        is_show: true,
+        seasons: vec![season_of("sk1", 1, total as i64, 0)],
+        episodes: list,
+        ..Default::default()
+    }));
+    let page_read = |rows: Vec<Episode>, stamp| {
+        test_adapter().ep_pages.lock().unwrap().landed.push(EpLanded {
+            sid: SRV_A,
+            show: "show".into(),
+            season: "sk1".into(),
+            page: 2,
+            rows: Some(rows),
+            stamp,
+        });
+    };
+    let holes = || current(test_state()).unwrap().episodes.missing(0, total - 1).collect::<Vec<_>>();
+
+    let before = test_state().ledger.stamp();
+    assert!(delete(episode_of("show", "a3", 1), false));
+    assert_eq!(holes(), [1, 2], "every row after the deleted one moved up, so a page not fully read is a hole again");
+
+    page_read(numbered(2 * p, total), before);
+    assert!(!pump_episode_pages(test_state(), test_adapter()), "the page was read before the deletion");
+    assert!(current(test_state()).unwrap().episodes.get(2 * p).is_none());
+
+    page_read(numbered(2 * p + 1, total), test_state().ledger.stamp());
+    assert!(pump_episode_pages(test_state(), test_adapter()), "a page read after the deletion lands");
+    let first = current(test_state()).unwrap().episodes.get(2 * p).map(|e| e.rk.clone());
+    assert_eq!(first, Some(format!("a{}", 2 * p + 1)));
+    clear(test_state(), test_adapter());
+}
+
+/// A season read before a deletion still lists the deleted episode, and counts the show's seasons
+/// as they stood: the tab stays on the season it was opened on, wherever the tabs moved it.
+#[test]
+fn a_season_read_in_flight_across_a_deletion_lands_without_the_episode() {
+    let _serial = plx_base::testlock::serial();
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "show".into(),
+        kind: "show".into(),
+        is_show: true,
+        seasons: vec![season_of("sk1", 1, 1, 0), season_of("sk2", 2, 2, 0), season_of("sk3", 3, 2, 0)],
+        episodes: vec![Episode { rk: "x1".into(), season: 1, ..Default::default() }].into(),
+        ..Default::default()
+    }));
+    let second = |rk: &str| Episode { rk: rk.into(), season: 2, ..Default::default() };
+    let (gen, prev) = begin_switch(1);
+    let stamp = test_state().ledger.stamp();
+
+    // season 1 loses its only episode, so season 2 moves to the first tab, and season 2 loses one
+    assert!(delete(episode_of("show", "x1", 1), false));
+    assert!(delete(episode_of("show", "y2", 2), false));
+    land_season(test_adapter(), gen, SRV_A, "show".into(), 1, prev, Some(vec![second("y1"), second("y2")].into()), stamp);
+    assert!(pump_season(test_state(), test_adapter()));
+    assert_eq!(listed_eps(), ["y1"], "the read still listed the deleted episode");
+    assert_eq!(selected_tab(), 0, "the tab stays on season 2, which is the first tab now");
+    assert_eq!(tabs(), [(2, 1, 0), (3, 2, 0)]);
+    clear(test_state(), test_adapter());
+}
+
+/// A Related window read before a deletion lists the deleted card and the show the deleted episode
+/// counted in: the landing drops the one and lowers the other, and the listing's total follows.
+#[test]
+fn a_related_window_read_before_a_deletion_lands_without_the_card() {
+    use crate::viewstate::ViewAt;
+    let _serial = plx_base::testlock::serial();
+    let tv = crate::pms::PmsMovie { kind: 1, leaf_count: Some(5), viewed_leaf_count: Some(2), ..related_tile(SRV_A, "tv") };
+    let page = || Detail {
+        sid: SRV_A,
+        rk: "film".into(),
+        kind: "movie".into(),
+        related: vec![related_tile(SRV_A, "h0"), related_tile(SRV_A, "w10"), related_tile(SRV_A, "w11"), tv.clone()],
+        related_tail: RelatedTail { head: 1, positions: vec![10, 11, 12], offset: 10, end: 13, total: 30, ..Default::default() },
+        ..Default::default()
+    };
+    set_current_for_test(test_state(), Some(page()));
+    let stale = page();
+
+    assert!(delete(ViewAt::leaf(SRV_A, "w11"), false));
+    assert!(delete(episode_of("tv", "tv-e1", 1), true));
+    land_related_for_test(test_adapter(), (10, 13), &stale);
+    assert!(pump_related_pages(test_state(), test_adapter()));
+
+    let d = current(test_state()).unwrap();
+    let cards = d.related.iter().map(|m| (m.rk.as_str(), m.leaf_count, m.viewed_leaf_count)).collect::<Vec<_>>();
+    assert_eq!(cards, [("h0", None, None), ("w10", None, None), ("tv", Some(4), Some(1))]);
+    let t = &d.related_tail;
+    assert_eq!((t.head, t.positions.clone(), t.total, t.offset, t.end), (1, vec![10, 12], 29, 10, 13));
+    clear(test_state(), test_adapter());
+}

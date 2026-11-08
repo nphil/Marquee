@@ -69,6 +69,7 @@ use plx_plex::plex::{Client, ClientKey, ClientKeys, ServerId};
 use crate::pms::{clamp_hold, PmsMovie, HOLD_ROWS, MAX_SHELF_ITEMS};
 use crate::stores::paging::{self, Ask, PageInfo, Row, RowMode, RowState};
 use crate::stores::StoreJob;
+use super::Fate;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -748,6 +749,11 @@ impl super::BrowseState {
             Outcome::List(Some(parsed)) => {
                 let mut shelves = parsed.shelves;
                 replay_since_request(&ledger, stamp, &mut shelves);
+                // `parse_window` drops a hub that arrives empty; one a deletion emptied while the read
+                // was out is dropped the same way, so no heading is left over nothing.
+                if ledger.since(stamp).iter().any(|(_, edit)| matches!(edit, crate::viewstate::ViewEdit::Deleted { .. })) {
+                    shelves.retain(|shelf| !shelf.items.is_empty() || shelf.released());
+                }
                 // The harness (`tests/mock_fps.py`, `LIBHUBS_RE`) reads the section and the shelf
                 // count; new fields go AFTER them.
                 plx_base::eventlog::log(&format!(
@@ -888,6 +894,20 @@ impl super::BrowseState {
         hit
     }
 
+    pub(super) fn hubs_deleted_local(&mut self, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+        let mut hit = false;
+        for st in self.states_mut() {
+            if edit_deleted(&mut st.hubs.committed, at, watched) {
+                st.hubs.revised();
+                hit = true;
+            }
+            if let Some(staged) = st.hubs.staged.as_mut() {
+                edit_deleted(staged, at, watched);
+            }
+        }
+        hit
+    }
+
     /// A notification from `sid`: its sections' shelves may have moved. No other server's section
     /// is touched and the failure ladder is kept (see [`SecHubs::invalidate_notified`]).
     pub(super) fn hubs_invalidate_server(&mut self, sid: ServerId, adapter: &Arc<super::BrowseAdapter>,
@@ -929,16 +949,24 @@ fn carry_windows(old: &[Shelf], new: &mut [Shelf]) {
 }
 
 /// The read describes the server from when it was requested: the view-state edits published since
-/// ([`crate::viewledger`]) are made again on the shelves it brought — a marked card stays marked
-/// and a card taken off Continue Watching stays off.
+/// ([`crate::viewledger`]) are made again on the shelves it brought — a marked card stays marked,
+/// a card taken off Continue Watching stays off and a deleted item stays gone.
 pub(super) fn replay_since_request(ledger: &crate::viewledger::ViewLedger, stamp: crate::viewledger::Stamp,
     shelves: &mut [Shelf]) {
     ledger.patch(stamp, shelves.iter_mut().flat_map(|shelf| shelf.items.iter_mut()));
     for (at, edit) in ledger.since(stamp) {
-        if let crate::viewstate::ViewEdit::LeftDeck = edit {
-            for shelf in shelves.iter_mut().filter(|shelf| shelf.is_continue) {
-                shelf.items.retain(|item| !at.is_item(item.sid, &item.rk));
+        match edit {
+            crate::viewstate::ViewEdit::LeftDeck => {
+                for shelf in shelves.iter_mut().filter(|shelf| shelf.is_continue) {
+                    shelf.items.retain(|item| !at.is_item(item.sid, &item.rk));
+                }
             }
+            crate::viewstate::ViewEdit::Deleted { watched } => {
+                for shelf in shelves.iter_mut() {
+                    delete_from_shelf(shelf, &at, watched);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -982,6 +1010,71 @@ fn drop_from_deck(shelves: &mut Arc<Vec<Shelf>>, sid: ServerId, rk: &str) -> boo
     }
     shelves.retain(|shelf| !shelf.items.is_empty());
     hit
+}
+
+/// A confirmed deletion on a section's shelves: the deleted cards leave, the show or season a
+/// deleted episode counted in gives the episode up, and a shelf the deletion emptied goes, as a hub
+/// that arrives empty is dropped at parse. A released row holds no cards and is left alone: it is
+/// read again from its listing, which no longer has the item.
+fn edit_deleted(shelves: &mut Arc<Vec<Shelf>>, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    let touched = shelves.iter()
+        .flat_map(|shelf| shelf.items.iter())
+        .any(|item| !matches!(Fate::of(at, item, watched), Fate::Stays));
+    if !touched {
+        return false;
+    }
+    Arc::make_mut(shelves).retain_mut(|shelf| {
+        let held = !shelf.items.is_empty();
+        delete_from_shelf(shelf, at, watched);
+        !held || !shelf.items.is_empty()
+    });
+    true
+}
+
+/// [`edit_deleted`] on one shelf. A card that goes takes its position with it and the cards after
+/// it close up by one, as the server's listing did; the window's `end` and the listing's `total`
+/// follow, so the next page read starts where the listing now holds the next card instead of
+/// skipping one. `offset` and `more` stand: the window still begins where it did and the server
+/// still says whether more lies beyond it.
+fn delete_from_shelf(shelf: &mut Shelf, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    let fates: Vec<Fate> = shelf.items.iter().map(|item| Fate::of(at, item, watched)).collect();
+    if fates.iter().all(|fate| matches!(fate, Fate::Stays)) {
+        return false;
+    }
+    // a shelf read without positions has none to keep aligned
+    let aligned = shelf.positions.len() == shelf.items.len();
+    let positions = std::mem::take(&mut shelf.positions);
+    let mut items = Vec::with_capacity(shelf.items.len());
+    let mut closed = Vec::with_capacity(positions.len());
+    let mut gone: Vec<String> = Vec::new();
+    for (i, (item, fate)) in std::mem::take(&mut shelf.items).into_iter().zip(fates).enumerate() {
+        let item = match fate {
+            Fate::Goes => {
+                gone.push(item.rk);
+                continue;
+            }
+            Fate::Stays => item,
+            Fate::Counted(counted) => counted,
+        };
+        items.push(item);
+        if aligned {
+            closed.push(positions[i].saturating_sub(gone.len()));
+        }
+    }
+    shelf.items = items;
+    shelf.positions = if aligned { closed } else { positions };
+    shelf.total = shelf.total.saturating_sub(gone.len());
+    shelf.end = shelf.end.saturating_sub(gone.len());
+    // A row read through its ledger has positions that index the ledger, which loses the same keys;
+    // a sample's listing offsets count from the end of its preview, which just got shorter.
+    if let Some(ledger) = shelf.row.ledger.as_mut().filter(|ledger| ledger.active && !gone.is_empty()) {
+        let keys: Vec<paging::LedgerKey> = gone.iter().map(|rk| paging::LedgerKey::new(rk)).collect();
+        ledger.keys.retain(|key| !keys.contains(key));
+    }
+    if let RowMode::Sample(preview) = &mut shelf.row.mode {
+        preview.retain(|rk| !gone.contains(rk));
+    }
+    true
 }
 
 /// Publish a section's shelves directly, for the screen tests that need a document with a shelf

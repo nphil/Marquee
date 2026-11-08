@@ -25,6 +25,7 @@
 
 - Home prepares the next banner's text during idle time, moving cold text work out of banner transitions without redrawing the settled screen.
 - The playback-repair help note fits in every language again (shorter troubleshooting link), and the Russian privacy title and French consent row fit their columns.
+- Delete in the item menu is offered only on a server the account owns that has "Allow media deletion" on, says plainly why a delete was refused or failed, and counts an item the server no longer has as deleted. A deleted item leaves Home, Continue Watching, the Library, search, collections, people and the show and season pages at once and stays gone when the lists are read again; an episode counts out of its season and show, and a show takes its episodes with it. The on-deck episode menu on a detail page, whose Delete did nothing, now deletes.
 
 ## 0.10.0
 

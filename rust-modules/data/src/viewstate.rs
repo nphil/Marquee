@@ -158,6 +158,10 @@ pub enum Scope {
     Show,
     /// A season of `show_rk`: its own row and every episode row of that show and season number.
     Season { show_rk: String, index: i64 },
+    /// One episode of season `index` of `show_rk` whose parentage is known: the episode's own row,
+    /// and, for a deletion, the show and season rows whose episode counts it leaves
+    /// ([`ViewAt::deleted_row`]). Reaches no other row, so it matches as a leaf everywhere else.
+    Episode { show_rk: String, index: i64 },
     /// The caller could not say (a fan-out copy on another server whose parentage was never read):
     /// matched as a leaf, so an unknown scope can only under-reach, never touch an unrelated row.
     Unknown,
@@ -220,6 +224,10 @@ pub enum ViewFact {
     /// the server was just told. Our own word, not the server's: a read-back corrects it when the server
     /// took the stop, and a refused or abandoned stop leaves it until the item is next read.
     Offset { ms: i64, dur_ms: i64 },
+    /// The server no longer has the item (a deletion it confirmed, or one that found the item
+    /// already gone), and the rows the scope reaches go with it. `watched` is whether the deleted
+    /// episode counted as watched, so its show and season give up the viewed episode too.
+    Deleted { watched: bool },
 }
 
 /// One change to what the app knows about an item's view state, published to every store that
@@ -259,6 +267,12 @@ pub enum ViewEdit {
     /// read-back that follows every stop the server TOOK (`StopRecord::ok`; a refused or abandoned
     /// POST owes no read). Like `Facts`, never recorded in the ledger.
     Offset { ms: i64 },
+    /// The item is gone from the server: stores REMOVE the rows the scope reaches
+    /// ([`ViewAt::deleted_row`]) instead of editing a field. `watched` is what the deleted episode
+    /// counted as, for the viewed-episode count its show and season give up. Recorded in the ledger
+    /// when published (the server already took it), so a read that was out before it and lands after
+    /// it makes the removal again.
+    Deleted { watched: bool },
 }
 
 /// WHICH rows a store edit reaches: the item and the scope it was published with.
@@ -286,6 +300,7 @@ impl ViewChange {
             ViewFact::Offset { ms, dur_ms } => ViewEdit::Offset {
                 ms: if past_watched_threshold(ms, dur_ms) { 0 } else { ms.max(0) },
             },
+            ViewFact::Deleted { watched } => ViewEdit::Deleted { watched },
         }
     }
 }
@@ -315,13 +330,65 @@ impl ViewAt {
             Scope::Season { show_rk: want, index } => {
                 kind == 3 && show_rk == want && season_index == *index
             }
-            Scope::Leaf | Scope::Unknown => false,
+            Scope::Leaf | Scope::Episode { .. } | Scope::Unknown => false,
         }
     }
 
     pub fn covers(&self, m: &crate::pms::PmsMovie) -> bool {
         self.covers_parts(m.sid, &m.rk, m.kind, &m.show_rk, i64::from(m.season_index))
     }
+
+    /// Is this row the show or the season a deleted episode counted in? Only a [`Scope::Episode`]
+    /// names them: the show is `show_rk`, the season is season `index` of it.
+    pub fn is_episode_parent(&self, m: &crate::pms::PmsMovie) -> bool {
+        let Scope::Episode { show_rk, index } = &self.scope else { return false };
+        match m.kind {
+            1 => plx_plex::plex::same_item((m.sid, &m.rk), (self.sid, show_rk)),
+            2 => m.sid == self.sid && m.show_rk == *show_rk && i64::from(m.season_index) == *index,
+            _ => false,
+        }
+    }
+
+    /// What a deletion does to one row a store holds, and does it: [`DeletedRow::Remove`] for the
+    /// deleted item, a row its scope reaches, or a show or season that held only the deleted
+    /// episode; [`DeletedRow::Counted`] when the row is the deleted episode's show or season and
+    /// has just given the episode up (its `leaf_count`, `viewed_leaf_count` and the flags derived
+    /// from them, as `pms::parse_item` derives them); [`DeletedRow::Leave`] for every other row. A
+    /// show's season count (`child_count`) is the server's word and stands until the read that
+    /// follows every deletion. Every store applies `Deleted` through this one function, so no two
+    /// of them can disagree about which rows a deletion reaches.
+    pub fn deleted_row(&self, m: &mut crate::pms::PmsMovie, watched: bool) -> DeletedRow {
+        if self.covers(m) {
+            return DeletedRow::Remove;
+        }
+        if !self.is_episode_parent(m) {
+            return DeletedRow::Leave;
+        }
+        let Some(leaves) = m.leaf_count else { return DeletedRow::Leave };
+        let leaves = leaves.saturating_sub(1);
+        if leaves == 0 {
+            return DeletedRow::Remove;
+        }
+        m.leaf_count = Some(leaves);
+        if let Some(viewed) = m.viewed_leaf_count {
+            let viewed = viewed.saturating_sub(u32::from(watched)).min(leaves);
+            m.viewed_leaf_count = Some(viewed);
+            m.unwatched = viewed == 0;
+            m.watched = viewed >= leaves;
+        }
+        DeletedRow::Counted
+    }
+}
+
+/// What [`ViewAt::deleted_row`] decided for one row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeletedRow {
+    /// Not about the deleted item: the row stands untouched.
+    Leave,
+    /// The row goes: the deleted item, one under it, or a container that held nothing else.
+    Remove,
+    /// The row stays and was changed in place: it is the deleted episode's show or season.
+    Counted,
 }
 
 impl ViewEdit {
@@ -336,11 +403,12 @@ impl ViewEdit {
                     || sort.is_some_and(|value| WatchSortFacts::of(m) != Some(value))
             }
             ViewEdit::Offset { ms } => m.resume_ms != ms,
-            ViewEdit::Watched(_) | ViewEdit::LeftDeck => true,
+            ViewEdit::Watched(_) | ViewEdit::LeftDeck | ViewEdit::Deleted { .. } => true,
         }
     }
     /// Apply to one row already known to be covered. `LeftDeck` changes no field of a row — leaving
-    /// the deck is a membership change the deck's owner makes.
+    /// the deck is a membership change the deck's owner makes — and neither does `Deleted`, which
+    /// removes rows through [`ViewAt::deleted_row`].
     pub fn apply(self, m: &mut crate::pms::PmsMovie) {
         match self {
             ViewEdit::Watched(on) => {
@@ -360,7 +428,7 @@ impl ViewEdit {
                 }
             }
             ViewEdit::Offset { ms } => m.resume_ms = ms,
-            ViewEdit::LeftDeck => {}
+            ViewEdit::LeftDeck | ViewEdit::Deleted { .. } => {}
         }
     }
 }
@@ -998,7 +1066,7 @@ pub fn pump_with_gate(
             // never a season's: the season's parent key is the origin server's, so the copy is
             // matched as the one row it is.
             let scope = match &r.scope { Scope::Show => Scope::Show, Scope::Leaf => Scope::Leaf,
-                Scope::Season { .. } | Scope::Unknown => Scope::Unknown };
+                Scope::Season { .. } | Scope::Episode { .. } | Scope::Unknown => Scope::Unknown };
             let change = ViewChange { sid: *osid, rk: ork.clone(), scope, fact: r.w.fact() };
             // the server took this copy already, so its number is the landing's
             self.ledger.record(&change.at(), change.edit());

@@ -701,6 +701,32 @@ struct LoanedView {
     genre_resolved: bool,
 }
 
+/// What a confirmed deletion does to one row a store holds: [`crate::viewstate::ViewAt::deleted_row`]'s
+/// verdict, taken once so the loaded listing pages and the section shelves apply the same one.
+enum Fate {
+    Stays,
+    Goes,
+    /// The deleted episode's show or season, with the counts it has now.
+    Counted(PmsMovie),
+}
+
+impl Fate {
+    /// The row is copied only when the deletion can touch it, so a whole listing is judged without
+    /// a clone per row.
+    fn of(at: &crate::viewstate::ViewAt, m: &PmsMovie, watched: bool) -> Fate {
+        use crate::viewstate::DeletedRow;
+        if !at.covers(m) && !at.is_episode_parent(m) {
+            return Fate::Stays;
+        }
+        let mut probe = m.clone();
+        match at.deleted_row(&mut probe, watched) {
+            DeletedRow::Leave => Fate::Stays,
+            DeletedRow::Remove => Fate::Goes,
+            DeletedRow::Counted => Fate::Counted(probe),
+        }
+    }
+}
+
 /// A section's items, CHUNKED BY PAGE (restructure phase 4, the O(result) rule of spec §5.2 —
 /// `docs/stores-as-machines.md` §2.6). The outer vector holds one slot per page of `PAGE`
 /// items and a page is allocated only when its items land, so sizing the store to a listing's
@@ -844,6 +870,72 @@ impl SecItems {
             }
         }
         (any_covered, changed)
+    }
+    /// A confirmed deletion on the loaded rows: the rows that go leave, every row after them closes
+    /// up as the server's listing did and `len` falls by the number that left, and the show or
+    /// season a deleted episode counted in gives the episode up where it stands. A slot the closing
+    /// up would fill from a page that is not loaded is a hole, as one never fetched, and the fetch
+    /// scan fills it. A scan first, and pages before the first removal keep their handle (only a
+    /// counted row copies its page), so a deletion that reaches no loaded row copies nothing.
+    /// Returns how many rows left and whether any row was counted.
+    fn deleted(&mut self, at: &crate::viewstate::ViewAt, watched: bool) -> (usize, bool) {
+        let mut plan: Vec<(usize, Fate)> = Vec::new();
+        for (p, page) in self.pages.iter().enumerate() {
+            let Some(page) = page else { continue };
+            for (s, row) in page.iter().enumerate() {
+                let Some(row) = row else { continue };
+                match Fate::of(at, row, watched) {
+                    Fate::Stays => {}
+                    fate => plan.push((p * PAGE + s, fate)),
+                }
+            }
+        }
+        if plan.is_empty() {
+            return (0, false);
+        }
+        let removed = plan.iter().filter(|(_, fate)| matches!(fate, Fate::Goes)).count();
+        let counted = plan.len() > removed;
+        let first_page = plan.iter().find(|(_, fate)| matches!(fate, Fate::Goes)).map(|(i, _)| i / PAGE);
+        let pages = Arc::make_mut(&mut self.pages);
+        let unmoved = plan.partition_point(|(i, _)| first_page.is_none_or(|first| i / PAGE < first));
+        for (i, fate) in plan.drain(..unmoved) {
+            let (Fate::Counted(row), Some(Some(page))) = (fate, pages.get_mut(i / PAGE)) else { continue };
+            if let Some(cell) = Arc::make_mut(page).get_mut(i % PAGE) {
+                *cell = Some(row);
+            }
+        }
+        let Some(first_page) = first_page else { return (0, counted) };
+        // From the first page that loses a row, every loaded row lands afresh at the index it now holds.
+        let new_len = self.len - removed;
+        let old: Vec<_> = pages.drain(first_page..).collect();
+        let mut rebuilt: Vec<Option<Vec<Option<PmsMovie>>>> =
+            (first_page..new_len.div_ceil(PAGE)).map(|_| None).collect();
+        let (mut shift, mut plan) = (0, plan.into_iter().peekable());
+        for (p, page) in (first_page..).zip(old) {
+            let Some(page) = page else { continue };
+            for (s, row) in Arc::unwrap_or_clone(page).into_iter().enumerate() {
+                let i = p * PAGE + s;
+                let row = match plan.next_if(|(at_i, _)| *at_i == i) {
+                    Some((_, Fate::Goes)) => {
+                        shift += 1;
+                        continue;
+                    }
+                    Some((_, Fate::Counted(counted))) => Some(counted),
+                    Some((_, Fate::Stays)) | None => row,
+                };
+                let Some(row) = row else { continue };
+                let to = i - shift;
+                let width = PAGE.min(new_len.saturating_sub(to / PAGE * PAGE));
+                let Some(slot) = rebuilt.get_mut(to / PAGE - first_page) else { continue };
+                let landed = slot.get_or_insert_with(|| (0..width).map(|_| None).collect());
+                if let Some(cell) = landed.get_mut(to % PAGE) {
+                    *cell = Some(row);
+                }
+            }
+        }
+        pages.extend(rebuilt.into_iter().map(|page| page.map(Arc::new)));
+        self.len = new_len;
+        (removed, counted)
     }
     #[cfg(any(test, feature = "test-support"))]
     fn from_vec(v: Vec<Option<PmsMovie>>) -> Self {
@@ -1560,6 +1652,32 @@ impl BrowseState {
                     }
                 }
             }
+        }
+        hit
+    }
+    /// A confirmed deletion ([`crate::viewstate::ViewEdit::Deleted`]) in every section's loaded rows:
+    /// the rows that go leave `items` and the unpublished re-list together, the section's total
+    /// falls with the rows that left the listing on screen, and the show or season a deleted
+    /// episode counted in gives the episode up. A section that has not listed yet (`total < 0`)
+    /// holds nothing to lose and keeps its state. The first-letter rail counted positions the
+    /// removal just moved, so it is asked for again ([`SecState::letters_gen`]). A page read still
+    /// out for the old listing is dropped by the generation fence of [`Self::listings_changed`],
+    /// which the deletion's caller raises right after this. True when a row on screen left or was
+    /// counted.
+    fn deleted_local(&mut self, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+        let mut hit = false;
+        for state in &mut self.states {
+            let (gone, counted) = state.items.deleted(at, watched);
+            if let Some(items) = state.relist_items.as_mut() {
+                items.deleted(at, watched);
+            }
+            if state.total >= 0 {
+                state.total = (state.total - gone as i64).max(0);
+            }
+            if gone > 0 {
+                state.letters_gen = state.letters_gen.wrapping_add(1);
+            }
+            hit |= gone > 0 || counted;
         }
         hit
     }
@@ -2876,6 +2994,11 @@ impl BrowseState {
                     self.apply_view_local(&at, edit)
                 }
                 crate::viewstate::ViewEdit::LeftDeck => self.hubs_left_the_deck(at.sid, &at.rk),
+                crate::viewstate::ViewEdit::Deleted { watched } => {
+                    let listing = self.deleted_local(&at, watched);
+                    let hubs = self.hubs_deleted_local(&at, watched);
+                    listing || hubs
+                }
             },
         }
     }
@@ -4485,3 +4608,7 @@ mod view_ledger_tests;
 #[cfg(test)]
 #[path = "browse_membership_tests.rs"]
 mod membership_tests;
+
+#[cfg(test)]
+#[path = "browse_deleted_media_tests.rs"]
+mod deleted_media_tests;

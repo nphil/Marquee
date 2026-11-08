@@ -154,6 +154,8 @@ pub const ACCEPT_JSON: &str = "Accept: application/json";
 enum BodyPolicy {
     Api,
     Bulk,
+    /// A request whose answer waits on slow server-side work: see [`request_slow`].
+    Slow,
     Probe { max: usize, timeout_s: i32, learn_pin: bool },
     Deadline { at: std::time::Instant, max: Option<usize> },
 }
@@ -207,6 +209,25 @@ pub fn request_bulk(
     pin: Option<&ResolvePin>,
 ) -> Option<Reply> {
     request_with(origin, path, method, headers, BodyPolicy::Bulk, pin).response()
+}
+
+/// How long a request made through [`request_slow`] waits for its answer.
+pub const SLOW_TOTAL_S: i32 = 180;
+
+/// A PMS request that changes the library and answers only once the server has finished: removing
+/// an item deletes its files first, and a spun-down array takes longer than the 25 s an ordinary
+/// request is given (a client that gave up then reads a deletion that is about to succeed as a
+/// failure). The wait is [`SLOW_TOTAL_S`] in either transport; the connect ceiling is the
+/// ordinary one over TLS.
+#[track_caller]
+pub fn request_slow(
+    origin: &Origin,
+    path: &str,
+    method: Method,
+    headers: &[&str],
+    pin: Option<&ResolvePin>,
+) -> Option<Reply> {
+    request_with(origin, path, method, headers, BodyPolicy::Slow, pin).response()
 }
 
 /// A small control-plane request inside an already-running transaction reserve. Plaintext composes
@@ -561,6 +582,15 @@ fn plaintext(
             method.as_str(),
             timeout_s.saturating_mul(1000),
         ),
+        BodyPolicy::Slow => plx_net::stream::http_open_probe(
+            &mut *hs,
+            host_c.as_ptr(),
+            origin.port(),
+            path_c.as_ptr(),
+            extra_ptr,
+            method.as_str(),
+            SLOW_TOTAL_S.saturating_mul(1000),
+        ),
         BodyPolicy::Deadline { at, .. } => {
             if std::time::Instant::now() >= at {
                 return RequestOutcome::Deadline;
@@ -640,7 +670,7 @@ fn plaintext(
             let max = match body_policy {
                 BodyPolicy::Probe { max, .. } => Some(max),
                 BodyPolicy::Deadline { max, .. } => max,
-                BodyPolicy::Api | BodyPolicy::Bulk => None,
+                BodyPolicy::Api | BodyPolicy::Bulk | BodyPolicy::Slow => None,
             };
             let room = max.map_or(chunk.len(), |max| max.saturating_sub(body.len()));
             let want = if max.is_some() { chunk.len().min(room.saturating_add(1)) } else { chunk.len() };
@@ -765,6 +795,11 @@ fn tls(
     let (timeouts, max_body, caller_owns_timeout) = match body_policy {
         BodyPolicy::Api => (plx_net::net::API, None, false),
         BodyPolicy::Bulk => (plx_net::net::BULK, None, false),
+        BodyPolicy::Slow => (
+            plx_net::net::Timeouts { total_s: SLOW_TOTAL_S as _, ..plx_net::net::API },
+            None,
+            false,
+        ),
         BodyPolicy::Deadline { at, max } => {
             let now = std::time::Instant::now();
             if now >= at {

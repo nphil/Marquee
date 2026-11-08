@@ -377,32 +377,6 @@ impl Default for PersonState {
 }
 
 impl PersonState {
-    pub(crate) fn deleted_media(&mut self, adapter: &PersonAdapter, at: &crate::viewstate::ViewAt) -> bool {
-        let Some(source) = self.current.as_ref().and_then(|p| p.srcs.iter().find(|s| s.sid == at.sid)) else { return false };
-        let held = source.shelves.iter().flat_map(|s| &s.items).any(|item| at.covers(item))
-            || source.matches.iter().any(|(_, rk)| rk == &at.rk);
-        if !held && source.settled() { return false; }
-        self.supersede(adapter);
-        let p = self.current.as_mut().unwrap();
-        let source = p.srcs.iter_mut().find(|s| s.sid == at.sid).unwrap();
-        for shelf in &mut source.shelves {
-            let old_len = shelf.items.len();
-            let mut index = 0;
-            shelf.items.retain(|item| {
-                let keep = !at.covers(item);
-                if !keep && index < shelf.roles.len() { shelf.roles.remove(index); }
-                if keep { index += 1; }
-                keep
-            });
-            shelf.total = shelf.total.saturating_sub(old_len - shelf.items.len());
-        }
-        source.matches.retain(|(_, rk)| rk != &at.rk);
-        source.landed = false;
-        source.roled = false;
-        resettle(p);
-        self.revision += 1;
-        true
-    }
     pub fn view(&self) -> PersonView<'_> {
         PersonView { current: self.current.as_ref(), revision: self.revision }
     }
@@ -945,8 +919,8 @@ fn resettle(p: &mut Person) {
 ///
 /// Returns whether anything matched. **MAIN THREAD.**
 fn apply_view(state: &mut PersonState, at: &crate::viewstate::ViewAt, edit: crate::viewstate::ViewEdit) -> bool {
-    // A person's tiles have no deck: a removal from Continue Watching changes nothing here.
-    if let crate::viewstate::ViewEdit::LeftDeck = edit { return false }
+    // A person's tiles have no deck, and a deletion removes rows ([`deleted`]) instead of editing one.
+    if matches!(edit, crate::viewstate::ViewEdit::LeftDeck | crate::viewstate::ViewEdit::Deleted { .. }) { return false }
     let Some(p) = state.current.as_mut() else {
         return false;
     };
@@ -968,6 +942,65 @@ fn apply_view(state: &mut PersonState, at: &crate::viewstate::ViewAt, edit: crat
         state.revision += 1;
     }
     hit
+}
+
+/// `ViewEdit::Deleted` on the open person: the credits [`ViewAt::deleted_row`] removes leave the
+/// source's shelves, the ones it counts are edited in place, and the source reads its filmography
+/// again so the page reconciles with the server. A source that has not settled may still have a read
+/// out that brings the row back, so it is superseded the same way.
+///
+/// Returns whether anything changed. **MAIN THREAD.**
+fn deleted(state: &mut PersonState, adapter: &PersonAdapter, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    let Some(source) = state.current.as_ref().and_then(|p| p.srcs.iter().find(|s| s.sid == at.sid)) else { return false };
+    let held = source.shelves.iter().flat_map(|s| &s.items).any(|m| at.covers(m) || at.is_episode_parent(m))
+        || source.matches.iter().any(|(_, rk)| rk == &at.rk);
+    if !held && source.settled() { return false; }
+    state.supersede(adapter);
+    let p = state.current.as_mut().unwrap();
+    let source = p.srcs.iter_mut().find(|s| s.sid == at.sid).unwrap();
+    drop_deleted(&mut source.shelves, &mut source.matches, at, watched);
+    source.landed = false;
+    source.roled = false;
+    resettle(p);
+    state.revision += 1;
+    true
+}
+
+/// Apply [`ViewAt::deleted_row`] to every credit of `shelves`: removed rows go with their caption and
+/// their place in the shelf total, counted ones stay edited, and the availability index forgets what
+/// left. Returns whether any row was removed or counted.
+fn drop_deleted(shelves: &mut [Shelf], matches: &mut Vec<(String, String)>, at: &crate::viewstate::ViewAt,
+    watched: bool) -> bool {
+    use crate::viewstate::DeletedRow;
+    let (mut hit, mut gone) = (false, Vec::new());
+    for shelf in shelves {
+        let (before, mut index) = (shelf.items.len(), 0);
+        shelf.items.retain_mut(|m| {
+            let row = at.deleted_row(m, watched);
+            hit |= row != DeletedRow::Leave;
+            if row == DeletedRow::Remove {
+                gone.push(m.rk.clone());
+                if index < shelf.roles.len() { shelf.roles.remove(index); }
+                return false;
+            }
+            index += 1;
+            true
+        });
+        shelf.total = shelf.total.saturating_sub(before - shelf.items.len());
+    }
+    matches.retain(|(_, rk)| rk != &at.rk && !gone.contains(rk));
+    hit
+}
+
+/// A read describes the server from when it was issued: the deletions published since
+/// ([`crate::viewledger`]) are made again on the credits it brought.
+fn replay_deletions(ledger: &crate::viewledger::ViewLedger, stamp: crate::viewledger::Stamp,
+    shelves: &mut [Shelf], matches: &mut Vec<(String, String)>) {
+    for (at, edit) in ledger.since(stamp) {
+        if let crate::viewstate::ViewEdit::Deleted { watched } = edit {
+            drop_deleted(shelves, matches, &at, watched);
+        }
+    }
 }
 
 // ---- public surface --------------------------------------------------------------------------
@@ -1180,6 +1213,7 @@ impl PersonState {
                 reset(self, adapter);
                 true
             }
+            PersonCmd::ApplyView { at, edit: crate::viewstate::ViewEdit::Deleted { watched } } => deleted(self, adapter, &at, watched),
             PersonCmd::ApplyView { at, edit } => apply_view(self, &at, edit),
         }
     }
@@ -1542,12 +1576,13 @@ fn apply_landing(state: &mut PersonState, i: usize, what: Landing) -> bool {
             resettle(p);
             true
         }
-        Landing::Media(Some(MediaLanding { mut shelves, matches })) => {
+        Landing::Media(Some(MediaLanding { mut shelves, mut matches })) => {
             let Some((sid, si)) = src_of(p, i) else {
                 return false;
             };
             // The read describes the server from when it was issued: edits published since are
             // made again on its rows (`crate::viewledger`).
+            replay_deletions(&ledger, stamp, &mut shelves, &mut matches);
             ledger.patch(stamp, shelves.iter_mut().flat_map(|shelf| shelf.items.iter_mut()));
             {
                 let s = &mut p.srcs[si];
@@ -2559,7 +2594,7 @@ mod tests {
         let shelf = &mut owner.state.current.as_mut().unwrap().srcs[0].shelves[0];
         shelf.roles = vec!["First".into(), "Second".into()];
         let at = crate::viewstate::ViewAt::leaf(sid, "10");
-        assert!(owner.state.deleted_media(&owner.adapter, &at));
+        assert!(delete(&mut owner, at, false));
         let person = owner.state.view().current().unwrap();
         assert_eq!(person.shelves[0].items.len(), 1);
         assert_eq!(person.shelves[0].items[0].rk, "11");
@@ -2950,6 +2985,99 @@ mod tests {
         owner.apply(slot, media(vec![tile("3"), tile("4")], Vec::new()));
         assert_eq!(landed(&owner), [("3".to_string(), false), ("4".to_string(), true)],
             "the pressed tile stays watched; the server's own earlier answer is not made again");
+        owner.reset();
+        plx_plex::plex::reset_servers_for_test();
+    }
+
+    fn delete(owner: &mut Owner, at: crate::viewstate::ViewAt, watched: bool) -> bool {
+        owner.state.run(&owner.adapter, crate::stores::person::PersonCmd::ApplyView {
+            at, edit: crate::viewstate::ViewEdit::Deleted { watched } })
+    }
+
+    fn show_on(sid: ServerId, rk: &str, leaves: u32, viewed: u32) -> PmsMovie {
+        PmsMovie { kind: 1, leaf_count: Some(leaves), viewed_leaf_count: Some(viewed), ..movie_on(sid, rk) }
+    }
+
+    #[test]
+    fn a_deleted_episode_lowers_the_count_of_its_show_on_the_filmography() {
+        use crate::viewstate::{Scope, ViewAt};
+        let _g = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let sid = plx_plex::plex::register_for_test("person-delete-episode", "127.0.0.1", 1, "t", "cid");
+        let mut owner = Owner::default();
+        owner.open(sid, "7", "", "Actor", "");
+        owner.state.install_for_test(vec![], vec![show_on(sid, "50", 4, 3), show_on(sid, "51", 2, 2)]);
+        let at = ViewAt { sid, rk: "500".into(), scope: Scope::Episode { show_rk: "50".into(), index: 1 } };
+        assert!(delete(&mut owner, at, true));
+        let shows = &owner.current().unwrap().shelves[1];
+        assert_eq!(shows.items.len(), 2, "the show keeps its place");
+        assert_eq!((shows.items[0].leaf_count, shows.items[0].viewed_leaf_count), (Some(3), Some(2)));
+        assert_eq!((shows.items[0].watched, shows.items[0].unwatched), (false, false));
+        assert_eq!(shows.items[1].leaf_count, Some(2), "another show is not this episode's");
+        owner.reset();
+        plx_plex::plex::reset_servers_for_test();
+    }
+
+    #[test]
+    fn a_show_that_held_only_the_deleted_episode_leaves_the_filmography() {
+        use crate::viewstate::{Scope, ViewAt};
+        let _g = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let sid = plx_plex::plex::register_for_test("person-delete-last", "127.0.0.1", 1, "t", "cid");
+        let mut owner = Owner::default();
+        owner.open(sid, "7", "", "Actor", "");
+        owner.state.install_for_test(vec![], vec![show_on(sid, "50", 1, 0), show_on(sid, "51", 2, 2)]);
+        owner.state.current.as_mut().unwrap().srcs[0].matches = vec![("g50".into(), "50".into()), ("g51".into(), "51".into())];
+        let at = ViewAt { sid, rk: "500".into(), scope: Scope::Episode { show_rk: "50".into(), index: 1 } };
+        assert!(delete(&mut owner, at, false));
+        let person = owner.current().unwrap();
+        assert!(matches!(person.shelves[1].items.as_slice(), [m] if m.rk == "51"));
+        assert_eq!(person.srcs[0].shelves[1].total, 1);
+        assert_eq!(person.srcs[0].matches, [("g51".to_string(), "51".to_string())]);
+        owner.reset();
+        plx_plex::plex::reset_servers_for_test();
+    }
+
+    #[test]
+    fn a_deletion_that_reaches_no_credit_changes_nothing() {
+        let _g = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let sid = plx_plex::plex::register_for_test("person-delete-none", "127.0.0.1", 1, "t", "cid");
+        let mut owner = Owner::default();
+        owner.open(sid, "7", "", "Actor", "");
+        owner.state.install_for_test(vec![movie_on(sid, "10")], vec![]);
+        let (revision, generation) = (owner.state.revision, owner.gen());
+        assert!(!delete(&mut owner, crate::viewstate::ViewAt::leaf(sid, "99"), false));
+        assert_eq!((owner.state.revision, owner.gen()), (revision, generation), "no notice, nothing re-read");
+        owner.reset();
+        plx_plex::plex::reset_servers_for_test();
+    }
+
+    /// A filmography read goes out, the item is deleted, and the read lands with the credit as the
+    /// server described it before the deletion: the ledger removes it again, and counts the show
+    /// the deleted episode left.
+    #[test]
+    fn a_filmography_read_in_flight_across_a_deletion_lands_without_the_row() {
+        use crate::viewstate::{Scope, ViewAt, ViewEdit};
+        let mut owner = Owner::default();
+        let _g = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        owner.reset();
+        let a = plx_plex::plex::register_for_test("person-ledger-delete", "127.0.0.1", 1, "a", "cid");
+        let slot = fx(a, K_MEDIA).unwrap();
+        owner.open(a, "7", "plex://person/7", "Actor", "");
+        owner.pump();
+        owner.state.ledger.record(&ViewAt::leaf(a, "3"), ViewEdit::Deleted { watched: false });
+        let episode = ViewAt { sid: a, rk: "500".into(), scope: Scope::Episode { show_rk: "50".into(), index: 1 } };
+        owner.state.ledger.record(&episode, ViewEdit::Deleted { watched: true });
+        let mut landing = media(vec![movie_on(a, "3"), movie_on(a, "4")], vec![show_on(a, "50", 4, 3)]);
+        if let Landing::Media(Some(m)) = &mut landing { m.matches = vec![("g3".into(), "3".into()), ("g4".into(), "4".into())]; }
+        owner.apply(slot, landing);
+        let src = &owner.current().unwrap().srcs[0];
+        assert!(matches!(src.shelves[0].items.as_slice(), [m] if m.rk == "4"));
+        assert_eq!(src.shelves[0].total, 1);
+        assert_eq!(src.matches, [("g4".to_string(), "4".to_string())]);
+        assert_eq!((src.shelves[1].items[0].leaf_count, src.shelves[1].items[0].viewed_leaf_count), (Some(3), Some(2)));
         owner.reset();
         plx_plex::plex::reset_servers_for_test();
     }

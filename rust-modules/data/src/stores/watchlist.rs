@@ -351,7 +351,7 @@ impl WatchlistStore {
                     entry.dur_ms = d;
                 }
             }
-            ViewEdit::LeftDeck => {}
+            ViewEdit::LeftDeck | ViewEdit::Deleted { .. } => {}
         }
         let changed = *entry != before;
         if changed {

@@ -61,12 +61,18 @@ impl Default for SearchStore {
 }
 
 impl SearchStore {
-    pub fn deleted_media(&mut self, at: &crate::viewstate::ViewAt) {
-        if self.state.deleted_media(&self.adapter, at) {
+    fn is_deletion(cmd: &SearchCmd) -> bool {
+        matches!(cmd, SearchCmd::ApplyView { edit: crate::viewstate::ViewEdit::Deleted { .. }, .. })
+    }
+
+    /// A deletion that changed anything put sources back to be read again; the adapter rotates so a
+    /// read that was out for the old rows can only finish into the mailbox nothing reads.
+    fn after_view_edit(&mut self, deletion: bool, changed: bool) {
+        if deletion && changed {
             self.adapter = Arc::new(Default::default());
-            self.bump();
         }
     }
+
     /// Join the owner's view-state publish order (`Stores::view_ledger`).
     pub(crate) fn share_ledger(&mut self, ledger: &crate::viewledger::ViewLedger) {
         self.state.ledger = ledger.clone();
@@ -136,7 +142,9 @@ impl SearchStore {
             self.adapter = Arc::new(Default::default());
         }
         let view_edit = matches!(&cmd, SearchCmd::ApplyView { .. });
+        let deletion = Self::is_deletion(&cmd);
         let answer = self.state.run(&self.adapter, cmd);
+        self.after_view_edit(deletion, answer);
         // An `ApplyView` that matched no tile raises no notice; every other command does.
         if answer || !view_edit {
             self.bump();
@@ -155,7 +163,9 @@ impl SearchStore {
             self.adapter = Arc::new(Default::default());
         }
         let view_edit = matches!(&cmd, SearchCmd::ApplyView { .. });
+        let deletion = Self::is_deletion(&cmd);
         let answer = self.state.run_with_directory(&self.adapter, cmd, directory);
+        self.after_view_edit(deletion, answer);
         if answer || !view_edit {
             self.bump();
         }

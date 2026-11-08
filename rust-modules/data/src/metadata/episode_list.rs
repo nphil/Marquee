@@ -147,6 +147,40 @@ impl EpisodeList {
         edited
     }
 
+    /// Removes every loaded episode `gone` selects and closes the gap: each later episode takes the
+    /// index the season now gives it, and the list is as long as the season is. Returns how many went.
+    /// A row on a page that has not landed cannot be tested, but it moves up with the rest, so a page
+    /// is loaded afterwards only when every row it now covers is known; the others are holes again,
+    /// which `missing` reports and `WantEpisodes` fetches. A partly known page left loaded would read
+    /// as fetched and never be asked for.
+    pub fn remove_where(&mut self, mut gone: impl FnMut(&Episode) -> bool) -> usize {
+        // One slot per episode that stays, in order: its row, or `None` for one that has not landed.
+        let mut staying: Vec<Option<&Episode>> = Vec::with_capacity(self.len());
+        for page in 0..self.cache.page_count() {
+            let landed = self.cache.page_rows(page).unwrap_or_default();
+            for k in 0..self.span(page) {
+                match landed.get(k) {
+                    Some(e) if gone(e) => {}
+                    other => staying.push(other),
+                }
+            }
+        }
+        let removed = self.len() - staying.len();
+        if removed == 0 {
+            return 0;
+        }
+        let mut cache = PageCache::default();
+        cache.set_total(staying.len());
+        for (page, run) in staying.chunks(PAGE).enumerate() {
+            if run.iter().all(Option::is_some) {
+                cache.set_rows(page, run.iter().flatten().map(|&e| e.clone()).collect());
+            }
+        }
+        self.cache = cache;
+        self.rev += 1;
+        removed
+    }
+
     /// Every page has landed in full, so the list is the season in order.
     pub fn is_complete(&self) -> bool {
         (0..self.cache.page_count()).all(|p| self.cache.page_rows(p).is_some_and(|rows| rows.len() == self.span(p)))
@@ -468,5 +502,65 @@ mod tests {
         assert!(serde_json::from_value::<EpisodeList>(past_end).is_err());
         let twice = shape(130, vec![page(0, rows(0, 60)), page(0, rows(0, 60))]);
         assert!(serde_json::from_value::<EpisodeList>(twice).is_err());
+    }
+
+    #[test]
+    fn remove_where_closes_the_gap_and_shortens_the_list() {
+        let mut list = EpisodeList::from(rows(0, 4));
+        let rev = list.rev();
+        assert_eq!(list.remove_where(|e| e.rk == "e1"), 1);
+        assert_eq!(list.len(), 3);
+        assert!(list.is_complete());
+        assert_eq!(list.iter_loaded().map(|(_, e)| e.rk.as_str()).collect::<Vec<_>>(), ["e0", "e2", "e3"]);
+        assert_eq!(list.rev(), rev + 1);
+        assert_eq!(list.remove_where(|e| e.rk == "nope"), 0);
+        assert_eq!(list.rev(), rev + 1, "a miss writes nothing and bumps nothing");
+        assert_eq!(list.remove_where(|_| true), 3);
+        assert!(list.is_empty() && list.is_complete());
+    }
+
+    #[test]
+    fn remove_where_shifts_rows_across_a_page_boundary() {
+        let mut list = EpisodeList::from(rows(0, 130));
+        assert_eq!(list.remove_where(|e| e.rk == "e10" || e.rk == "e70"), 2);
+        assert_eq!(list.len(), 128);
+        assert!(list.is_complete(), "every page is still known in full");
+        let at = |i: usize| list.get(i).map(|e| e.rk.clone());
+        assert_eq!(at(9).as_deref(), Some("e9"));
+        assert_eq!(at(10).as_deref(), Some("e11"));
+        assert_eq!(at(59).as_deref(), Some("e60"), "page 0 took the first row of page 1");
+        assert_eq!(at(60).as_deref(), Some("e61"));
+        assert_eq!(at(68).as_deref(), Some("e69"));
+        assert_eq!(at(69).as_deref(), Some("e71"));
+        assert_eq!(at(127).as_deref(), Some("e129"));
+        assert_eq!(at(128), None, "the season is two episodes shorter");
+        assert_eq!(list.position("e70"), None);
+        assert_eq!(list.position("e71"), Some(69));
+    }
+
+    #[test]
+    fn remove_where_leaves_a_page_it_cannot_fill_as_a_hole_for_the_fetch_scan() {
+        // Pages 0 and 2 of three loaded; page 1 never landed. Dropping a row of page 0 pulls one row of
+        // the unknown page into it, and the page after it now starts one row earlier.
+        let mut list = EpisodeList::with_total(130);
+        list.set_page(0, rows(0, 60));
+        list.set_page(2, rows(120, 130));
+        assert_eq!(list.remove_where(|e| e.rk == "e5"), 1);
+        assert_eq!(list.len(), 129);
+        assert_eq!(list.missing(0, 129).collect::<Vec<_>>(), vec![0, 1], "neither page is fully known");
+        assert!(list.get(0).is_none() && list.get(60).is_none());
+        assert_eq!(list.get(120).map(|e| e.rk.as_str()), Some("e121"), "page 2 is whole again, one row up");
+        assert_eq!(list.get(128).map(|e| e.rk.as_str()), Some("e129"));
+        assert!(!list.is_complete());
+    }
+
+    #[test]
+    fn remove_where_keeps_the_pages_before_the_first_removal_loaded() {
+        let mut list = EpisodeList::from(rows(0, 130));
+        assert_eq!(list.remove_where(|e| e.rk == "e129"), 1);
+        assert_eq!(list.len(), 129);
+        assert!(list.is_complete());
+        assert_eq!(list.get(59).map(|e| e.rk.as_str()), Some("e59"));
+        assert_eq!(list.get(128).map(|e| e.rk.as_str()), Some("e128"));
     }
 }

@@ -563,6 +563,22 @@ impl Client {
         )
     }
 
+    /// [`Client::send`] for a request that answers only once the server has finished slow work (a
+    /// library deletion): the same request, a [`http::SLOW_TOTAL_S`] wait instead of the 25 s API cap.
+    #[track_caller]
+    fn send_slow(&self, path_no_token: &str, method: Method, headers: &[&str]) -> Option<http::Reply> {
+        if !self.may_send() { return None; }
+        let owned = pms_headers(headers);
+        let headers: Vec<&str> = owned.iter().map(String::as_str).collect();
+        http::request_slow(
+            &self.origin,
+            &self.with_token(path_no_token),
+            method,
+            &headers,
+            self.resolve_pin.as_ref(),
+        )
+    }
+
     /// The 2xx-folding twin of [`Client::send_bulk`] used by ordinary content-dependent reads.
     #[track_caller]
     fn body_2xx_bulk(&self, path_no_token: &str, headers: &[&str]) -> Option<Vec<u8>> {
@@ -856,6 +872,15 @@ impl Client {
     #[track_caller]
     pub(super) fn delete(&self, path_no_token: &str) -> i32 {
         self.send(path_no_token, Method::Delete, &[])
+            .map_or(-1, |r| r.status)
+    }
+
+    /// DELETE of a library item (no body), on [`Client::send_slow`]'s terms: the server removes the
+    /// files before it answers. Returns the HTTP status, or `-1` when the request never completed,
+    /// as [`Client::delete`] does.
+    #[track_caller]
+    pub(super) fn delete_slow(&self, path_no_token: &str) -> i32 {
+        self.send_slow(path_no_token, Method::Delete, &[])
             .map_or(-1, |r| r.status)
     }
 

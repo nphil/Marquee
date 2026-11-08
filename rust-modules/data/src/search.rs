@@ -889,26 +889,6 @@ impl Default for SearchState {
 }
 
 impl SearchState {
-    pub(crate) fn deleted_media(&mut self, adapter: &SearchAdapter, at: &crate::viewstate::ViewAt) -> bool {
-        let matches = |item: &Item| matches!(item, Item::Media(m) if at.covers(m));
-        let held = self.shelves.as_ref().is_some_and(|shelves| shelves.iter().flat_map(|s| &s.items).any(matches));
-        let slot = at.sid.raw() as usize;
-        let source = self.src.get(slot);
-        let cached = source.is_some_and(|s| s.items.iter().flatten().any(matches)
-            || s.tails.iter().flat_map(|lane| lane.items()).any(matches));
-        let pending = terms(self.query()).is_some() && (source.is_none_or(|s| s.status == Status::Pending)
-            || adapter.mailbox(slot).busy());
-        if !held && !cached && !pending { return false; }
-        if held {
-            let shelves = Arc::make_mut(self.shelves.as_mut().unwrap());
-            for shelf in shelves.iter_mut() {
-                shelf.items.retain(|item| !matches!(item, Item::Media(m) if at.covers(m)));
-            }
-            shelves.retain(|shelf| !shelf.items.is_empty());
-        }
-        if let Some(source) = self.src.get_mut(at.sid.raw() as usize) { *source = Source::EMPTY; }
-        true
-    }
     /// The query as typed, verbatim — trailing space and all, because the FIELD draws this.
     pub fn query(&self) -> &str {
         self.query.as_deref().unwrap_or("")
@@ -1124,8 +1104,8 @@ fn set_query_with_directory(
 ///
 /// Returns whether anything matched. **MAIN THREAD.**
 fn apply_view(state: &mut SearchState, at: &crate::viewstate::ViewAt, edit: crate::viewstate::ViewEdit) -> bool {
-    // A result tile has no deck: a removal from Continue Watching changes nothing here.
-    if let crate::viewstate::ViewEdit::LeftDeck = edit { return false }
+    // A result tile has no deck, and a deletion removes rows ([`deleted`]) instead of editing one.
+    if matches!(edit, crate::viewstate::ViewEdit::LeftDeck | crate::viewstate::ViewEdit::Deleted { .. }) { return false }
     let mut hit = false;
     // `changes`: a press always counts, the server's `Facts`/`Offset` only where they differ, so a
     // read-back that agrees with what is drawn raises no notice and moves nothing.
@@ -1151,6 +1131,70 @@ fn apply_view(state: &mut SearchState, at: &crate::viewstate::ViewAt, edit: crat
         }
     }
     hit
+}
+
+/// `ViewEdit::Deleted` on the result shelves: the rows [`ViewAt::deleted_row`] removes leave them and
+/// the ones it counts are edited in place. Every source holding a reached row, or with a read out
+/// that may still bring it, is put back to [`Source::EMPTY`] — a lane's depths are offsets into a
+/// server listing the deletion has moved, so the sources are read again rather than edited — and the
+/// caller rotates the adapter so the read that was out can never land.
+///
+/// Returns whether anything changed, which includes the sources put back. **MAIN THREAD.**
+fn deleted(state: &mut SearchState, adapter: &SearchAdapter, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    let reaches = |it: &Item| matches!(it, Item::Media(m) if at.covers(m) || at.is_episode_parent(m));
+    let mut hit = false;
+    if let Some(shelves) = &mut state.shelves {
+        // A deletion outside the visible result cap must not clone a retained catalog it cannot change.
+        if shelves.iter().flat_map(|s| &s.items).any(|it| reaches(it)) {
+            let shelves = Arc::make_mut(shelves);
+            for shelf in shelves.iter_mut() { hit |= drop_deleted(&mut shelf.items, at, watched); }
+            shelves.retain(|shelf| !shelf.items.is_empty());
+        }
+    }
+    let searching = terms(state.query()).is_some();
+    for (slot, source) in state.src.iter_mut().enumerate() {
+        let holds = source.items.iter().flatten().any(|it| reaches(it))
+            || source.tails.iter().flat_map(|lane| lane.items()).any(|it| reaches(it));
+        let reading = searching && slot == at.sid.raw() as usize && adapter.mailbox(slot).busy();
+        if holds || reading {
+            *source = Source::EMPTY;
+            hit = true;
+        }
+    }
+    hit
+}
+
+/// Apply [`ViewAt::deleted_row`] to every media row of `items`: removed rows go, counted ones stay
+/// edited. Returns whether any row did either.
+fn drop_deleted(items: &mut Vec<Item>, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    use crate::viewstate::DeletedRow;
+    let mut hit = false;
+    items.retain_mut(|it| {
+        let Item::Media(m) = it else { return true };
+        let row = at.deleted_row(m, watched);
+        hit |= row != DeletedRow::Leave;
+        row != DeletedRow::Remove
+    });
+    hit
+}
+
+/// Does a deletion published after `stamp` remove a row of this answer? Rows it only counts are
+/// edited in place on the way, so an answer that stands carries the counts a held row has.
+fn overtaken<'a>(ledger: &crate::viewledger::ViewLedger, stamp: crate::viewledger::Stamp,
+    rows: impl Iterator<Item = &'a mut Item>) -> bool {
+    use crate::viewstate::{DeletedRow, ViewEdit};
+    let deletions: Vec<_> = ledger.since(stamp).into_iter()
+        .filter_map(|(at, edit)| if let ViewEdit::Deleted { watched } = edit { Some((at, watched)) } else { None })
+        .collect();
+    if deletions.is_empty() { return false }
+    let mut gone = false;
+    for it in rows {
+        let Item::Media(m) = it else { continue };
+        for (at, watched) in &deletions {
+            gone |= at.deleted_row(m, *watched) == DeletedRow::Remove;
+        }
+    }
+    gone
 }
 
 /// Post a finished fetch to its mailbox. MONOTONE: an older fetch landing late must never clobber a
@@ -1420,7 +1464,11 @@ fn record(state: &mut SearchState, i: usize, what: Option<Projection>) {
             s.retry_cd = RETRY_FRAMES;
             plx_base::eventlog::log(&format!("search: q[{qlen}ch] sid={i} FAILED, retry in {RETRY_FRAMES}f"));
         }
-        Some(items) => {
+        Some(mut items) => {
+            // A read out before a deletion that removes one of its rows describes rows the server no
+            // longer has, and a lane's depths are offsets into that listing, so rows cannot be cut
+            // out of it: the answer is dropped and the source, still pending, asks again.
+            if overtaken(&state.ledger, source(state, i).stamp, items.iter_mut().flatten()) { return }
             let counts: Vec<String> = KINDS
                 .iter()
                 .enumerate()
@@ -1430,7 +1478,6 @@ fn record(state: &mut SearchState, i: usize, what: Option<Projection>) {
             // The two fields an answer decides, and `retry_cd` is deliberately not one of them: a
             // source that has answered is refused by `maybe_spawn` on `status` alone, and the next
             // query resets the whole record through `Source::EMPTY`.
-            let mut items = items;
             let (ledger, stamp) = (state.ledger.clone(), source(state, i).stamp);
             replay_since_request(&ledger, stamp, items.iter_mut().flatten());
             let s = source_mut(state, i);
@@ -1792,6 +1839,9 @@ fn land_read(state: &mut SearchState, i: usize, t: TailMail) -> bool {
     match t.read {
         Some((mut lane, tv)) => {
             let (ledger, stamp) = (state.ledger.clone(), source(state, i).stamp);
+            // As in [`record`]: a read that was out before a deletion reaching its rows is not kept,
+            // and the lane it was a read of stays owed.
+            if overtaken(&ledger, stamp, lane.items_mut()) { return false }
             replay_since_request(&ledger, stamp, lane.items_mut());
             let s = source_mut(state, i);
             progressed = (lane.covered(), lane.end, lane.is_growth()) != (s.tails[k].covered(), s.tails[k].end, s.tails[k].is_growth());
@@ -2122,6 +2172,7 @@ fn run_with_optional_directory(
             reset(state, adapter);
             true
         }
+        SearchCmd::ApplyView { at, edit: crate::viewstate::ViewEdit::Deleted { watched } } => deleted(state, adapter, &at, watched),
         SearchCmd::ApplyView { at, edit } => apply_view(state, &at, edit),
         SearchCmd::Page { kind, before, seen } => page(state, kind, before, seen),
         SearchCmd::PageCancel { kind, seen } => cancel_page(state, kind, seen),
@@ -2174,27 +2225,165 @@ pub fn land_for_test(adapter: &SearchAdapter, i: usize, gen: u32, item: Item) {
 #[cfg(test)]
 mod delete_membership_tests {
     use super::*;
+    use crate::stores::search::SearchCmd;
+    use crate::viewstate::{Scope, ViewAt, ViewEdit};
+
+    fn media(sid: ServerId, rk: &str, kind: i32, show: &str) -> PmsMovie {
+        PmsMovie { sid, rk: rk.into(), kind, show_rk: show.into(), ..Default::default() }
+    }
+
+    fn counted(sid: ServerId, rk: &str, kind: i32, show: &str, season: i32, leaves: u32, viewed: u32) -> Item {
+        Item::Media(PmsMovie { season_index: season, leaf_count: Some(leaves), viewed_leaf_count: Some(viewed),
+            ..media(sid, rk, kind, show) })
+    }
+
+    fn row(sid: ServerId, rk: &str, kind: i32, show: &str) -> Item { Item::Media(media(sid, rk, kind, show)) }
+
+    fn state_with(items: Vec<Item>) -> SearchState {
+        let mut state = SearchState::default();
+        state.query = Some(Arc::from("show"));
+        state.gen = 9;
+        state.shelves = Some(Arc::new(vec![Shelf { kind: Kind::Show, window: Window::default(), epoch: 0, items }]));
+        state
+    }
+
+    fn delete(state: &mut SearchState, adapter: &Arc<SearchAdapter>, at: ViewAt, watched: bool) -> bool {
+        state.run(adapter, SearchCmd::ApplyView { at, edit: ViewEdit::Deleted { watched } })
+    }
+
+    fn episode_at(sid: ServerId, rk: &str, show: &str, season: i64) -> ViewAt {
+        ViewAt { sid, rk: rk.into(), scope: Scope::Episode { show_rk: show.into(), index: season } }
+    }
+
+    fn answer(items: Vec<Item>, kind: usize) -> Projection {
+        let mut projection: Projection = [const { Vec::new() }; NKIND];
+        projection[kind] = items;
+        projection
+    }
+
+    fn media_at(state: &SearchState, i: usize) -> &PmsMovie {
+        let Item::Media(m) = &state.shelves()[0].items[i] else { panic!("not a media row") };
+        m
+    }
+
     #[test]
     fn delete_membership_search_removes_show_and_children_without_resetting_query() {
         let sid = ServerId::from_raw(1);
         let other = ServerId::from_raw(2);
-        let row = |sid, rk: &str, kind, show: &str| Item::Media(PmsMovie {
-            sid, rk: rk.into(), kind, show_rk: show.into(), ..Default::default()
-        });
-        let mut state = SearchState::default();
-        state.query = Some(Arc::from("show"));
-        state.gen = 9;
-        state.shelves = Some(Arc::new(vec![Shelf { kind: Kind::Show, window: Window::default(), epoch: 0,
-            items: vec![row(sid, "10", 1, ""), row(sid, "11", 3, "10"),
-                row(other, "10", 1, ""), row(sid, "12", 1, "")] }]));
-        let at = crate::viewstate::ViewAt { sid, rk: "10".into(), scope: crate::viewstate::Scope::Show };
-        assert!(state.deleted_media(&SearchAdapter::default(), &at));
+        let mut state = state_with(vec![row(sid, "10", 1, ""), row(sid, "11", 3, "10"),
+            row(other, "10", 1, ""), row(sid, "12", 1, "")]);
+        let at = ViewAt { sid, rk: "10".into(), scope: Scope::Show };
+        assert!(delete(&mut state, &Arc::new(SearchAdapter::default()), at, false));
         let rows = &state.shelves()[0].items;
         assert_eq!(rows.len(), 2);
         assert!(matches!(&rows[0], Item::Media(m) if m.sid == other && m.rk == "10"));
         assert!(matches!(&rows[1], Item::Media(m) if m.rk == "12"));
         assert_eq!(state.query_gen(), 9);
         assert_eq!(state.query(), "show");
+    }
+
+    #[test]
+    fn a_deleted_season_takes_its_episodes_with_it() {
+        let sid = ServerId::from_raw(1);
+        let episode = |rk: &str, season: i32| Item::Media(PmsMovie { season_index: season, ..media(sid, rk, 3, "10") });
+        let mut state = state_with(vec![row(sid, "20", 2, "10"), episode("21", 1), episode("30", 2)]);
+        let at = ViewAt { sid, rk: "20".into(), scope: Scope::Season { show_rk: "10".into(), index: 1 } };
+        assert!(delete(&mut state, &Arc::new(SearchAdapter::default()), at, false));
+        let rows = &state.shelves()[0].items;
+        assert!(matches!(rows.as_slice(), [Item::Media(m)] if m.rk == "30"), "only the other season's episode stays");
+    }
+
+    #[test]
+    fn a_deleted_episode_lowers_its_show_and_season_counts() {
+        let sid = ServerId::from_raw(1);
+        let mut state = state_with(vec![
+            counted(sid, "10", 1, "", 0, 3, 2),
+            counted(sid, "20", 2, "10", 1, 2, 1),
+            row(sid, "21", 3, "10"),
+            counted(sid, "30", 2, "10", 2, 1, 0),
+            counted(sid, "50", 1, "", 0, 5, 5),
+        ]);
+        assert!(delete(&mut state, &Arc::new(SearchAdapter::default()), episode_at(sid, "21", "10", 1), true));
+        assert_eq!(state.shelves()[0].items.len(), 4, "the episode itself is gone");
+        let (show, season) = (media_at(&state, 0), media_at(&state, 1));
+        assert_eq!((show.leaf_count, show.viewed_leaf_count, show.watched, show.unwatched), (Some(2), Some(1), false, false));
+        assert_eq!((season.leaf_count, season.viewed_leaf_count, season.watched, season.unwatched),
+            (Some(1), Some(0), false, true));
+        assert_eq!(media_at(&state, 2).leaf_count, Some(1), "another season is not this episode's");
+        assert_eq!(media_at(&state, 3).leaf_count, Some(5), "another show is not this episode's");
+    }
+
+    #[test]
+    fn a_show_and_season_that_held_only_the_deleted_episode_go() {
+        let sid = ServerId::from_raw(1);
+        let mut state = state_with(vec![counted(sid, "10", 1, "", 0, 1, 1), counted(sid, "20", 2, "10", 1, 1, 1),
+            row(sid, "21", 3, "10"), row(sid, "99", 1, "")]);
+        assert!(delete(&mut state, &Arc::new(SearchAdapter::default()), episode_at(sid, "21", "10", 1), true));
+        assert!(matches!(state.shelves()[0].items.as_slice(), [Item::Media(m)] if m.rk == "99"));
+    }
+
+    #[test]
+    fn a_deletion_that_reaches_nothing_on_screen_changes_nothing() {
+        let sid = ServerId::from_raw(1);
+        let mut state = state_with(vec![row(sid, "10", 1, ""), counted(sid, "11", 1, "", 0, 4, 1)]);
+        let adapter = Arc::new(SearchAdapter::default());
+        assert!(!delete(&mut state, &adapter, ViewAt::leaf(sid, "99"), false));
+        assert!(!delete(&mut state, &adapter, episode_at(sid, "98", "77", 1), false), "a show that is not here");
+        assert_eq!(state.shelves()[0].items.len(), 2);
+        assert_eq!(media_at(&state, 1).leaf_count, Some(4));
+    }
+
+    #[test]
+    fn a_source_holding_the_row_or_reading_is_asked_again() {
+        let sid = ServerId::from_raw(1);
+        let adapter = Arc::new(SearchAdapter::default());
+        let mut state = state_with(vec![row(sid, "10", 1, "")]);
+        let held = source_mut(&mut state, 1);
+        held.status = Status::Answered;
+        held.items = answer(vec![row(sid, "10", 1, "")], 1);
+        assert!(delete(&mut state, &adapter, ViewAt::leaf(sid, "10"), false));
+        assert_eq!(source(&state, 1).status, Status::Pending);
+        assert!(source(&state, 1).items.iter().all(Vec::is_empty));
+
+        let held = source_mut(&mut state, 1);
+        held.status = Status::Answered;
+        held.items = answer(vec![row(sid, "11", 1, "")], 1);
+        assert!(!delete(&mut state, &adapter, ViewAt::leaf(sid, "99"), false), "a read nothing is out for stands");
+        assert_eq!(source(&state, 1).status, Status::Answered);
+        adapter.mailbox(1).claim(9);
+        assert!(delete(&mut state, &adapter, ViewAt::leaf(sid, "99"), false), "a read that is out may bring the row back");
+        assert_eq!(source(&state, 1).status, Status::Pending);
+    }
+
+    #[test]
+    fn an_answer_read_before_a_deletion_does_not_bring_the_row_back() {
+        let sid = ServerId::from_raw(1);
+        let mut state = SearchState::default();
+        state.query = Some(Arc::from("show"));
+        let at = ViewAt::leaf(sid, "10");
+        source_mut(&mut state, 1).stamp = state.ledger.stamp();
+        state.ledger.record(&at, ViewEdit::Deleted { watched: false });
+        record(&mut state, 1, Some(answer(vec![row(sid, "10", 1, ""), row(sid, "11", 1, "")], 0)));
+        assert_eq!(source(&state, 1).status, Status::Pending, "the answer is dropped, the source asks again");
+        assert!(source(&state, 1).items.iter().all(Vec::is_empty));
+
+        source_mut(&mut state, 1).stamp = state.ledger.stamp();
+        record(&mut state, 1, Some(answer(vec![row(sid, "11", 1, "")], 0)));
+        assert_eq!(source(&state, 1).status, Status::Answered);
+        assert_eq!(source(&state, 1).items[0].len(), 1);
+    }
+
+    #[test]
+    fn an_answer_read_before_an_episode_deletion_lands_with_the_lower_counts() {
+        let sid = ServerId::from_raw(1);
+        let mut state = SearchState::default();
+        state.query = Some(Arc::from("show"));
+        source_mut(&mut state, 1).stamp = state.ledger.stamp();
+        state.ledger.record(&episode_at(sid, "21", "10", 1), ViewEdit::Deleted { watched: true });
+        record(&mut state, 1, Some(answer(vec![counted(sid, "10", 1, "", 0, 3, 1)], 1)));
+        assert_eq!(source(&state, 1).status, Status::Answered);
+        let Item::Media(show) = &source(&state, 1).items[1][0] else { panic!("not a media row") };
+        assert_eq!((show.leaf_count, show.viewed_leaf_count), (Some(2), Some(0)));
     }
 }
 

@@ -136,6 +136,7 @@ pub(super) fn bare_held(sid: ServerId, rk: &str) -> DetailScreen {
         restore_intent: None,
         teardown_cleared: false,
         withdrawn: false,
+        left_deleted: false,
         scroll: Spring::at(0.0),
         scroll_target: 0.0,
         free: false,
@@ -4728,6 +4729,28 @@ fn wanted_episodes(effects: &[plx_machine::machine::Stamped<TestHost>]) -> Vec<(
             _ => None,
         })
         .collect()
+}
+
+/// The server deleted the item the page shows: the page leaves with one BACK, not one per frame, and
+/// asks again after an uncover (the loop drops the request of a page another one covers).
+#[test]
+fn a_page_whose_own_item_was_deleted_leaves_once_and_asks_again_after_an_uncover() {
+    let sid = ServerId::UNSET;
+    let _guard = install(Detail { sid, rk: "film".into(), kind: "movie".into(), ..Default::default() });
+    let mut screen = bare(&_guard, sid, "film");
+    let leaves = |effects: &[plx_machine::machine::Stamped<TestHost>]| {
+        effects.iter().filter(|e| matches!(e.fx, Fx::App(AppFx::Content(ContentReq::Back)))).count()
+    };
+    assert_eq!(leaves(&tick_page(&mut screen, None, 0)), 0, "a page that has its item stays");
+    test_store().run(MetadataCmd::ApplyView {
+        at: plx_data::viewstate::ViewAt::leaf(sid, "film"),
+        edit: plx_data::viewstate::ViewEdit::Deleted { watched: false },
+    });
+    assert_eq!(leaves(&tick_page(&mut screen, None, 16)), 1, "the item is gone: the page leaves");
+    assert_eq!(leaves(&tick_page(&mut screen, None, 32)), 0, "once: a second BACK would withdraw the first");
+    step(&mut screen, &ScreenEvent::Enter(plx_ui::screen::Enter::Restored), None);
+    assert_eq!(leaves(&tick_page(&mut screen, None, 48)), 1, "uncovered, the page asks again");
+    clear();
 }
 
 /// Opening a show the viewer is part way through leaves the page where it always opened, on the

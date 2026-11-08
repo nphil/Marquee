@@ -29,7 +29,7 @@ pub(super) fn drain_item_menu_requests<R: super::playback::PlaybackResources>(
     replaying: bool,
 ) {
     for req in bridge.take_item_menu_reqs() {
-        if replaying && matches!(req.act, plx_screens::item_menu::Action::DeleteMedia(_)) { continue; }
+        if replaying && matches!(req.act, plx_screens::item_menu::Action::DeleteMedia(..)) { continue; }
         unsafe { super::input::apply_item_action(ps, pa, req, pages, bridge, resources, menu_play_await, now); }
     }
 }
@@ -514,13 +514,11 @@ pub(crate) fn content_requests(app: &mut App, fr: &mut Frame) {
         &mut app.menu_play_await, fr.now, matches!(app.rec, super::recorder::Recplay::Replaying(_)));
     if let Some(completion) = app.bridge.delete_media.poll() {
         let sid = completion.sid;
-        if let Some((rk, kind)) = completion.deleted {
-            let scope = if kind == plx_plex::plex::delete_media::MediaKind::Show {
-                plx_data::viewstate::Scope::Show
-            } else {
-                plx_data::viewstate::Scope::Leaf
-            };
-            app.bridge.deleted_media(&plx_data::viewstate::ViewAt { sid, rk, scope });
+        // Every list drops the item (and what it took with it) now; the refresh below then reads
+        // the server's own answer, which a late read of the old state cannot undo (the ledger).
+        if let Some(deleted) = completion.deleted {
+            let endpoints = app.bridge.deleted_media(deleted.at(sid), deleted.watched);
+            super::bridge::execute_endpoint_outcomes(&mut app.pages, endpoints);
         }
         use plx_data::stores::browse::BrowseCmd;
         app.bridge.browse_run(BrowseCmd::ListingsChanged { sid, library_on_stack: false });

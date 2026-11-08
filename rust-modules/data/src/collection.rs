@@ -240,19 +240,38 @@ impl Default for CollectionState {
 }
 
 impl CollectionState {
-    pub(crate) fn deleted_media(&mut self, adapter: &CollectionAdapter, at: &crate::viewstate::ViewAt) -> bool {
+    /// `ViewEdit::Deleted` on the open collection. A listing that is read to its end drops the rows
+    /// [`ViewAt::deleted_row`] removes, counts the ones it only counts, and keeps the focus and the
+    /// restore target on the row they were on; one that is not is read again, since the rows it has
+    /// not got may hold the deleted item.
+    ///
+    /// Returns whether anything changed; the revision is the caller's ([`CollectionState::run`]).
+    fn deleted(&mut self, adapter: &CollectionAdapter, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+        use crate::viewstate::DeletedRow;
         let Some(c) = self.current.as_ref().filter(|c| c.id.sid == at.sid) else { return false };
         let loaded = c.pages.loaded_rows().count();
-        let found = c.pages.loaded_rows().any(|(_, row)| at.covers(row));
         if c.header_ready && !c.more && loaded == c.shown() {
-            if !found { return false; }
-            let removed_before = |index: usize| c.pages.loaded_rows()
-                .filter(|(i, row)| *i < index && at.covers(row)).count();
+            let mut rows = Vec::with_capacity(loaded);
+            let (mut counted, mut removed_at) = (Vec::new(), Vec::new());
+            for (index, row) in c.pages.loaded_rows() {
+                let mut row = row.clone();
+                match at.deleted_row(&mut row, watched) {
+                    DeletedRow::Remove => removed_at.push(index),
+                    DeletedRow::Counted => { counted.push((index, row.clone())); rows.push(row); }
+                    DeletedRow::Leave => rows.push(row),
+                }
+            }
+            if removed_at.is_empty() {
+                // Counts changed in place: no row moved, so the listing and its generation stand.
+                if counted.is_empty() { return false; }
+                let c = self.current.as_mut().unwrap();
+                for (index, row) in counted { c.pages.edit(index, |item| *item = row); }
+                return true;
+            }
+            let removed_before = |index: usize| removed_at.iter().filter(|&&i| i < index).count();
             let focus = c.focus.map(|i| i.saturating_sub(removed_before(i)));
             let restore = c.restore.map(|i| i.saturating_sub(removed_before(i)));
-            let rows: Vec<_> = c.pages.loaded_rows().filter(|(_, row)| !at.covers(row))
-                .map(|(_, row)| row.clone()).collect();
-            let removed = loaded - rows.len();
+            let removed = removed_at.len();
             self.supersede(adapter);
             let c = self.current.as_mut().unwrap();
             c.total = rows.len();
@@ -268,7 +287,6 @@ impl CollectionState {
             c.restore = restore.map(|i| i.min(c.total.saturating_sub(1)));
             c.status = if c.total == 0 { CollectionStatus::Empty } else { CollectionStatus::Ready };
             c.generation = self.generation;
-            self.revision += 1;
             return true;
         }
         let (id, want, key) = (c.id.clone(), c.wanted.end, c.client_key);
@@ -277,7 +295,6 @@ impl CollectionState {
         let mut fresh = Collection::loading(id, want, key, self.generation);
         (fresh.wanted, fresh.focus, fresh.restore) = (window, focus, restore);
         self.current = Some(fresh);
-        self.revision += 1;
         true
     }
     pub fn view(&self) -> CollectionView<'_> {
@@ -355,6 +372,9 @@ impl CollectionState {
             // The item menu's Mark watched/unwatched reaches every store that can be drawing the
             // item (`viewstate`'s fan-out); a member's disc must flip on this page too, not one
             // refetch later.
+            CollectionCmd::ApplyView { at, edit: crate::viewstate::ViewEdit::Deleted { watched } } => {
+                self.deleted(adapter, &at, watched)
+            }
             CollectionCmd::ApplyView { at, edit } => {
                 // A member has no deck to leave.
                 if let crate::viewstate::ViewEdit::LeftDeck = edit { return false }
@@ -476,8 +496,11 @@ impl CollectionState {
                 true
             }
             Landing::Page { start, got, mut pages, total } => {
-                // The read describes the server from when it was issued: edits published since
-                // are made again on its rows (`crate::viewledger`).
+                // The read describes the server from when it was issued: edits published since are
+                // made again on its rows (`crate::viewledger`). A deletion cannot be cut out of a page
+                // read at its own offset, so one that removes a row of the answer drops the answer and
+                // the same page is asked again.
+                if overtaken(&ledger, stamp, pages.iter_mut().flatten()) { return false; }
                 ledger.patch(stamp, pages.iter_mut().flatten());
                 // A page is read at its own offset: the frontier, or a re-read of a page whose
                 // count is known. Anything past the frontier was never asked for in order.
@@ -550,6 +573,24 @@ impl CollectionState {
         let Some(mail) = adapter.fetch.take() else { return false };
         mail.gen == self.generation && self.apply(mail.what)
     }
+}
+
+/// Does a deletion published after `stamp` remove a row of this answer? Rows it only counts are
+/// edited in place on the way, so an answer that stands carries the counts a held row has.
+fn overtaken<'a>(ledger: &crate::viewledger::ViewLedger, stamp: crate::viewledger::Stamp,
+    rows: impl Iterator<Item = &'a mut PmsMovie>) -> bool {
+    use crate::viewstate::{DeletedRow, ViewEdit};
+    let deletions: Vec<_> = ledger.since(stamp).into_iter()
+        .filter_map(|(at, edit)| if let ViewEdit::Deleted { watched } = edit { Some((at, watched)) } else { None })
+        .collect();
+    if deletions.is_empty() { return false }
+    let mut gone = false;
+    for m in rows {
+        for (at, watched) in &deletions {
+            gone |= at.deleted_row(m, *watched) == DeletedRow::Remove;
+        }
+    }
+    gone
 }
 
 /// What one request asks the server for. Serialized into the tape's admission record
@@ -813,16 +854,115 @@ mod tests {
         state.run_bare(&adapter, CollectionCmd::Window { wanted: 0..2, focus: Some(1), restore: None });
         let other = crate::viewstate::ViewAt::leaf(ServerId::UNSET, "99");
         let old = state.generation();
-        assert!(!state.deleted_media(&adapter, &other));
+        assert!(!delete(&mut state, &adapter, other, false));
         assert_eq!(state.view().current().unwrap().item(0).unwrap().rk, "10");
         let at = crate::viewstate::ViewAt::leaf(ServerId::UNSET, "10");
-        assert!(state.deleted_media(&adapter, &at));
+        assert!(delete(&mut state, &adapter, at, false));
         assert_ne!(state.generation(), old);
         assert_eq!(state.view().current().unwrap().item(0).unwrap().rk, "11");
         assert_eq!(state.view().current().unwrap().focus, Some(0));
         adapter.land(old, Landing::Header { rk: None, head: header("Stale", 2) });
         assert!(!state.take_landing_for_test(&adapter));
         assert_eq!(state.view().current().unwrap().item(0).unwrap().rk, "11");
+    }
+
+    fn delete(state: &mut CollectionState, adapter: &Arc<CollectionAdapter>, at: crate::viewstate::ViewAt,
+        watched: bool) -> bool {
+        state.run_bare(adapter, CollectionCmd::ApplyView { at, edit: crate::viewstate::ViewEdit::Deleted { watched } })
+    }
+
+    fn listed(rk: &str, kind: i32, show: &str, season: i32, leaves: Option<(u32, u32)>) -> PmsMovie {
+        PmsMovie { rk: rk.into(), sid: ServerId::UNSET, kind, show_rk: show.into(), season_index: season,
+            leaf_count: leaves.map(|l| l.0), viewed_leaf_count: leaves.map(|l| l.1), ..Default::default() }
+    }
+
+    fn ready_with(members: Vec<PmsMovie>) -> (CollectionState, Arc<CollectionAdapter>) {
+        let adapter = Arc::new(CollectionAdapter::default());
+        let mut state = CollectionState::default();
+        state.run_bare(&adapter, CollectionCmd::Open { target: set_target("50001", 7, "Set") });
+        state.install_for_test(members, CollectionStatus::Ready);
+        (state, adapter)
+    }
+
+    #[test]
+    fn a_deleted_show_takes_its_season_and_episode_members_with_it() {
+        let (mut state, adapter) = ready_with(vec![listed("10", 1, "", 0, None), listed("20", 2, "10", 1, None),
+            listed("21", 3, "10", 1, None), listed("30", 1, "", 0, None)]);
+        let at = crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "10".into(), scope: crate::viewstate::Scope::Show };
+        assert!(delete(&mut state, &adapter, at, false));
+        let c = state.view().current().unwrap();
+        assert_eq!((c.shown(), c.item(0).map(|m| m.rk.as_str())), (1, Some("30")));
+        assert_eq!(c.child_count, 1);
+    }
+
+    #[test]
+    fn a_deleted_episode_lowers_the_counts_of_the_show_member_without_moving_the_listing() {
+        let (mut state, adapter) = ready_with(vec![listed("10", 1, "", 0, Some((4, 3))), listed("11", 1, "", 0, Some((2, 2)))]);
+        let old = state.generation();
+        let at = crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "100".into(),
+            scope: crate::viewstate::Scope::Episode { show_rk: "10".into(), index: 1 } };
+        assert!(delete(&mut state, &adapter, at, true));
+        let c = state.view().current().unwrap();
+        let show = c.item(0).unwrap();
+        assert_eq!((show.leaf_count, show.viewed_leaf_count, show.watched, show.unwatched), (Some(3), Some(2), false, false));
+        assert_eq!(c.item(1).unwrap().leaf_count, Some(2), "another show is not this episode's");
+        assert_eq!(state.generation(), old, "nothing moved, so nothing is read again");
+    }
+
+    #[test]
+    fn a_show_member_that_held_only_the_deleted_episode_leaves_and_the_focus_follows() {
+        let (mut state, adapter) = ready_with(vec![listed("9", 1, "", 0, Some((3, 0))), listed("10", 1, "", 0, Some((1, 1))),
+            listed("11", 1, "", 0, Some((2, 0)))]);
+        state.run_bare(&adapter, CollectionCmd::Window { wanted: 0..3, focus: Some(2), restore: None });
+        let at = crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "100".into(),
+            scope: crate::viewstate::Scope::Episode { show_rk: "10".into(), index: 1 } };
+        assert!(delete(&mut state, &adapter, at, true));
+        let c = state.view().current().unwrap();
+        assert_eq!((c.shown(), c.item(1).map(|m| m.rk.as_str())), (2, Some("11")));
+        assert_eq!(c.focus, Some(1));
+    }
+
+    #[test]
+    fn a_deletion_that_reaches_no_member_changes_nothing() {
+        let (mut state, adapter) = ready_with(vec![listed("10", 1, "", 0, Some((4, 3)))]);
+        let old = state.generation();
+        let at = crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "100".into(),
+            scope: crate::viewstate::Scope::Episode { show_rk: "77".into(), index: 1 } };
+        assert!(!delete(&mut state, &adapter, at, true));
+        assert_eq!(state.generation(), old);
+        assert_eq!(state.view().current().unwrap().item(0).unwrap().leaf_count, Some(4));
+    }
+
+    #[test]
+    fn a_page_read_before_a_deletion_does_not_bring_the_member_back() {
+        let adapter = Arc::new(CollectionAdapter::default());
+        let mut state = CollectionState::default();
+        state.run_bare(&adapter, CollectionCmd::Open { target: set_target("50001", 7, "Set") });
+        let page = || Landing::Page { start: 0, got: 2, total: 2,
+            pages: vec![vec![listed("10", 1, "", 0, Some((4, 3))), listed("11", 1, "", 0, None)]] };
+        let at = crate::viewstate::ViewAt::leaf(ServerId::UNSET, "11");
+        state.stamp = state.ledger.stamp();
+        state.ledger.record(&at, crate::viewstate::ViewEdit::Deleted { watched: false });
+        assert!(!state.apply(page()), "the answer is dropped, the page is asked again");
+        assert!(state.view().current().unwrap().item(0).is_none());
+
+        state.stamp = state.ledger.stamp();
+        assert!(state.apply(page()), "a read issued after the deletion is the server's word");
+        assert_eq!(state.view().current().unwrap().item(1).unwrap().rk, "11");
+    }
+
+    #[test]
+    fn a_page_read_before_an_episode_deletion_lands_with_the_lower_counts() {
+        let adapter = Arc::new(CollectionAdapter::default());
+        let mut state = CollectionState::default();
+        state.run_bare(&adapter, CollectionCmd::Open { target: set_target("50001", 7, "Set") });
+        state.stamp = state.ledger.stamp();
+        state.ledger.record(&crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "100".into(),
+            scope: crate::viewstate::Scope::Episode { show_rk: "10".into(), index: 1 } },
+            crate::viewstate::ViewEdit::Deleted { watched: true });
+        assert!(state.apply(Landing::Page { start: 0, got: 1, total: 1,
+            pages: vec![vec![listed("10", 1, "", 0, Some((4, 3)))]] }));
+        assert_eq!(state.view().current().unwrap().item(0).unwrap().leaf_count, Some(3));
     }
 
     #[test]
@@ -836,7 +976,7 @@ mod tests {
         let old = state.generation();
         let at = crate::viewstate::ViewAt { sid: ServerId::UNSET, rk: "10".into(),
             scope: crate::viewstate::Scope::Show };
-        assert!(state.deleted_media(&adapter, &at));
+        assert!(delete(&mut state, &adapter, at, false));
         assert!(state.view().current().unwrap().item(0).is_none());
         adapter.land(old, Landing::Header { rk: None, head: header("Stale", 1) });
         assert!(!state.take_landing_for_test(&adapter));

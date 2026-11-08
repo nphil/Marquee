@@ -524,6 +524,24 @@ impl Stores {
         endpoints
     }
 
+    /// The server took a deletion (or found the item already gone): every store drops the rows the
+    /// change reaches and the show and season rows count one episode fewer
+    /// ([`crate::viewstate::ViewEdit::Deleted`]). The ledger records it as landed, so a read that
+    /// was out before this call and answers after it makes the removal again. The Hubs step settles
+    /// refused launches, so the endpoint refreshes it owes are returned for the caller to carry.
+    /// MAIN THREAD.
+    pub fn media_deleted(&mut self, at: crate::viewstate::ViewAt, watched: bool, directory: browse::DirectoryView<'_>,
+        clients: &plx_plex::plex::ClientKeys) -> EndpointRefreshSet {
+        let change = crate::viewstate::ViewChange {
+            sid: at.sid,
+            rk: at.rk,
+            scope: at.scope,
+            fact: crate::viewstate::ViewFact::Deleted { watched },
+        };
+        self.view_ledger.record(&change.at(), change.edit());
+        self.publish(change, directory, clients)
+    }
+
     fn publish(&mut self, change: crate::viewstate::ViewChange, directory: browse::DirectoryView<'_>,
         clients: &plx_plex::plex::ClientKeys) -> EndpointRefreshSet {
         self.watchlist.apply_view(&change);

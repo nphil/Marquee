@@ -53,6 +53,7 @@ use std::convert::Infallible;
 use std::os::raw::c_int;
 
 use plx_data::pms::{MediaVersion, PmsMovie};
+use plx_plex::plex::delete_media::MediaKind;
 use plx_media::route::DeckPress;
 use crate::registry::{tile_facts, RepeatGate, PANEL_REPEAT_MS};
 use crate::registry::{AppFx, AppLike, ItemMenuArg, ItemMenuKind, ItemMenuReq};
@@ -124,8 +125,10 @@ pub enum Action {
     /// Play this leaf's version `media`, resuming as Play does. The id, never a position: the app
     /// resolves it against the item it fetches (`plx_plex::plex::Metadata::media_version`).
     PlayVersion { rk: String, media: plx_plex::plex::MediaId },
-    /// Permanently delete the named item from its Plex server.
-    DeleteMedia(String),
+    /// Permanently delete the named item from its Plex server. The kind is the menu's own, from
+    /// the row it built the Delete row for, so the confirmation and the server call cannot
+    /// disagree about what is deleted (the detail page's on-deck episode menu carries no row).
+    DeleteMedia(String, MediaKind),
 }
 
 impl Action {
@@ -164,7 +167,7 @@ impl Action {
             | Action::RemoveFromDeck(rk)
             | Action::GoToCatalog(rk)
             | Action::WatchlistRemove(rk)
-            | Action::DeleteMedia(rk)
+            | Action::DeleteMedia(rk, _)
             | Action::ChooseVersion(rk) => rk,
             Action::PlayVersion { rk, .. } => rk,
             Action::PlayTrailer { rk, .. } => rk,
@@ -189,7 +192,7 @@ impl Action {
             Action::WatchlistAdd { .. } => 11,
             Action::ChooseVersion(_) => 12,
             Action::PlayVersion { .. } => 13,
-            Action::DeleteMedia(_) => 14,
+            Action::DeleteMedia(..) => 14,
         };
         c.u32(tag).str(self.rk());
         if let Action::WatchlistAdd { hex } = self {
@@ -327,7 +330,7 @@ fn build_with(
     deck_press: DeckPress,
     trailer: Option<&plx_data::metadata::Extra>,
 ) -> ItemForm {
-    build_card(m, from_deck, deck_press, trailer, None, None)
+    build_card(m, from_deck, deck_press, trailer, None, None, true)
 }
 
 /// `deck_press` is the Continue Watching setting. It changes this menu for a card FROM the deck
@@ -341,6 +344,9 @@ fn build_with(
 ///
 /// `watchlist_guid` is set for the Watchlist grid's hold menu (plan §1.9, "Card kind + Remove"):
 /// the destructive Remove from Watchlist row follows the card's own rows.
+///
+/// `can_delete` is the server's answer, captured when the menu opened ([`ItemMenuArg::can_delete`]):
+/// the Delete row is offered only where the server can act on it.
 fn build_card(
     m: &PmsMovie,
     from_deck: bool,
@@ -348,6 +354,7 @@ fn build_card(
     trailer: Option<&plx_data::metadata::Extra>,
     watchlist_guid: Option<&str>,
     face: Option<&watchlist::Face>,
+    can_delete: bool,
 ) -> ItemForm {
     let leaf = m.kind == 0 || m.kind == 3;
     let opens_details = from_deck && !deck_press.press_plays();
@@ -456,14 +463,27 @@ fn build_card(
         // face adds Add / Remove, last, with the one other destructive row.
         sec = watchlist::push_face(sec, face);
     }
-    if matches!(m.kind, 0 | 1 | 3) && !m.rk.is_empty() {
-        sec = delete_row(sec, &m.rk);
+    if can_delete && !m.rk.is_empty() {
+        if let Some(kind) = delete_kind(m.kind) {
+            sec = delete_row(sec, &m.rk, kind);
+        }
     }
     Form::new().section(sec)
 }
 
-fn delete_row(sec: FormSection<ItemRow, Action, Infallible>, rk: &str) -> FormSection<ItemRow, Action, Infallible> {
-    sec.item(ItemRow::DeleteMedia, RowKind::Button, Action::DeleteMedia(rk.to_owned()),
+/// What a card row of `kind` is, as far as deletion goes: a movie, a show or an episode. A season
+/// (2) has no Delete row.
+fn delete_kind(kind: i32) -> Option<MediaKind> {
+    match kind {
+        0 => Some(MediaKind::Movie),
+        1 => Some(MediaKind::Show),
+        3 => Some(MediaKind::Episode),
+        _ => None,
+    }
+}
+
+fn delete_row(sec: FormSection<ItemRow, Action, Infallible>, rk: &str, kind: MediaKind) -> FormSection<ItemRow, Action, Infallible> {
+    sec.item(ItemRow::DeleteMedia, RowKind::Button, Action::DeleteMedia(rk.to_owned(), kind),
         Row::new(plx_platform::i18n::msg::settings_delete()).licon(Icon::Close).destructive(true))
 }
 
@@ -566,10 +586,10 @@ fn state_rows(
 /// episode two ways — and with no nav group there is no separator either ([`build`]'s rule: the
 /// divider only exists when there is a group above it). An episode is a LEAF, so all three states are
 /// reachable and a part-watched one gets the pair, exactly as a shelf card does.
-fn build_episode(rk: &str, mark: PosterMark, versions: &[MediaVersion], face: Option<&watchlist::Face>) -> ItemForm {
+fn build_episode(rk: &str, mark: PosterMark, versions: &[MediaVersion], face: Option<&watchlist::Face>, can_delete: bool) -> ItemForm {
     let sec = state_rows(FormSection::new(""), rk, mark, true, versions.len() >= 2, None, "");
     let sec = watchlist::push_face(sec, face);
-    Form::new().section(if rk.is_empty() { sec } else { delete_row(sec, rk) })
+    Form::new().section(if rk.is_empty() || !can_delete { sec } else { delete_row(sec, rk, MediaKind::Episode) })
 }
 
 /// The Watchlist grid's hold menu (plan §1.9): [`self::hold::rows_for`] bound to
@@ -685,7 +705,9 @@ pub struct ItemMenuScreen {
     face: Option<watchlist::Face>,
     alert: DecisionAlert,
     alert_frames: Cell<Option<(Rect, Rect)>>,
-    pending_delete: Option<String>,
+    /// The item awaiting the confirmation, and what it is. The kind follows from the row, so only
+    /// the key is part of the canonical state.
+    pending_delete: Option<(String, MediaKind)>,
 }
 
 /// Play Trailer only when the already-loaded Detail is this movie/show and already has a trailer.
@@ -739,9 +761,10 @@ impl ItemMenuScreen {
                 let trailer = cached_trailer(self.arg.sid, row, meta);
                 // A Watchlist tile with a reachable copy is a card of that copy, and Remove joins it.
                 let remove = self.arg.catalog.as_ref().map(|c| c.guid.as_str());
-                build_card(row, *from_deck, plx_media::route::deck_press(), trailer.as_ref(), remove, self.face.as_ref())
+                build_card(row, *from_deck, plx_media::route::deck_press(), trailer.as_ref(), remove, self.face.as_ref(), self.arg.can_delete)
             }
-            ItemMenuKind::Episode { mark, versions, .. } => build_episode(&self.arg.rk, *mark, versions, self.face.as_ref()),
+            ItemMenuKind::Episode { mark, versions, .. } =>
+                build_episode(&self.arg.rk, *mark, versions, self.face.as_ref(), self.arg.can_delete),
             ItemMenuKind::Season { mark, .. } => build_season(&self.arg.rk, *mark, self.face.as_ref()),
             ItemMenuKind::Catalog { state } => {
                 let guid = self.arg.catalog.as_ref().map_or("", |c| c.guid.as_str());
@@ -794,20 +817,21 @@ impl ItemMenuScreen {
             self.show_versions(rk);
             return;
         }
-        if let Some(Action::DeleteMedia(rk)) = &act {
+        if let Some(Action::DeleteMedia(rk, kind)) = &act {
             if !rk.is_empty() {
-                let (name, scope) = match &self.arg.kind {
-                    ItemMenuKind::Card { row, .. } => (row.title.as_str(), match row.kind {
-                        0 => "This movie and its media files will be permanently deleted from the server.",
-                        1 => "This show, all its seasons and episodes, and their media files will be permanently deleted from the server.",
-                        _ => "This episode and its media files will be permanently deleted from the server.",
-                    }),
-                    ItemMenuKind::Episode { title, .. } => (title.as_str(), "This episode and its media files will be permanently deleted from the server."),
+                let name = match &self.arg.kind {
+                    ItemMenuKind::Card { row, .. } => row.title.as_str(),
+                    ItemMenuKind::Episode { title, .. } => title.as_str(),
                     _ => return,
+                };
+                let scope = match kind {
+                    MediaKind::Movie => "This movie and its media files will be permanently deleted from the server.",
+                    MediaKind::Show => "This show, all its seasons and episodes, and their media files will be permanently deleted from the server.",
+                    MediaKind::Episode => "This episode and its media files will be permanently deleted from the server.",
                 };
                 let name = if name.trim().is_empty() { "Untitled item" } else { name };
                 self.alert.open_card(c"Delete media?", vec![Cow::Owned(name.to_owned()), Cow::Borrowed(scope)], Answers::Two);
-                self.pending_delete = Some(rk.clone());
+                self.pending_delete = Some((rk.clone(), *kind));
                 if let Some(i) = self.form.index_of_key(RowKey(elem)) { self.form.table.sel = i as i32; }
                 let to = fx.from();
                 crate::registry::enter_group(fx, to, ALERT_GROUP);
@@ -822,7 +846,7 @@ impl ItemMenuScreen {
         self.alert.dismiss();
         let pending = self.pending_delete.take();
         if confirm {
-            self.dispatch(pending.map(Action::DeleteMedia), fx);
+            self.dispatch(pending.map(|(rk, kind)| Action::DeleteMedia(rk, kind)), fx);
         } else {
             let to = fx.from();
             fx.push(Fx::Deliver(to, plx_machine::machine::Delivery::Screen(ScreenEvent::Enter(
@@ -1166,7 +1190,7 @@ impl LogicalState for ItemMenuScreen {
             c.option(self.form.binding_at(i).map(|b| &b.action), |c, a| a.write(c));
         }
         c.u32(self.form.table.sel as u32);
-        c.option(self.pending_delete.as_ref(), |c, rk| { c.str(rk); });
+        c.option(self.pending_delete.as_ref(), |c, (rk, _)| { c.str(rk); });
         c.u32(self.alert.is_open() as u32).u32((self.alert.choice() == Choice::Destructive) as u32);
         c.u32(self.alert.scroll_target_bits());
         self.form.table.write_motion(c);
@@ -1242,7 +1266,7 @@ mod tests {
         built(super::build_with(m, from_deck, mode, None))
     }
     fn build_episode(rk: &str, mark: PosterMark) -> Built {
-        built(super::build_episode(rk, mark, &[], None))
+        built(super::build_episode(rk, mark, &[], None, true))
     }
     fn build_season(rk: &str, mark: PosterMark) -> Built {
         built(super::build_season(rk, mark, None))
@@ -1910,6 +1934,7 @@ mod tests {
                 from_home: false,
                 catalog: None,
                 watchlist: None,
+                can_delete: true,
             },
         );
         strip.build_rows(test_store().view());
@@ -1944,6 +1969,7 @@ mod tests {
                 from_home: false,
                 catalog: None,
                 watchlist: None,
+                can_delete: false,
             },
         );
         tab.build_rows(test_store().view());
@@ -2175,6 +2201,7 @@ mod tests {
             from_home: true,
             catalog: None,
             watchlist: None,
+            can_delete: true,
         }
     }
 
@@ -2460,8 +2487,8 @@ mod tests {
             let container = PmsMovie { versions: sample_versions(), ..item(kind, PosterMark::None) };
             assert!(!build(&container, false).offers(ItemRow::PlayVersion), "kind {kind}");
         }
-        assert!(!built(super::build_episode("1", PosterMark::None, &[], None)).offers(ItemRow::PlayVersion));
-        assert!(built(super::build_episode("1", PosterMark::None, &sample_versions(), None)).offers(ItemRow::PlayVersion));
+        assert!(!built(super::build_episode("1", PosterMark::None, &[], None, true)).offers(ItemRow::PlayVersion));
+        assert!(built(super::build_episode("1", PosterMark::None, &sample_versions(), None, true)).offers(ItemRow::PlayVersion));
     }
 
     /// Play Version… does not leave the panel: it becomes the version list, and a version row
@@ -2471,7 +2498,7 @@ mod tests {
         let m = versioned(3);
         let mut s = ItemMenuScreen::new(EntryId(7), card_arg(&m, false));
         s.built = true;
-        s.form.set(build_card(&m, false, DeckPress::Play, None, None, None), None);
+        s.form.set(build_card(&m, false, DeckPress::Play, None, None, None, true), None);
         let choose = first_action(&s, |a| matches!(a, Action::ChooseVersion(_)));
         let mut out = Vec::new();
         let mut present = plx_machine::present::Present::new();
@@ -2533,7 +2560,7 @@ mod tests {
     #[test]
     fn a_playable_catalog_hold_menu_is_the_card_menu_plus_remove() {
         let movie = item(0, PosterMark::None);
-        let menu = built(super::build_card(&movie, false, DeckPress::Play, None, Some("plex://movie/abc"), None));
+        let menu = built(super::build_card(&movie, false, DeckPress::Play, None, Some("plex://movie/abc"), None, true));
         let ids = menu.ids();
         for row in [ItemRow::GoToItem, ItemRow::MarkWatched, ItemRow::PlayFromStart] {
             assert!(ids.contains(&row), "the card's {row:?} row is there: {ids:?}");
@@ -2580,16 +2607,37 @@ mod tests {
     }
     #[test]
     fn delete_is_only_offered_for_addressable_media() {
-        for kind in [0, 1, 3] {
+        for (kind, deletes) in [(0, MediaKind::Movie), (1, MediaKind::Show), (3, MediaKind::Episode)] {
             let menu = build(&item(kind, PosterMark::None), false);
             assert!(menu.offers(ItemRow::DeleteMedia));
             assert!(menu.is_destructive(ItemRow::DeleteMedia));
-            assert_eq!(menu.action(ItemRow::DeleteMedia), Action::DeleteMedia("42".into()));
+            assert_eq!(menu.action(ItemRow::DeleteMedia), Action::DeleteMedia("42".into(), deletes));
         }
         assert!(!build(&item(2, PosterMark::None), false).offers(ItemRow::DeleteMedia));
         assert!(!build_episode("", PosterMark::None).offers(ItemRow::DeleteMedia));
         assert!(build_episode("77", PosterMark::None).offers(ItemRow::DeleteMedia));
         assert!(!build_season("77", PosterMark::None).offers(ItemRow::DeleteMedia));
+    }
+
+    #[test]
+    fn delete_is_offered_only_where_the_server_can_act_on_it() {
+        let card = |kind, can_delete| {
+            built(super::build_card(&item(kind, PosterMark::None), false, DeckPress::Play, None, None, None, can_delete))
+        };
+        for kind in [0, 1, 3] {
+            let (on, off) = (card(kind, true), card(kind, false));
+            assert!(on.offers(ItemRow::DeleteMedia) && !off.offers(ItemRow::DeleteMedia), "kind {kind}");
+            assert_eq!(on.ids().len(), off.ids().len() + 1, "kind {kind}: Delete is the only row the answer removes");
+        }
+        let strip = |can_delete| built(super::build_episode("77", PosterMark::None, &[], None, can_delete));
+        assert!(strip(true).offers(ItemRow::DeleteMedia) && !strip(false).offers(ItemRow::DeleteMedia));
+        // the menu itself builds from the answer captured when it opened
+        for can_delete in [true, false] {
+            let arg = ItemMenuArg { can_delete, ..card_arg(&item(0, PosterMark::None), false) };
+            let mut screen = ItemMenuScreen::new(EntryId(7), arg);
+            screen.build_rows(test_store().view());
+            assert_eq!(screen.form.index_of_key(ItemRow::DeleteMedia.key()).is_some(), can_delete);
+        }
     }
 
     #[test]
@@ -2632,7 +2680,7 @@ mod tests {
         }
         let requests: Vec<_> = out.iter().filter_map(|e| match &e.fx { Fx::App(AppFx::ItemMenu(r)) => Some(r), _ => None }).collect();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].act, Action::DeleteMedia("42".into()));
+        assert_eq!(requests[0].act, Action::DeleteMedia("42".into(), MediaKind::Movie));
         assert_eq!(requests[0].sid, movie.sid);
     }
 
@@ -2689,7 +2737,9 @@ mod tests {
         assert_eq!(screen.alert.body_for_test()[0], "The episode");
         assert!(screen.alert.body_for_test()[1].contains("This episode"));
         screen.answer_delete::<HostFixture>(true, &mut fx);
-        assert!(out.iter().any(|e| matches!(&e.fx, Fx::App(AppFx::ItemMenu(req)) if req.act == Action::DeleteMedia("episode-77".into()))));
+        assert!(out.iter().any(|e| matches!(&e.fx, Fx::App(AppFx::ItemMenu(req))
+            if req.act == Action::DeleteMedia("episode-77".into(), MediaKind::Episode) && !req.loaded_episode && req.item.is_none())),
+            "an on-deck episode's menu carries neither a row nor the loaded flag, so the action alone says what is deleted");
     }
     #[test]
     fn long_delete_disclosure_scrolls_without_selecting_delete() {

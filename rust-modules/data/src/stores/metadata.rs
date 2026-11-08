@@ -79,8 +79,10 @@
 //!   (`pump_related`, at the start of the frame, installs the window it lands).
 //! - `SeekRelated{at, seen}` → `metadata::ask_related` with `RelatedAsk::Seek` — the same job, opened at a tail position.
 //! - `SetNowPlaying(Option<NowPlaying>)` → `metadata::set_now_playing`.
-//! - `ApplyView{at, edit}` → `metadata::set_watched_local` — the optimistic half of a view-state
-//!   change, answers whether it actually changed anything.
+//! - `ApplyView{at, edit}` → the optimistic half of a view-state change on the loaded page
+//!   (`metadata::set_watched_local`; `metadata::deleted_local` for a `Deleted`), answers whether it
+//!   actually changed anything. A deletion of the page's own item empties the page, and
+//!   `MetadataView::deleted` then says whose it was.
 //! - `InstallPlaying(Option<PlayingItem>)` → `metadata::install_playing` — the playback plan's leaf
 //!   (`route.rs`).
 //! - `MarkSkipped(Marker)` → `metadata::mark_skipped`.
@@ -577,5 +579,60 @@ mod view_edit_notice_tests {
         assert!(!apply(&mut store, "elsewhere", facts));
         assert_eq!(store.take_notice(), None, "an item nothing here draws raises none either");
         crate::metadata::install_for_test(store.state_mut(), None);
+    }
+
+    /// The server's deletion of an item raises a notice only when the page held it. When the page's
+    /// own item is the one deleted the page lets go of it and the view says why, so a screen showing
+    /// it can leave instead of waiting for a read that will not come.
+    #[test]
+    fn a_deleted_item_raises_a_notice_and_a_deleted_page_says_why() {
+        let _serial = plx_base::testlock::serial();
+        let sid = plx_plex::plex::ServerId::UNSET;
+        let mut store = MetadataStore::default();
+        let tile = |rk: &str| Related { sid, rk: rk.into(), unwatched: true, ..Default::default() };
+        crate::metadata::install_for_test(store.state_mut(), Some(Detail {
+            sid, rk: "film".into(), kind: "movie".into(), related: vec![tile("r0"), tile("r1")], ..Default::default()
+        }));
+        let _ = store.take_notice();
+        let delete = |store: &mut MetadataStore, rk: &str| {
+            let at = ViewAt::leaf(sid, rk);
+            let edit = ViewEdit::Deleted { watched: false };
+            store.state().ledger.record(&at, edit);
+            store.run(MetadataCmd::ApplyView { at, edit })
+        };
+
+        assert!(delete(&mut store, "r1"));
+        assert!(store.take_notice().is_some(), "a tile that left the shelf is news");
+        assert_eq!(store.view().current().unwrap().related.len(), 1);
+        assert!(!delete(&mut store, "r1"));
+        assert_eq!(store.take_notice(), None, "a tile that already left raises none");
+        assert!(!store.view().deleted(sid, "film"));
+
+        assert!(delete(&mut store, "film"));
+        assert!(store.take_notice().is_some(), "an emptied page is news");
+        assert!(store.view().current().is_none(), "the page lets go of the item");
+        assert!(store.view().deleted(sid, "film"), "and says it was deleted");
+        assert!(!store.view().deleted(sid, "other"));
+    }
+
+    /// The read of the page was out when its item was deleted: it lands on nothing, and the page is
+    /// as empty and as deleted as if the deletion had found it loaded. Finishing the read is the
+    /// news that wakes the screen, though no page was installed.
+    #[test]
+    fn a_read_landing_after_the_deletion_of_its_own_item_leaves_the_page_empty_and_deleted() {
+        use plx_machine::job::Port;
+        let _serial = plx_base::testlock::serial();
+        let sid = plx_plex::plex::ServerId::UNSET;
+        let mut store = MetadataStore::default();
+        store.run(MetadataCmd::RequestDetail { sid, rk: "film".into() });
+        let super::super::StoreJob::Detail(job, port) = store.take_jobs().pop().unwrap() else { panic!("detail job") };
+        let _ = store.take_notice();
+        store.state().ledger.record(&ViewAt::leaf(sid, "film"), ViewEdit::Deleted { watched: false });
+        port.done(job.addr, ((sid, "film".into()), Some(Detail { sid, rk: "film".into(), ..Default::default() })));
+        assert!(store.pump_detail());
+        assert!(store.take_notice().is_some());
+        assert!(store.view().current().is_none());
+        assert!(store.view().deleted(sid, "film"));
+        assert!(!store.view().detail_loading());
     }
 }

@@ -3,6 +3,7 @@
 use super::*;
 #[allow(unused_imports)]
 use super::test_support::*;
+use super::test_support::land;
 
 /// Every appearance of the item flips, deck and shelves alike — a home screen that marked one
 /// of them and not the other would be two answers about one film on one screen. And the resume
@@ -378,5 +379,241 @@ fn facts_that_change_no_row_are_not_a_hit_but_facts_that_differ_are() {
     assert!(b.cw[0].m.watched && b.shelves[0].items[0].watched);
     assert_eq!(b.cw[0].m.resume_ms, 0);
     assert!(!apply_edit(&mut b, &leaf, watched), "the same facts again change nothing: no hit");
+    reset(&mut o.state, &o.adapter);
+}
+
+/// The card for an episode of show `show`, season `season`, as the hubs hold it.
+fn episode_card(rk: &str, show: &str, season: i32) -> Arc<PmsMovie> {
+    Arc::new(PmsMovie { kind: KIND_EPISODE, show_rk: show.into(), season_index: season, ..(*started(0, rk)).clone() })
+}
+
+/// A show (`KIND_SHOW`) or season (`KIND_SEASON`) card holding `leaves` episodes, `viewed` of them
+/// watched, with the flags `parse_item` derives from those counts.
+fn container_card(rk: &str, kind: i32, show: &str, season: i32, leaves: u32, viewed: u32) -> Arc<PmsMovie> {
+    Arc::new(PmsMovie {
+        kind, show_rk: show.into(), season_index: season,
+        leaf_count: Some(leaves), viewed_leaf_count: Some(viewed),
+        watched: viewed >= leaves, unwatched: viewed == 0,
+        ..(*row(0, rk)).clone()
+    })
+}
+
+fn deleted(watched: bool) -> ViewEdit { ViewEdit::Deleted { watched } }
+
+fn episode_at(rk: &str, show: &str, index: i64) -> ViewAt {
+    ViewAt { sid: sid(0), rk: rk.into(), scope: crate::viewstate::Scope::Episode { show_rk: show.into(), index } }
+}
+
+fn deck_of(cw: &[CwItem]) -> Vec<&str> { cw.iter().map(|c| c.m.rk.as_str()).collect() }
+
+fn items_of(s: &Shelf) -> Vec<&str> { s.items.iter().map(|m| m.rk.as_str()).collect() }
+
+/// A lane the deck has been placed on, holding `cw` as its rows.
+fn placed_lane(cw: &[CwItem]) -> deck::Lane {
+    let mut lanes = [deck::Lane::preview("", "", cw.len(), cw.len(), true)];
+    deck::place(&mut lanes, &[cw]);
+    let [lane] = lanes;
+    lane
+}
+
+/// A confirmed deletion takes the item off the deck, the lane behind it and every shelf, and a
+/// shelf that lost a row closes up exactly as the server's listing did: later positions, the
+/// window's end and the listing's total all drop by one, so the next page read does not skip a row.
+/// A shelf left empty stays a shelf, and a card that stays is not copied.
+#[test]
+fn a_deleted_item_leaves_the_deck_the_lane_and_every_shelf() {
+    let _g = plx_base::testlock::serial();
+    let cw = vec![CwItem { last_viewed_at: 9, m: started(0, "7"), position: 0 },
+        CwItem { last_viewed_at: 8, m: started(0, "8"), position: 0 }];
+    let mut recent = shelf(0, "Recently Added", "home.movies.recent", &["a", "7", "b", "c"]);
+    (recent.positions, recent.total, recent.offset, recent.end, recent.more) = (vec![10, 11, 12, 13], 20, 10, 14, true);
+    let only = shelf(0, "Only Seven", "home.only", &["7"]);
+    let mut b = SourceBuild { lane: placed_lane(&cw), cw, shelves: vec![recent, only] };
+    let before = b.clone();
+
+    assert!(apply_edit(&mut b, &ViewAt::leaf(sid(0), "7"), deleted(false)));
+
+    assert_eq!(deck_of(&b.cw), ["8"]);
+    assert_eq!(deck_of(&b.lane.rows), ["8"], "the lane drops it too");
+    assert_eq!((b.lane.rows[0].position, b.lane.total), (0, 1), "and closes up over it");
+    let s = &b.shelves[0];
+    assert_eq!(items_of(s), ["a", "b", "c"]);
+    assert_eq!(s.positions, [10, 11, 12], "the rows behind the removed one close up");
+    assert_eq!((s.total, s.offset, s.end, s.more), (19, 10, 13, true));
+    assert_eq!(b.shelves.len(), 2, "a shelf that emptied stays a shelf");
+    assert!(b.shelves[1].items.is_empty() && b.shelves[1].positions.is_empty());
+    assert!(Arc::ptr_eq(&b.cw[0].m, &before.cw[1].m), "a deck card that stays is not copied");
+    assert!(Arc::ptr_eq(&s.items[0], &before.shelves[0].items[0]), "nor a shelf card");
+
+    let mut elsewhere = before.clone();
+    assert!(!apply_edit(&mut elsewhere, &ViewAt::leaf(sid(0), "not-on-home"), deleted(false)));
+    assert!(!apply_edit(&mut elsewhere, &ViewAt::leaf(sid(1), "7"), deleted(false)), "another server's 7");
+    assert_eq!((elsewhere.cw.len(), elsewhere.shelves[0].items.len()), (2, 4), "nothing moved");
+}
+
+/// A deleted show takes every card of its episodes and seasons, a deleted season the episodes of
+/// that season only; another show's cards stay in both.
+#[test]
+fn a_deleted_show_or_season_takes_the_cards_under_it() {
+    let _g = plx_base::testlock::serial();
+    let rows = || {
+        let mut recent = shelf(0, "Recently Aired", "home.tv.recent", &[]);
+        recent.items = vec![container_card("S", KIND_SHOW, "", 0, 10, 4), episode_card("e21", "S", 2),
+            episode_card("e12", "S", 1), container_card("S2", KIND_SEASON, "S", 2, 5, 0), episode_card("t11", "T", 1)];
+        recent.positions = (0..5).collect();
+        SourceBuild { lane: Default::default(),
+            cw: vec![CwItem { last_viewed_at: 9, m: episode_card("e11", "S", 1), position: 0 },
+                CwItem { last_viewed_at: 8, m: episode_card("t11", "T", 1), position: 1 }],
+            shelves: vec![recent] }
+    };
+
+    let mut b = rows();
+    let show = ViewAt { sid: sid(0), rk: "S".into(), scope: crate::viewstate::Scope::Show };
+    assert!(apply_edit(&mut b, &show, deleted(false)));
+    assert_eq!(deck_of(&b.cw), ["t11"]);
+    assert_eq!(items_of(&b.shelves[0]), ["t11"], "the show, its episodes and its season are gone");
+    assert_eq!(b.shelves[0].positions, [0], "the survivor is addressed from the top");
+
+    let mut b = rows();
+    let season = ViewAt { sid: sid(0), rk: "S2".into(), scope: crate::viewstate::Scope::Season { show_rk: "S".into(), index: 2 } };
+    assert!(apply_edit(&mut b, &season, deleted(true)));
+    assert_eq!(deck_of(&b.cw), ["e11", "t11"], "season 1's card stays on the deck");
+    assert_eq!(items_of(&b.shelves[0]), ["S", "e12", "t11"]);
+}
+
+/// A deleted episode lowers the episode counts of its show and season where those are on a shelf:
+/// the viewed count too when the episode was watched, the flags follow, and a show or season that
+/// held only that episode goes. Cards the episode does not belong to are left as they are.
+#[test]
+fn a_deleted_episode_lowers_the_counts_of_its_show_and_season() {
+    let _g = plx_base::testlock::serial();
+    let build = |show: Arc<PmsMovie>, season: Arc<PmsMovie>| {
+        let mut recent = shelf(0, "Recently Aired", "home.tv.recent", &[]);
+        recent.items = vec![show.clone(), season, container_card("S2", KIND_SEASON, "S", 2, 5, 5),
+            episode_card("e11", "S", 1), container_card("T", KIND_SHOW, "", 0, 4, 0)];
+        recent.positions = (0..5).collect();
+        (recent.total, recent.end) = (5, 5);
+        SourceBuild { lane: Default::default(),
+            cw: vec![CwItem { last_viewed_at: 9, m: show, position: 0 },
+                CwItem { last_viewed_at: 8, m: episode_card("e11", "S", 1), position: 1 }],
+            shelves: vec![recent] }
+    };
+    let at = episode_at("e11", "S", 1);
+
+    let mut b = build(container_card("S", KIND_SHOW, "", 0, 10, 4), container_card("S1", KIND_SEASON, "S", 1, 3, 2));
+    let before = b.clone();
+    assert!(apply_edit(&mut b, &at, deleted(true)));
+    let s = &b.shelves[0];
+    assert_eq!(items_of(s), ["S", "S1", "S2", "T"], "only the episode itself leaves");
+    let counts = |m: &PmsMovie| (m.leaf_count, m.viewed_leaf_count, m.watched, m.unwatched);
+    assert_eq!(counts(&s.items[0]), (Some(9), Some(3), false, false), "a watched episode lowers both counts");
+    assert_eq!(counts(&s.items[1]), (Some(2), Some(1), false, false));
+    assert_eq!(counts(&b.cw[0].m), (Some(9), Some(3), false, false), "the deck's card of the show too");
+    assert!(Arc::ptr_eq(&s.items[2], &before.shelves[0].items[2]), "another season is not copied");
+    assert!(Arc::ptr_eq(&s.items[3], &before.shelves[0].items[4]), "nor another show");
+    assert_eq!((s.total, s.end), (4, 4), "a counted card stays in the listing; the episode does not");
+    assert_eq!(deck_of(&b.cw), ["S"]);
+
+    let mut b = build(container_card("S", KIND_SHOW, "", 0, 10, 4), container_card("S1", KIND_SEASON, "S", 1, 3, 2));
+    assert!(apply_edit(&mut b, &at, deleted(false)));
+    let s = &b.shelves[0];
+    assert_eq!(counts(&s.items[0]), (Some(9), Some(4), false, false), "an unwatched episode leaves the viewed count");
+    assert_eq!(counts(&s.items[1]), (Some(2), Some(2), true, false), "and a season left all watched reads watched");
+
+    let mut b = build(container_card("S", KIND_SHOW, "", 0, 1, 1), container_card("S1", KIND_SEASON, "S", 1, 1, 1));
+    assert!(apply_edit(&mut b, &at, deleted(true)));
+    assert_eq!(items_of(&b.shelves[0]), ["S2", "T"], "a show and a season that held only that episode go");
+    assert_eq!((b.shelves[0].total, b.shelves[0].positions.clone()), (2, vec![0, 1]));
+    assert!(b.cw.is_empty());
+
+    let mut b = SourceBuild { lane: Default::default(), cw: Vec::new(),
+        shelves: vec![shelf(0, "Top", "home.top", &["x"])] };
+    assert!(!apply_edit(&mut b, &at, deleted(true)), "no card of the episode's show or season is on screen");
+}
+
+/// The Home catalog is rebuilt from the edited projection: the card leaves the deck and the shelves
+/// behind it still name their own items, the copy facts of the removed card go with it (a newest
+/// card leaves its copy outside the span the lane still holds), and what a quiet read staged carries
+/// the deletion when it lands. An item on no shelf commits nothing.
+#[test]
+fn a_deleted_item_is_gone_from_home_and_from_what_a_quiet_read_staged() {
+    let _g = plx_base::testlock::serial();
+    let mut o = Owner::default();
+    reset(&mut o.state, &o.adapter);
+    let grouped = |rk: &str, guid: u8| Arc::new(PmsMovie { show_guid: Some([guid; 12]), ..(*episode_card(rk, rk, 1)).clone() });
+    let cw = vec![CwItem { last_viewed_at: 9, m: grouped("e1", 1), position: 0 },
+        CwItem { last_viewed_at: 8, m: grouped("e2", 2), position: 0 }];
+    let build = SourceBuild { lane: placed_lane(&cw), cw,
+        shelves: vec![shelf(0, "Recently Added", "home.movies.recent", &["a", "e1", "b"])] };
+    seed(&mut o.state, vec![src(0, "", HubState::Ready, Some(build.clone()))]);
+    o.state.srcs[0].staged = Some(build);
+    assert_eq!(o.state.srcs[0].copies.rks(), ["e1", "e2"], "premise: the facts hold both cards");
+
+    assert!(edit_item(&mut o.state, &ViewAt::leaf(sid(0), "e1"), deleted(false)));
+
+    assert_eq!(rks(&o.state, 0), ["e2"]);
+    assert_eq!(rks(&o.state, 1), ["a", "b"], "the shelf behind the deck still names its own items");
+    assert_eq!(o.state.srcs[0].copies.rks(), ["e2"], "the removed card's fact is gone with it");
+    let staged = o.state.srcs[0].staged.as_ref().unwrap();
+    assert_eq!(deck_of(&staged.cw), ["e2"]);
+    assert_eq!(items_of(&staged.shelves[0]), ["a", "b"]);
+
+    assert!(!edit_item(&mut o.state, &ViewAt::leaf(sid(0), "not-on-home"), deleted(false)));
+    assert_eq!(hub_len(&o.state, 1), 2, "Home is exactly as it was");
+    reset(&mut o.state, &o.adapter);
+}
+
+/// A hub read issued before the deletion and landing after it describes the server from before:
+/// it must not bring the row back, on the deck or on a shelf, nor leave a show's count stale.
+#[test]
+fn a_hub_read_issued_before_a_deletion_lands_without_the_row() {
+    let _g = plx_base::testlock::serial();
+    let mut s = Src::new(sid(0), String::new(), &registry_keys_for_test());
+    s.stamp = s.ledger.stamp(); // the read goes out…
+    let gone = s.ledger.record(&ViewAt::leaf(sid(0), "7"), deleted(false)); // …then the deletion is confirmed
+    s.ledger.record(&episode_at("e1", "S", 1), deleted(true));
+    let mut brought = SourceBuild { lane: Default::default(),
+        cw: vec![CwItem { last_viewed_at: 9, m: started(0, "7"), position: 0 },
+            CwItem { last_viewed_at: 8, m: started(0, "8"), position: 1 }],
+        shelves: vec![{
+            let mut recent = shelf(0, "Recently Added", "home.movies.recent", &[]);
+            recent.items = vec![row(0, "7"), row(0, "8"), episode_card("e1", "S", 1), container_card("S", KIND_SHOW, "", 0, 4, 3)];
+            recent.positions = (0..4).collect();
+            recent
+        }] };
+
+    replay_since_request(&s, &mut brought);
+
+    assert_eq!(deck_of(&brought.cw), ["8"]);
+    assert_eq!(items_of(&brought.shelves[0]), ["8", "S"]);
+    assert_eq!(brought.shelves[0].positions, [0, 1]);
+    let show = &brought.shelves[0].items[1];
+    assert_eq!((show.leaf_count, show.viewed_leaf_count), (Some(3), Some(2)), "the show's count lost the episode");
+
+    s.ledger.landed(gone); // the server has taken the deletion…
+    s.stamp = s.ledger.stamp(); // …and a read issued after that carries it already
+    let mut later = SourceBuild { lane: Default::default(), cw: Vec::new(),
+        shelves: vec![shelf(0, "Recently Added", "home.movies.recent", &["7"])] };
+    replay_since_request(&s, &mut later);
+    assert_eq!(items_of(&later.shelves[0]), ["7"], "its answer stands");
+}
+
+/// The same through the real landing of a source's read: the row the late answer still held is not
+/// on Home afterwards.
+#[test]
+fn a_landing_issued_before_a_deletion_does_not_publish_the_row() {
+    let _g = plx_base::testlock::serial();
+    let mut o = Owner::default();
+    reset(&mut o.state, &o.adapter);
+    seed(&mut o.state, vec![src(0, "", HubState::Loading, None)]);
+    o.state.srcs[0].stamp = o.state.ledger.stamp(); // the read is out…
+    o.state.ledger.record(&ViewAt::leaf(sid(0), "7"), deleted(false)); // …when the deletion is confirmed
+
+    land(&o.state, &o.adapter, 0, Some(built(0, &[(9, "7"), (8, "8")],
+        vec![shelf(0, "Recently Added", "home.movies.recent", &["a", "7", "b"])])));
+    pump(&mut o.state, &o.adapter, 0.0);
+
+    assert_eq!(rks(&o.state, 0), ["8"], "the deck");
+    assert_eq!(rks(&o.state, 1), ["a", "b"], "and the shelf");
     reset(&mut o.state, &o.adapter);
 }

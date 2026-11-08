@@ -47,7 +47,7 @@ fn movie(kind: i32) -> PmsMovie {
     m
 }
 fn card(kind: i32, f: Option<&Face>) -> Menu {
-    menu(build_card(&movie(kind), false, DeckPress::Play, None, None, f))
+    menu(build_card(&movie(kind), false, DeckPress::Play, None, None, f, true))
 }
 
 #[test]
@@ -75,16 +75,16 @@ fn an_unreachable_service_omits_the_row() {
         let m = card(kind, None);
         assert!(!m.offers(ItemRow::WatchlistAdd) && !m.offers(ItemRow::WatchlistRemove), "kind {kind}");
     }
-    for m in [menu(build_episode("1", PosterMark::None, &[], None)), menu(build_season("1", PosterMark::None, None))] {
+    for m in [menu(build_episode("1", PosterMark::None, &[], None, true)), menu(build_season("1", PosterMark::None, None))] {
         assert!(!m.offers(ItemRow::WatchlistAdd) && !m.offers(ItemRow::WatchlistRemove));
     }
 }
 
 #[test]
 fn an_episode_names_the_show() {
-    let add = menu(build_episode("9", PosterMark::None, &[], Some(&face(Membership::Off, Kind::Show, true))));
+    let add = menu(build_episode("9", PosterMark::None, &[], Some(&face(Membership::Off, Kind::Show, true)), true));
     assert_eq!(add.label(ItemRow::WatchlistAdd), "Add Show to Watchlist");
-    let on = menu(build_episode("9", PosterMark::None, &[], Some(&face(Membership::On, Kind::Show, true))));
+    let on = menu(build_episode("9", PosterMark::None, &[], Some(&face(Membership::On, Kind::Show, true)), true));
     assert_eq!(on.label(ItemRow::WatchlistRemove), plx_platform::i18n::msg::watchlist_action_remove_show());
     assert_eq!(on.action(ItemRow::WatchlistRemove), Action::WatchlistRemove(guid_of(Kind::Show, &HEX)));
     let ep_card = card(3, Some(&face(Membership::Off, Kind::Show, true)));
@@ -108,7 +108,7 @@ fn remove_is_destructive_and_add_is_not() {
 #[test]
 fn a_watchlist_tile_card_keeps_its_one_remove_row() {
     let f = face(Membership::On, Kind::Movie, false);
-    let m = menu(build_card(&movie(0), false, DeckPress::Play, None, Some("plex://movie/abc"), Some(&f)));
+    let m = menu(build_card(&movie(0), false, DeckPress::Play, None, Some("plex://movie/abc"), Some(&f), true));
     assert_eq!(m.ids().iter().filter(|i| **i == ItemRow::WatchlistRemove).count(), 1);
 }
 

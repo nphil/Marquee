@@ -73,7 +73,7 @@ CLIENT_DOORS = frozenset({
 })
 # The server client's private transport. A call is a site only as `self.name(` inside `impl Client`,
 # and never from a door's own body (`get_json_status` reads through `send_bulk`).
-CLIENT_TRANSPORT = frozenset({'send', 'send_until', 'send_bulk', 'body_2xx', 'body_2xx_bulk'})
+CLIENT_TRANSPORT = frozenset({'send', 'send_until', 'send_bulk', 'send_slow', 'body_2xx', 'body_2xx_bulk'})
 # `impl AccountClient`'s request methods, called as `self.name(` inside that impl.
 ACCOUNT_DOORS = frozenset({'get', 'get_evidence', 'get_evidence_with', 'get_raw', 'post_raw'})
 # Transport calls made directly, path-qualified by the crate or module that owns them.
@@ -81,6 +81,7 @@ FREE_DOORS = {
     'request_evidence': frozenset({'net'}),
     'request_probe': frozenset({'http'}),
     'request_bulk': frozenset({'http'}),
+    'request_slow': frozenset({'http'}),
     'request_until_outcome': frozenset({'http'}),
 }
 DOOR_NAMES = CLIENT_DOORS | CLIENT_TRANSPORT | ACCOUNT_DOORS | frozenset(FREE_DOORS)

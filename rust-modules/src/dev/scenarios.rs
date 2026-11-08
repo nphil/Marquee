@@ -2640,6 +2640,8 @@ fn modal_bench_open(app: &mut App, target: bench::ModalTarget) {
                 from_home: true,
                 catalog: None,
                 watchlist: None,
+                // the full row set whatever the server allows, so runs compare like with like
+                can_delete: true,
             };
             crate::app::bridge::open_item_menu(&mut app.pages, arg);
         }

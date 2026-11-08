@@ -61,6 +61,39 @@ impl Subscription {
     }
 }
 
+/// Has the server's owner allowed media deletion (`allowMediaDeletion` on `GET /`)? The same
+/// tristate as [`Subscription`] and for the same reason: a server that never said, or has not been
+/// asked yet, is `Unknown`, and the Delete row is offered only on a server known to answer `Yes`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Deletion {
+    #[default]
+    Unknown,
+    No,
+    Yes,
+}
+
+impl Deletion {
+    /// The wire field → the tristate; the lenient adapter has already folded `true`/`"1"` to
+    /// nonzero and `false`/`"0"` to 0, and absence stays `None`.
+    fn from_wire(v: Option<i64>) -> Self {
+        match v {
+            None => Self::Unknown,
+            Some(0) => Self::No,
+            Some(_) => Self::Yes,
+        }
+    }
+
+    fn of(on: bool) -> Self {
+        if on { Self::Yes } else { Self::No }
+    }
+}
+
+/// How long an answer about deletion stands before the next menu open asks the server again, and how
+/// soon after a fetch that got no answer. A background read either way: opening a menu never waits
+/// on the network.
+const DELETION_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+const DELETION_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// What this module keeps about one server. A server with no entry reads as the boot state:
 /// `Unknown`, no build string, no fetch in flight.
 #[derive(Default)]
@@ -74,13 +107,19 @@ struct Entry {
     /// rather than global because two servers' fetches are different questions — a shared server
     /// registered while our own is mid-fetch must not be silently skipped.
     inflight: bool,
+    /// The server's "Allow media deletion" answer, `Unknown` until a fetch lands or a deletion
+    /// attempt learns it first-hand ([`note_deletion`]).
+    deletion: Deletion,
+    /// When `deletion` was last asked about, answered or not: the clock the refresh rule reads, so
+    /// a server that cannot answer is retried every [`DELETION_RETRY`] rather than on every menu.
+    deletion_checked: Option<std::time::Instant>,
 }
 
 /// Every server's [`Entry`], keyed by its registry slot number. A map, not an array indexed by the
 /// slot: the registry issues slot numbers past any fixed size (a sign-out consumes one per
 /// registration), and a server that a fixed table cannot hold must still answer for itself.
 ///
-/// One `Mutex` for all three fields, because they are always read and written together and every
+/// One `Mutex` for every field, because they are always read and written together and every
 /// critical section is a few field moves — never a round trip (the fetch happens first, the store
 /// second). The readers are the detail hero's per-frame subscription read and the stats panel's
 /// 2 Hz sample; an uncontended lock is an atomic compare-exchange, the same cost the three
@@ -101,6 +140,64 @@ pub fn subscription_of(id: ServerId) -> Subscription {
         return Subscription::Unknown;
     }
     with_table(|t| t.get(&id.raw()).map_or(Subscription::Unknown, |e| e.sub))
+}
+
+/// [`Deletion`] for a NAMED server; `Unknown` for one that has not answered yet and for an id that
+/// names nothing.
+pub fn deletion_of(id: ServerId) -> Deletion {
+    if super::client_for(id).is_none() {
+        return Deletion::Unknown;
+    }
+    with_table(|t| t.get(&id.raw()).map_or(Deletion::Unknown, |e| e.deletion))
+}
+
+/// Should the item menu offer Delete for an item on this server? Only where it can work: this
+/// account owns the server (plex.tv's `owned`, which is who PMS lets delete) AND the server's own
+/// "Allow media deletion" setting is known to be on. A lookup of what the registration fetch
+/// stored, so a menu opening never waits on the network; [`refresh_deletion_if_due`] keeps the
+/// stored answer current. A stale "yes" costs one refusal at delete time (the pre-flight read
+/// corrects it), never a deletion.
+pub fn delete_offered(id: ServerId) -> bool {
+    owned(id) && with_table(|t| t.get(&id.raw()).is_some_and(|e| e.deletion == Deletion::Yes))
+}
+
+/// Start the background re-read of the "Allow media deletion" setting when the stored answer is
+/// missing or older than [`DELETION_TTL`] (sooner for a server that never answered), for the next
+/// menu opening to see. Only a server this account owns is asked: nobody else is offered Delete.
+/// The effect is the caller's to run (the app does, where it presents a menu), so [`delete_offered`]
+/// stays a lookup.
+pub fn refresh_deletion_if_due(id: ServerId) {
+    if !owned(id) {
+        return;
+    }
+    let due = with_table(|t| {
+        let entry = t.get(&id.raw());
+        let deletion = entry.map_or(Deletion::Unknown, |e| e.deletion);
+        let checked = entry.and_then(|e| e.deletion_checked);
+        deletion_wants_refresh(deletion, checked, std::time::Instant::now())
+    });
+    if due {
+        refresh(id);
+    }
+}
+
+/// Does this account own the server (plex.tv's `owned`)?
+fn owned(id: ServerId) -> bool {
+    super::server_facts(id).is_some_and(|facts| facts.owned)
+}
+
+/// Is the stored answer missing or old enough to ask again? A server that never answered is retried
+/// sooner than one that did.
+fn deletion_wants_refresh(deletion: Deletion, checked: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    let wait = if deletion == Deletion::Unknown { DELETION_RETRY } else { DELETION_TTL };
+    checked.is_none_or(|at| now.saturating_duration_since(at) >= wait)
+}
+
+/// A deletion attempt just read the setting first-hand (its pre-flight `GET /`, or a refusal that
+/// can only mean it is off): keep what it learned, so the next menu opening follows the server
+/// rather than an older answer.
+pub fn note_deletion(id: ServerId, on: bool) {
+    store_deletion(id, Deletion::of(on));
 }
 
 /// [`version`] for a NAMED server; "" while unknown.
@@ -213,11 +310,14 @@ fn fetch_once(id: ServerId, c: &Client) {
     }
     let i = id.raw();
     let Some(mc) = c.server_root() else {
+        // a server that cannot answer is asked again on the retry schedule, not on every menu
+        mark_deletion_asked(id);
         plx_base::eventlog::log(&format!(
             "pms: server {i} info unavailable (GET / failed) — subscription stays unknown"
         ));
         return;
     };
+    store_deletion(id, Deletion::from_wire(mc.allow_media_deletion));
     let mut sub = Subscription::from_wire(mc.my_plex_subscription);
     // dev: /tmp/plxnative-nopass — pretend the server answered "no Plex Pass". The dev server
     // has one, so every Pass-conditional surface (the facts row's HDR warning, the read-out's
@@ -279,6 +379,40 @@ fn store(id: ServerId, sub: Subscription, version: &str) {
         e.version = version.to_owned();
     });
     plx_machine::idle::invalidate();
+}
+
+/// Keep one server's answer about media deletion and stamp when it was asked. Separate from
+/// [`store`]: nothing on screen states this fact, so landing it owes the frame gate nothing — the
+/// next menu opening reads it.
+fn store_deletion(id: ServerId, deletion: Deletion) {
+    if !id.is_set() {
+        return;
+    }
+    with_table(|t| {
+        // as in `store`: a fetch that outlived its server's sign-out files nothing
+        if super::client_for(id).is_none() {
+            return;
+        }
+        let e = t.entry(id.raw()).or_default();
+        e.deletion = deletion;
+        e.deletion_checked = Some(std::time::Instant::now());
+    });
+}
+
+/// Stamp that the server was asked about deletion and said nothing, leaving what was known.
+fn mark_deletion_asked(id: ServerId) {
+    with_table(|t| {
+        if let Some(e) = t.get_mut(&id.raw()) {
+            e.deletion_checked = Some(std::time::Instant::now());
+        }
+    });
+}
+
+/// Test-only: publish one server's deletion answer without a round trip, stamped as just asked.
+/// Callers hold `plx_base::testlock::serial()` for [`store_for_test`]'s reason.
+#[cfg(any(test, feature = "test-support"))]
+pub fn store_deletion_for_test(id: ServerId, deletion: Deletion) {
+    store_deletion(id, deletion);
 }
 
 /// Test-only: publish one server's answer without a round trip.
@@ -547,5 +681,110 @@ mod tests {
         // a write through an id that names no server publishes nothing, so it wakes nothing
         store(ServerId::UNSET, Subscription::Yes, "nowhere");
         assert!(!asked(), "a write that landed in no slot changed no screen");
+    }
+
+    /// `allowMediaDeletion` follows the lenient-number rule too (PMS 1.43 sends a JSON bool; the
+    /// field is free to arrive as a string elsewhere), and absence must stay unknown rather than
+    /// read as the server's owner having switched deletion off.
+    #[test]
+    fn the_root_envelope_survives_every_encoding_of_the_deletion_flag() {
+        let read = |body: &str| {
+            let e: Envelope = serde_json::from_str(body).expect("root parse");
+            Deletion::from_wire(e.media_container.allow_media_deletion)
+        };
+        assert_eq!(read(r#"{"MediaContainer":{"allowMediaDeletion":true}}"#), Deletion::Yes);
+        assert_eq!(read(r#"{"MediaContainer":{"allowMediaDeletion":"1"}}"#), Deletion::Yes);
+        assert_eq!(read(r#"{"MediaContainer":{"allowMediaDeletion":"true"}}"#), Deletion::Yes);
+        assert_eq!(read(r#"{"MediaContainer":{"allowMediaDeletion":false}}"#), Deletion::No);
+        assert_eq!(read(r#"{"MediaContainer":{"allowMediaDeletion":"0"}}"#), Deletion::No);
+        assert_eq!(read(r#"{"MediaContainer":{"allowMediaDeletion":"false"}}"#), Deletion::No);
+        assert_eq!(read(r#"{"MediaContainer":{"version":"1.43.5"}}"#), Deletion::Unknown);
+    }
+
+    /// **The offer gate.** Delete is shown only where it can work: the account owns the server AND
+    /// the server's own switch is known to be on. A share, the household's server seen from a
+    /// managed profile, a server that said no, and one that has not answered yet all stay without
+    /// the row — the pair of facts is what a deletion needs, not either alone.
+    #[test]
+    fn delete_is_offered_only_where_this_account_owns_the_server_and_it_allows_deletion() {
+        use super::super::servers::{self, GrantEvidence};
+        struct Fresh(#[allow(dead_code)] plx_base::testlock::Serial);
+        impl Drop for Fresh {
+            fn drop(&mut self) {
+                servers::reset_for_test();
+            }
+        }
+        let _g = Fresh(plx_base::testlock::serial());
+        servers::reset_for_test();
+        let mut slot = 0;
+        let mut offered = |grant: GrantEvidence, deletion: Option<Deletion>| {
+            slot += 1;
+            let id = servers::register_with_client_id(&format!("mach-del-{slot}"), "10.0.0.1", 32400, "tok", "cid");
+            servers::describe(id, "nas", "", grant);
+            // the per-server table outlives `reset_for_test`: start from the boot state
+            store_deletion(id, Deletion::Unknown);
+            with_table(|t| t.entry(id.raw()).or_default().deletion_checked = None);
+            if let Some(deletion) = deletion {
+                store_deletion(id, deletion);
+            }
+            delete_offered(id)
+        };
+        let ours = GrantEvidence::ours();
+        assert!(offered(ours, Some(Deletion::Yes)), "owner + allowed");
+        assert!(!offered(ours, Some(Deletion::No)), "owner, but the server's switch is off");
+        assert!(!offered(ours, Some(Deletion::Unknown)), "owner, but the server never said");
+        assert!(!offered(ours, None), "owner, nothing fetched yet — never offered on a guess");
+        assert!(!offered(GrantEvidence::outside(), Some(Deletion::Yes)), "a friend's share");
+        assert!(!offered(GrantEvidence::household(7), Some(Deletion::Yes)), "the household's server seen by a member");
+
+        // a server nothing is registered at, and one never described, offer nothing
+        assert!(!delete_offered(ServerId::UNSET));
+        assert!(!delete_offered(ServerId::from_raw(u16::MAX - 1)));
+    }
+
+    /// A deletion attempt reads the setting first-hand (its pre-flight, or a refusal that can only
+    /// mean it is off); the next menu follows that instead of an older answer, in either direction.
+    #[test]
+    fn what_a_deletion_attempt_learns_replaces_the_cached_answer() {
+        use super::super::servers::{self, GrantEvidence};
+        struct Fresh(#[allow(dead_code)] plx_base::testlock::Serial);
+        impl Drop for Fresh {
+            fn drop(&mut self) {
+                servers::reset_for_test();
+            }
+        }
+        let _g = Fresh(plx_base::testlock::serial());
+        servers::reset_for_test();
+        let id = servers::register_with_client_id("mach-note", "10.0.0.1", 32400, "tok", "cid");
+        servers::describe(id, "nas", "", GrantEvidence::ours());
+        store_deletion(id, Deletion::Yes);
+        assert!(delete_offered(id));
+
+        note_deletion(id, false);
+        assert_eq!(deletion_of(id), Deletion::No);
+        assert!(!delete_offered(id), "the owner switched deletion off since the last read");
+
+        note_deletion(id, true);
+        assert!(delete_offered(id), "and back on");
+
+        // a note about a server nothing is registered at lands nowhere
+        note_deletion(ServerId::UNSET, true);
+        assert_eq!(deletion_of(ServerId::UNSET), Deletion::Unknown);
+    }
+
+    /// The answer is re-read in the background, never on a menu's critical path: a server that has
+    /// never been asked is read at once, a silent one every thirty seconds, an answered one every
+    /// ten minutes.
+    #[test]
+    fn the_deletion_answer_is_refreshed_on_a_schedule() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let after = |s: u64| t0 + Duration::from_secs(s);
+        assert!(deletion_wants_refresh(Deletion::Unknown, None, t0), "never asked");
+        assert!(!deletion_wants_refresh(Deletion::Unknown, Some(t0), after(29)), "a silent server just asked");
+        assert!(deletion_wants_refresh(Deletion::Unknown, Some(t0), after(30)), "a silent server asked again");
+        assert!(!deletion_wants_refresh(Deletion::Yes, Some(t0), after(599)), "an answer stands for ten minutes");
+        assert!(deletion_wants_refresh(Deletion::Yes, Some(t0), after(600)), "then is read again");
+        assert!(deletion_wants_refresh(Deletion::No, Some(t0), after(600)));
     }
 }

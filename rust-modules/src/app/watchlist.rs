@@ -361,6 +361,8 @@ impl Bridge {
             }),
             _ => None,
         };
+        // A tile with a playable copy opens that copy's own menu, so Delete follows the copy's server.
+        let can_delete = crate::app::delete_media::offered(sid);
         Some(plx_screens::registry::ItemMenuArg {
             sid,
             rk,
@@ -372,6 +374,7 @@ impl Bridge {
             from_home: false,
             catalog: Some(catalog),
             watchlist,
+            can_delete,
         })
     }
 

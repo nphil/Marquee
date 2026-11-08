@@ -32,6 +32,12 @@ impl<'a> MetadataView<'a> {
     pub fn current(&self) -> Option<&'a Detail> {
         self.state.current.as_ref()
     }
+    /// Did the server delete `(sid, rk)` while it was the loaded item? Its page is empty then
+    /// ([`Self::current`] is `None`) and there is nothing to read again: the screen leaves it.
+    /// Reported for a deletion applied to the loaded page and for a read that landed after it.
+    pub fn deleted(&self, sid: plx_plex::plex::ServerId, rk: &str) -> bool {
+        self.state.gone.as_ref().is_some_and(|(s, r)| plx_plex::plex::same_item((*s, r), (sid, rk)))
+    }
     /// The episodes the loaded Detail lists in its current season window, when the loaded item IS
     /// `(sid, rk)`. The store is single-current, so the identity check keeps a covered Detail page
     /// from naming the episodes of the one that replaced it. An episode's change moves the season's
@@ -139,6 +145,10 @@ pub struct MetadataState {
     /// Where in that order the detail read now out was issued ([`MetadataCmd::RequestDetail`]).
     detail_stamp: crate::viewledger::Stamp,
     current: Option<Detail>,
+    /// The item whose page was emptied because the server deleted it ([`MetadataView::deleted`]).
+    /// Kept until that page closes or another item loads, so a screen that was not looking at the
+    /// moment still finds out why its item is missing.
+    gone: Option<(plx_plex::plex::ServerId, String)>,
     now: Option<NowPlaying>,
     playing: Option<PlayingItem>,
     /// Segments the user has already skipped in THIS playback — see the retired `SKIPPED` static's
@@ -1834,10 +1844,12 @@ pub fn install_for_test(state: &mut MetadataState, d: Option<Detail>) {
 ///
 /// The landed refresh is the truth and silently corrects any of this; see [`crate::viewstate`].
 fn set_watched_local(state: &mut MetadataState, at: &crate::viewstate::ViewAt, on: bool) -> bool {
+    state.current.as_mut().is_some_and(|d| watched_in(d, at, on))
+}
+
+/// [`set_watched_local`] on one page, which [`replay_in`] also makes on a page read before the press.
+fn watched_in(d: &mut Detail, at: &crate::viewstate::ViewAt, on: bool) -> bool {
     let edit = crate::viewstate::ViewEdit::Watched(on);
-    let Some(d) = state.current.as_mut() else {
-        return false;
-    };
     // The RELATED shelf first, and unconditionally — it is the one store here whose rows are
     // OTHER items, so it is neither the loaded item nor one of its episodes and must not be
     // reached through either of their early returns below. A related tile is also the one the
@@ -1974,12 +1986,273 @@ fn patch_loaded_offset(state: &mut MetadataState, at: &crate::viewstate::ViewAt,
     true
 }
 
+/// What a deletion did to the loaded page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Deletion {
+    /// Nothing on the page was about the deleted item.
+    Untouched,
+    /// Rows left the page or gave an episode up; the page stands.
+    Edited,
+    /// The page's own item is the deleted one, or the show it lists has no season left: nothing
+    /// remains to show.
+    PageGone,
+}
+
+/// **OPTIMISTIC**, MAIN THREAD: take the item the server confirmed deleted off the LOADED page,
+/// before anything is read back. Returns whether anything on the page was about it.
+///
+/// The page loses the item wherever it held it: a Related or collection tile, the on-deck episode,
+/// an episode of the season on screen. The shelves and the strip close the gap rather than leave a
+/// hole under the cursor, and a deleted episode also leaves the season tabs' counts and the hero's
+/// watched mark ([`deleted_in`]).
+///
+/// When the page's OWN item is the one deleted the page empties ([`page_gone`]) and the
+/// application leaves it, told by [`MetadataView::deleted`].
+fn deleted_local(state: &mut MetadataState, adapter: &MetadataAdapter, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    let Some(d) = state.current.as_mut() else { return false };
+    match deleted_in(d, at, watched) {
+        Deletion::Untouched => false,
+        Deletion::Edited => true,
+        Deletion::PageGone => {
+            let (sid, rk) = (d.sid, d.rk.clone());
+            page_gone(state, adapter, sid, rk);
+            true
+        }
+    }
+}
+
+/// The item the page shows is gone from the server. The page lets go of it as a close does, and
+/// remembers why, so the screen that was showing it can tell a deletion from a page that has not
+/// loaded ([`MetadataView::deleted`]).
+fn page_gone(state: &mut MetadataState, adapter: &MetadataAdapter, sid: plx_plex::plex::ServerId, rk: String) {
+    clear_item(state, adapter, sid, &rk);
+    state.gone = Some((sid, rk));
+}
+
+/// The deletion of `at` made on one page: [`deleted_local`]'s edit, which [`replay_in`] also makes on
+/// a page read before the deletion.
+///
+/// A show's episode counts are the server's own numbers, so a deleted episode lowers them as
+/// [`crate::viewstate::ViewAt::deleted_row`] does a tile's: its season's count, and its viewed count
+/// when it was watched. A season left with no episode goes from the tabs and a show left with no
+/// season is gone. `cur_season` is a position in the list that just changed, so it follows the
+/// season on screen by that season's own key; when the season on screen is the one that went, the
+/// tab falls to the season that took its place and lists no episodes until the page is read again.
+fn deleted_in(d: &mut Detail, at: &crate::viewstate::ViewAt, watched: bool) -> Deletion {
+    // A season page names its show by `parent_rk` and its own number by `index`; an episode page
+    // names both by `show_rk` and `season`.
+    let (kind, show_rk, season) = match d.kind.as_str() {
+        "show" => (1, "", 0),
+        "season" => (2, d.parent_rk.as_str(), d.index),
+        "episode" => (3, d.show_rk.as_str(), d.season),
+        _ => (0, "", 0),
+    };
+    if at.covers_parts(d.sid, &d.rk, kind, show_rk, season) {
+        return Deletion::PageGone;
+    }
+    let tiles = deleted_tiles(d, at, watched);
+    // `Episode` carries no server of its own: its server is the page's.
+    let episodes = if d.sid == at.sid { deleted_episodes(d, at, watched) } else { Deletion::Untouched };
+    if tiles { episodes.max(Deletion::Edited) } else { episodes }
+}
+
+/// The Related shelf's and the collection shelf's tiles, which are other items' rows matched on
+/// their OWN server. Whether any tile left or was counted.
+fn deleted_tiles(d: &mut Detail, at: &crate::viewstate::ViewAt, watched: bool) -> bool {
+    use crate::viewstate::DeletedRow;
+    let mut hit = false;
+    let mut i = 0;
+    while i < d.related.len() {
+        match at.deleted_row(&mut d.related[i], watched) {
+            DeletedRow::Leave => i += 1,
+            DeletedRow::Counted => {
+                hit = true;
+                i += 1;
+            }
+            DeletedRow::Remove => {
+                d.related.remove(i);
+                // The head and the window's positions keep naming the cards that are left. The
+                // window's own edges stay where the server last put them: the next read of an edge
+                // finds its place again, and a card after the gap that now sits one place earlier
+                // is only read from where it was.
+                let t = &mut d.related_tail;
+                if i < t.head {
+                    t.head -= 1;
+                } else {
+                    if i - t.head < t.positions.len() {
+                        t.positions.remove(i - t.head);
+                    }
+                    t.total = t.total.saturating_sub(1);
+                }
+                hit = true;
+            }
+        }
+    }
+    let mut alone = false;
+    if let Some(c) = d.collection.as_mut() {
+        let listed = c.members.len();
+        let mut counted = false;
+        c.members.retain_mut(|m| match at.deleted_row(m, watched) {
+            DeletedRow::Leave => true,
+            DeletedRow::Counted => {
+                counted = true;
+                true
+            }
+            DeletedRow::Remove => false,
+        });
+        let removed = listed - c.members.len();
+        if removed > 0 {
+            c.count = c.count.saturating_sub(removed);
+            // a shelf of the page's own tile is no way to a collection ([`collection_shelf`])
+            alone = c.members.iter().all(|m| plx_plex::plex::same_item((m.sid, &m.rk), (d.sid, &d.rk)));
+        }
+        hit |= counted || removed > 0;
+    }
+    if alone {
+        d.collection = None;
+    }
+    hit
+}
+
+/// The loaded show's own rows, matched on the page's server: the on-deck episode, the strip's
+/// episodes and the season tabs.
+fn deleted_episodes(d: &mut Detail, at: &crate::viewstate::ViewAt, watched: bool) -> Deletion {
+    use crate::viewstate::Scope;
+    let mut hit = false;
+    // OnDeck is another copy of an episode, independent of the strip's window.
+    if d.on_deck.as_ref().is_some_and(|ep| at.covers_parts(d.sid, &ep.rk, 3, &d.rk, ep.season)) {
+        d.on_deck = None;
+        hit = true;
+    }
+    hit |= d.episodes.remove_where(|e| at.covers_parts(d.sid, &e.rk, 3, &d.rk, e.season)) > 0;
+    let shown = d.seasons.get(d.cur_season).map(|s| s.rk.clone());
+    let counted = match &at.scope {
+        Scope::Episode { show_rk, index } if *show_rk == d.rk => {
+            // A season the server sent no count for stays as it was: its count is not ours to guess.
+            match d.seasons.iter().position(|s| s.index == *index && s.leaf_count > 0) {
+                Some(k) => {
+                    let leaves = d.seasons[k].leaf_count - 1;
+                    if leaves == 0 {
+                        d.seasons.remove(k);
+                    } else {
+                        let s = &mut d.seasons[k];
+                        s.leaf_count = leaves;
+                        s.viewed_leaf_count = s.viewed_leaf_count.saturating_sub(i64::from(watched)).clamp(0, leaves);
+                    }
+                    true
+                }
+                None => false,
+            }
+        }
+        Scope::Season { show_rk, index } if *show_rk == d.rk => {
+            let listed = d.seasons.len();
+            d.seasons.retain(|s| s.index != *index && !at.is_item(d.sid, &s.rk));
+            d.seasons.len() != listed
+        }
+        _ => false,
+    };
+    if !counted {
+        return if hit { Deletion::Edited } else { Deletion::Untouched };
+    }
+    if d.seasons.is_empty() {
+        return Deletion::PageGone;
+    }
+    match shown.and_then(|rk| d.seasons.iter().position(|s| s.rk == rk)) {
+        Some(k) => d.cur_season = k,
+        None => {
+            d.cur_season = d.cur_season.min(d.seasons.len() - 1);
+            d.episodes = EpisodeList::default();
+        }
+    }
+    // The show's flag is the sum of its seasons' counts, which is only known when every season
+    // sent one.
+    if d.seasons.iter().all(|s| s.leaf_count > 0) {
+        let (viewed, leaves) = d.seasons.iter()
+            .fold((0i64, 0i64), |(v, l), s| (v.saturating_add(s.viewed_leaf_count), l.saturating_add(s.leaf_count)));
+        d.watched = viewed >= leaves;
+    }
+    Deletion::Edited
+}
+
+/// The edits published since a read was requested, made again in the order they were published on
+/// the page it returned. A deletion of the page's own item ends the replay: nothing after it has a
+/// page to land on.
+fn replay_in(d: &mut Detail, edits: &[(crate::viewstate::ViewAt, crate::viewstate::ViewEdit)]) -> Deletion {
+    use crate::viewstate::ViewEdit;
+    let mut out = Deletion::Untouched;
+    for (at, edit) in edits {
+        match *edit {
+            ViewEdit::Watched(on) => {
+                watched_in(d, at, on);
+            }
+            ViewEdit::Deleted { watched } => {
+                out = out.max(deleted_in(d, at, watched));
+                if out == Deletion::PageGone {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Does a deletion at `at` take an episode or a season out of the loaded show's season list? A
+/// read of its seasons or episodes made before it counts the seasons as they stood, and every
+/// season after the one that went has moved up a place.
+fn reshapes_seasons(d: &Detail, at: &crate::viewstate::ViewAt) -> bool {
+    use crate::viewstate::Scope;
+    d.sid == at.sid
+        && matches!(&at.scope, Scope::Episode { show_rk, .. } | Scope::Season { show_rk, .. } if *show_rk == d.rk)
+}
+
+/// Does this published edit move rows of the loaded show's episode strip? An episode page read
+/// before it holds rows at the places they had, which the strip has left. A deletion whose scope
+/// names no show (`Leaf`, `Unknown`) may be an episode of this one, so it counts too.
+fn moves_episodes(d: &Detail, at: &crate::viewstate::ViewAt, edit: crate::viewstate::ViewEdit) -> bool {
+    use crate::viewstate::{Scope, ViewEdit};
+    matches!(edit, ViewEdit::Deleted { .. })
+        && (reshapes_seasons(d, at) || d.sid == at.sid && matches!(at.scope, Scope::Leaf | Scope::Unknown))
+}
+
+/// A Related window read before a deletion still lists what the deletion removed, and still counts
+/// the episode in the shows it names: the same decisions as on the cards already on the page.
+/// Returns how many cards left the window.
+fn drop_deleted_rows(
+    rows: &mut Vec<crate::stores::paging::Row>,
+    edits: &[(crate::viewstate::ViewAt, crate::viewstate::ViewEdit)],
+) -> usize {
+    use crate::viewstate::{DeletedRow, ViewEdit};
+    let listed = rows.len();
+    for (at, edit) in edits {
+        let ViewEdit::Deleted { watched } = *edit else { continue };
+        rows.retain_mut(|(_, card)| {
+            // the shared card is cloned only for a row the deletion reaches
+            if !at.covers(card) && !at.is_episode_parent(card) {
+                return true;
+            }
+            at.deleted_row(std::sync::Arc::make_mut(card), watched) != DeletedRow::Remove
+        });
+    }
+    listed - rows.len()
+}
+
+/// A season read before a deletion still lists the episodes the deletion removed.
+fn drop_deleted_episodes(d: &mut Detail, edits: &[(crate::viewstate::ViewAt, crate::viewstate::ViewEdit)]) {
+    for (at, edit) in edits {
+        if matches!(edit, crate::viewstate::ViewEdit::Deleted { .. }) && d.sid == at.sid {
+            d.episodes.remove_where(|e| at.covers_parts(d.sid, &e.rk, 3, &d.rk, e.season));
+        }
+    }
+}
+
 /// drop the loaded detail (on leaving the detail page). Also supersedes any in-flight async
 /// fetch — otherwise a load requested on the way in lands after the page closed and silently
 /// repopulates CURRENT (and NOW, via `sync_now_playing`) behind whatever screen is now mounted.
 fn clear(state: &mut MetadataState, adapter: &MetadataAdapter) {
     supersede_detail(adapter);
     state.current = None;
+    state.gone = None;
     // The *Also available* copies describe the item that is going, so they go with it. Nothing
     // reads them afterwards — the store is addressed and no page's pair can match an empty one —
     // but a departing page should not leave another item's list in memory for the next one to be
@@ -2002,6 +2275,9 @@ fn clear_item(state: &mut MetadataState, adapter: &MetadataAdapter, sid: plx_ple
     if state.current.as_ref().is_some_and(|d| same(d.sid, &d.rk)) {
         state.current = None;
         alt_clear(state);
+    }
+    if state.gone.as_ref().is_some_and(|(s, r)| same(*s, r)) {
+        state.gone = None;
     }
 }
 
@@ -2036,6 +2312,7 @@ fn withdraw(adapter: &MetadataAdapter, sid: plx_plex::plex::ServerId, rk: &str) 
 fn reset(state: &mut MetadataState, adapter: &MetadataAdapter) {
     supersede_detail(adapter);
     state.current = None;
+    state.gone = None;
     state.now = None;
     state.playing = None;
     state.played_since_load = None;
@@ -4200,6 +4477,10 @@ pub fn run(state: &mut MetadataState, adapter: &std::sync::Arc<MetadataAdapter>,
                 let tiles = patch_tiles(state, &at, edit);
                 patch_loaded_offset(state, &at, ms) | tiles
             }
+            // The server no longer has the item: its rows leave the page, and when the page's own
+            // item is the one gone the page empties and says why ([`MetadataView::deleted`]). It
+            // starts no read; the read-back that follows every deletion reconciles the page.
+            crate::viewstate::ViewEdit::Deleted { watched } => deleted_local(state, adapter, &at, watched),
         },
         MetadataCmd::InstallPlaying(p) => {
             install_playing(state, p);
@@ -4293,7 +4574,19 @@ pub fn pump_detail(state: &mut MetadataState,
 /// so the failure is in the log — it just is not in these words, and a `None` here with no
 /// `detail:` line above it is that case.
 fn install_landed_detail(state: &mut MetadataState, adapter: &std::sync::Arc<MetadataAdapter>, d: Option<Detail>) -> bool {
-    let Some(d) = d else { return false };
+    let Some(mut d) = d else { return false };
+    if let Some(old) = state.current.as_ref() {
+        carry_related_window(old, &mut d);
+        carry_episode_window(old, &mut d);
+    }
+    // The read describes the server from when it was requested: the edits published since are made
+    // again on the page it returned, in the order they were published (`crate::viewledger`). A page
+    // whose own item was deleted meanwhile has nothing to show and is not installed, and none of the
+    // work below is started for it.
+    if replay_in(&mut d, &state.ledger.since(state.detail_stamp)) == Deletion::PageGone {
+        page_gone(state, adapter, d.sid, d.rk);
+        return false;
+    }
     // The LANDING is what defines which show's episodes are current, so the season supersede has
     // to happen here as well as at request time: a tab hop issued while this load was in flight
     // spawned a fetch against the OLD item, and its landing would patch these fresh episodes.
@@ -4306,15 +4599,8 @@ fn install_landed_detail(state: &mut MetadataState, adapter: &std::sync::Arc<Met
     if state.played_since_load.as_ref().is_some_and(|(s, r)| plx_plex::plex::same_item((*s, r), (d.sid, &d.rk))) {
         state.played_since_load = None;
     }
-    let mut d = d;
-    if let Some(old) = state.current.as_ref() {
-        carry_related_window(old, &mut d);
-        carry_episode_window(old, &mut d);
-    }
     state.current = Some(d);
-    // The read describes the server from when it was requested: the edits published since are
-    // made again on the page it installed (`crate::viewledger`).
-    replay_views(state, state.detail_stamp);
+    state.gone = None;
     // if this load is a playing leaf (episode/movie), refresh the Info card's descriptor from it
     sync_now_playing(state);
     true
@@ -5231,7 +5517,11 @@ pub fn pump_episode_pages(state: &mut MetadataState, adapter: &MetadataAdapter) 
     for page in landed {
         let ours = plx_plex::plex::same_item((d.sid, &d.rk), (page.sid, &page.show))
             && d.seasons.get(d.cur_season).is_some_and(|s| s.rk == page.season);
-        if let (true, Some(rows)) = (ours, page.rows) {
+        // The list is numbered as the server numbered it. A deletion since the page was read took
+        // a row out and moved every row after it, so the page holds rows at positions the list has
+        // left: it stays a hole, and the screen asks for it again.
+        let moved = ours && state.ledger.since(page.stamp).iter().any(|(at, edit)| moves_episodes(d, at, *edit));
+        if let (true, Some(rows)) = (ours && !moved, page.rows) {
             d.episodes.set_page(page.page, rows);
             since = since.min(page.stamp);
             changed = true;
@@ -5702,11 +5992,13 @@ pub fn pump_related_pages(state: &mut MetadataState, adapter: &MetadataAdapter) 
         if !plx_plex::plex::same_item((d.sid, &d.rk), (l.sid, &l.rk)) || (t.offset, t.end) != l.from {
             continue;
         }
-        let Some((rows, info, hubs, state)) = l.window else { continue };
+        let Some((mut rows, mut info, hubs, row)) = l.window else { continue };
+        // A window read before a deletion still lists what the deletion removed.
+        info.total = info.total.saturating_sub(drop_deleted_rows(&mut rows, &state.ledger.since(l.stamp)));
         d.related.truncate(t.head);
         t.positions = rows.iter().map(|(position, _)| *position).collect();
         d.related.extend(rows.into_iter().map(|(_, m)| std::sync::Arc::try_unwrap(m).unwrap_or_else(|m| (*m).clone())));
-        (t.offset, t.end, t.total, t.more, t.hubs, t.row) = (info.offset, info.end, info.total, info.more, hubs, state);
+        (t.offset, t.end, t.total, t.more, t.hubs, t.row) = (info.offset, info.end, info.total, info.more, hubs, row);
         since = since.min(l.stamp);
         changed = true;
     }
@@ -5906,12 +6198,22 @@ pub fn pump_season_with_gate(state: &mut MetadataState, adapter: &MetadataAdapte
     if !plx_plex::plex::same_item((d.sid, &d.rk), (r.sid, &r.rk)) {
         return false; // the page moved to another item — not ours to patch
     }
+    // The deletions published since the fetch was requested: the episodes it read still list what
+    // they removed, and its `idx` / `prev` count the show's seasons as they stood then. A deletion
+    // that took a season out leaves them naming another one, while `cur_season` already follows the
+    // requested season through it (`deleted_in` keeps it on the season's own key).
+    let deleted = state.ledger.since(r.stamp);
+    let renumbered = deleted.iter()
+        .any(|(at, edit)| matches!(edit, crate::viewstate::ViewEdit::Deleted { .. }) && reshapes_seasons(d, at));
     match r.eps {
         Some(eps) => {
             d.episodes = eps;
+            drop_deleted_episodes(d, &deleted);
             // the old list's wanted range means nothing to the new one
             adapter.ep_pages.lock().unwrap_or_else(|e| e.into_inner()).keep = None;
-            d.cur_season = r.idx;
+            if !renumbered {
+                d.cur_season = r.idx;
+            }
             replay_views(state, r.stamp);
             true
         }
@@ -5923,7 +6225,9 @@ pub fn pump_season_with_gate(state: &mut MetadataState, adapter: &MetadataAdapte
             // whichever tab reads selected), and it is what makes the tab RETRYABLE — both
             // load paths fetch only when the target `!= cur_season`, so a tab left marked
             // selected could never be asked for again.
-            d.cur_season = r.prev;
+            if !renumbered {
+                d.cur_season = r.prev;
+            }
             false
         }
     }

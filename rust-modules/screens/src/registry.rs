@@ -466,6 +466,10 @@ pub struct ItemMenuArg {
     /// of the argument's identity or canonical form: it is a fact about the title, not a second
     /// menu.
     pub watchlist: Option<crate::item_menu::watchlist::Face>,
+    /// Whether the server can delete media for this account, as cached when the menu opened:
+    /// "Allow media deletion" is on and the account owns the server. The Delete row exists only
+    /// then. Like `watchlist`, a fact about the title's server rather than part of the menu's identity.
+    pub can_delete: bool,
 }
 
 /// **A discover-catalog title**, the subject of an [`ItemMenuKind::Catalog`] menu: identity only,
@@ -2413,6 +2417,7 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             from_home: false,
             catalog: None,
             watchlist: None,
+            can_delete: false,
         }),
         AppArg::WatchlistMenu(WatchlistMenuArg {
             host: EntryId(0),

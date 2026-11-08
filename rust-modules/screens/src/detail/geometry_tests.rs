@@ -100,6 +100,7 @@ fn bare(sid: ServerId, rk: &str) -> DetailScreen {
         restore_intent: None,
         teardown_cleared: false,
         withdrawn: false,
+        left_deleted: false,
         refresh: DetailRefreshPhase::None,
         refresh_gen: 0,
         scroll: Spring::at(0.0),

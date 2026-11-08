@@ -896,21 +896,11 @@ pub(super) unsafe fn apply_item_action<R: super::playback::PlaybackResources>(
     // The empty-rk guard the head of this function used to carry is the SURFACE's now
     // (`ItemMenuScreen::activate`): a row with no target never becomes a request at all.
     match act {
-        Action::DeleteMedia(rk) => {
-            let kind = if loaded_episode {
-                Some(plx_plex::plex::delete_media::MediaKind::Episode)
-            } else {
-                item.as_ref().filter(|row| row.rk == rk).and_then(|row| match row.kind {
-                    0 => Some(plx_plex::plex::delete_media::MediaKind::Movie),
-                    1 => Some(plx_plex::plex::delete_media::MediaKind::Show),
-                    3 => Some(plx_plex::plex::delete_media::MediaKind::Episode),
-                    _ => None,
-                })
-            };
-            if let Some(kind) = kind {
-                if !bridge.is_controlled_replay() {
-                    bridge.delete_media.start(sid, rk, kind);
-                }
+        // The action names what it deletes: the on-deck episode's menu on the detail page carries
+        // no row and is not the loaded filmstrip, so neither of those could have said so.
+        Action::DeleteMedia(rk, kind) => {
+            if !bridge.is_controlled_replay() {
+                bridge.delete_media.start(sid, rk, kind);
             }
         }
         Action::GoToItem(rk) => {

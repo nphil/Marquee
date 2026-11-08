@@ -24,7 +24,7 @@
 //! outside `pms`/`stores::hubs` spells the old direct-call form; this is the part that
 //! keyword-level `pub(super)` genuinely cannot add on top of that count.
 use crate::stores::{deck, paging};
-use crate::viewstate::{ViewAt, ViewEdit};
+use crate::viewstate::{DeletedRow, ViewAt, ViewEdit};
 use plx_machine::job::{Job, Port};
 use plx_machine::machine::{Addr, MachineId, RequestId};
 use plx_plex::plex::{ClientKey, ClientKeys, ServerId};
@@ -985,7 +985,11 @@ fn edit_item_with_scope(
         if let Some(b) = s.staged.as_mut() { apply_edit(b, at, edit); }
         // a removed card leaves the facts with it, wherever it sorted in its lane (`Held::feed`
         // drops only copies inside the span of the rows that remain)
-        if matches!(edit, ViewEdit::LeftDeck) { s.copies.forget(|m| at.is_item(m.sid, &m.rk)); }
+        match edit {
+            ViewEdit::LeftDeck => s.copies.forget(|m| at.is_item(m.sid, &m.rk)),
+            ViewEdit::Deleted { watched } => s.copies.forget(|m| matches!(fate(at, m, watched), Fate::Goes)),
+            _ => {}
+        }
         s.feed_copies(); // a removed card, a marked one
     }
     if !hit {
@@ -1004,6 +1008,8 @@ fn apply_edit(b: &mut SourceBuild, at: &ViewAt, edit: ViewEdit) -> bool {
     let mine = |m: &PmsMovie| match edit {
         ViewEdit::Watched(_) | ViewEdit::Facts { .. } | ViewEdit::Offset { .. } => at.covers(m),
         ViewEdit::LeftDeck => at.is_item(m.sid, &m.rk),
+        // decided row by row by `ViewAt::deleted_row`, never by this test
+        ViewEdit::Deleted { .. } => false,
     };
     match edit {
         ViewEdit::Watched(_) | ViewEdit::Facts { .. } | ViewEdit::Offset { .. } => {
@@ -1028,7 +1034,83 @@ fn apply_edit(b: &mut SourceBuild, at: &ViewAt, edit: ViewEdit) -> bool {
             b.cw.retain(|c| !mine(&*c.m));
             b.lane.remove(|row| mine(&*row.m)) || b.cw.len() != before
         }
+        ViewEdit::Deleted { watched } => apply_deleted(b, at, watched),
     }
+}
+
+/// What a deletion does to one card a source holds.
+enum Fate {
+    Stays,
+    Goes,
+    /// The deleted episode's show or season, with the count it has now.
+    Counted(Arc<PmsMovie>),
+}
+
+/// [`ViewAt::deleted_row`] for a shared card. The card is copied only when it is one the deletion
+/// can touch, so the rest of a catalog is tested without a clone.
+fn fate(at: &ViewAt, m: &PmsMovie, watched: bool) -> Fate {
+    if !at.covers(m) && !at.is_episode_parent(m) { return Fate::Stays; }
+    let mut probe = m.clone();
+    match at.deleted_row(&mut probe, watched) {
+        DeletedRow::Leave => Fate::Stays,
+        DeletedRow::Remove => Fate::Goes,
+        DeletedRow::Counted => Fate::Counted(Arc::new(probe)),
+    }
+}
+
+/// A confirmed deletion on ONE source's projection: the deleted rows leave the deck and every
+/// shelf, and the show or season a deleted episode counted in gives the episode up. True when a
+/// row left or was counted.
+fn apply_deleted(b: &mut SourceBuild, at: &ViewAt, watched: bool) -> bool {
+    let goes = |m: &Arc<PmsMovie>| matches!(fate(at, m, watched), Fate::Goes);
+    let before = b.cw.len();
+    b.cw.retain(|c| !goes(&c.m));
+    let mut hit = b.cw.len() != before;
+    // `Lane::remove` takes one row a call, and a deleted show can hold several cards. Removal
+    // comes before counting so a counted row is not judged twice.
+    while b.lane.remove(|row| goes(&row.m)) { hit = true; }
+    for c in b.cw.iter_mut().chain(b.lane.rows.iter_mut()) {
+        if let Fate::Counted(m) = fate(at, &c.m, watched) {
+            c.m = m;
+            hit = true;
+        }
+    }
+    for s in b.shelves.iter_mut() { hit |= delete_from_shelf(s, at, watched); }
+    hit
+}
+
+/// [`apply_deleted`] on one shelf. A row that goes takes its position with it and the rows after
+/// it close up by one, as the server's listing did; the window's `end` and the listing's `total`
+/// follow, so the next page read starts where the listing now holds the next row instead of
+/// skipping one. `offset` and `more` stand: the window still begins where it did and the server
+/// still says whether more lies beyond it.
+fn delete_from_shelf(s: &mut Shelf, at: &ViewAt, watched: bool) -> bool {
+    let fates: Vec<Fate> = s.items.iter().map(|m| fate(at, m, watched)).collect();
+    if fates.iter().all(|f| matches!(f, Fate::Stays)) { return false; }
+    // a shelf from an older recording has no positions, and then there is nothing to keep aligned
+    let aligned = s.positions.len() == s.items.len();
+    let old_positions = std::mem::take(&mut s.positions);
+    let mut items = Vec::with_capacity(s.items.len());
+    let mut positions = Vec::with_capacity(old_positions.len());
+    let mut gone: Vec<paging::LedgerKey> = Vec::new();
+    for (i, (m, what)) in std::mem::take(&mut s.items).into_iter().zip(fates).enumerate() {
+        let kept = match what {
+            Fate::Goes => { gone.push(paging::LedgerKey::new(&m.rk)); continue; }
+            Fate::Stays => m,
+            Fate::Counted(counted) => counted,
+        };
+        items.push(kept);
+        if aligned { positions.push(old_positions[i].saturating_sub(gone.len())); }
+    }
+    s.items = items;
+    s.positions = if aligned { positions } else { old_positions };
+    s.total = s.total.saturating_sub(gone.len());
+    s.end = s.end.saturating_sub(gone.len());
+    // a row read through its ledger has positions that index the ledger, which lost the same keys
+    if let Some(ledger) = s.row.ledger.as_mut().filter(|ledger| ledger.active && !gone.is_empty()) {
+        ledger.keys.retain(|key| !gone.contains(key));
+    }
+    true
 }
 
 /// The fields one row's watch state is spread over, moved together: `watched`, `unwatched` and

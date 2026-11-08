@@ -6,27 +6,57 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind { Movie, Show, Episode }
 
+/// Why nothing was deleted, reduced to what a person can act on. Trying again is always safe: a
+/// deletion that did take effect reads on the next try as "already deleted", which is a success.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeleteError {
-    Denied,
-    Unavailable,
+    /// The server refused this account (401/403) or does not say that it allows deletion: the
+    /// server's owner has to turn "Allow media deletion" on, and only the owner's account may delete.
+    NotAllowed,
+    /// No answer, a server error, or a delete that could not be confirmed either way.
+    ServerProblem,
+    /// The request does not name a movie, show or episode on the server.
     InvalidItem,
-    Rejected(i32),
-    /// The server did not confirm the DELETE. It may still have taken effect; do not retry blindly.
-    Uncertain,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WatchlistOutcome { Removed, NotListed, Preserved, Failed }
+pub enum WatchlistOutcome {
+    Removed,
+    NotListed,
+    Preserved,
+    Failed,
+    /// The item was already gone, so there was no record to read its Watchlist identity from.
+    Skipped,
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DeleteOutcome { pub watchlist: WatchlistOutcome }
+/// Where a deleted episode sat, from the server's own record of it just before the delete: what the
+/// season and show counts on screen need in order to follow the deletion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EpisodeParent { pub show_rk: String, pub season_index: i64 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeleteOutcome {
+    pub watchlist: WatchlistOutcome,
+    /// Set for an episode whose record named its show and season.
+    pub parent: Option<EpisodeParent>,
+    /// The item had been played, which decides whether the watched counts above it move too.
+    pub watched: bool,
+}
+
+impl DeleteOutcome {
+    fn already_gone() -> Self {
+        Self { watchlist: WatchlistOutcome::Skipped, parent: None, watched: false }
+    }
+}
 
 trait Backend {
     fn still_current(&self) -> bool;
     fn get(&mut self, path: &str) -> Option<(i32, Option<Value>)>;
     fn delete(&mut self, path: &str) -> Option<i32>;
     fn remove_watchlist(&mut self, hex: &str) -> Option<bool>;
+    /// What this attempt learned first-hand about the server's "Allow media deletion" setting.
+    fn note_deletion(&mut self, on: bool);
+    fn pause(&mut self, ms: u64);
 }
 
 struct Live<'a> { server: Client, original: &'a Client, key: ClientKey, account: Option<&'a AccountClient> }
@@ -40,7 +70,7 @@ impl Backend for Live<'_> {
         self.server.get_value_status(path)
     }
     fn delete(&mut self, path: &str) -> Option<i32> {
-        let status = self.server.delete(path);
+        let status = self.server.delete_slow(path);
         (status >= 0).then_some(status)
     }
     fn remove_watchlist(&mut self, hex: &str) -> Option<bool> {
@@ -50,41 +80,62 @@ impl Backend for Live<'_> {
         account.watchlist_remove(hex, &mut account.watchlist_transport()).ok()?;
         Some(true)
     }
-}
-
-fn allowed<B: Backend>(backend: &mut B) -> Result<bool, DeleteError> {
-    let (status, body) = backend.get("/").ok_or(DeleteError::Unavailable)?;
-    if matches!(status, 401 | 403) { return Ok(false); }
-    if !(200..300).contains(&status) { return Err(DeleteError::Unavailable); }
-    let body = body.ok_or(DeleteError::Unavailable)?;
-    let value = body.get("MediaContainer").and_then(|v| v.get("allowMediaDeletion"))
-        .ok_or(DeleteError::Unavailable)?;
-    match value {
-        Value::Bool(v) => Ok(*v),
-        Value::Number(n) if n.as_i64() == Some(1) => Ok(true),
-        Value::Number(n) if n.as_i64() == Some(0) => Ok(false),
-        Value::String(s) if s == "1" || s.eq_ignore_ascii_case("true") => Ok(true),
-        Value::String(s) if s == "0" || s.eq_ignore_ascii_case("false") => Ok(false),
-        _ => Err(DeleteError::Unavailable),
+    fn note_deletion(&mut self, on: bool) {
+        super::serverinfo::note_deletion(self.original.id(), on);
+    }
+    fn pause(&mut self, ms: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
     }
 }
 
-/// Read the permission of this exact server and its current credential. Unknown is not allowed.
-pub fn permission(server: &Client, key: ClientKey) -> Result<bool, DeleteError> {
-    if !super::server_facts(server.id()).is_some_and(|facts| facts.owned) { return Ok(false); }
-    let captured = server.captured_for_key(key).ok_or(DeleteError::Unavailable)?;
-    let mut live = Live { server: captured, original: server, key, account: None };
-    let answer = allowed(&mut live)?;
-    if !live.still_current() { return Err(DeleteError::Unavailable); }
-    Ok(answer)
+/// `allowMediaDeletion` as PMS spells it (a bool on 1.43; the lenient forms elsewhere). Anything
+/// else is not an answer.
+fn flag(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(v) => Some(*v),
+        Value::Number(n) if n.as_i64() == Some(1) => Some(true),
+        Value::Number(n) if n.as_i64() == Some(0) => Some(false),
+        Value::String(s) if s == "1" || s.eq_ignore_ascii_case("true") => Some(true),
+        Value::String(s) if s == "0" || s.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
+}
+
+/// Ask the server, just before deleting, whether it allows deletion. The answer is kept for the
+/// item menu too. An absent or unreadable answer is not permission: nothing is deleted on a guess.
+fn permitted<B: Backend>(backend: &mut B) -> Result<(), DeleteError> {
+    let (status, body) = backend.get("/").ok_or(DeleteError::ServerProblem)?;
+    if matches!(status, 401 | 403) {
+        backend.note_deletion(false);
+        return Err(DeleteError::NotAllowed);
+    }
+    if !(200..300).contains(&status) { return Err(DeleteError::ServerProblem); }
+    let body = body.ok_or(DeleteError::ServerProblem)?;
+    let on = body.get("MediaContainer").and_then(|c| c.get("allowMediaDeletion")).and_then(flag) == Some(true);
+    backend.note_deletion(on);
+    if on { Ok(()) } else { Err(DeleteError::NotAllowed) }
 }
 
 fn key_ok(key: &str) -> bool { !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) }
 fn item_path(key: &str) -> String { format!("/library/metadata/{key}") }
+fn first_metadata(body: &Value) -> Option<Value> {
+    body.get("MediaContainer")?.get("Metadata")?.as_array()?.first().cloned()
+}
 fn metadata<B: Backend>(backend: &mut B, key: &str) -> Option<Value> {
     let (status, body) = backend.get(&item_path(key))?;
     if !(200..300).contains(&status) { return None; }
-    body?.get("MediaContainer")?.get("Metadata")?.as_array()?.first().cloned()
+    first_metadata(&body?)
+}
+
+/// The server's record of the item to delete, or `None` when the server says it no longer exists.
+fn read_item<B: Backend>(backend: &mut B, key: &str) -> Result<Option<Value>, DeleteError> {
+    let (status, body) = backend.get(&item_path(key)).ok_or(DeleteError::ServerProblem)?;
+    match status {
+        404 => Ok(None),
+        401 | 403 => Err(DeleteError::NotAllowed),
+        200..=299 => body.as_ref().and_then(first_metadata).map(Some).ok_or(DeleteError::ServerProblem),
+        _ => Err(DeleteError::ServerProblem),
+    }
 }
 
 fn catalog_id(guid: &str, kind: MediaKind) -> Option<String> {
@@ -92,6 +143,16 @@ fn catalog_id(guid: &str, kind: MediaKind) -> Option<String> {
     let hex = guid.strip_prefix(prefix)?;
     catalog_hex_of_guid(guid)?;
     Some(hex.to_owned())
+}
+
+fn number(item: &Value, field: &str) -> Option<i64> {
+    let n = item.get(field)?;
+    n.as_i64().or_else(|| n.as_str()?.parse().ok())
+}
+
+fn episode_parent(item: &Value) -> Option<EpisodeParent> {
+    let show_rk = item.get("grandparentRatingKey").and_then(Value::as_str).filter(|s| key_ok(s))?;
+    Some(EpisodeParent { show_rk: show_rk.to_owned(), season_index: number(item, "parentIndex")? })
 }
 
 // Returns Some(true) only with positive evidence that episodes remain. A missing count is unknown.
@@ -108,23 +169,57 @@ fn episodes_remain<B: Backend>(backend: &mut B, show: &str, missing_is_empty: bo
     Some(n != 0)
 }
 
+const SETTLE_POLLS: u32 = 3;
+const SETTLE_PAUSE_MS: u64 = 2_000;
+
+/// A DELETE that got no clear answer (a server error, or a connection that dropped) may still have
+/// taken effect, because PMS keeps working after a client gives up. Look at the item itself for a
+/// few seconds: gone means deleted.
+fn settled<B: Backend>(backend: &mut B, path: &str) -> Result<(), DeleteError> {
+    for _ in 0..SETTLE_POLLS {
+        backend.pause(SETTLE_PAUSE_MS);
+        match backend.get(path) {
+            Some((404, _)) => return Ok(()),
+            Some((401 | 403, _)) => return Err(DeleteError::NotAllowed),
+            _ => {}
+        }
+    }
+    Err(DeleteError::ServerProblem)
+}
+
+/// The DELETE itself. A 404 is "already gone" (an earlier attempt that timed out, another client),
+/// which is what the person asked for.
+fn remove<B: Backend>(backend: &mut B, key: &str) -> Result<(), DeleteError> {
+    let path = item_path(key);
+    match backend.delete(&path) {
+        Some(status) if (200..300).contains(&status) || status == 404 => Ok(()),
+        Some(401 | 403) => {
+            backend.note_deletion(false);
+            Err(DeleteError::NotAllowed)
+        }
+        _ => settled(backend, &path),
+    }
+}
+
 /// Delete one item and then clean up the Watchlist. Call only after explicit user confirmation.
-/// An `Ok` confirms deletion; `Failed` reports that subsequent Watchlist cleanup was not confirmed.
-/// `Uncertain` means the DELETE might have succeeded and must not be repeated automatically.
+/// An `Ok` confirms the item is gone, deleted now or already; `Failed` reports that the Watchlist
+/// cleanup that followed was not confirmed. An `Err` is safe to retry.
 pub fn delete(server: &Client, key: ClientKey, account: Option<&AccountClient>, rating_key: &str, kind: MediaKind)
     -> Result<DeleteOutcome, DeleteError>
 {
-    if !super::server_facts(server.id()).is_some_and(|facts| facts.owned) { return Err(DeleteError::Denied); }
-    let captured = server.captured_for_key(key).ok_or(DeleteError::Unavailable)?;
+    if !super::server_facts(server.id()).is_some_and(|facts| facts.owned) { return Err(DeleteError::NotAllowed); }
+    let captured = server.captured_for_key(key).ok_or(DeleteError::ServerProblem)?;
     execute(&mut Live { server: captured, original: server, key, account }, rating_key, kind)
 }
 
 fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind) -> Result<DeleteOutcome, DeleteError> {
     if !key_ok(key) { return Err(DeleteError::InvalidItem); }
-    if !allowed(backend)? { return Err(DeleteError::Denied); }
-    let item = metadata(backend, key).ok_or(DeleteError::Unavailable)?;
+    permitted(backend)?;
+    let Some(item) = read_item(backend, key)? else { return Ok(DeleteOutcome::already_gone()); };
     let expected = match kind { MediaKind::Movie => "movie", MediaKind::Show => "show", MediaKind::Episode => "episode" };
     if item.get("type").and_then(Value::as_str) != Some(expected) { return Err(DeleteError::InvalidItem); }
+    let parent = if kind == MediaKind::Episode { episode_parent(&item) } else { None };
+    let watched = number(&item, "viewCount").is_some_and(|n| n > 0);
     let show = if kind == MediaKind::Episode {
         item.get("grandparentRatingKey").and_then(Value::as_str).filter(|s| key_ok(s)).map(str::to_owned)
     } else { None };
@@ -137,21 +232,14 @@ fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind) -> Result<De
     };
     // Confirm the endpoint exists before interpreting a later 404 as an emptied/removed show.
     let leaves_known = show.as_deref().and_then(|s| episodes_remain(backend, s, false)).is_some();
-    if !backend.still_current() { return Err(DeleteError::Unavailable); }
-    let path = item_path(key);
-    match backend.delete(&path) {
-        Some(status) if (200..300).contains(&status) => {},
-        Some(status) if status < 500 => return Err(DeleteError::Rejected(status)),
-        _ => match backend.get(&path) {
-            Some((404, _)) => {},
-            _ => return Err(DeleteError::Uncertain),
-        },
-    }
+    if !backend.still_current() { return Err(DeleteError::ServerProblem); }
+    remove(backend, key)?;
+    let outcome = |watchlist| DeleteOutcome { watchlist, parent: parent.clone(), watched };
     if kind == MediaKind::Episode {
         let remaining = if leaves_known { show.as_deref().and_then(|s| episodes_remain(backend, s, true)) } else { None };
         match remaining {
-            Some(true) => return Ok(DeleteOutcome { watchlist: WatchlistOutcome::Preserved }),
-            None => return Ok(DeleteOutcome { watchlist: WatchlistOutcome::Failed }),
+            Some(true) => return Ok(outcome(WatchlistOutcome::Preserved)),
+            None => return Ok(outcome(WatchlistOutcome::Failed)),
             Some(false) => {},
         }
     }
@@ -160,7 +248,7 @@ fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind) -> Result<De
         Some(false) => WatchlistOutcome::NotListed,
         None => WatchlistOutcome::Failed,
     };
-    Ok(DeleteOutcome { watchlist })
+    Ok(outcome(watchlist))
 }
 
 #[cfg(test)]

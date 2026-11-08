@@ -94,7 +94,8 @@ pub enum BrowseCmd {
     ListingsChanged { sid: ServerId, library_on_stack: bool },
     /// The optimistic half of a view-state change (`viewstate::publish_view`), on the grid and the
     /// shelves: a watched edit reaches the listing and the section shelves, a deck removal the
-    /// section shelves' Continue Watching.
+    /// section shelves' Continue Watching, a confirmed deletion takes the item out of every
+    /// section's rows and shelves and lets the show or season of a deleted episode count one fewer.
     ApplyView { at: crate::viewstate::ViewAt, edit: crate::viewstate::ViewEdit },
 }
 
@@ -188,7 +189,9 @@ impl BrowseStore {
         let change_sensitive = matches!(&cmd, BrowseCmd::Discovery(_) | BrowseCmd::Addressed {
             work: LibraryWork::SaveCursor { .. } | LibraryWork::Hubs { .. } | LibraryWork::HubHold { .. }
                 | LibraryWork::Requery, ..
-        }) || matches!(&cmd, BrowseCmd::ApplyView { edit: ViewEdit::Facts { .. } | ViewEdit::Offset { .. }, .. });
+        }) || matches!(&cmd, BrowseCmd::ApplyView {
+            edit: ViewEdit::Facts { .. } | ViewEdit::Offset { .. } | ViewEdit::Deleted { .. }, ..
+        });
         let quiet = matches!(&cmd, BrowseCmd::Addressed {
             work: LibraryWork::Want { .. } | LibraryWork::Letters { .. } | LibraryWork::Genres | LibraryWork::HubPage { .. } | LibraryWork::HubPageCancel { .. }, ..
         });
@@ -880,6 +883,29 @@ mod contract_tests {
         assert_eq!(held.len(), shelf_only.len() + 3, "the shelves plus the three grid items: {:?}", rks(&held));
         assert!(!rks(&held).contains(&"7".to_string()), "past the window");
         assert!(browse.held_keys(SectionAddress { epoch: target.epoch + 1, ..target }).is_empty(), "a stale address holds nothing");
+    }
+
+    /// A confirmed deletion raises the store's notice only when a row on screen left: the Stores
+    /// fan-out sends it to every store, and the ones the item never reached stay quiet.
+    #[test]
+    fn a_deletion_raises_a_notice_only_for_a_row_it_reached() {
+        use crate::viewstate::{ViewAt, ViewEdit};
+        let _guard = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let mut browse = BrowseStore::default();
+        browse.seed_two_source_table_for_test();
+        browse.seed_items_for_test(3);
+        let sid = browse.listing_snapshot().view().item(0).unwrap().sid;
+        let _ = browse.take_notice();
+        let delete = |rk: &str| BrowseCmd::ApplyView { at: ViewAt::leaf(sid, rk), edit: ViewEdit::Deleted { watched: false } };
+        assert!(!browse.run_for_test(delete("99")), "no row of the listing is the deleted item");
+        assert_eq!(browse.take_notice(), None);
+        assert!(browse.run_for_test(delete("2")));
+        assert!(browse.take_notice().is_some(), "a row left the screen");
+        let snapshot = browse.listing_snapshot();
+        let view = snapshot.view();
+        assert_eq!(view.total(), 2);
+        assert_eq!(view.item(1).map(|m| m.rk.as_str()), Some("3"), "the next row closed up");
     }
 
     /// `hubs_committed` is the drawn set: nothing before the first publication, and still nothing
