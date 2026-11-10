@@ -790,6 +790,8 @@ pub enum NavOp<A> {
     PopTo(EntryId),
     Replace(A),
     SelectTab(A),
+    /// Select a tab and put its child on top in the same commit. Back reveals the tab's page.
+    SelectTabWithChild { tab: A, child: A },
     Present(A),
     Dismiss(EntryId),
     Cancel,
