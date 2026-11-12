@@ -410,7 +410,7 @@ pub(super) fn transcode_spec<'a>(
     // says so (`client_subtitles`) so the server does not fall back to burning the part's own
     // selection. Every burn is a `remux: false` contract and keeps its id. (A cold start that
     // CARRIES a burn into a remux-shaped plan asks for it explicitly: [`transcode_spec_carrying_burn`].)
-    let (sub, client_subtitles) = if contract.remux { (0, sub != 0) } else { (sub, false) };
+    let (sub, client_subtitles) = if contract.remux || contract.client_sidecar { (0, sub != 0) } else { (sub, false) };
     transcode_spec_carrying_burn(caps, rk, media_index, session, encoder_session, offset, aud, sub, client_subtitles, contract)
 }
 

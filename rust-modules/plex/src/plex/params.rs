@@ -139,6 +139,10 @@ pub struct EncodeContract {
     /// `route::desired_audio` — `NONE` unless the enhancement is offered (Plex Pass, a capable
     /// carried track, the Original route, no subtitle, no Dolby Vision) and the viewer opted in.
     pub audio: AudioEnhancements,
+    /// **An external subtitle the app draws itself rides this re-encode instead of being burned**
+    /// (the video-conversion contracts of open recovery). The wire then says `subtitles=none`, as a
+    /// remux's does, and the presenter reads `ClientOverRemux`. Meaningful only with `remux == false`.
+    pub client_sidecar: bool,
 }
 
 impl EncodeContract {
@@ -152,6 +156,7 @@ impl EncodeContract {
             no_video_copy: false,
             ceiling: None,
             audio,
+            client_sidecar: false,
         }
     }
 }

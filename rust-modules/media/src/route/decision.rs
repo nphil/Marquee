@@ -3585,6 +3585,7 @@ impl HlsAbrControl {
                     seconds_per_segment: self.seconds_per_segment,
                 },
                 audio: plx_plex::plex::AudioEnhancements::NONE,
+                client_sidecar: false,
             },
         );
         // The deadline-bearing path preserves the cause where it is issued. A completed HTTP
@@ -9727,6 +9728,9 @@ fn video_encode_contract(ps: &PlaybackSession, lower: bool) -> plx_plex::plex::E
     };
     plx_plex::plex::EncodeContract {
         no_video_copy: true,
+        // An external text subtitle the app draws itself stays the app's, as over a remux; the
+        // server's burn is for what the app cannot draw.
+        client_sidecar: sidecar_drawn_by_client(ps) && !ps.side_subs_refused,
         ..re_encode_contract(ps, cur_delivery(ps), ceiling)
     }
 }
@@ -9749,6 +9753,7 @@ fn re_encode_contract(
             crate::player::audio_enhancements(),
             enhancements_offered(&facts(ps), RouteFamily::Other),
         ),
+        client_sidecar: false,
     }
 }
 
@@ -10437,9 +10442,11 @@ pub fn subtitle_presenter(ps: &PlaybackSession) -> SubtitlePresenter {
         SubtitlePresenter::None
     } else if !is_transcoding(ps) {
         SubtitlePresenter::Client
-    } else if ps.cur_contract.remux
+    } else if (ps.cur_contract.remux
         && ps.cur_contract.delivery == plx_plex::plex::TranscodeDelivery::ProgressiveMkv
-        && side_subs_allowed(ps)
+        && side_subs_allowed(ps))
+        // A video conversion that left an external subtitle to the app (`video_encode_contract`).
+        || (ps.cur_contract.client_sidecar && sidecar_drawn_by_client(ps) && !ps.side_subs_refused)
     {
         SubtitlePresenter::ClientOverRemux
     } else if enhancement_family(ps) == RouteFamily::Remux {
@@ -10703,6 +10710,7 @@ fn enhanced_remux_contract(
         no_video_copy: false,
         ceiling: None,
         audio,
+        client_sidecar: false,
     }
 }
 
@@ -11422,6 +11430,7 @@ pub fn enhancement_test_session(route: EnhTestFixture) -> (PlaybackSession, Serv
         no_video_copy: false,
         ceiling: route.rung.map(|r| r.ceiling()),
         audio: route.applied,
+        client_sidecar: false,
     };
     ps.tsession = if route.remux.is_some() { "enh-menu-test-session".to_owned() } else { String::new() };
     ps.cur_audio = route.carried_capable.map(|capable| CarriedAudio {

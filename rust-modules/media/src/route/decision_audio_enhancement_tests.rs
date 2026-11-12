@@ -4158,6 +4158,33 @@ fn transcode_spec_never_names_a_subtitle_on_a_remux() {
     assert_eq!((burn.subtitle_stream_id, burn.client_subtitles), (77, false));
 }
 
+/// Open recovery's video conversion (`VideoLane::Encode`/`Both`) re-encodes, but an external subtitle
+/// the app draws stays the app's: no burn on the wire, no dimmed Style/Timing. An embedded pick
+/// keeps the server's burn.
+#[test]
+fn video_conversion_leaves_a_drawable_sidecar_to_the_app() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install_truehd_remux(&mut ps, &live);
+    let caps = plx_platform::devcaps::caps();
+    let spec = |c| crate::route::plan::transcode_spec(&caps, "5", 0, "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 78, c);
+    pick_sidecar(&mut ps);
+    let contract = video_encode_contract(&ps, true);
+    assert!(!contract.remux && contract.no_video_copy);
+    let s = spec(contract);
+    assert_eq!((s.subtitle_stream_id, s.client_subtitles), (0, true), "no burn on the wire");
+    ps.cur_contract = contract;
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ClientOverRemux);
+    assert!(!subtitles_burned(&ps));
+    // The same pick with no sidecar behind it is the server's burn.
+    ps.cur_sub_sidecar = false;
+    let s = spec(video_encode_contract(&ps, true));
+    assert_eq!((s.subtitle_stream_id, s.client_subtitles), (78, false), "an embedded track is burned");
+    live.finish();
+    cleanup(&mut ps);
+}
+
 #[test]
 fn sidecar_pick_on_a_live_remux_queues_no_retranscode() {
     let mut ps = PlaybackSession::IDLE;

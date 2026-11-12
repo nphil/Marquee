@@ -792,6 +792,7 @@ mod tests {
                 no_video_copy,
                 ceiling: None,
                 audio,
+                client_sidecar: false,
             },
             caps: assumed_caps(),
             audio_stream_id: 0,

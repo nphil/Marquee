@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- When the TV refuses a direct-play start and open recovery re-encodes the video, an external subtitle file the app draws itself (an SRT on the part) is no longer burned in by the server: the app keeps drawing it, so Timing and Style stay available. Built-in and picture subtitles are still burned.
 - Deleting a movie, show or episode also takes it off the Plex Watchlist, including when the item was already gone from the server (the identity comes from the row the menu was opened on). A failed Watchlist call is tried three times before it is reported. The deletion messages are short, plain and translated in all eleven languages: "Deleted.", "Already deleted.", "Deleted, but it couldn't be removed from your Watchlist." and, for an episode whose show could not be checked, "Episode deleted. Check your Watchlist for the show."
 - The launcher dock gets a native 240 px `extraLargeIcon`, so a 4K dock tile is no longer an upscaled 130 px icon. `tools/import-bazarr-link.sh` now gives the staged file the owner of the app's jail directory, which the jailed app requires to read it.
 - The detail page, the info card and the audio menu label subtitles "Subtitles", subtitles for the deaf and hard of hearing "Captions" and audio description "Audio description" in plain words instead of the CC, SDH and AD marks, in all eleven languages. The Tracks panel keeps its technical labels.
