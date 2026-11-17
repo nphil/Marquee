@@ -225,6 +225,11 @@ pub(super) fn record_render(elapsed: Duration) {
     LAST_RENDER_US.set(Some(micros(elapsed)));
 }
 
+/// WORKER: how long this job's `plx_ass_render` call took, if it made one.
+pub(super) fn last_render_us() -> Option<u32> {
+    LAST_RENDER_US.get()
+}
+
 /// WORKER: remember the duration of the whole `Engine::render` job just run.
 pub(super) fn record_job(elapsed: Duration, ahead: bool) {
     LAST_JOB_US.set(Some(micros(elapsed)));

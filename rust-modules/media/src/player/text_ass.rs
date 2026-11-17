@@ -898,7 +898,7 @@ fn script_from(text: &str, dialect: TextDialect) -> TextScript {
 }
 
 /// `H:MM:SS.cc` from centiseconds.
-fn centis(cs: i64) -> String {
+pub(super) fn centis(cs: i64) -> String {
     format!("{}:{:02}:{:02}.{:02}", cs / 360_000, cs / 6_000 % 60, cs / 100 % 60, cs % 100)
 }
 

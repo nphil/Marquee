@@ -3,7 +3,7 @@
 //! it never parses fonts/events, rasterizes, or waits for the native renderer.
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 mod mailbox;
@@ -247,6 +247,11 @@ pub struct Runtime {
     started: OnceLock<bool>,
     worker: OnceLock<std::thread::Thread>,
     mailbox: Mutex<Mailbox>,
+    /// The playback (`route::playback_trace_generation() + 1`) whose styled subtitles were given
+    /// up for being too slow to draw (`ass_plain`); 0 for none.
+    plain_for: AtomicU64,
+    /// That give-up has not been told to the viewer yet.
+    plain_untold: AtomicBool,
 }
 
 impl Runtime {
@@ -261,6 +266,8 @@ impl Runtime {
             started: OnceLock::new(),
             worker: OnceLock::new(),
             mailbox: Mutex::new(Mailbox::new()),
+            plain_for: AtomicU64::new(0),
+            plain_untold: AtomicBool::new(false),
         }
     }
 
@@ -515,6 +522,30 @@ pub fn clear() {
     clear_runtime(runtime());
 }
 
+/// MAIN THREAD: whether styled subtitles were given up as too slow to draw since the last call, so
+/// the viewer is told once.
+pub fn take_styling_given_up() -> bool {
+    runtime().plain_untold.swap(false, Ordering::AcqRel)
+}
+
+/// WORKER: whether styling is given up for the playback on now.
+fn styling_given_up() -> bool {
+    runtime().plain_for.load(Ordering::Acquire) == u64::from(crate::route::playback_trace_generation()) + 1
+}
+
+/// WORKER: authored renders have stayed too slow (`ass_plain::SlowRenders`): draw plain lines for
+/// the rest of this playback.
+fn give_up_styling() {
+    let playback = u64::from(crate::route::playback_trace_generation()) + 1;
+    runtime().plain_for.store(playback, Ordering::Release);
+    runtime().plain_untold.store(true, Ordering::Release);
+    plx_base::eventlog::log(&format!(
+        "subtitle: styled renders over {} ms for {} ms; plain lines for the rest of this playback",
+        super::ass_plain::SLOW_RENDER_MS,
+        super::ass_plain::SLOW_FOR_MS
+    ));
+}
+
 fn clear_runtime(runtime: &Runtime) {
     if runtime.source_id.swap(0, Ordering::AcqRel) == 0 {
         return;
@@ -562,6 +593,8 @@ fn worker() {
         .expect("one styled subtitle worker");
     super::ass_perf::log_worker_tid();
     let mut engine = Engine::default();
+    let mut slow = super::ass_plain::SlowRenders::default();
+    let clock = std::time::Instant::now();
     loop {
         let job = {
             let mut mailbox = runtime().mailbox.lock().unwrap_or_else(|e| e.into_inner());
@@ -593,6 +626,7 @@ fn worker() {
             && alignment_epoch_valid(job.key.alignment_epoch);
         let rendered = live().then(|| {
             let job_started = std::time::Instant::now();
+            engine.plain = styling_given_up();
             let rendered = engine.render(&job);
             super::ass_perf::record_job(job_started.elapsed(), job.kind != Kind::Normal);
             rendered
@@ -607,6 +641,13 @@ fn worker() {
             ran.then_some(finished)
         };
         let Some(finished) = finished else { continue };
+        if let Some(render_us) = super::ass_perf::last_render_us().filter(|_| !engine.plain && !job.source.origin.is_text()) {
+            let renderer = (job.key.epoch, job.key.source_id, job.key.width, job.key.height);
+            let now_ms = clock.elapsed().as_millis() as u64;
+            if slow.step(now_ms, renderer, u64::from(render_us) / 1000) {
+                give_up_styling();
+            }
+        }
         super::ass_perf::finish_call(finished.changed, finished.pub_bytes);
         if finished.wake {
             plx_machine::present::wake_from_worker();
@@ -751,6 +792,13 @@ struct Engine {
     error: Option<Fault>,
     /// The override the held renderer wears; a fresh renderer wears none.
     mine: Option<super::text_style::TextStyle>,
+    /// Styling is given up for this playback (`ass_plain`): an authored source is drawn as its
+    /// plain lines. The worker sets it before each render.
+    plain: bool,
+    /// The plain lines last made: the authored source and revision and the look they came from.
+    plain_held: Option<(u64, u64, super::text_style::TextStyle, Arc<Source>)>,
+    /// How many plain tracks were made: each new one's revision.
+    plain_made: u64,
 }
 
 impl Engine {
@@ -901,14 +949,34 @@ impl Engine {
 
     /// The frame for `job` and the window of playheads it stays right for.
     fn render(&mut self, job: &Job) -> Rendered {
-        let frame = self.render_frame(job);
+        let source = self.shown_source(job);
+        let frame = self.render_frame(job, &source);
         let validity = if frame.error.is_some() {
             Validity::ALWAYS
         } else {
-            self.validity(&job.source, job.now_ms)
+            self.validity(&source, job.now_ms)
         };
-        let aligns = self.aligns(&job.source, job.now_ms);
+        let aligns = self.aligns(&source, job.now_ms);
         Rendered { frame, validity, aligns }
+    }
+
+    /// What the renderer draws for `job`: its source, or once styling is given up
+    /// ([`Engine::plain`]) an authored source's plain lines in the viewer's text look, made again
+    /// only when the track or the look changes.
+    fn shown_source(&mut self, job: &Job) -> Arc<Source> {
+        if !self.plain || job.source.origin.is_text() {
+            return job.source.clone();
+        }
+        let style = super::text_style::TextStyle::current();
+        if let Some((id, revision, held, plain)) = &self.plain_held {
+            if (*id, *revision, *held) == (job.source.id, job.source.revision, style) {
+                return plain.clone();
+            }
+        }
+        self.plain_made += 1;
+        let plain = Arc::new(super::ass_plain::plain_source(&job.source, style, self.plain_made));
+        self.plain_held = Some((job.source.id, job.source.revision, style, plain.clone()));
+        plain
     }
 
     /// The window at `now_ms` from every event's timing, clamped to the script window held.
@@ -936,28 +1004,28 @@ impl Engine {
         validity
     }
 
-    fn render_frame(&mut self, request: &Job) -> Arc<Frame> {
+    fn render_frame(&mut self, request: &Job, source: &Arc<Source>) -> Arc<Frame> {
         let key = request.key;
         let source_changed = self.source.as_ref().is_none_or(|old| {
-            old.id != request.source.id || old.revision != request.source.revision
+            old.id != source.id || old.revision != source.revision
         });
         if source_changed {
-            self.error = validate(&request.source).err();
+            self.error = validate(source).err();
             if self.error.is_none() {
                 let append = self
                     .source
                     .as_ref()
-                    .and_then(|old| append_from(old, &request.source));
+                    .and_then(|old| append_from(old, source));
                 let result = if let (Some(from), Some(native)) = (append, self.native.as_mut()) {
-                    let Content::Embedded { events, .. } = &request.source.content else {
+                    let Content::Embedded { events, .. } = &source.content else {
                         unreachable!()
                     };
                     unsafe { plx_ass_prune_before(native.0, prune_deadline(events)) };
-                    native.append(&request.source, from)
+                    native.append(source, from)
                 } else if self
                     .source
                     .as_ref()
-                    .is_some_and(|old| same_embedded_resources(old, &request.source))
+                    .is_some_and(|old| same_embedded_resources(old, source))
                     && self.native.is_some()
                 {
                     // An out-of-order or size-capped window may not be expressible
@@ -965,29 +1033,30 @@ impl Engine {
                     // timeline. Reset events only, retaining parsed header, fonts and caches.
                     let native = self.native.as_mut().unwrap();
                     unsafe { plx_ass_flush_events(native.0) };
-                    native.append(&request.source, 0)
-                } else if self.source.as_ref().is_some_and(|old| restyles(old, &request.source)) {
-                    self.restyle(&request.source, request.now_ms)
+                    native.append(source, 0)
+                } else if self.source.as_ref().is_some_and(|old| restyles(old, source)) {
+                    self.restyle(source, request.now_ms)
                 } else {
-                    self.open(&request.source, request.now_ms)
+                    self.open(source, request.now_ms)
                 };
                 self.error = result.err();
             }
-            self.source = Some(request.source.clone());
+            self.source = Some(source.clone());
             if let Some(error) = self.error {
                 self.native = None;
                 plx_base::eventlog::log(&format!("subtitle: ASS refused: {error:?}"));
             }
         }
         if self.error.is_none() {
-            if let Err(error) = self.wear(key.mine) {
+            // plain lines are in the viewer's look already
+            if let Err(error) = self.wear(key.mine.filter(|_| !source.origin.is_text())) {
                 self.error = Some(error);
                 self.native = None;
                 plx_base::eventlog::log(&format!("subtitle: ASS refused: {error:?}"));
             }
         }
         if self.error.is_none() {
-            if let Err(error) = self.slide(&request.source, request.now_ms) {
+            if let Err(error) = self.slide(source, request.now_ms) {
                 self.error = Some(error);
                 self.native = None;
                 plx_base::eventlog::log(&format!("subtitle: ASS refused: {error:?}"));

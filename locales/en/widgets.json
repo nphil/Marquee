@@ -31,6 +31,10 @@
     "value": "Press OK to play at lower quality",
     "description": "Second line of the caption after a long wait for the network: OK continues this playback at a lower quality. The saved quality setting does not change."
   },
+  "widgets.subtitles.simpler_style": {
+    "value": "Subtitles switched to a simpler style to keep playback smooth",
+    "description": "System notification when styled subtitles take too long to draw on the TV: the rest of this playback shows them as plain text."
+  },
   "widgets.menu.scaling": {
     "value": "Video scaling",
     "description": "Opens the current picture scaling choices."

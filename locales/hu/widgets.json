@@ -7,6 +7,7 @@
   "widgets.skip.missing_both": "Hiányzik a Plex bevezető- és stáblistajelölője. Ellenőrizd az elemzést és a felismerést.",
   "widgets.stall.waiting_network": "Várakozás a hálózatra",
   "widgets.stall.lower_quality": "Nyomja meg az OK-t az alacsonyabb minőségű lejátszáshoz",
+  "widgets.subtitles.simpler_style": "A feliratok egyszerűbb stílusra váltottak, hogy a lejátszás akadásmentes maradjon",
   "widgets.menu.scaling": "Videó méretezése",
   "widgets.scaling.fit": "Illesztés",
   "widgets.scaling.fill": "Kitöltés / vágás",

@@ -23,6 +23,7 @@ pub(crate) mod alignment; // bounded SpeechDock alignment worker
 pub mod claim_hold;
 pub mod ass; // pinned libass worker and immutable rendered frames
 pub mod ass_perf; // per-second libass cost line (`assperf:`)
+mod ass_plain; // styled subtitles too slow to draw, drawn as plain lines for the rest of the playback (pure)
 pub mod ass_timing; // libass clock reading and the validity window of a rendered frame
 pub mod ass_script; // a sidecar script fed in windows around the playhead
 pub mod ass_source; // bounded embedded scripts and subtitle presentation clock

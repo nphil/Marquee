@@ -7,6 +7,7 @@
   "widgets.skip.missing_both": "Faltan las marcas de introducción y créditos de Plex. Revisa Analizar y la detección.",
   "widgets.stall.waiting_network": "Esperando a la red",
   "widgets.stall.lower_quality": "Pulsa OK para reproducir en menor calidad",
+  "widgets.subtitles.simpler_style": "Los subtítulos pasaron a un estilo más simple para que la reproducción siga fluida",
   "widgets.menu.scaling": "Escala de vídeo",
   "widgets.scaling.fit": "Ajustar",
   "widgets.scaling.fill": "Llenar / recortar",

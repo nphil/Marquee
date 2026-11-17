@@ -7,6 +7,7 @@
   "widgets.skip.missing_both": "Marcadores de introdução e créditos Plex em falta. Verifique Analisar e a deteção.",
   "widgets.stall.waiting_network": "A aguardar a rede",
   "widgets.stall.lower_quality": "Prima OK para reproduzir em qualidade inferior",
+  "widgets.subtitles.simpler_style": "As legendas passaram a um estilo mais simples para manter a reprodução fluida",
   "widgets.menu.scaling": "Escala do vídeo",
   "widgets.scaling.fit": "Ajustar",
   "widgets.scaling.fill": "Preencher / recortar",

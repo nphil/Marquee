@@ -7,6 +7,7 @@
   "widgets.skip.missing_both": "Нет меток заставки и титров Plex. Проверьте анализ и обнаружение.",
   "widgets.stall.waiting_network": "Ожидание сети",
   "widgets.stall.lower_quality": "Нажмите OK, чтобы смотреть в более низком качестве",
+  "widgets.subtitles.simpler_style": "Субтитры переключены на более простой стиль, чтобы воспроизведение шло плавно",
   "widgets.menu.scaling": "Масштаб видео",
   "widgets.scaling.fit": "Вписать",
   "widgets.scaling.fill": "Заполнить / обрезать",

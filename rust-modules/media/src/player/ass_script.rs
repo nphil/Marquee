@@ -30,6 +30,8 @@ struct Line {
     end_ms: i64,
     off: u32,
     len: u32,
+    /// Where the Text column starts in the line (`len` when it has none).
+    text: u32,
     /// Its picture depends on the clock (an animation tag or an Effect), so a frame showing it
     /// is valid for one time only.
     animated: bool,
@@ -83,7 +85,9 @@ impl ScriptIndex {
                 let (start_ms, end_ms) = times(body, start_at, end_at, fields).unwrap_or(ALWAYS);
                 let effect = effect_at.and_then(|at| body.splitn(fields.max(1), ',').nth(at));
                 let animated = effect.is_some_and(|e| effect_animated(e.as_bytes())) || text_animated(body.as_bytes());
-                lines.push(Line { start_ms, end_ms, off: off as u32, len: line.len() as u32, animated });
+                // What was trimmed is valid text, so its length is the same in the raw line.
+                let text_from = text_at(line, text.len() - trimmed.len() + 9, fields);
+                lines.push(Line { start_ms, end_ms, off: off as u32, len: line.len() as u32, text: text_from, animated });
             } else {
                 if trimmed.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("Format:")) {
                     let names: Vec<String> =
@@ -115,6 +119,14 @@ impl ScriptIndex {
             start_ms: l.start_ms,
             end_ms: l.end_ms,
             motion: Motion::Known(l.animated),
+        })
+    }
+
+    /// Every `Dialogue:` line's start, end and Text column, in file order.
+    pub fn dialogues(&self) -> impl Iterator<Item = (i64, i64, &[u8])> + '_ {
+        self.lines.iter().map(|l| {
+            let line = &self.raw[l.off as usize..(l.off + l.len) as usize];
+            (l.start_ms, l.end_ms, line[l.text as usize..].trim_ascii_end())
         })
     }
 
@@ -219,6 +231,21 @@ impl ScriptIndex {
 fn times(body: &str, start_at: usize, end_at: usize, fields: usize) -> Option<(i64, i64)> {
     let cols: Vec<&str> = body.splitn(fields.max(1), ',').collect();
     Some((libass_clock_ms(cols.get(start_at)?), libass_clock_ms(cols.get(end_at)?)))
+}
+
+/// Where a `Dialogue:` line's Text column (the last of the Format's `fields`) starts: after the
+/// `fields - 1`th comma of the body at `body_at`, as libass splits it; the line's end when it has
+/// fewer. Commas are ASCII, so the raw bytes are split, not text an invalid byte has widened.
+fn text_at(line: &[u8], body_at: usize, fields: usize) -> u32 {
+    let wanted = fields.saturating_sub(1);
+    let mut commas = 0;
+    for (i, &b) in line.iter().enumerate().skip(body_at) {
+        if commas == wanted {
+            return i as u32;
+        }
+        commas += usize::from(b == b',');
+    }
+    line.len() as u32
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@
   "widgets.skip.missing_both": "Plex-Intro- und Abspannmarkierungen fehlen. Plex-Analyse und Erkennung prüfen.",
   "widgets.stall.waiting_network": "Warten auf das Netzwerk",
   "widgets.stall.lower_quality": "OK drücken, um in niedrigerer Qualität abzuspielen",
+  "widgets.subtitles.simpler_style": "Untertitel auf einen einfacheren Stil umgestellt, damit die Wiedergabe flüssig bleibt",
   "widgets.menu.scaling": "Videoskalierung",
   "widgets.scaling.fit": "Einpassen",
   "widgets.scaling.fill": "Füllen / Zuschneiden",

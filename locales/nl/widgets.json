@@ -7,6 +7,7 @@
   "widgets.skip.missing_both": "Plex-markeringen voor intro en aftiteling ontbreken. Controleer Plex-analyse en detectie.",
   "widgets.stall.waiting_network": "Wachten op het netwerk",
   "widgets.stall.lower_quality": "Druk op OK om in lagere kwaliteit af te spelen",
+  "widgets.subtitles.simpler_style": "Ondertitels zijn overgezet op een eenvoudigere stijl om het afspelen soepel te houden",
   "widgets.menu.scaling": "Videoschaling",
   "widgets.scaling.fit": "Passend",
   "widgets.scaling.fill": "Vullen / bijsnijden",

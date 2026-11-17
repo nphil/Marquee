@@ -1877,3 +1877,20 @@ fn native_use_my_look_restyles_dialogue_and_leaves_a_placed_sign_alone() {
     let back = engine.render(&job(&source, 500, 320, 180, 320, 180)).frame;
     assert!(pixels_where(&back, dialogue, green) > 0, "turning it off restores the script");
 }
+
+#[test]
+fn once_styling_is_given_up_an_authored_track_is_drawn_from_plain_lines_made_once_per_revision() {
+    let authored = Arc::new(source(vec![event(0, 0, 1000)]));
+    let mut engine = Engine::default();
+    let shown = |engine: &mut Engine, source: &Arc<Source>| engine.shown_source(&job(source, 0, 320, 180, 320, 180));
+    assert!(Arc::ptr_eq(&shown(&mut engine, &authored), &authored));
+    engine.plain = true;
+    let plain = shown(&mut engine, &authored);
+    assert!(plain.origin.is_text() && plain.id != authored.id);
+    assert!(Arc::ptr_eq(&shown(&mut engine, &authored), &plain), "made once");
+    let mut grown = source(vec![event(0, 0, 1000), event(1, 500, 1000)]);
+    grown.revision = 2;
+    let next = shown(&mut engine, &Arc::new(grown));
+    assert_eq!(next.id, plain.id, "the same timeline, so packets append");
+    assert!(next.revision != plain.revision);
+}

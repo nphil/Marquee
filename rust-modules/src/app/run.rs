@@ -312,7 +312,8 @@ pub(crate) unsafe fn run(app: &mut App) {
 /// **This iteration's frame, with the control row resolved** (`Frame::begin`), plus the two offers the
 /// player adds to `player_hud::slot`: the first credits offer stays on after its marker ends while a
 /// successor is queued (`up_next::Countdown::credits_offer`), and an episode whose marker-inclusive
-/// fetch carries no intro or credits marker says so once, as a toast.
+/// fetch carries no intro or credits marker says so once, as a toast. Styled subtitles given up as
+/// too slow to draw (`ass::take_styling_given_up`) are told once the same way.
 fn begin_frame(app: &mut App) -> Frame {
     let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
     if fr.ctrl.is_discs() && plx_media::route::up_next(&app.player.session).is_some() {
@@ -348,6 +349,12 @@ fn begin_frame(app: &mut App) -> Frame {
                 }
             }
         }
+    }
+    if plx_media::player::ass::take_styling_given_up() {
+        let text = plx_platform::i18n::msg::widgets_subtitles_simpler_style();
+        plx_base::task::spawn_small("simpler subtitles", move || {
+            let _ = plx_platform::tv::toast::toast(text);
+        });
     }
     fr
 }
