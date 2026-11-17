@@ -16,20 +16,24 @@ use plx_plex::plex::session::{SubAnchor, SubBack, SubEdge, SubtitleLook};
 ///
 /// An authored ASS/SSA frame keeps its own colours (the ladder's tint applies as it always did)
 /// unless the look says `Mine`; a text frame takes the look's colour, opacity and Blend level.
+/// The viewer's brightness dims both, since it answers glare, not taste.
 pub fn compose_ink(base: [f32; 4], look: &SubtitleLook, text_frame: bool, level: f32) -> [f32; 4] {
-    if !text_frame && look.ass == plx_plex::plex::session::AssMode::Keep {
-        return base;
-    }
+    let dim = f32::from(look.brightness) / 100.0;
     let mut ink = base;
+    if !text_frame && look.ass == plx_plex::plex::session::AssMode::Keep {
+        for channel in &mut ink[..3] {
+            *channel *= dim;
+        }
+        return ink;
+    }
     if let Some(c) = look.color {
         ink[0] = ((c >> 16) & 0xFF) as f32 / 255.0;
         ink[1] = ((c >> 8) & 0xFF) as f32 / 255.0;
         ink[2] = (c & 0xFF) as f32 / 255.0;
     }
-    if look.blend {
-        for channel in &mut ink[..3] {
-            *channel *= level;
-        }
+    let level = if look.blend { level } else { 1.0 };
+    for channel in &mut ink[..3] {
+        *channel *= level * dim;
     }
     ink[3] *= f32::from(look.opacity) / 100.0;
     ink
@@ -254,6 +258,19 @@ mod tests {
         let soft = compose_ink(white, &blend, true, 0.8);
         assert!(soft[0] < 0.8 && soft[3] < 1.0, "Blend scales the colour by its level: {soft:?}");
         assert_eq!(compose_ink(white, &SubtitleLook::default(), true, 0.5), white, "the default look changes nothing");
+    }
+
+    #[test]
+    fn brightness_dims_the_letters_of_every_frame_but_not_their_opacity() {
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let dim = SubtitleLook { brightness: 70, ..SubtitleLook::default() };
+        let text = compose_ink(white, &dim, true, 1.0);
+        assert!((text[0] - 0.7).abs() < 1e-6 && (text[2] - 0.7).abs() < 1e-6 && text[3] == 1.0, "{text:?}");
+        let authored = compose_ink(white, &dim, false, 1.0);
+        assert!((authored[1] - 0.7).abs() < 1e-6 && authored[3] == 1.0, "an authored frame dims too: {authored:?}");
+        let yellow = SubtitleLook { color: Some(0xFFE680), brightness: 55, ..SubtitleLook::default() };
+        let ink = compose_ink(white, &yellow, true, 1.0);
+        assert!((ink[0] - 0.55).abs() < 1e-6 && (ink[1] - 0.902 * 0.55).abs() < 1e-3, "{ink:?}");
     }
 
     #[test]

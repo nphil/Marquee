@@ -1209,6 +1209,14 @@
     "value": "Blend with video",
     "description": "Row label on the player's subtitle Style page and title of its picker page. The caption's brightness follows the scene and stays below HDR peak."
   },
+  "widgets.tracks.style_brightness": {
+    "value": "Brightness",
+    "description": "Row label on the Color page of the player's subtitle Style menu, and title of the page it opens. Dims the subtitle letters to 100, 85, 70 or 55 percent, against glare on a dark scene."
+  },
+  "widgets.tracks.style_sample": {
+    "value": "Subtitles will look like this",
+    "description": "Sample subtitle line drawn on the video while the viewer changes the subtitle size, position or look and no real subtitle is on screen."
+  },
   "widgets.tracks.look_preset_blend": {
     "value": "Blend with video",
     "description": "A caption preset on the player's Style > Preset page. Soft, translucent text that follows the scene's brightness (modelled on Apple TV and Infuse)."

@@ -272,6 +272,8 @@
   "widgets.tracks.style_background": "Háttér",
   "widgets.tracks.style_reveal": "Felfedés",
   "widgets.tracks.style_blend": "Illeszkedés a videóhoz",
+  "widgets.tracks.style_brightness": "Fényerő",
+  "widgets.tracks.style_sample": "Így fognak kinézni a feliratok",
   "widgets.tracks.look_preset_blend": "Illeszkedés a videóhoz",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Klasszikus",

@@ -24,7 +24,7 @@ use plx_media::player::text_style::TextStyle;
 use plx_media::player::video_geometry::Viewport;
 use plx_media::player::{ass, text_ass};
 use plx_plex::plex::session::{
-    AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubtitleLook, BACK_COLORS, COLORS,
+    AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubtitleLook, BACK_COLORS, BRIGHTNESS_STEPS, COLORS,
 };
 use plx_platform::i18n::msg;
 use std::sync::Arc;
@@ -43,6 +43,7 @@ enum Field {
     Size,
     Color,
     Opacity,
+    Brightness,
     Bold,
     Edge,
     EdgeWidth,
@@ -61,13 +62,15 @@ enum Field {
 }
 
 impl Field {
-    const ALL: [Field; 22] = [
+    /// A row's key is its place here, so a new row goes last and no other row's key moves.
+    const ALL: [Field; 23] = [
         Field::Preset, Field::Sample, Field::Scene,
         Field::Font, Field::Size, Field::Color, Field::Opacity, Field::Bold,
         Field::Edge, Field::EdgeWidth,
         Field::Back, Field::BackOpacity, Field::BackRadius, Field::BackPad, Field::BackColor,
         Field::Anchor, Field::Nudge, Field::LineSpacing,
         Field::Blend, Field::Reveal, Field::Styled, Field::Reset,
+        Field::Brightness,
     ];
 
     fn index(self) -> u32 {
@@ -141,6 +144,13 @@ fn adjust(look: SubtitleLook, field: Field, delta: i32, wrap: bool) -> SubtitleL
             edit(look, |l| l.color = next)
         }
         Field::Opacity => edit(look, |l| l.opacity = n(l.opacity, 5, 10, 100) as u8),
+        // the viewer's own, kept across presets, so not an edit of the look: brighter to the right
+        Field::Brightness => {
+            let top = BRIGHTNESS_STEPS.len() as i32 - 1;
+            let at = top - BRIGHTNESS_STEPS.iter().position(|b| *b == look.brightness).unwrap_or(0) as i32;
+            let next = top - ladder(at, 1, 0, top, delta, wrap);
+            SubtitleLook { brightness: BRIGHTNESS_STEPS[next as usize], ..look }
+        }
         Field::Bold => edit(look, |l| l.bold = !l.bold),
         Field::Edge => edit(look, |l| l.edge = l.edge.step(delta)),
         Field::EdgeWidth => edit(look, |l| l.edge_w = n(l.edge_w, 1, 1, 8) as u8),
@@ -275,6 +285,7 @@ fn value_of(look: &SubtitleLook, choices: Choices, field: Field) -> Option<Strin
         Field::Size => percent(look.size_pct),
         Field::Color => text_color(look.color),
         Field::Opacity => percent(look.opacity),
+        Field::Brightness => percent(look.brightness),
         Field::Bold | Field::Blend => return None,
         Field::Edge => edge_label(look.edge).to_string(),
         Field::EdgeWidth => pixels(look.edge_w),
@@ -302,6 +313,7 @@ fn label_of(field: Field) -> &'static str {
         Field::Size => msg::subtitles_row_size(),
         Field::Color | Field::BackColor => msg::subtitles_row_color(),
         Field::Opacity | Field::BackOpacity => msg::subtitles_row_opacity(),
+        Field::Brightness => msg::subtitles_row_brightness(),
         Field::Bold => msg::subtitles_row_bold(),
         Field::Edge => msg::subtitles_row_edge(),
         Field::EdgeWidth => msg::subtitles_row_edge_width(),
@@ -344,7 +356,10 @@ fn subtitles_form(look: &SubtitleLook, choices: Choices) -> Form<Field, Field, S
     };
     Form::new()
         .section(section(msg::subtitles_group_look(), &[Field::Preset, Field::Sample, Field::Scene]))
-        .section(section(msg::subtitles_group_text(), &[Field::Font, Field::Size, Field::Color, Field::Opacity, Field::Bold]))
+        .section(section(
+            msg::subtitles_group_text(),
+            &[Field::Font, Field::Size, Field::Color, Field::Opacity, Field::Brightness, Field::Bold],
+        ))
         .section(section(msg::subtitles_group_edge(), &[Field::Edge, Field::EdgeWidth]))
         .section(section(
             msg::subtitles_group_background(),

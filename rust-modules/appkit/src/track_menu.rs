@@ -105,7 +105,9 @@
 use plx_data::metadata;
 use plx_data::metadata::sub_layout::{self, LangId, OtherLang, RowTarget, SubHeader, SubModel, SubRow, SubTrack};
 use plx_data::metadata::track_label;
-use plx_plex::plex::session::{LookPreset, Reveal, SubBack, SubEdge, SubFont, SubtitleLook, SubtitlePosition, SubtitleSize, SubtitleTone};
+use plx_plex::plex::session::{
+    LookPreset, Reveal, SubBack, SubEdge, SubFont, SubtitleLook, SubtitlePosition, SubtitleSize, SubtitleTone, BRIGHTNESS_STEPS,
+};
 use plx_ui::frame::Budget;
 use plx_ui::geom::IndexElem;
 use plx_machine::machine::{Canon, Cx, EntryId, FocusKey, GroupId, Host, Measure};
@@ -221,12 +223,14 @@ pub enum StyleField {
     Reveal,
     /// Blend with video: the caption's tone follows the scene.
     Blend,
+    /// How bright the letters are (`BRIGHTNESS_STEPS`): live under every renderer, like Color.
+    Brightness,
 }
 
 impl StyleField {
-    pub const ALL: [StyleField; 9] = [
+    pub const ALL: [StyleField; 10] = [
         StyleField::Size, StyleField::Position, StyleField::Color, StyleField::Preset, StyleField::Font,
-        StyleField::Edge, StyleField::Background, StyleField::Reveal, StyleField::Blend,
+        StyleField::Edge, StyleField::Background, StyleField::Reveal, StyleField::Blend, StyleField::Brightness,
     ];
 
     fn ordinal(self) -> u32 {
@@ -245,6 +249,7 @@ impl StyleField {
             Self::Background => msg::widgets_tracks_style_background(),
             Self::Reveal => msg::widgets_tracks_style_reveal(),
             Self::Blend => msg::widgets_tracks_style_blend(),
+            Self::Brightness => msg::widgets_tracks_style_brightness(),
         }
     }
 
@@ -260,6 +265,7 @@ impl StyleField {
             Self::Background => SubBack::ALL.len(),
             Self::Reveal => Reveal::ALL.len(),
             Self::Blend => 2,
+            Self::Brightness => BRIGHTNESS_STEPS.len(),
         }
     }
 
@@ -275,9 +281,13 @@ impl StyleField {
             Self::Background => back_label(SubBack::ALL[i]),
             Self::Reveal => reveal_label(Reveal::ALL[i]),
             Self::Blend => on_off_label(i == 1),
+            Self::Brightness => BRIGHTNESS_LABELS[i.min(BRIGHTNESS_LABELS.len() - 1)],
         }
     }
 }
+
+/// The Brightness picker's rungs, [`BRIGHTNESS_STEPS`] as the Settings page writes a percentage.
+const BRIGHTNESS_LABELS: [&str; BRIGHTNESS_STEPS.len()] = ["100%", "85%", "70%", "55%"];
 
 /// **A drill-in page of the Subtitles tab** — the form's `Dest`. The Subtitles root is the empty
 /// page stack, not a value of this type (`docs/player-submenus.md`).
@@ -1515,6 +1525,15 @@ impl TrackMenuState {
                 self.look = preset.applied(&self.look);
                 TrackCommit::SubtitleLook(self.look)
             }
+            StyleField::Brightness => {
+                // the viewer's, not the look's: the preset stays what it was
+                let brightness = BRIGHTNESS_STEPS[rung.min(BRIGHTNESS_STEPS.len() - 1)];
+                if brightness == self.look.brightness {
+                    return TrackOk::Inert;
+                }
+                self.look.brightness = brightness;
+                TrackCommit::SubtitleLook(self.look)
+            }
             StyleField::Font => return self.pick_look(|l| l.font = SubFont::ALL[rung.min(SubFont::ALL.len() - 1)]),
             StyleField::Edge => return self.pick_look(|l| l.edge = SubEdge::ALL[rung.min(SubEdge::ALL.len() - 1)]),
             StyleField::Background => return self.pick_look(|l| l.back = SubBack::ALL[rung.min(SubBack::ALL.len() - 1)]),
@@ -1540,6 +1559,7 @@ impl TrackMenuState {
             StyleField::Background => self.look.back.index(),
             StyleField::Reveal => self.look.reveal.index(),
             StyleField::Blend => usize::from(self.look.blend),
+            StyleField::Brightness => BRIGHTNESS_STEPS.iter().position(|b| *b == self.look.brightness).unwrap_or(0),
         };
         rung as usize
     }
@@ -1976,6 +1996,7 @@ impl TrackMenuState {
     /// The Style page: one drill-in per field, each reading out its current value. Under an image
     /// or styled subtitle Size and Position are disabled (dim, focusable, inert) and one note names
     /// why; Color is live under every renderer — the subtitle ink tints bitmaps and ASS alike.
+    /// Brightness opens from the Color page ([`Self::picker_form`]): this page is at `NEED_H`.
     fn style_form(&self) -> TrackForm {
         let field_row = |field: StyleField| {
             Row::new(field.label()).value(field.rung_label(self.current_rung(field)))
@@ -2022,13 +2043,24 @@ impl TrackMenuState {
         Form::new().section(sec).section(look)
     }
 
-    /// A picker page: one choice per rung of `field`'s ladder, the current one checked.
+    /// A picker page: one choice per rung of `field`'s ladder, the current one checked. The Color
+    /// page ends with the Brightness drill-in, which dims whichever colour the look draws in.
     fn picker_form(&self, field: StyleField) -> TrackForm {
         let current = TrackRow::Choice(field, self.current_rung(field));
         let sec = (0..field.rungs()).fold(FormSection::new(""), |sec, rung| {
             sec.choice(TrackRow::Choice(field, rung), (), Row::new(field.rung_label(rung)), |id| *id == current)
         });
-        Form::new().section(sec)
+        let form = Form::new().section(sec);
+        if field != StyleField::Color {
+            return form;
+        }
+        let brightness = StyleField::Brightness;
+        form.section(FormSection::new("").item(
+            TrackRow::OpenField(brightness),
+            RowKind::Nav(TrackPage::Picker(brightness)),
+            (),
+            Row::new(brightness.label()).value(brightness.rung_label(self.current_rung(brightness))),
+        ))
     }
 
     /// The explicit initial focus of a pushed page: the Style page opens on Size, a picker on its
@@ -6455,18 +6487,34 @@ mod style_page_tests {
         teardown(&ps);
     }
 
-    /// The Style page reads the current value of each field on its Nav row.
+    /// The Style page reads the current value of each field on its Nav row; Brightness reads its
+    /// own on the Color page, which opens it, and a pick there shows on return.
     #[test]
     fn the_style_page_shows_each_fields_current_value() {
         let _g = plx_base::testlock::serial();
         let (mut menu, ps, store) = open_text();
         focus_id(&mut menu, TrackRow::Style);
         menu.on_ok(store.view());
-        for field in StyleField::ALL {
-            let row = row_of(&menu, TrackRow::OpenField(field));
+        let reads_out = |menu: &TrackMenuState, field: StyleField| {
+            let row = row_of(menu, TrackRow::OpenField(field));
             assert_eq!(row.label, field.label());
             assert_eq!(row.value.as_deref(), Some(field.rung_label(menu.current_rung(field))));
+        };
+        for field in StyleField::ALL.into_iter().filter(|f| *f != StyleField::Brightness) {
+            reads_out(&menu, field);
         }
+        focus_id(&mut menu, TrackRow::OpenField(StyleField::Color));
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
+        reads_out(&menu, StyleField::Brightness);
+        focus_id(&mut menu, TrackRow::OpenField(StyleField::Brightness));
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
+        focus_id(&mut menu, TrackRow::Choice(StyleField::Brightness, 2));
+        assert!(matches!(
+            menu.on_ok(store.view()),
+            TrackOk::Commit { commit: TrackCommit::SubtitleLook(look), .. } if look.brightness == 70
+        ));
+        menu.on_left(&ps, store.view());
+        assert_eq!(row_of(&menu, TrackRow::OpenField(StyleField::Brightness)).value.as_deref(), Some("70%"));
         teardown(&ps);
     }
 

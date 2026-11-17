@@ -276,6 +276,8 @@
   "widgets.tracks.style_background": "Fundo",
   "widgets.tracks.style_reveal": "Revelar",
   "widgets.tracks.style_blend": "Mesclar com o vídeo",
+  "widgets.tracks.style_brightness": "Brilho",
+  "widgets.tracks.style_sample": "As legendas vão ficar assim",
   "widgets.tracks.look_preset_blend": "Mesclar com o vídeo",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Clássico",

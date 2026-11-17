@@ -280,6 +280,8 @@
   "widgets.tracks.style_background": "Tło",
   "widgets.tracks.style_reveal": "Odkrywanie",
   "widgets.tracks.style_blend": "Dopasuj do obrazu",
+  "widgets.tracks.style_brightness": "Jasność",
+  "widgets.tracks.style_sample": "Tak będą wyglądać napisy",
   "widgets.tracks.look_preset_blend": "Dopasuj do obrazu",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Klasyczny",

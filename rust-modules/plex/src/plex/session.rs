@@ -60,7 +60,8 @@ mod bazarr_import;
 pub use bazarr_import::{import_once as import_bazarr_link_file, IMPORT_FILE as BAZARR_IMPORT_FILE};
 mod subtitle_look;
 pub use subtitle_look::{
-    AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, COLORS, SIZE_STEPS,
+    AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, BRIGHTNESS_STEPS, COLORS,
+    SIZE_STEPS,
 };
 
 pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, SpoilerProtectionPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, persist_profile_tour_seen, put_own, stored_effective, stored_effective_hud, tenure, tour_seen as profile_tour_seen, HudSelectionPref, AudioEnhancementsPref,

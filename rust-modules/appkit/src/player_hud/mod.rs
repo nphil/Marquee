@@ -361,8 +361,13 @@ pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: Hud
             }
             let lift = hud_lift(set.iter().map(|(_, r)| *r), hud_up, band);
             // the tone TINTS a bitmap: the image shader multiplies by it, so a PGS cue keeps its
-            // authored colours and outline and only gives up light (white is the identity)
-            let tint = subtitle_ink(model);
+            // authored colours and outline and only gives up light (white is the identity); the
+            // viewer's brightness gives up more of it the same way
+            let mut tint = subtitle_ink(model);
+            let dim = f32::from(model.sub_look.brightness) / 100.0;
+            for channel in &mut tint[..3] {
+                *channel *= dim;
+            }
             let p = Painter::root();
             for (tex, r) in set.iter() {
                 let dy = if overhangs(*r, band) { lift } else { 0.0 };

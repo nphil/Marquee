@@ -71,7 +71,8 @@ fn every_field_has_its_own_key_and_a_row() {
     for field in Field::ALL {
         assert!(page.form.index_of_key(field.key()).is_some(), "{field:?} has a row");
     }
-    assert_eq!(keys_for_test().len(), 22);
+    assert_eq!(keys_for_test().len(), 23);
+    assert_eq!(Field::Brightness.key(), RowKey(23), "the newest row takes the next key");
 }
 
 #[test]
@@ -119,6 +120,19 @@ fn numeric_rows_clamp_with_the_arrows_and_wrap_with_ok() {
     assert_eq!(adjust(SubtitleLook::DEFAULT, Field::Nudge, 1, false).nudge, 10);
     assert_eq!(adjust(SubtitleLook::DEFAULT, Field::LineSpacing, 1, false).line_pct, 105);
     assert_eq!(adjust(SubtitleLook::DEFAULT, Field::Size, 1, false).size_pct, 110, "Automatic reads as 100");
+}
+
+#[test]
+fn brightness_steps_its_four_rungs_and_keeps_the_preset() {
+    let look = LookPreset::Blend.look();
+    let dimmer = adjust(look, Field::Brightness, -1, false);
+    assert_eq!((dimmer.brightness, dimmer.preset), (85, LookPreset::Blend), "dimming is not a hand edit of the look");
+    assert_eq!(adjust(look, Field::Brightness, 1, false), look, "full brightness is the top");
+    let dimmest = SubtitleLook { brightness: 55, ..look };
+    assert_eq!(adjust(dimmest, Field::Brightness, -1, false), dimmest);
+    assert_eq!(adjust(dimmest, Field::Brightness, 1, false).brightness, 70);
+    assert_eq!(adjust(look, Field::Brightness, 1, true).brightness, 55, "OK wraps");
+    assert_eq!(value_of(&dimmer, Choices { sample: 0, scene: 0 }, Field::Brightness).as_deref(), Some("85%"));
 }
 
 #[test]

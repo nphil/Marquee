@@ -144,6 +144,9 @@ pub const SIZE_STEPS: [u16; 15] = [50, 60, 70, 80, 90, 100, 110, 120, 130, 150, 
 pub const COLORS: [u32; 6] = [0xFFFFFF, 0xE8E4F0, 0xFFE680, 0x7FE3F0, 0x9EE493, 0xFFA3C4];
 /// The background box colours: black, plum, slate, brown.
 pub const BACK_COLORS: [u32; 4] = [0x000000, 0x1A1626, 0x2B2740, 0x3A1F1F];
+/// The Brightness row's steps, percent of the letters' own colour. Dimmed white is easier on the
+/// eyes on an OLED panel in a dark room, whatever the look's colour is.
+pub const BRIGHTNESS_STEPS: [u8; 4] = [100, 85, 70, 55];
 
 /// The look. Field ranges are enforced by [`SubtitleLook::clamped`], which every reader of a
 /// stored value applies, so a hand-edited file cannot ask libass for a 4000 px outline.
@@ -159,6 +162,9 @@ pub struct SubtitleLook {
     pub color: Option<u32>,
     /// Opacity of the letters, 10..=100.
     pub opacity: u8,
+    /// Brightness of the letters, percent of their colour: one of [`BRIGHTNESS_STEPS`]. It is the
+    /// viewer's, not the preset's, so picking a preset keeps it.
+    pub brightness: u8,
     pub edge: SubEdge,
     /// Edge strength 1..=8: pixels of outline or hard shadow, or the spread of the soft shadow.
     pub edge_w: u8,
@@ -194,6 +200,7 @@ impl SubtitleLook {
         size_pct: 0,
         color: None,
         opacity: 100,
+        brightness: 100,
         edge: SubEdge::Outline,
         edge_w: 2,
         back: SubBack::Off,
@@ -232,8 +239,8 @@ impl<'de> Deserialize<'de> for SubtitleLook {
             )+};
         }
         take!(
-            preset, font, bold, size_pct, color, opacity, edge, edge_w, back, back_opacity, back_color, back_radius,
-            back_pad, anchor, nudge, line_pct, blend, reveal, ass
+            preset, font, bold, size_pct, color, opacity, brightness, edge, edge_w, back, back_opacity, back_color,
+            back_radius, back_pad, anchor, nudge, line_pct, blend, reveal, ass
         );
         Ok(look.clamped())
     }
@@ -244,6 +251,7 @@ impl SubtitleLook {
     pub fn clamped(mut self) -> Self {
         self.size_pct = if self.size_pct == 0 { 0 } else { self.size_pct.clamp(40, 300) };
         self.opacity = self.opacity.clamp(10, 100);
+        self.brightness = BRIGHTNESS_STEPS.iter().copied().min_by_key(|s| s.abs_diff(self.brightness)).unwrap_or(100);
         self.edge_w = self.edge_w.clamp(1, 8);
         self.back_opacity = self.back_opacity.min(100);
         self.back_radius = self.back_radius.min(40);
@@ -278,6 +286,7 @@ impl SubtitleLook {
         mix(u64::from(self.size_pct));
         mix(self.color.map_or(u64::MAX, u64::from));
         mix(u64::from(self.opacity));
+        mix(u64::from(self.brightness));
         mix(self.edge.index() as u64);
         mix(u64::from(self.edge_w));
         mix(self.back.index() as u64);
@@ -378,9 +387,10 @@ impl LookPreset {
     }
 
     /// This preset picked over `current`: every field the preset styles, with what a file's own
-    /// styling does left as the viewer had it (a behaviour of the player, not a look).
+    /// styling does (a behaviour of the player, not a look) and the brightness left as the viewer
+    /// had them.
     pub fn applied(self, current: &SubtitleLook) -> SubtitleLook {
-        SubtitleLook { ass: current.ass, ..self.look() }
+        SubtitleLook { ass: current.ass, brightness: current.brightness, ..self.look() }
     }
 }
 
@@ -398,12 +408,12 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_keeps_how_the_viewer_treats_a_files_own_styling() {
-        let mine = SubtitleLook { ass: AssMode::Mine, ..SubtitleLook::default() };
+    fn a_preset_keeps_how_the_viewer_treats_a_files_own_styling_and_the_brightness() {
+        let mine = SubtitleLook { ass: AssMode::Mine, brightness: 70, ..SubtitleLook::default() };
         for p in LookPreset::PICKER {
             let next = p.applied(&mine);
-            assert_eq!(next.ass, AssMode::Mine, "{p:?}");
-            assert_eq!(SubtitleLook { ass: AssMode::Keep, ..next }, p.look(), "{p:?} styles everything else");
+            assert_eq!((next.ass, next.brightness), (AssMode::Mine, 70), "{p:?}");
+            assert_eq!(SubtitleLook { ass: AssMode::Keep, brightness: 100, ..next }, p.look(), "{p:?} styles everything else");
         }
     }
 
@@ -447,12 +457,13 @@ mod tests {
             line_pct: 1,
             color: Some(0xFF00_0000),
             back_color: 0xFF12_3456,
+            brightness: 77,
             ..SubtitleLook::default()
         }
         .clamped();
         assert_eq!((wild.size_pct, wild.opacity, wild.edge_w), (300, 10, 8));
         assert_eq!((wild.back_opacity, wild.back_radius, wild.back_pad, wild.nudge, wild.line_pct), (100, 40, 40, 400, 70));
-        assert_eq!((wild.color, wild.back_color), (Some(0), 0x12_3456));
+        assert_eq!((wild.color, wild.back_color, wild.brightness), (Some(0), 0x12_3456, 70), "brightness snaps to a step");
         assert_eq!(wild, wild.clamped());
         assert_eq!(SubtitleLook { size_pct: 0, ..wild }.clamped().size_pct, 0, "0 is the ladder, not a size");
     }

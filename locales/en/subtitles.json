@@ -95,6 +95,10 @@
     "value": "Opacity",
     "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. How opaque the letters or the box are, in percent."
   },
+  "subtitles.row_brightness": {
+    "value": "Brightness",
+    "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. How bright the letters are, in percent (100, 85, 70 or 55), against glare on a dark scene."
+  },
   "subtitles.row_bold": {
     "value": "Bold",
     "description": "Settings > Subtitles page. Row label on the Settings > Subtitles page. A short label; its value is on the right. Heavier weight on or off. The value is On or Off."

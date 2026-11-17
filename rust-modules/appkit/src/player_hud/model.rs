@@ -16,7 +16,7 @@
 //! `state.rs` and `motion.rs`: those run at input and Tick time, and moving them onto a model sampled
 //! at prepare time would shift them by a frame.
 
-use plx_plex::plex::session::{SubtitlePosition, SubtitleSize, SubtitleTone};
+use plx_plex::plex::session::{SubtitleLook, SubtitlePosition, SubtitleSize, SubtitleTone};
 
 /// The image-subtitle cue lookup [`HudModel::bitmap_by_key`] injects: the canvas size and the
 /// rects of the selected track's display set with this `start_ns` key.
@@ -49,6 +49,9 @@ pub struct HudModel {
     pub sub_position: SubtitlePosition,
     /// `plx_media::player::subtitle_tone()`: the caption ink's tone.
     pub sub_tone: SubtitleTone,
+    /// `plx_media::route::subtitle_look()`: the viewer's caption look. Its brightness dims image
+    /// subtitles too, and the style preview's sample line is drawn in it.
+    pub sub_look: SubtitleLook,
     /// `plx_media::player::desired_sub_idx()`: the selected subtitle track, -1 when off.
     pub sub_sel: i32,
     /// `plx_media::player::active_bitmap_key(plx_media::player::playpos_ns())`: the `start_ns` key
@@ -94,6 +97,7 @@ impl Default for HudModel {
             sub_size: SubtitleSize::default(),
             sub_position: SubtitlePosition::default(),
             sub_tone: SubtitleTone::default(),
+            sub_look: SubtitleLook::DEFAULT,
             sub_sel: -1,
             controls: super::state::Controls::NONE,
             chapters: false,

@@ -708,6 +708,7 @@ fn hud_model(
         sub_size: plx_media::route::subtitle_size(),
         sub_position: plx_media::route::subtitle_position(),
         sub_tone: plx_media::player::subtitle_tone(),
+        sub_look: plx_media::route::subtitle_look(),
         sub_sel: plx_media::player::desired_sub_idx(),
         controls: plx_appkit::player_hud::Controls::now(ps),
         chapters: plx_appkit::chapters_panel::has_chapters(meta),

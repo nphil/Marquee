@@ -25,6 +25,7 @@
 - Player Info distinguishes SpeechDock word intervals actually applied to the current cue from estimated or unused timing, clearing stale status across renderer and playback changes.
 - SpeechDock requests preserve millisecond-authored cue bounds, skip ineligible long cues without rejecting the batch, and start correctly during the first 15 seconds of playback.
 - A sidecar subtitle with SpeechDock word timing is rebuilt only when an answer changes some cue's words, not on every repeated request during dialogue, and its estimated script is reused while the subtitle style stays the same.
+- Subtitle Brightness (100, 85, 70 or 55 %) dims subtitle text in every look, authored and picture subtitles included, against OLED glare. It is kept per profile, set in Settings › Subtitles or on the Color page of the player's Style menu, and shows on the subtitle as it is changed.
 
 - Dialogue Enhance uses the output audio layout and recovers playback without enhancement if the enhanced stream cannot start.
 - Dialogue Enhance on an Opus track whose source fails to open no longer ends in an error: a cold start retries without enhancement, and any other failed open goes through the usual recovery (HLS fallback or rollback). A slow open is no longer reported as a Load timeout.

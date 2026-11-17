@@ -272,6 +272,8 @@
   "widgets.tracks.style_background": "Hintergrund",
   "widgets.tracks.style_reveal": "Einblenden",
   "widgets.tracks.style_blend": "Mit Video verschmelzen",
+  "widgets.tracks.style_brightness": "Helligkeit",
+  "widgets.tracks.style_sample": "So sehen die Untertitel aus",
   "widgets.tracks.look_preset_blend": "Mit Video verschmelzen",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Klassisch",

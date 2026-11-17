@@ -276,6 +276,8 @@
   "widgets.tracks.style_background": "Sfondo",
   "widgets.tracks.style_reveal": "Rivela",
   "widgets.tracks.style_blend": "Fondi con il video",
+  "widgets.tracks.style_brightness": "Luminosità",
+  "widgets.tracks.style_sample": "I sottotitoli avranno questo aspetto",
   "widgets.tracks.look_preset_blend": "Fondi con il video",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Classico",

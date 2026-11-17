@@ -280,6 +280,8 @@
   "widgets.tracks.style_background": "Фон",
   "widgets.tracks.style_reveal": "Паказ слоў",
   "widgets.tracks.style_blend": "Зліццё з відэа",
+  "widgets.tracks.style_brightness": "Яркасць",
+  "widgets.tracks.style_sample": "Так будуць выглядаць субцітры",
   "widgets.tracks.look_preset_blend": "Зліццё з відэа",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Класічны",

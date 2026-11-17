@@ -280,6 +280,8 @@
   "widgets.tracks.style_background": "Фон",
   "widgets.tracks.style_reveal": "Появление",
   "widgets.tracks.style_blend": "Слияние с видео",
+  "widgets.tracks.style_brightness": "Яркость",
+  "widgets.tracks.style_sample": "Так будут выглядеть субтитры",
   "widgets.tracks.look_preset_blend": "Слияние с видео",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Классический",

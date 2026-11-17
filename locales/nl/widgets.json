@@ -272,6 +272,8 @@
   "widgets.tracks.style_background": "Achtergrond",
   "widgets.tracks.style_reveal": "Onthullen",
   "widgets.tracks.style_blend": "Mengen met video",
+  "widgets.tracks.style_brightness": "Helderheid",
+  "widgets.tracks.style_sample": "Zo ziet de ondertiteling eruit",
   "widgets.tracks.look_preset_blend": "Mengen met video",
   "widgets.tracks.look_preset_apple_tv": "Apple TV",
   "widgets.tracks.look_preset_classic": "Klassiek",
