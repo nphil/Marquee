@@ -226,6 +226,7 @@
   "widgets.badge.audio_description": "Audiodescripción",
   "widgets.tracks.other_languages": "Otros idiomas",
   "widgets.tracks.search.open": "Buscar subtítulos",
+  "widgets.tracks.search.plex": "Buscar con Plex",
   "widgets.tracks.search.language": "Idioma",
   "widgets.tracks.search.results": "Resultados",
   "widgets.tracks.search.searching": "Buscando…",

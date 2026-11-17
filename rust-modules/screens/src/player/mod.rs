@@ -26,6 +26,7 @@ pub(crate) mod ass_subtitles;
 mod seek_jump;
 pub mod input;
 pub mod overlay;
+mod prefetch;
 #[cfg(test)]
 mod overlay_tests;
 #[cfg(test)]
@@ -229,6 +230,8 @@ pub struct PlayerScreen {
     /// the process's language is fixed, so a language change waits for the next launch). A page always has one (it is a constructor argument): the mount
     /// never compiles, and there is no state in which the page draws or places from anything else.
     pub compiled: std::sync::Arc<plx_appkit::hud_format::compile::Compiled>,
+    /// The early Bazarr search for the playing item — see [`prefetch`].
+    prefetch: prefetch::Prefetch,
 }
 
 impl PlayerScreen {
@@ -260,6 +263,35 @@ impl PlayerScreen {
             clock_warm: Default::default(),
             model: HudModel::default(),
             compiled,
+            prefetch: prefetch::Prefetch::default(),
+        }
+    }
+
+    /// One frame of the early Bazarr search ([`prefetch`]): what it owes the subtitle-search store
+    /// goes out as effects, as the Tracks panel's commands do.
+    fn step_prefetch<H: PlayerLike + crate::registry::MetadataLike>(
+        &mut self, tick: &plx_machine::machine::Tick, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>,
+    ) {
+        let ps = H::session(cx);
+        let owed = self.prefetch.step(plx_media::route::cur_part_id(ps), plx_media::player::is_playing(ps),
+            tick.dt_us / 1000, H::subtitle_search(cx), || {
+                matches!(plx_media::route::cur_kind(ps), "movie" | "episode").then(|| prefetch::Wanted {
+                    sid: plx_media::route::cur_sid(ps),
+                    rk: plx_media::route::cur_rk(ps),
+                    lang: overlay::search_default_lang(ps, H::metadata(cx)),
+                })
+            });
+        let store = |cmd| Fx::App(AppFx::Store(plx_data::stores::StoreId::SubtitleSearch,
+            plx_data::stores::StoreCmd::SubtitleSearch(cmd)));
+        let pump = || Fx::App(AppFx::StoreWork(plx_data::stores::StoreWork::SubtitleSearch));
+        match owed {
+            prefetch::Owed::Nothing => {}
+            prefetch::Owed::Open(cmd) => {
+                fx.push(store(cmd));
+                fx.push(pump());
+            }
+            prefetch::Owed::Pump => fx.push(pump()),
+            prefetch::Owed::Close => fx.push(store(plx_data::subsearch::SubSearchCmd::Close)),
         }
     }
 
@@ -879,6 +911,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 self.step_scrub_hold(tick.ms);
                 self.hold_the_transport_for_a_target(tick.ms);
                 self.publish();
+                self.step_prefetch(tick, cx, fx);
                 Handled::Yes
             }
             ScreenEvent::Unmount => {
@@ -887,6 +920,10 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 self.render.subs.release();
                 self.render.ass.release();
                 self.render.subtitle_bounds = None;
+                if self.prefetch.leave() {
+                    fx.push(Fx::App(AppFx::Store(plx_data::stores::StoreId::SubtitleSearch,
+                        plx_data::stores::StoreCmd::SubtitleSearch(plx_data::subsearch::SubSearchCmd::Close))));
+                }
                 Handled::Yes
             }
             ScreenEvent::Input(input) => {

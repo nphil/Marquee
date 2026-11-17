@@ -222,6 +222,7 @@
   "widgets.badge.audio_description": "Audionarráció",
   "widgets.tracks.other_languages": "Más nyelvek",
   "widgets.tracks.search.open": "Feliratok keresése",
+  "widgets.tracks.search.plex": "Keresés a Plex-szel",
   "widgets.tracks.search.language": "Nyelv",
   "widgets.tracks.search.results": "Találatok",
   "widgets.tracks.search.searching": "Keresés…",

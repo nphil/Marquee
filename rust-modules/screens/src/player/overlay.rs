@@ -264,7 +264,7 @@ fn subtitle_yours_langs(ps: &plx_media::route::PlaybackSession, meta: plx_data::
 /// The language the Search page opens on: the account's subtitle language, else the menu's own
 /// "your languages" (the playing audio's, the current subtitle's), else English — the first that
 /// can be searched (`subsearch::default_language`). The store folds it onto the two-letter code.
-fn search_default_lang(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) -> String {
+pub(super) fn search_default_lang(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) -> String {
     plx_data::subsearch::default_language(plx_media::route::cur_sub_pref_lang(ps), subtitle_yours_langs(ps, meta))
 }
 
@@ -287,11 +287,11 @@ impl PlayerOverlayScreen {
     /// tests' host; the app mounts through [`Self::new_folded`] alone (`AppMounter::mount`).
     #[cfg(test)]
     pub fn new(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>, entry: EntryId, kind: OverlayKind) -> Self {
-        Self::new_folded(ps, meta, entry, kind, false, None, Vec::new())
+        Self::new_folded(ps, meta, entry, kind, plx_appkit::track_menu::SearchOffer::None, None, Vec::new())
     }
 
-    /// **The one constructor** (`AppMounter::mount`'s): the panel `kind` names, for a host that can run a subtitle
-    /// search when `offer_search` (`MetadataLike::subtitle_search`; the Tracks panel is built offering it, never
+    /// **The one constructor** (`AppMounter::mount`'s): the panel `kind` names, for a host that can run the subtitle
+    /// search `offer` names (`MetadataLike::subtitle_search`; the Tracks panel is built offering it, never
     /// offered it later, `TrackMenuState::new_with`). `anchor` is the rect the player screen hands a menu to hang
     /// from, which it latches (`None`: [`menu_anchor`], classic's row; panels that are not menus ignore it). `folded`
     /// is what a More menu lists between Speed and Options ([`plx_appkit::more_menu::folded_rows`], which the app
@@ -302,14 +302,14 @@ impl PlayerOverlayScreen {
         meta: plx_data::metadata::MetadataView<'_>,
         entry: EntryId,
         kind: OverlayKind,
-        offer_search: bool,
+        offer: plx_appkit::track_menu::SearchOffer,
         anchor: Option<Rect>,
         folded: Vec<plx_appkit::more_menu::FoldedRow>,
     ) -> Self {
         let anchor = anchor.unwrap_or_else(menu_anchor);
         let panel = match kind {
             OverlayKind::Tracks { tab } => Panel::Tracks(plx_base::diag::spans::span("tmnew", || {
-                plx_appkit::track_menu::TrackMenuState::new_with(ps, meta, tab, subtitle_yours_langs(ps, meta), offer_search)
+                plx_appkit::track_menu::TrackMenuState::new_with(ps, meta, tab, subtitle_yours_langs(ps, meta), offer)
                     .with_anchor(anchor)
             })),
             // A quality entry is the ordinary menu under Force Direct Play, which offers no

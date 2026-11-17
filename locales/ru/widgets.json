@@ -230,6 +230,7 @@
   "widgets.badge.audio_description": "Аудиоописание",
   "widgets.tracks.other_languages": "Другие языки",
   "widgets.tracks.search.open": "Найти субтитры",
+  "widgets.tracks.search.plex": "Найти через Plex",
   "widgets.tracks.search.language": "Язык",
   "widgets.tracks.search.results": "Результаты",
   "widgets.tracks.search.searching": "Поиск…",

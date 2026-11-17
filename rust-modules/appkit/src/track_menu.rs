@@ -171,6 +171,9 @@ pub enum TrackRow {
     /// The Search for subtitles drill-in on the Subtitles root ([`TrackPage::Search`]). Present only
     /// when the host offers a search ([`TrackMenuState::set_search`]).
     OpenSearch,
+    /// The Bazarr search drill-in near the top of the Subtitles root, under Off and Forced only
+    /// ([`TrackPage::BazarrSearch`]). Present only while Bazarr is linked ([`SearchOffer::WithBazarr`]).
+    OpenBazarr,
     /// The Search page's language row: reads out the language searched, opens
     /// [`TrackPage::SearchLanguage`].
     SearchLang,
@@ -372,6 +375,7 @@ impl FormId for TrackRow {
             TrackRow::OpenOther => 0x0008_0000,
             TrackRow::OpenLang(lang) => 0x0009_0000 + (lang.slot as u32).min(0xFFFF),
             TrackRow::OpenSearch => 0x000A_0000,
+            TrackRow::OpenBazarr => 0x0010_0000,
             TrackRow::SearchLang => 0x000B_0000,
             TrackRow::SearchRetry => 0x000B_0001,
             TrackRow::SearchCheckInstall => 0x000B_0002,
@@ -617,9 +621,12 @@ pub struct TrackMenuState {
     background_owner: Option<u64>,
     /// The subtitle search for the playing item, as the host last published it
     /// ([`Self::set_search`]); `None` when the host offers no search, which also hides the root's
-    /// Search row. The panel never performs the search: it reads this and answers
+    /// Search rows. The panel never performs the search: it reads this and answers
     /// [`TrackOk::Search`] for the screen to send.
     search: Option<plx_data::subsearch::SubSearchSnapshot>,
+    /// Bazarr was linked when the panel was built ([`SearchOffer::WithBazarr`]): the root leads with
+    /// its search. Fixed for the panel's life, like the offer itself.
+    bazarr: bool,
     /// The generation this panel watched in flight; an installation is handed over once.
     search_watching: Option<u32>,
     search_activation: Option<(i64, plx_media::route::SubtitleActivation)>,
@@ -762,6 +769,19 @@ impl Drop for TrackMenuState {
     }
 }
 
+/// **The subtitle search a host can run**, fixed when the panel is built
+/// ([`TrackMenuState::new_with`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SearchOffer {
+    /// No search.
+    #[default]
+    None,
+    /// The server's agents (OpenSubtitles through Plex), at the bottom of the Subtitles root.
+    Server,
+    /// The server's agents, and the viewer's linked Bazarr, whose search leads the root.
+    WithBazarr,
+}
+
 impl TrackMenuState {
     /// Build the menu focused on `tab` (0=Audio, 1=Subtitles) — the on-screen audio/subs icons
     /// pick a specific tab this way; the plain open path passes 0. `yours` is "your languages" in
@@ -772,19 +792,19 @@ impl TrackMenuState {
         tab: c_int,
         yours: Vec<String>,
     ) -> Self {
-        Self::new_with(ps, meta, tab, yours, false)
+        Self::new_with(ps, meta, tab, yours, SearchOffer::None)
     }
 
-    /// [`Self::new`], with the Subtitles root offering *Search subtitles* from its FIRST build when
-    /// `offer_search` — the host can run the search. Offering it later, from a tick, would rebuild
-    /// the root under a live panel; a closing panel's refresh is what kept a fading Tracks surface
-    /// alive past its hand-off (`tracks_to_timing_hands_off_without_stacking_a_second_surface`).
+    /// [`Self::new`], with the Subtitles root offering the subtitle search `offer` names from its
+    /// FIRST build. Offering it later, from a tick, would rebuild the root under a live panel; a
+    /// closing panel's refresh is what kept a fading Tracks surface alive past its hand-off
+    /// (`tracks_to_timing_hands_off_without_stacking_a_second_surface`).
     pub fn new_with(
         ps: &plx_media::route::PlaybackSession,
         meta: metadata::MetadataView<'_>,
         tab: c_int,
         yours: Vec<String>,
-        offer_search: bool,
+        offer: SearchOffer,
     ) -> Self {
         let mut s = TrackMenuState {
             tab,
@@ -811,7 +831,8 @@ impl TrackMenuState {
             sticky_audio_target: None,
             motion: PanelMotion::new(),
             background_owner: None,
-            search: offer_search.then(|| plx_data::subsearch::SubSearchSnapshot::idle(0)),
+            search: (offer != SearchOffer::None).then(|| plx_data::subsearch::SubSearchSnapshot::idle(0)),
+            bazarr: offer == SearchOffer::WithBazarr,
             search_watching: None,
             search_activation: None,
             item_sidecars: Vec::new(),
@@ -2364,6 +2385,7 @@ impl TrackMenuState {
         let show_timing = !plx_media::route::is_transcoding(ps)
             || presenter != plx_media::route::SubtitlePresenter::None;
         let model = self.sub_model(ps, meta, show_timing);
+        let bazarr = self.bazarr && self.search.is_some();
         let mut form = table_form(
             &model,
             self.active_sub,
@@ -2371,21 +2393,30 @@ impl TrackMenuState {
             burn,
             plx_media::route::cur_memory_note(ps),
             forced,
+            bazarr,
         );
         if self.search.is_some() {
             // offered on direct play AND during a transcode: a downloaded sidecar is drawn by the
             // client on one and burned by the server on the other, so it reaches the picture either way
-            form = form.section(FormSection::new("").item(
+            use plx_platform::i18n::msg;
+            let mut section = FormSection::new("").item(
                 TrackRow::OpenSearch,
                 RowKind::Nav(TrackPage::Search),
                 (),
-                Row::new(plx_platform::i18n::msg::widgets_tracks_search_open()),
-            ));
-            form = form.section(FormSection::new("").item(
+                // under Bazarr's search at the top, this one is named for the source it asks
+                Row::new(if bazarr { msg::widgets_tracks_search_plex() } else { msg::widgets_tracks_search_open() }),
+            );
+            // with Bazarr's row at the top the two share one section, which keeps the root
+            // within NEED_H (716 px in two)
+            if !bazarr {
+                form = form.section(section);
+                section = FormSection::new("");
+            }
+            form = form.section(section.item(
                 TrackRow::OpenFix,
                 RowKind::Nav(TrackPage::Fix),
                 (),
-                Row::new(plx_platform::i18n::msg::widgets_tracks_fix()),
+                Row::new(msg::widgets_tracks_fix()),
             ));
         }
         (form, model)
@@ -3041,6 +3072,9 @@ fn in_lang_label(t: &SubTrack) -> String {
 /// and on nothing else: not on Off and not on the forced track it drew, whose own row (and its
 /// Other languages row) stays unchecked. `active_sub` still says whether a track is drawn, which is
 /// what keeps Timing live, so Timing is dim only while nothing is drawn.
+///
+/// `bazarr`: the viewer's Bazarr is linked, and its search ([`TrackRow::OpenBazarr`]) follows Off
+/// and Forced only, where a viewer with no good track looks first.
 fn table_form(
     model: &SubModel,
     active_sub: c_int,
@@ -3048,6 +3082,7 @@ fn table_form(
     burn: Option<plx_media::route::BurnReason>,
     memory_note: bool,
     forced_only: Option<&str>,
+    bazarr: bool,
 ) -> TrackForm {
     use plx_platform::i18n::msg;
     // the track the rows check: the drawn one, unless Forced only holds the checkmark
@@ -3062,10 +3097,10 @@ fn table_form(
             }
             SubHeader::Bare => Section::new(""),
         };
-        let out = sec.rows.iter().fold(FormSection::from_head(head), |out, row| {
+        let out = sec.rows.iter().enumerate().fold(FormSection::from_head(head), |out, (i, row)| {
             // the identity comes from the model's own row target, never from the position
             let id = TrackRow::from(row.target());
-            match row {
+            let out = match row {
                 SubRow::Off => out.item(
                     id,
                     RowKind::Choice,
@@ -3115,6 +3150,18 @@ fn table_form(
                         None => out,
                     }
                 }
+            };
+            let off_rows_end =
+                matches!(row, SubRow::Off | SubRow::ForcedOnly) && !matches!(sec.rows.get(i + 1), Some(SubRow::ForcedOnly));
+            if bazarr && off_rows_end {
+                out.item(
+                    TrackRow::OpenBazarr,
+                    RowKind::Nav(TrackPage::BazarrSearch),
+                    (),
+                    Row::new(msg::widgets_tracks_search_open()),
+                )
+            } else {
+                out
             }
         });
         form.section(if at == 0 && memory_note { out.note(msg::widgets_tracks_sub_remembered_note()) } else { out })
@@ -3158,7 +3205,7 @@ mod tests {
         let yours: Vec<String> = yours.iter().map(|y| y.to_string()).collect();
         let model = sub_layout::sub_sections(subs, offered, names, &yours, show_timing);
         let mut built = FormTable::new(plx_ui::table_screen::BAND_BASE);
-        built.set(table_form(&model, active_sub, offset_ms, None, false, None), None);
+        built.set(table_form(&model, active_sub, offset_ms, None, false, None, false), None);
         let ids = (0..built.table.n_rows() as usize).map(|i| built.id_at(i).copied()).collect();
         (std::mem::take(&mut built.table.sections), ids)
     }
@@ -6029,6 +6076,7 @@ mod focus_tests {
             motion: PanelMotion::new(),
             background_owner: None,
             search: None,
+            bazarr: false,
             search_watching: None,
             search_activation: None,
             item_sidecars: Vec::new(),
@@ -7556,7 +7604,7 @@ mod motion_tests {
             lang_code: "eng".into(), codec: "srt".into(), ..Default::default() }];
         subs.extend(extra);
         let store = store_with(subs);
-        let mut menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], true);
+        let mut menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], SearchOffer::Server);
         menu.set_search(SubSearchSnapshot::idle(7));
         menu.focus_key(TrackRow::OpenSearch.key().0);
         assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
@@ -7576,9 +7624,38 @@ mod motion_tests {
         assert!(!menu.ids().contains(&TrackRow::OpenSearch));
         menu.set_search(SubSearchSnapshot::idle(3));
         assert!(!menu.ids().contains(&TrackRow::OpenSearch), "a late publish never adds the offer");
-        let menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], true);
+        let menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], SearchOffer::Server);
         assert_eq!(menu.ids().last(), Some(&TrackRow::OpenFix), "the offered root ends with Wrong subtitles?");
         assert_eq!(&menu.ids()[menu.ids().len() - 2..], [TrackRow::OpenSearch, TrackRow::OpenFix], "after the search row");
+        assert!(!menu.ids().contains(&TrackRow::OpenBazarr), "Bazarr's search only once it is linked");
+    }
+
+    /// With Bazarr linked the root leads with its search, under Off and Forced only, and the
+    /// bottom row is named for the server it asks. OK enters the Bazarr page, which is what makes
+    /// the screen open that search; LEFT comes back to the row.
+    #[test]
+    fn a_linked_bazarr_puts_its_search_under_off_and_forced_only() {
+        let _g = plx_base::testlock::serial();
+        plx_media::player::sidecar::reset();
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let store = store_with(subs());
+        let mut menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], SearchOffer::WithBazarr);
+        let ids = menu.ids();
+        let forced = ids.iter().position(|id| *id == TrackRow::SubForcedOnly).expect("Forced only follows Off");
+        assert_eq!(ids[forced - 1..=forced + 1], [TrackRow::SubOff, TrackRow::SubForcedOnly, TrackRow::OpenBazarr]);
+        assert_eq!(ids[ids.len() - 2..], [TrackRow::OpenSearch, TrackRow::OpenFix]);
+        let label = |id: TrackRow| {
+            let i = menu.form.index_of(&id).unwrap();
+            menu.form.table.sections.iter().flat_map(|s| &s.rows).nth(i).unwrap().label.to_string()
+        };
+        assert_eq!(label(TrackRow::OpenBazarr), plx_platform::i18n::msg::widgets_tracks_search_open().to_string());
+        assert_eq!(label(TrackRow::OpenSearch), plx_platform::i18n::msg::widgets_tracks_search_plex().to_string());
+        menu.focus_key(TrackRow::OpenBazarr.key().0);
+        assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
+        assert_eq!(menu.page_path(), [TrackPage::BazarrSearch]);
+        assert_eq!(menu.wants_source(), Some(plx_data::subsearch::SubSource::Bazarr));
+        menu.on_left(&ps, store.view());
+        assert_eq!(menu.selected_id(), Some(TrackRow::OpenBazarr));
     }
 
     /// Entering the page is what makes the screen open the search — never merely opening the menu.
@@ -7657,7 +7734,7 @@ mod motion_tests {
     #[test]
     fn the_search_keys_are_distinct_from_every_other_row() {
         let mut ids = vec![TrackRow::SubOff, TrackRow::Timing, TrackRow::Style, TrackRow::Boost,
-            TrackRow::Loudness, TrackRow::OpenOther, TrackRow::OpenSearch, TrackRow::SearchLang,
+            TrackRow::Loudness, TrackRow::OpenOther, TrackRow::OpenSearch, TrackRow::OpenBazarr, TrackRow::SearchLang,
             TrackRow::SearchRetry, TrackRow::SearchCheckInstall, TrackRow::OpenFix, TrackRow::FixRemove, TrackRow::FixBazarr];
         ids.extend((0..300).flat_map(|i| [TrackRow::Sub(i), TrackRow::Audio(i), TrackRow::SearchHit(i),
             TrackRow::LangChoice(i)]));
@@ -7677,7 +7754,7 @@ mod motion_tests {
         let store = store_with(vec![metadata::Stream { id: 7, index: 0, lang: "English".into(),
             lang_code: "eng".into(), codec: "srt".into(), key: "/library/streams/7".into(), external: true,
             ..Default::default() }]);
-        let mut menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], true);
+        let mut menu = TrackMenuState::new_with(&ps, store.view(), 1, vec!["eng".into()], SearchOffer::Server);
         menu.active_sub = 0;
         menu.read_item_sidecars(store.view());
         menu.set_search(SubSearchSnapshot { bazarr_host: "bazarr.example.net".into(), ..SubSearchSnapshot::idle(1) });
@@ -7703,7 +7780,7 @@ mod motion_tests {
         // an embedded track is never offered for removal
         let embedded = store_with(vec![metadata::Stream { id: 1, index: 0, lang: "English".into(),
             lang_code: "eng".into(), codec: "srt".into(), ..Default::default() }]);
-        let mut menu = TrackMenuState::new_with(&ps, embedded.view(), 1, vec!["eng".into()], true);
+        let mut menu = TrackMenuState::new_with(&ps, embedded.view(), 1, vec!["eng".into()], SearchOffer::Server);
         menu.active_sub = 0;
         menu.read_item_sidecars(embedded.view());
         menu.set_search(SubSearchSnapshot::idle(1));
@@ -7754,7 +7831,7 @@ mod motion_tests {
         let store = store_with(vec![metadata::Stream { id: 1, index: 0, lang: "English".into(),
             lang_code: "eng".into(), codec: "srt".into(), ..Default::default() }]);
         for tab in [0, 1] {
-            let mut menu = TrackMenuState::new_with(&ps, store.view(), tab, vec!["eng".into()], true);
+            let mut menu = TrackMenuState::new_with(&ps, store.view(), tab, vec!["eng".into()], SearchOffer::Server);
             menu.set_search(snap(SearchStatus::Ready, None, vec![hit("rel")], installed.clone()));
             assert!(menu.take_search_commit().is_none(), "tab {tab}: reopening must not re-commit");
         }
@@ -8109,7 +8186,8 @@ mod classic_placement_tests {
         let store = item(0);
         let mut tallest = 0.0f32;
         for tab in [0, 1] {
-            let mut menu = TrackMenuState::new_with(&ps, store.view(), tab, vec!["eng".into()], true);
+            // the tallest root: both searches offered
+            let mut menu = TrackMenuState::new_with(&ps, store.view(), tab, vec!["eng".into()], SearchOffer::WithBazarr);
             tallest = tallest.max(menu.form.table.measured_height());
             if let Some(i) = menu.form.index_of(&TrackRow::Style) {
                 menu.focus_row(i as c_int);

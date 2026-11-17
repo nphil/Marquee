@@ -222,6 +222,7 @@
   "widgets.badge.audio_description": "Audiodescriptie",
   "widgets.tracks.other_languages": "Andere talen",
   "widgets.tracks.search.open": "Ondertitels zoeken",
+  "widgets.tracks.search.plex": "Zoeken met Plex",
   "widgets.tracks.search.language": "Taal",
   "widgets.tracks.search.results": "Resultaten",
   "widgets.tracks.search.searching": "Zoeken…",

@@ -2232,9 +2232,14 @@ where
                 crate::item_menu::ItemMenuScreen::new(entry, arg.clone()).with_watchlist(arg.watchlist)),
             AppArg::WatchlistMenu(arg) => Box::new(crate::watchlist::menu::WatchlistMenuScreen::new(entry, *arg)),
             AppArg::PlayerOverlay(arg) => {
-                let offer_search = H::subtitle_search(cx).is_some();
+                use plx_appkit::track_menu::SearchOffer;
+                let offer = match H::subtitle_search(cx) {
+                    None => SearchOffer::None,
+                    Some(view) if view.bazarr_host().is_empty() => SearchOffer::Server,
+                    Some(_) => SearchOffer::WithBazarr,
+                };
                 Box::new(crate::player::overlay::PlayerOverlayScreen::new_folded(
-                    H::session(cx), H::metadata(cx), entry, arg.kind, offer_search,
+                    H::session(cx), H::metadata(cx), entry, arg.kind, offer,
                     self.player_menu_anchor.take(), std::mem::take(&mut self.player_more_folds)))
             }
             AppArg::AltSources(arg) => Box::new(

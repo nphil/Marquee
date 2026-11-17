@@ -25,7 +25,7 @@ use plx_ui::fixture::FixtureMeasure;
 use plx_ui::form::FormId;
 use plx_appkit::more_menu::{Action as MoreAction, MoreRow, MorePage};
 use plx_ui::page_stack::TITLE_KEY;
-use plx_appkit::track_menu::{StyleField, TrackPage, TrackRow};
+use plx_appkit::track_menu::{SearchOffer, StyleField, TrackPage, TrackRow};
 use plx_machine::machine::{
     Cx, Edge, Effects, EntryId, FocusKey, Fx, GroupId, Handled, Host, InputEvent, InputKind,
     InputOwner, InstanceId, Machine, MachineId, NavOp, Source, Tick,
@@ -315,7 +315,7 @@ fn a_folded_row_closes_more_first_and_asks_the_one_performer() {
     assert!(folded.len() >= 5, "{folded:?}");
     for row in &folded {
         for by_click in [false, true] {
-            let mut page = PlayerOverlayScreen::new_folded(&ps, meta.view(), ENTRY, OverlayKind::More { page: None }, false, None, folded.clone());
+            let mut page = PlayerOverlayScreen::new_folded(&ps, meta.view(), ENTRY, OverlayKind::More { page: None }, SearchOffer::None, None, folded.clone());
             let key = MoreRow::Act(MoreAction::Hud(row.command)).key().0;
             let ev = if by_click {
                 ScreenEvent::Activate(key)
@@ -339,7 +339,7 @@ fn a_folded_row_closes_more_first_and_asks_the_one_performer() {
         }
     }
     // the unfolded Options row still reports as it did
-    let mut page = PlayerOverlayScreen::new_folded(&ps, meta.view(), ENTRY, OverlayKind::More { page: None }, false, None, folded);
+    let mut page = PlayerOverlayScreen::new_folded(&ps, meta.view(), ENTRY, OverlayKind::More { page: None }, SearchOffer::None, None, folded);
     let (_, reqs, dismissed) = more_open(&mut page, MoreRow::Act(MoreAction::ToggleStats));
     assert!(dismissed && reqs.contains(&PlayerReq::More(MoreAction::ToggleStats)), "{reqs:?}");
     assert!(!reqs.iter().any(|r| matches!(r, PlayerReq::Command(HudCommand::ToggleStats))));
@@ -1161,7 +1161,7 @@ fn every_menu_arm_latches_the_anchor_it_is_handed() {
     let anchor = plx_ui::Rect::new(333.0, 222.0, 111.0, 55.0);
     assert_ne!(anchor, plx_appkit::player_hud::audit_geometry().row);
     for (kind, name) in MENUS {
-        let page = PlayerOverlayScreen::new_folded(&ps, meta.view(), ENTRY, kind, false, Some(anchor), Vec::new());
+        let page = PlayerOverlayScreen::new_folded(&ps, meta.view(), ENTRY, kind, SearchOffer::None, Some(anchor), Vec::new());
         assert_eq!(menu_anchor_of(&page, name), anchor, "{name}");
     }
 }

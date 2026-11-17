@@ -226,6 +226,7 @@
   "widgets.badge.audio_description": "Audiodescrição",
   "widgets.tracks.other_languages": "Outros idiomas",
   "widgets.tracks.search.open": "Procurar legendas",
+  "widgets.tracks.search.plex": "Procurar com o Plex",
   "widgets.tracks.search.language": "Idioma",
   "widgets.tracks.search.results": "Resultados",
   "widgets.tracks.search.searching": "A procurar…",

@@ -1536,8 +1536,8 @@ impl Bridge {
     }
 
     /// One frame's subtitle-search pump: refill the keys, step, and start the request the step
-    /// emitted, all in this call. The player's search panel is what pumps the store, so the refill
-    /// costs a registry walk only while that panel is open.
+    /// emitted, all in this call. The player's search panel pumps the store, and so does the
+    /// player's early Bazarr search while it is in flight; the refill costs a registry walk only then.
     pub(crate) fn subsearch_pump(&mut self) -> bool {
         super::adapters::stores::refill_client_keys(&mut self.client_keys);
         self.subsearch_state_link();
@@ -2183,6 +2183,11 @@ impl Bridge {
 
     pub(crate) fn publish_playback(&mut self, session: &plx_media::route::PlaybackSession, live: bool) {
         if live {
+            if !self.playback_live {
+                // a playback starts knowing whether Bazarr is linked: the Tracks panel leads with
+                // its search, and the player fetches its candidates early, both off the search view
+                self.subsearch_state_link();
+            }
             self.playback = session.publication();
             self.playback_live = true;
         } else if self.playback_live {

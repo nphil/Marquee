@@ -230,6 +230,7 @@
   "widgets.badge.audio_description": "Audiodeskrypcja",
   "widgets.tracks.other_languages": "Inne języki",
   "widgets.tracks.search.open": "Szukaj napisów",
+  "widgets.tracks.search.plex": "Szukaj w Plex",
   "widgets.tracks.search.language": "Język",
   "widgets.tracks.search.results": "Wyniki",
   "widgets.tracks.search.searching": "Wyszukiwanie…",
