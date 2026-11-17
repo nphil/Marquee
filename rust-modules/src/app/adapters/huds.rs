@@ -1147,7 +1147,7 @@ mod tests {
     /// at a third, a refused certificate at a fourth, and a page that is not a package at a fifth.
     fn network(url: &str, max_bytes: usize) -> Result<Resp, RequestFailure> {
         use plx_net::net::RequestError;
-        let reply = |status: u16, body: &[u8]| Ok(Resp { status, body: body.to_vec(), peer_pin: None, etag: None });
+        let reply = |status: u16, body: &[u8]| Ok(Resp { status, body: body.to_vec(), peer_pin: None, etag: None, cookies: Vec::new() });
         match url {
             "https://example.com/hud.plxhud.json" => {
                 assert_eq!(max_bytes, MAX_PACKAGE_BYTES, "the fetch is bounded by the format's package limit");

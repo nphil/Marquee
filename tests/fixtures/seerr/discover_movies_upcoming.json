@@ -1,0 +1,54 @@
+{
+ "page": 1,
+ "totalPages": 166,
+ "totalResults": 3312,
+ "results": [
+  {
+   "id": 1003596,
+   "mediaType": "movie",
+   "title": "Avengers: Doomsday",
+   "releaseDate": "2026-12-16",
+   "posterPath": "/1zqWkLwC1zLBBBtIWzmkmWeMWnT.jpg",
+   "backdropPath": "/rObL4of4eFA8yWaN9pRFo9aOVNi.jpg",
+   "overview": "Beloved heroes from three distinct universes are set on a deadly collision course and face an existential threat unlike anything they've ever encountered."
+  },
+  {
+   "id": 1300968,
+   "mediaType": "movie",
+   "title": "The Hunger Games: Sunrise on the Reaping",
+   "releaseDate": "2026-11-18",
+   "posterPath": "/kONfwpf0AZzvL1zqjZV9C89g1PY.jpg",
+   "backdropPath": "/aqFZcr2dxSZ2UwWSo1WC6C0rwDf.jpg",
+   "overview": "Return to the world of Panem 24 years before the events of The Hunger Games, starting on the morning of the reaping of the 50th Hunger Games, also known as the…"
+  },
+  {
+   "id": 1170608,
+   "mediaType": "movie",
+   "title": "Dune: Part Three",
+   "releaseDate": "2026-12-15",
+   "posterPath": "/d43fvHQsIMa4kpyhKXw0haEJIvI.jpg",
+   "backdropPath": "/i5E9H7Ik0u61ylDDTbmUpTL3Yw.jpg",
+   "overview": "Nearly two decades after he seized control of the Imperium, Paul Atreides is now a ruthless Emperor, and must face the consequences of his reign as old allies…",
+   "mediaInfo": {
+    "status": 1,
+    "status4k": 3,
+    "tmdbId": 1170608,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "downloadStatus": [],
+    "ratingKey": null,
+    "seasons": [],
+    "requests": []
+   }
+  },
+  {
+   "id": 1538497,
+   "mediaType": "movie",
+   "title": "Hexed",
+   "releaseDate": "2026-11-25",
+   "posterPath": "/yykeYKbDBM9eUMJUucaaDo2mi1p.jpg",
+   "backdropPath": "/wZ9Me7OndzgBOEAa8nSBNPu3Sl4.jpg",
+   "overview": "An impulsive and unconventional teenage girl named Billie discovers secret magical abilities which, once unleashed, hurtle her into a spectacle-filled journey…"
+  }
+ ]
+}

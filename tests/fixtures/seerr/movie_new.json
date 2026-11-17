@@ -1,0 +1,28 @@
+{
+ "id": 1300968,
+ "title": "The Hunger Games: Sunrise on the Reaping",
+ "releaseDate": "2026-11-18",
+ "runtime": 159,
+ "posterPath": "/kONfwpf0AZzvL1zqjZV9C89g1PY.jpg",
+ "backdropPath": "/aqFZcr2dxSZ2UwWSo1WC6C0rwDf.jpg",
+ "status": "Released",
+ "overview": "Return to the world of Panem 24 years before the events of The Hunger Games, starting on the morning of the reaping of the 50th Hunger Games, also known as the Second Quarter Quell.",
+ "genres": [
+  {
+   "id": 878,
+   "name": "Science Fiction"
+  },
+  {
+   "id": 28,
+   "name": "Action"
+  },
+  {
+   "id": 12,
+   "name": "Adventure"
+  }
+ ],
+ "externalIds": {
+  "imdbId": "tt32558705"
+ },
+ "mediaInfo": null
+}

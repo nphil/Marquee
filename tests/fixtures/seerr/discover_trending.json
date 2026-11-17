@@ -1,0 +1,144 @@
+{
+ "page": 1,
+ "totalPages": 500,
+ "totalResults": 10000,
+ "results": [
+  {
+   "id": 1368337,
+   "mediaType": "movie",
+   "title": "The Odyssey",
+   "releaseDate": "2026-07-15",
+   "posterPath": "/5rhTDKUhPYvpdQIijFIs5VoWsON.jpg",
+   "backdropPath": "/sdkZMG32J5aG0us2zoLbnD7Kd26.jpg",
+   "overview": "Odysseus, the legendary King of Ithaca, embarks on a long and perilous journey home following the Trojan War. Throughout his voyage, he is forced to confront…",
+   "mediaInfo": {
+    "status": 5,
+    "status4k": 1,
+    "tmdbId": 1368337,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "downloadStatus": [],
+    "ratingKey": "22192",
+    "mediaUrl": "https://app.plex.tv/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F22192",
+    "seasons": [],
+    "requests": []
+   }
+  },
+  {
+   "id": 1300968,
+   "mediaType": "movie",
+   "title": "The Hunger Games: Sunrise on the Reaping",
+   "releaseDate": "2026-11-18",
+   "posterPath": "/ffJaYMtB6v1TrvkyhCOqwqCKm0o.jpg",
+   "backdropPath": "/aqFZcr2dxSZ2UwWSo1WC6C0rwDf.jpg",
+   "overview": "Return to the world of Panem 24 years before the events of The Hunger Games, starting on the morning of the reaping of the 50th Hunger Games, also known as the…"
+  },
+  {
+   "id": 1003596,
+   "mediaType": "movie",
+   "title": "Avengers: Doomsday",
+   "releaseDate": "2026-12-16",
+   "posterPath": "/1zqWkLwC1zLBBBtIWzmkmWeMWnT.jpg",
+   "backdropPath": "/rObL4of4eFA8yWaN9pRFo9aOVNi.jpg",
+   "overview": "Beloved heroes from three distinct universes are set on a deadly collision course and face an existential threat unlike anything they've ever encountered."
+  },
+  {
+   "id": 1185344,
+   "mediaType": "movie",
+   "title": "The Beast",
+   "releaseDate": "2026-10-08",
+   "posterPath": "/ocg5JfJP19fodcv5uQUApkmZMdI.jpg",
+   "backdropPath": "/v5Wb9NoE0s1mGmC5wVeQR1OK22V.jpg",
+   "overview": "When a militia of unidentified hostiles coordinates a coup against the United States, the president must fight back by utilizing the highly classified…"
+  },
+  {
+   "id": 291507,
+   "mediaType": "tv",
+   "name": "The Body",
+   "firstAirDate": "2026-11-11",
+   "posterPath": "/zleCYDRbW5mKwgZwVK4SNIrKXWx.jpg",
+   "backdropPath": "/hYJqUoXRZnodGxgVZTM8uwr5kbC.jpg",
+   "overview": "On Halloween night, an all-girls dance squad tumbles into Catholic guilt, unholy desires and ghostly visions when an initiation goes to hell."
+  },
+  {
+   "id": 1400837,
+   "mediaType": "movie",
+   "title": "Other Mommy",
+   "releaseDate": "2026-10-07",
+   "posterPath": "/fGRNCssTRrhYZxNzykGGCoMsAVq.jpg",
+   "backdropPath": "/smZ8BT4Vzw4iCEppTLCnN8jNYtn.jpg",
+   "overview": "Young Bela forms a relationship with a sinister entity in her home that looks uncannily like her own mother, drawing her into a terrifying and increasingly…",
+   "mediaInfo": {
+    "status": 5,
+    "status4k": 1,
+    "tmdbId": 1400837,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "downloadStatus": [],
+    "ratingKey": "22831",
+    "mediaUrl": "https://app.plex.tv/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F22831",
+    "seasons": [],
+    "requests": []
+   }
+  },
+  {
+   "id": 213375,
+   "mediaType": "tv",
+   "name": "VisionQuest",
+   "firstAirDate": "2026-10-13",
+   "posterPath": "/WGyAyBPncfuu8MZhLY9RtfZPM0.jpg",
+   "backdropPath": "/uoXXbN2PrOxH6UKyP7kYwmGpAAP.jpg",
+   "overview": "With a bounty on his head, Vision must confront his nature and resist Ultron's influence to survive."
+  },
+  {
+   "id": 969681,
+   "mediaType": "movie",
+   "title": "Spider-Man: Brand New Day",
+   "releaseDate": "2026-07-29",
+   "posterPath": "/bjiS5ipwxb9JFy3XRRN4OAilSeX.jpg",
+   "backdropPath": "/subj7knTn4DeS6KS7qI66EQKe9i.jpg",
+   "overview": "Fighting crime full-time as Spider-Man in a world that doesn't remember him—and the pressure of seeing his old friends move on without him—sparks a change in…",
+   "mediaInfo": {
+    "status": 5,
+    "status4k": 1,
+    "tmdbId": 969681,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "downloadStatus": [],
+    "ratingKey": "22329",
+    "mediaUrl": "https://app.plex.tv/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F22329",
+    "seasons": [],
+    "requests": []
+   }
+  },
+  {
+   "id": 1381071,
+   "mediaType": "movie",
+   "title": "Godzilla Minus Zero",
+   "releaseDate": "2026-11-03",
+   "posterPath": "/hSmIJluOJmTWvJs4d7kHRxjc8s8.jpg",
+   "backdropPath": "/oqrYIDH4tvfEzPe1yqT4jzmAWHQ.jpg",
+   "overview": "War reduced Japan to zero, and Godzilla plunged it into minus. Two years have passed since then, and the country has faced agonizing struggles to achieve…",
+   "mediaInfo": {
+    "status": 3,
+    "status4k": 1,
+    "tmdbId": 1381071,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "downloadStatus": [],
+    "ratingKey": null,
+    "seasons": [],
+    "requests": []
+   }
+  },
+  {
+   "id": 84773,
+   "mediaType": "tv",
+   "name": "The Lord of the Rings: The Rings of Power",
+   "firstAirDate": "2022-09-01",
+   "posterPath": "/bMXWXKM9ydUmMTNvDnYo9QtCBRt.jpg",
+   "backdropPath": "/uVOcz7JBOuZxsx9IYpx6Ah174LX.jpg",
+   "overview": "Beginning in a time of relative peace, we follow an ensemble cast of characters as they confront the re-emergence of evil to Middle-earth. From the darkest…"
+  }
+ ]
+}

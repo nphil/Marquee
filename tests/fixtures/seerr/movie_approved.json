@@ -1,0 +1,46 @@
+{
+ "id": 1381071,
+ "title": "Godzilla Minus Zero",
+ "releaseDate": "2026-11-03",
+ "runtime": 135,
+ "posterPath": "/hSmIJluOJmTWvJs4d7kHRxjc8s8.jpg",
+ "backdropPath": "/oqrYIDH4tvfEzPe1yqT4jzmAWHQ.jpg",
+ "status": "Released",
+ "overview": "War reduced Japan to zero, and Godzilla plunged it into minus. Two years have passed since then, and the country has faced agonizing struggles to achieve recovery and finally reclaim its daily life. Just as humanity managed to cling to a hard-won peace, a new threat strikes, crushing hope in an…",
+ "genres": [
+  {
+   "id": 878,
+   "name": "Science Fiction"
+  },
+  {
+   "id": 27,
+   "name": "Horror"
+  },
+  {
+   "id": 28,
+   "name": "Action"
+  }
+ ],
+ "externalIds": {
+  "imdbId": "tt34384661"
+ },
+ "mediaInfo": {
+  "status": 3,
+  "status4k": 1,
+  "tmdbId": 1381071,
+  "tvdbId": null,
+  "mediaType": "movie",
+  "downloadStatus": [],
+  "ratingKey": null,
+  "seasons": [],
+  "requests": [
+   {
+    "id": 184,
+    "status": 2,
+    "type": "movie",
+    "is4k": false,
+    "seasons": []
+   }
+  ]
+ }
+}

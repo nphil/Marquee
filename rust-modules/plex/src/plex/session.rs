@@ -56,6 +56,8 @@ mod playback_options;
 pub use playback_options::{AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, SpoilerProtection};
 mod bazarr_link;
 pub use bazarr_link::{BazarrChange, BazarrLink, UrlProblem};
+mod seerr_link;
+pub use seerr_link::{SeerrChange, SeerrLink};
 mod bazarr_import;
 pub use bazarr_import::{import_once as import_bazarr_link_file, IMPORT_FILE as BAZARR_IMPORT_FILE};
 mod subtitle_look;
@@ -2542,6 +2544,22 @@ impl Session {
             next.extensions.0.remove("speechdock_origin");
         } else {
             next.extensions.0.insert("speechdock_origin".into(), Value::String(origin.into()));
+        }
+        next
+    }
+
+    /// The Seerr link (Settings > Integrations > Requests); empty until the viewer set it.
+    pub fn seerr(&self) -> SeerrLink {
+        self.extensions.0.get("seerr").map(SeerrLink::from_value).unwrap_or_default()
+    }
+
+    /// Preserve every other session field when saving or clearing the Seerr link.
+    pub fn with_seerr(&self, link: &SeerrLink) -> Self {
+        let mut next = self.clone();
+        if link.is_empty() {
+            next.extensions.0.remove("seerr");
+        } else {
+            next.extensions.0.insert("seerr".into(), link.to_value());
         }
         next
     }

@@ -41,6 +41,10 @@ pub mod subtitles;
 /// playing item, search the providers, download a pick. A third-party service the viewer runs, so
 /// it is reached by the address they typed, with the key they typed, and nothing else.
 pub mod bazarr;
+/// Seerr's HTTP API (Settings > Integrations > Requests): discover, search, read and request
+/// titles as the seated Plex account. A third-party service the viewer runs, reached by the
+/// address they typed.
+pub mod seerr;
 /// The PMS server-sent-event notification feed: the SSE parser, the lenient `playing` models and
 /// the one-connection client. `docs/pms-api.md` §9; the data layer decides when to connect.
 pub mod notify;

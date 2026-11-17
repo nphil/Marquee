@@ -588,12 +588,20 @@ fn global_init_once() -> bool {
     }
 }
 
+/// The longest `Set-Cookie` pair kept, and how many one response may set: bounds on what a reply
+/// can make the sink hold. A session cookie is well under a kilobyte.
+const COOKIE_BYTES: usize = 4096;
+const COOKIE_SLOTS: usize = 8;
+
 struct BodySink {
     body: Vec<u8>,
     max: Option<usize>,
     overflowed: bool,
     /// The `ETag` of the response being read (see [`header_cb`]); the last hop's, never a redirect's.
     etag: Option<String>,
+    /// The `name=value` of each `Set-Cookie` of the response being read, attributes dropped; reset
+    /// on every status line like `etag`, so a redirect hop's cookies are never the final response's.
+    cookies: Vec<String>,
     /// A public transfer's protocol floor survives response/status resets across redirect hops.
     redirect: Option<RedirectFloor>,
 }
@@ -638,6 +646,7 @@ impl BodySink {
             max,
             overflowed: false,
             etag: None,
+            cookies: Vec::new(),
             redirect: None,
         }
     }
@@ -712,10 +721,23 @@ impl BodySink {
         }
         if line.starts_with(b"HTTP/") {
             self.etag = None;
+            self.cookies.clear();
             return true;
         }
         let Some(colon) = line.iter().position(|&b| b == b':') else { return true };
-        if !line[..colon].eq_ignore_ascii_case(b"etag") {
+        let name = &line[..colon];
+        if name.eq_ignore_ascii_case(b"set-cookie") {
+            // A session cookie is a few hundred bytes; a header past COOKIE_BYTES is not one a
+            // caller would send back, and COOKIE_SLOTS bounds what one response can make it hold.
+            if let Ok(value) = std::str::from_utf8(&line[colon + 1..]) {
+                let pair = value.split(';').next().unwrap_or("").trim();
+                if pair.contains('=') && pair.len() <= COOKIE_BYTES && self.cookies.len() < COOKIE_SLOTS {
+                    self.cookies.push(pair.to_owned());
+                }
+            }
+            return true;
+        }
+        if !name.eq_ignore_ascii_case(b"etag") {
             return true;
         }
         if let Ok(value) = std::str::from_utf8(&line[colon + 1..]) {
@@ -763,6 +785,9 @@ pub struct Resp {
     /// prefix and quotes), or `None` when it sent none. A 304 normally repeats the validator.
     /// Present on every buffered request; the caller's own `If-None-Match` goes in `headers`.
     pub etag: Option<String>,
+    /// The `name=value` pair of each `Set-Cookie` the final response sent, in order, attributes
+    /// dropped. Empty when it sent none (a streamed request never fills it).
+    pub cookies: Vec<String>,
 }
 impl Resp {
     pub fn ok(&self) -> bool {
@@ -857,7 +882,7 @@ fn finish_response(
             verify,
         });
     }
-    Ok(Resp { status: status.unwrap(), body: sink.body, peer_pin: None, etag: sink.etag })
+    Ok(Resp { status: status.unwrap(), body: sink.body, peer_pin: None, etag: sink.etag, cookies: sink.cookies })
 }
 
 /// **How long one call may take.** The values are a PER-CALL argument rather than constants

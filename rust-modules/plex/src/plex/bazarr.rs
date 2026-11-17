@@ -243,7 +243,7 @@ pub struct Bazarr<'a, T: Transport> {
     http: &'a T,
 }
 
-fn enc(s: &str) -> String {
+pub(super) fn enc(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
@@ -256,7 +256,7 @@ fn enc(s: &str) -> String {
 }
 
 /// A JSON string field, tolerating a number or null.
-fn text(v: &Value, key: &str) -> String {
+pub(super) fn text(v: &Value, key: &str) -> String {
     match v.get(key) {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Number(n)) => n.to_string(),
@@ -264,7 +264,7 @@ fn text(v: &Value, key: &str) -> String {
     }
 }
 
-fn int(v: &Value, key: &str) -> i64 {
+pub(super) fn int(v: &Value, key: &str) -> i64 {
     match v.get(key) {
         Some(Value::Number(n)) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)).unwrap_or(0),
         Some(Value::String(s)) => s.trim().parse().unwrap_or(0),

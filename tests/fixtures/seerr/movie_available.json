@@ -1,0 +1,39 @@
+{
+ "id": 1368337,
+ "title": "The Odyssey",
+ "releaseDate": "2026-07-15",
+ "runtime": 173,
+ "posterPath": "/5rhTDKUhPYvpdQIijFIs5VoWsON.jpg",
+ "backdropPath": "/mIi99BK2mDpLp2lGsa8jCBDFit4.jpg",
+ "status": "Released",
+ "overview": "Odysseus, the legendary King of Ithaca, embarks on a long and perilous journey home following the Trojan War. Throughout his voyage, he is forced to confront the whims of gods, mythological monsters, and trials that stretch both his cunning and his humanity to the breaking point.",
+ "genres": [
+  {
+   "id": 12,
+   "name": "Adventure"
+  },
+  {
+   "id": 28,
+   "name": "Action"
+  },
+  {
+   "id": 14,
+   "name": "Fantasy"
+  }
+ ],
+ "externalIds": {
+  "imdbId": "tt33764258"
+ },
+ "mediaInfo": {
+  "status": 5,
+  "status4k": 1,
+  "tmdbId": 1368337,
+  "tvdbId": null,
+  "mediaType": "movie",
+  "downloadStatus": [],
+  "ratingKey": "22192",
+  "mediaUrl": "https://app.plex.tv/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F22192",
+  "seasons": [],
+  "requests": []
+ }
+}

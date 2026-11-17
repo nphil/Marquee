@@ -1,0 +1,94 @@
+{
+ "id": 114410,
+ "name": "Chainsaw Man",
+ "firstAirDate": "2022-10-12",
+ "posterPath": "/npdB6eFzizki0WaZ1OvKcJrWe97.jpg",
+ "backdropPath": "/fOUKSCbZzaoQKsO39enivHnWDid.jpg",
+ "numberOfSeasons": 1,
+ "status": "Ended",
+ "overview": "Denji has a simple dream—to live a happy and peaceful life, spending time with a girl he likes. This is a far cry from reality, however, as Denji is forced by the yakuza into killing devils in order to pay off his crushing debts. Using his pet devil Pochita as a weapon, he is ready to do anything…",
+ "genres": [
+  {
+   "id": 16,
+   "name": "Animation"
+  },
+  {
+   "id": 10759,
+   "name": "Action & Adventure"
+  },
+  {
+   "id": 10765,
+   "name": "Sci-Fi & Fantasy"
+  }
+ ],
+ "seasons": [
+  {
+   "seasonNumber": 0,
+   "episodeCount": 8,
+   "name": "0",
+   "airDate": ""
+  },
+  {
+   "seasonNumber": 1,
+   "episodeCount": 12,
+   "name": "1",
+   "airDate": ""
+  },
+  {
+   "seasonNumber": 2,
+   "episodeCount": 0,
+   "name": "2",
+   "airDate": ""
+  }
+ ],
+ "externalIds": {
+  "imdbId": "tt13616990",
+  "tvdbId": 397934
+ },
+ "mediaInfo": {
+  "status": 5,
+  "status4k": 1,
+  "tmdbId": 114410,
+  "tvdbId": 397934,
+  "mediaType": "tv",
+  "downloadStatus": [],
+  "ratingKey": "21977",
+  "mediaUrl": "https://app.plex.tv/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F21977",
+  "seasons": [
+   {
+    "seasonNumber": 1,
+    "status": 5
+   },
+   {
+    "seasonNumber": 2,
+    "status": 1
+   }
+  ],
+  "requests": [
+   {
+    "id": 134,
+    "status": 5,
+    "type": "tv",
+    "is4k": false,
+    "seasons": [
+     {
+      "seasonNumber": 1,
+      "status": 5
+     }
+    ]
+   },
+   {
+    "id": 173,
+    "status": 5,
+    "type": "tv",
+    "is4k": false,
+    "seasons": [
+     {
+      "seasonNumber": 1,
+      "status": 5
+     }
+    ]
+   }
+  ]
+ }
+}

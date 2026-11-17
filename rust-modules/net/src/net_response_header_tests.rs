@@ -54,6 +54,16 @@ fn a_new_status_line_forgets_the_validator_of_the_hop_before() {
 }
 
 #[test]
+fn set_cookie_keeps_the_final_hops_name_value_pairs_without_attributes() {
+    let sink = fed(&[
+        "HTTP/1.1 302 Found\r\n", "Set-Cookie: hop=1; Path=/\r\n", "\r\n",
+        "HTTP/1.1 200 OK\r\n", "set-cookie: connect.sid=s%3Aabc.def; Path=/; HttpOnly\r\n",
+        "Set-Cookie: theme=dark\r\n", "Set-Cookie: no-pair\r\n", "X-Set-Cookie: nope=1\r\n",
+    ]);
+    assert_eq!(sink.cookies, ["connect.sid=s%3Aabc.def", "theme=dark"]);
+}
+
+#[test]
 fn a_null_sink_or_a_non_utf8_line_is_taken_without_a_panic() {
     let line = b"ETag: \xff\xfe\r\n";
     let n = header_cb(line.as_ptr() as *mut c_char, 1, line.len(), std::ptr::null_mut());

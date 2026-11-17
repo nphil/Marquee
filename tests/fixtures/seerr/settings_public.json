@@ -1,0 +1,9 @@
+{
+ "initialized": true,
+ "applicationTitle": "Seerr",
+ "partialRequestsEnabled": true,
+ "enableSpecialEpisodes": false,
+ "hideAvailable": true,
+ "movie4kEnabled": true,
+ "series4kEnabled": true
+}

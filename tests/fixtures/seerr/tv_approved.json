@@ -1,0 +1,58 @@
+{
+ "id": 171802,
+ "name": "Blade Runner 2099",
+ "firstAirDate": "2026-11-25",
+ "posterPath": "/qAcXaAoJiYry9nGEyxTirnJ82Jj.jpg",
+ "backdropPath": "/nSEYOOejH4nccNsrXzUnfP75AKd.jpg",
+ "numberOfSeasons": 1,
+ "status": "In Production",
+ "overview": "Fifty years after the events of Blade Runner 2049, Los Angeles has been reborn, just not by humanity. Cora, a fugitive in a final bid to stop running, takes on one last identity: a Blade Runner. Forced to partner with Olwen, a Replicant days from dying, she hunts down a runaway hiding a truth that…",
+ "genres": [
+  {
+   "id": 10765,
+   "name": "Sci-Fi & Fantasy"
+  }
+ ],
+ "seasons": [
+  {
+   "seasonNumber": 0,
+   "episodeCount": 0,
+   "name": "0",
+   "airDate": ""
+  },
+  {
+   "seasonNumber": 1,
+   "episodeCount": 8,
+   "name": "1",
+   "airDate": ""
+  }
+ ],
+ "externalIds": {
+  "imdbId": "tt18224594",
+  "tvdbId": 424855
+ },
+ "mediaInfo": {
+  "status": 3,
+  "status4k": 1,
+  "tmdbId": 171802,
+  "tvdbId": 424855,
+  "mediaType": "tv",
+  "downloadStatus": [],
+  "ratingKey": null,
+  "seasons": [],
+  "requests": [
+   {
+    "id": 199,
+    "status": 2,
+    "type": "tv",
+    "is4k": false,
+    "seasons": [
+     {
+      "seasonNumber": 1,
+      "status": 2
+     }
+    ]
+   }
+  ]
+ }
+}

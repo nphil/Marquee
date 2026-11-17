@@ -1,0 +1,39 @@
+{
+ "id": 291507,
+ "name": "The Body",
+ "firstAirDate": "2026-11-11",
+ "posterPath": "/zleCYDRbW5mKwgZwVK4SNIrKXWx.jpg",
+ "backdropPath": "/hYJqUoXRZnodGxgVZTM8uwr5kbC.jpg",
+ "numberOfSeasons": 1,
+ "status": "Returning Series",
+ "overview": "On Halloween night, an all-girls dance squad tumbles into Catholic guilt, unholy desires and ghostly visions when an initiation goes to hell.",
+ "genres": [
+  {
+   "id": 9648,
+   "name": "Mystery"
+  },
+  {
+   "id": 18,
+   "name": "Drama"
+  }
+ ],
+ "seasons": [
+  {
+   "seasonNumber": 0,
+   "episodeCount": 0,
+   "name": "0",
+   "airDate": ""
+  },
+  {
+   "seasonNumber": 1,
+   "episodeCount": 8,
+   "name": "1",
+   "airDate": ""
+  }
+ ],
+ "externalIds": {
+  "imdbId": "tt8014982",
+  "tvdbId": 463695
+ },
+ "mediaInfo": null
+}

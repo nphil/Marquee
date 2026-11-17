@@ -54,10 +54,7 @@ impl BazarrLink {
 
     /// The host (and port) of the address, for the one line that names it on screen.
     pub fn host(&self) -> Option<&str> {
-        let rest = self.url.split_once("://")?.1;
-        let host = rest.split(['/', '?', '#']).next()?;
-        let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
-        (!host.is_empty()).then_some(host)
+        host_of(&self.url)
     }
 
     /// The address as a typed string settles to: trimmed, a scheme in front, no trailing slash or
@@ -163,6 +160,14 @@ fn is_home_network(host: &str) -> bool {
         );
     }
     host.starts_with("fe80:") || host.starts_with("fc") || host.starts_with("fd")
+}
+
+/// The host (and port) of a stored `scheme://host[:port]` address.
+pub(super) fn host_of(url: &str) -> Option<&str> {
+    let rest = url.split_once("://")?.1;
+    let host = rest.split(['/', '?', '#']).next()?;
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    (!host.is_empty()).then_some(host)
 }
 
 #[cfg(test)]

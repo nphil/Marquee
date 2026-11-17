@@ -1,0 +1,148 @@
+{
+ "pageInfo": {
+  "pages": 4,
+  "pageSize": 20,
+  "results": 75,
+  "page": 1
+ },
+ "results": [
+  {
+   "id": 201,
+   "status": 2,
+   "type": "movie",
+   "is4k": false,
+   "seasons": [],
+   "media": {
+    "tmdbId": 656908,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "status": 3,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": null
+   }
+  },
+  {
+   "id": 200,
+   "status": 2,
+   "type": "movie",
+   "is4k": true,
+   "seasons": [],
+   "media": {
+    "tmdbId": 1170608,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "status": 1,
+    "status4k": 3,
+    "downloadStatus": [],
+    "ratingKey": null
+   }
+  },
+  {
+   "id": 199,
+   "status": 2,
+   "type": "tv",
+   "is4k": false,
+   "seasons": [
+    {
+     "seasonNumber": 1,
+     "status": 2
+    }
+   ],
+   "media": {
+    "tmdbId": 171802,
+    "tvdbId": 424855,
+    "mediaType": "tv",
+    "status": 3,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": null
+   }
+  },
+  {
+   "id": 198,
+   "status": 2,
+   "type": "tv",
+   "is4k": false,
+   "seasons": [
+    {
+     "seasonNumber": 1,
+     "status": 2
+    }
+   ],
+   "media": {
+    "tmdbId": 224377,
+    "tvdbId": 433637,
+    "mediaType": "tv",
+    "status": 3,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": null
+   }
+  },
+  {
+   "id": 197,
+   "status": 5,
+   "type": "movie",
+   "is4k": false,
+   "seasons": [],
+   "media": {
+    "tmdbId": 1423191,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "status": 5,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": "22835"
+   }
+  },
+  {
+   "id": 196,
+   "status": 5,
+   "type": "movie",
+   "is4k": false,
+   "seasons": [],
+   "media": {
+    "tmdbId": 1400837,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "status": 5,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": "22831"
+   }
+  },
+  {
+   "id": 182,
+   "status": 5,
+   "type": "movie",
+   "is4k": false,
+   "seasons": [],
+   "media": {
+    "tmdbId": 1813,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "status": 5,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": "22309"
+   }
+  },
+  {
+   "id": 180,
+   "status": 5,
+   "type": "movie",
+   "is4k": false,
+   "seasons": [],
+   "media": {
+    "tmdbId": 1291595,
+    "tvdbId": null,
+    "mediaType": "movie",
+    "status": 5,
+    "status4k": 1,
+    "downloadStatus": [],
+    "ratingKey": "22338"
+   }
+  }
+ ]
+}
