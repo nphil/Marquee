@@ -675,7 +675,7 @@ pub(crate) fn machine_name(id: plx_machine::machine::MachineId) -> String {
         MachineId::Session => "Session".into(), MachineId::Consent => "Consent".into(), MachineId::Huds => "Huds".into(),
         MachineId::Input => "Input".into(), MachineId::Present => "Present".into(),
         MachineId::Nav => "Nav".into(), MachineId::Player => "Player".into(),
-        MachineId::Cache => "Cache".into(),
+        MachineId::Cache => "Cache".into(), MachineId::Requests => "Requests".into(),
     }
 }
 

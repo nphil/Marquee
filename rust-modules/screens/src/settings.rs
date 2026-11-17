@@ -470,6 +470,7 @@ fn mount_page(
         SettingsPage::HomeRows => Box::new(home_rows::HomeRowsPage::new(entry, cx.views)),
         SettingsPage::Subtitles => Box::new(subtitles::SubtitlesPage::new(entry)),
         SettingsPage::Bazarr => Box::new(bazarr::BazarrPage::new(entry)),
+        SettingsPage::Seerr => Box::new(seerr::SeerrPage::new(entry)),
         SettingsPage::SpeechDock => Box::new(speechdock::SpeechDockPage::new(entry)),
         SettingsPage::Contribute => Box::new(super::legal::DocumentPage::contribute(entry)),
         SettingsPage::Playback => Box::new(super::preferences::PreferencesPage::new(entry, super::preferences::Kind::Playback)),
@@ -983,6 +984,7 @@ enum RootId {
     Subtitles,
     Bazarr,
     SpeechDock,
+    Seerr,
     AudioSubtitles,
     Language,
     AutoSignIn,
@@ -1021,6 +1023,7 @@ impl FormId for RootId {
             RootId::Subtitles => 12,
             RootId::Bazarr => 13,
             RootId::SpeechDock => 14,
+            RootId::Seerr => 22,
             RootId::PlaybackTrace => 15,
             RootId::TraceExport => 16,
             RootId::TraceDelete => 17,
@@ -1091,6 +1094,7 @@ struct RootState {
     /// the canon only when they are not the defaults, so every default root's digest is unchanged.
     subtitle_preset: plx_plex::plex::session::LookPreset,
     bazarr_host: String,
+    seerr_host: String,
     /// Each unencrypted-connection switch, in row order. Written to the canon only when there is
     /// one, so every other root's digest is unchanged.
     plaintext: Vec<bool>,
@@ -1111,6 +1115,9 @@ impl LogicalState for RootState {
         }
         if !self.bazarr_host.is_empty() {
             w.str(&self.bazarr_host);
+        }
+        if !self.seerr_host.is_empty() {
+            w.u8(0xd3).str(&self.seerr_host);
         }
         if self.trace != plx_platform::playback_trace::Status::Off { w.u8(0xd1).u8(self.trace as u8); }
         if !self.plaintext.is_empty() {
@@ -1173,6 +1180,7 @@ struct RootInputs {
     /// The subtitle look's preset and the Bazarr link, which their rows summarise.
     subtitle_preset: plx_plex::plex::session::LookPreset,
     bazarr: plx_plex::plex::session::BazarrLink,
+    seerr: plx_plex::plex::session::SeerrLink,
     /// Unencrypted-connection switches, in row order — empty when signed out or when nobody has
     /// an answered/offered plaintext question.
     plaintext: Vec<PlaintextRowInput>,
@@ -1327,6 +1335,15 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::speechdock_title())
                 .detail(plx_platform::i18n::msg::speechdock_root_detail())
                 .chevron(true),
+        )
+        .item(
+            RootId::Seerr,
+            RowKind::Nav(SettingsPage::Seerr),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::seerr_title())
+                .detail(plx_platform::i18n::msg::seerr_root_detail())
+                .value(seerr::summary(&inputs.seerr))
+                .chevron(true),
         );
     let has_plaintext = signed_in && !inputs.plaintext.is_empty();
     let mut plaintext = FormSection::new(plx_platform::i18n::msg::settings_plaintext_section()).visible(has_plaintext);
@@ -1422,6 +1439,7 @@ impl RootPage {
                 under_posters: plx_plex::plex::session::UnderPosters::DEFAULT,
                 subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
                 bazarr_host: String::new(),
+                seerr_host: String::new(),
                 plaintext: Vec::new(),
                 trace: plx_platform::playback_trace::Status::Off,
             },
@@ -1459,13 +1477,15 @@ impl RootPage {
         self.state.subtitle_preset = plx_media::route::subtitle_look().preset;
         let bazarr = sess.bazarr().clone();
         self.state.bazarr_host = bazarr.host().map(str::to_string).filter(|_| bazarr.is_complete()).unwrap_or_default();
+        let seerr = sess.seerr().clone();
+        self.state.seerr_host = seerr.host().map(str::to_string).filter(|_| seerr.enabled).unwrap_or_default();
         let plaintext = if signed_in { self.plaintext_inputs() } else { Vec::new() };
         let form = root_form(&RootInputs {
             trace: self.state.trace,
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
             auto_sign_in, trailer_autoplay, spoiler_protection, resolution, resolution_offered, language: self.state.language,
             under_posters: self.state.under_posters, plaintext,
-            subtitle_preset: self.state.subtitle_preset, bazarr,
+            subtitle_preset: self.state.subtitle_preset, bazarr, seerr,
         });
         let keep = self.form.selected_id().cloned();
         self.form.table.compact = false;
@@ -1824,6 +1844,8 @@ mod home_rows;
 mod subtitles;
 #[path = "settings_bazarr.rs"]
 mod bazarr;
+#[path = "settings_seerr.rs"]
+mod seerr;
 #[path = "settings_speechdock.rs"]
 mod speechdock;
 pub use under_posters::caption_policy_of;

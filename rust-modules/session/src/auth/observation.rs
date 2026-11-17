@@ -393,6 +393,7 @@ pub mod address {
             MachineId::Player => (5, 0), MachineId::Store(id) => (6, id.0),
             MachineId::Instance(id) => (7, id.0), MachineId::Cache => (8, 0),
             MachineId::Huds => (9, 0),
+            MachineId::Requests => (10, 0),
         };
         (tag, id, value.req.0).serialize(serializer)
     }
@@ -405,6 +406,7 @@ pub mod address {
             (6, id) => MachineId::Store(StoreOrd(id)), (7, id) => MachineId::Instance(InstanceId(id)),
             (8, 0) => MachineId::Cache,
             (9, 0) => MachineId::Huds,
+            (10, 0) => MachineId::Requests,
             _ => return Err(serde::de::Error::custom("invalid Session delivery address")),
         };
         Ok(Addr { to, req: RequestId(req) })

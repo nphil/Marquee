@@ -6613,6 +6613,9 @@ pub const TAB_KEY_CHIP: u32 = crate::dispatch::STRIP_BASE + 4;
 /// BEFORE Search in the strip's visual order (`app::chrome::strip_keys`) — a key is a destination's
 /// identity, never its position.
 pub const TAB_KEY_WATCHLIST: u32 = crate::dispatch::STRIP_BASE + 5;
+/// The Requests pill, `+6`: appended after the Watchlist mark so no existing key moves. It sits
+/// between the Watchlist mark and Search, and only while Seerr is set up (`app::chrome::strip_keys`).
+pub const TAB_KEY_REQUESTS: u32 = crate::dispatch::STRIP_BASE + 6;
 /// The top chrome band's y — the chip and the pills sit on it (Home and Library alike).
 ///
 /// **Derived from the overscan safe area, not chosen.** It was a bare `44.0` until 2026-08-23, which

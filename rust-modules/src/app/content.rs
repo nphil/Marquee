@@ -753,12 +753,18 @@ fn search_requests(app: &mut App) {
     for (source, request, ret) in app.bridge.take_search_reqs() {
         let MachineId::Instance(instance) = source else { continue };
         let Some(entry) = app.pages.nav.entry_of_instance(instance) else { continue };
-        if app.route() != AppArg::Search || app.pages.nav.input_owner() != Some(InputOwner::Entry(entry)) { continue; }
+        // The Requests page shares Search's strip and Back requests: it is a Search-shaped page.
+        let here = match app.route() {
+            AppArg::Search => HomeTab::Search,
+            AppArg::Requests => HomeTab::Requests,
+            _ => continue,
+        };
+        if app.pages.nav.input_owner() != Some(InputOwner::Entry(entry)) { continue; }
         match &request {
             SearchReq::Back => bridge::nav_tab(&mut app.pages, &mut app.bridge, HomeTab::Home, None, Some(ret)),
             SearchReq::Tab(tab) => {
                 if !app.bridge.search_tab_available(*tab) { continue; }
-                if matches!(tab, HomeTab::Search) { continue }
+                if *tab == here { continue }
                 match tab {
                     HomeTab::Home => bridge::nav_home_pill(&mut app.pages, &mut app.bridge, Some(ret)),
                     other => bridge::nav_tab(&mut app.pages, &mut app.bridge, *other, None, Some(ret)),

@@ -95,6 +95,7 @@ pub const STRIP_SHOWS_ELEM: u32 = plx_ui::dispatch::STRIP_BASE + 2;
 pub const STRIP_SEARCH_ELEM: u32 = plx_ui::dispatch::STRIP_BASE + 3;
 pub const STRIP_ACCOUNT_ELEM: u32 = plx_ui::dispatch::STRIP_BASE + 4;
 pub const STRIP_WATCHLIST_ELEM: u32 = plx_ui::dispatch::STRIP_BASE + 5;
+pub const STRIP_REQUESTS_ELEM: u32 = plx_ui::dispatch::STRIP_BASE + 6;
 
 const MAX_ITEMS: usize = plx_data::pms::MAX_SHELF_ITEMS;
 /// **How much of a resting shelf's posters must stand above the bottom margin for the pointer to take
@@ -1903,6 +1904,7 @@ impl HomeScreen {
             STRIP_SHOWS_ELEM => HomeReq::Tab(HomeTab::Shows),
             STRIP_SEARCH_ELEM => HomeReq::Tab(HomeTab::Search),
             STRIP_WATCHLIST_ELEM => HomeReq::Tab(HomeTab::Watchlist),
+            STRIP_REQUESTS_ELEM => HomeReq::Tab(HomeTab::Requests),
             STRIP_ACCOUNT_ELEM => HomeReq::Account,
             _ => return None,
         })
@@ -1964,6 +1966,7 @@ impl HomeScreen {
                     HomeTab::Shows => STRIP_SHOWS_ELEM,
                     HomeTab::Search => STRIP_SEARCH_ELEM,
                     HomeTab::Watchlist => STRIP_WATCHLIST_ELEM,
+                    HomeTab::Requests => STRIP_REQUESTS_ELEM,
                 };
                 self.strip_chosen = true;
                 self.reseat(

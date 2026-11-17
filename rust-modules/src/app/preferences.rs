@@ -116,6 +116,21 @@ pub(super) fn execute(command: PreferenceCmd) {
                 plx_machine::idle::invalidate();
             });
         }
+        PreferenceCmd::SeerrLink { change, reply } => {
+            plx_plex::plex::session::queue_update_settled(
+                move |current| Some(current.with_seerr(&change.applied(&current.seerr()))),
+                move |durable| {
+                    let _ = reply.send(durable);
+                    plx_machine::idle::invalidate();
+                },
+            );
+        }
+        PreferenceCmd::SeerrRead { reply } => {
+            let link = plx_plex::plex::session::peek().seerr();
+            let _ = reply.send((link.url, link.enabled));
+            plx_machine::idle::invalidate();
+        }
+        PreferenceCmd::SeerrTest { reply } => super::bridge::test_seerr(reply),
         PreferenceCmd::Language { language, reply } => {
             let _ = plx_base::storage_worker::submit_retained(move || {
                 let _ = reply.send(plx_plex::plex::session::set_language(language));

@@ -14,6 +14,7 @@ fn content(arg: &plx_screens::registry::ContentArg) -> Value {
         ContentArg::Filmography { sid, key } => json!({"filmography":[sid.raw(),key]}),
         ContentArg::Collection(id) => json!({"collection":[id.sid.raw(),id.rk,id.sec,id.tag,id.name]}),
         ContentArg::Catalog { hex } => json!({"catalog":plx_data::watchlist::encode_hex(hex)}),
+        ContentArg::RequestTitle { kind, tmdb } => json!({"request_title":[*kind as u32,tmdb]}),
     }
 }
 fn argument(arg: &plx_screens::registry::AppArg) -> Result<Value, &'static str> {
@@ -30,7 +31,7 @@ fn home_command(command: &plx_screens::registry::HomeCmd) -> Value {
         HomeCmd::Hero => json!("hero"),
         HomeCmd::FocusStrip(tab) => json!({"focus_strip":match tab {
             HomeTab::Home => "home", HomeTab::Movies => "movies", HomeTab::Shows => "shows", HomeTab::Search => "search",
-            HomeTab::Watchlist => "watchlist" }}),
+            HomeTab::Watchlist => "watchlist", HomeTab::Requests => "requests" }}),
         HomeCmd::Flip(delta) => json!({"flip":delta}),
         HomeCmd::SelectHero(index) => json!({"select_hero":index}),
         HomeCmd::PinHero(index) => json!({"pin_hero":index}),

@@ -421,6 +421,7 @@ fn text_fit_inputs() -> RootInputs {
         under_posters: plx_plex::plex::session::UnderPosters::DEFAULT, plaintext: Vec::new(),
         subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
         bazarr: plx_plex::plex::session::BazarrLink::default(),
+        seerr: plx_plex::plex::session::SeerrLink::default(),
     }
 }
 

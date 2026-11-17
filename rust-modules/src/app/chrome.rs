@@ -12,26 +12,30 @@ pub(crate) enum Pill {
     Home,
     Section(SecKind),
     Watchlist,
+    Requests,
     Search,
 }
 
 /// The strip's destination keys in strip order: Home, one key per type pill, the Watchlist
-/// bookmark, Search. The one
+/// bookmark, Requests (only while Seerr is set up), Search. The one
 /// place that order is written; `refresh` publishes it and the pill maps below read it, so no
 /// map assumes which index Search holds.
-fn strip_keys(directory: DirectoryView<'_>) -> Vec<u32> {
+fn strip_keys(directory: DirectoryView<'_>, requests: bool) -> Vec<u32> {
     let mut keys = vec![widgets::TAB_KEY_HOME];
     keys.extend((0..directory.tab_count()).filter_map(|i| directory.tab_kind(i)).map(|kind| match kind {
         SecKind::Movie => widgets::TAB_KEY_MOVIES,
         SecKind::Show => widgets::TAB_KEY_SHOWS,
     }));
     keys.push(widgets::TAB_KEY_WATCHLIST);
+    if requests {
+        keys.push(widgets::TAB_KEY_REQUESTS);
+    }
     keys.push(widgets::TAB_KEY_SEARCH);
     keys
 }
 
 pub(crate) fn pill_at(directory: DirectoryView<'_>, i: usize) -> Pill {
-    pill_in(i, &strip_keys(directory))
+    pill_in(i, &strip_keys(directory, requests_on()))
 }
 
 /// The destination a strip index names, by the KEY published at that index.
@@ -40,13 +44,14 @@ fn pill_in(i: usize, keys: &[u32]) -> Pill {
         Some(widgets::TAB_KEY_MOVIES) => Pill::Section(SecKind::Movie),
         Some(widgets::TAB_KEY_SHOWS) => Pill::Section(SecKind::Show),
         Some(widgets::TAB_KEY_WATCHLIST) => Pill::Watchlist,
+        Some(widgets::TAB_KEY_REQUESTS) => Pill::Requests,
         Some(widgets::TAB_KEY_SEARCH) => Pill::Search,
         _ => Pill::Home,
     }
 }
 
 pub(crate) fn pill_of(directory: DirectoryView<'_>, pill: Pill) -> Option<usize> {
-    pill_index(pill, &strip_keys(directory))
+    pill_index(pill, &strip_keys(directory, requests_on()))
 }
 
 fn pill_index(pill: Pill, keys: &[u32]) -> Option<usize> {
@@ -55,14 +60,22 @@ fn pill_index(pill: Pill, keys: &[u32]) -> Option<usize> {
         Pill::Section(SecKind::Movie) => widgets::TAB_KEY_MOVIES,
         Pill::Section(SecKind::Show) => widgets::TAB_KEY_SHOWS,
         Pill::Watchlist => widgets::TAB_KEY_WATCHLIST,
+        Pill::Requests => widgets::TAB_KEY_REQUESTS,
         Pill::Search => widgets::TAB_KEY_SEARCH,
     };
     keys.iter().position(|&k| k == key)
 }
 
+/// Whether the Requests pill is on the strip: Seerr is turned on and has an address.
+fn requests_on() -> bool {
+    plx_plex::plex::session::peek().seerr().is_ready()
+}
+
 #[derive(Default)]
 pub(crate) struct ChromeSnapshot {
     tabs_generation: Option<u32>,
+    /// Whether the strip as captured carries the Requests pill.
+    requests: bool,
     profile_generation: Option<u32>,
     session_watch: plx_plex::plex::session::VisibleSessionWatch,
     faces: Vec<TabFace>,
@@ -110,14 +123,17 @@ impl ChromeSnapshot {
     pub(crate) fn refresh_with_profile(&mut self, measure: &dyn Measure, directory: DirectoryView<'_>,
         captured: Option<(&plx_plex::plex::session::CurrentProfile, &plx_plex::plex::session::Session)>) {
         let generation = directory.tabs_gen();
-        let strip_changed = self.tabs_generation != Some(generation);
+        let requests = captured.map_or_else(requests_on, |(_, saved)| saved.seerr().is_ready());
+        let strip_changed = self.tabs_generation != Some(generation) || self.requests != requests;
         if strip_changed {
-            self.keys = strip_keys(directory);
+            self.keys = strip_keys(directory, requests);
+            self.requests = requests;
             self.faces = self.keys.iter().map(|&key| match key {
                 widgets::TAB_KEY_HOME => TabFace::Label(plx_platform::i18n::msg::browse_chrome_home().into()),
                 widgets::TAB_KEY_MOVIES => TabFace::Label(plx_platform::i18n::msg::browse_kind_movies().into()),
                 widgets::TAB_KEY_SHOWS => TabFace::Label(plx_platform::i18n::msg::browse_kind_tv_shows().into()),
                 widgets::TAB_KEY_WATCHLIST => TabFace::Icon(Icon::Bookmark),
+                widgets::TAB_KEY_REQUESTS => TabFace::Label(plx_platform::i18n::msg::requests_tab().into()),
                 _ => TabFace::Icon(Icon::Search),
             }).collect();
             self.widths = widgets::tab_widths(&self.faces, measure);
@@ -363,7 +379,7 @@ mod tests {
     fn pill_maps_follow_the_published_strip_keys() {
         let directory = directory(&[SecKind::Movie, SecKind::Show]);
         let view = directory.view();
-        assert_eq!(strip_keys(view), vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES,
+        assert_eq!(strip_keys(view, false), vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES,
             widgets::TAB_KEY_SHOWS, widgets::TAB_KEY_WATCHLIST, widgets::TAB_KEY_SEARCH]);
         assert_eq!(pill_of(view, Pill::Watchlist), Some(3));
         assert_eq!(pill_of(view, Pill::Search), Some(4));

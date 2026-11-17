@@ -1166,6 +1166,7 @@ impl Bridge {
         if wears_tab_bar(route) {
             d.nav.tabs.strip_fallback = Some(match route {
                 AppArg::Search => plx_ui::widgets::TAB_KEY_SEARCH,
+                AppArg::Requests => plx_ui::widgets::TAB_KEY_REQUESTS,
                 AppArg::Watchlist => plx_ui::widgets::TAB_KEY_WATCHLIST,
                 _ => plx_screens::home::STRIP_HOME_ELEM,
             });
@@ -2243,6 +2244,11 @@ impl Bridge {
             self.huds_command(command.clone());
             return Handled::Yes;
         }
+        if let AppMsg::Requests(command) = msg {
+            if to != MachineId::Requests { return Handled::No; }
+            self.requests_command(command.clone());
+            return Handled::Yes;
+        }
         if let AppMsg::Session(event) = msg {
             use plx_session::auth::owner::SessionEvent;
             if to != MachineId::Session { return Handled::No; }
@@ -2582,6 +2588,7 @@ impl Bridge {
                 out.push(Fx::Deliver(from, Delivery::Screen(ScreenEvent::App(AppMsg::PlaybackTrace(status)))));
             }
             AppFx::Huds(command) => out.push(Fx::Deliver(MachineId::Huds, Delivery::Machine(AppMsg::Huds(command)))),
+            AppFx::Requests(command) => out.push(Fx::Deliver(MachineId::Requests, Delivery::Machine(AppMsg::Requests(command)))),
             AppFx::Store(id, cmd) => out.push(Fx::Deliver(MachineId::Store(id.ord()), Delivery::Machine(AppMsg::Store(cmd)))),
             AppFx::StoreWork(work) => out.push(Fx::Deliver(
                 MachineId::Store(work.store().ord()), Delivery::Machine(AppMsg::StoreWork(work)))),
@@ -3880,6 +3887,7 @@ fn pill_of_arg(arg: &AppArg, directory: plx_data::stores::browse::DirectoryView<
     match arg {
         AppArg::Home => pill_of(directory, Pill::Home),
         AppArg::Search => pill_of(directory, Pill::Search),
+        AppArg::Requests => pill_of(directory, Pill::Requests),
         AppArg::Watchlist => pill_of(directory, Pill::Watchlist),
         // The grid and the two pages its header pushes (Collections, Recommended) are all the
         // library's: they select its type's pill, the pill they were opened from.
@@ -3921,6 +3929,7 @@ pub(crate) fn nav_tab(
                     Pill::Home => HomeTab::Home,
                     Pill::Search => HomeTab::Search,
                     Pill::Watchlist => HomeTab::Watchlist,
+                    Pill::Requests => HomeTab::Requests,
                     Pill::Section(plx_data::browse::SecKind::Movie) => HomeTab::Movies,
                     Pill::Section(plx_data::browse::SecKind::Show) => HomeTab::Shows,
                 };
@@ -3935,6 +3944,7 @@ pub(crate) fn nav_tab(
             AppArg::Library
         }
         HomeTab::Search => AppArg::Search,
+        HomeTab::Requests => AppArg::Requests,
         HomeTab::Watchlist => AppArg::Watchlist,
     };
     nav_peer(d, arg, ret);
@@ -4721,6 +4731,10 @@ mod strip_home_pill_tests;
 #[path = "watchlist.rs"]
 mod watchlist;
 pub(crate) use watchlist::{hex_of_guid, open_catalog, open_watchlist_menu};
+
+#[path = "requests.rs"]
+mod requests;
+pub(crate) use requests::test_seerr;
 
 #[cfg(test)]
 #[path = "watchlist_press_tests.rs"]

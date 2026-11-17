@@ -37,6 +37,8 @@ pub enum SettingsPage {
     Bazarr,
     /// Settings > Integrations > SpeechDock.
     SpeechDock,
+    /// Settings > Integrations > Requests: whether the Requests area is on and where Seerr runs.
+    Seerr,
     /// Translation contribution guide with an offline QR link.
     Contribute,
     /// Playback settings: each profile's own picks (a profile that has not chosen reads the install's older value). The page names the seated profile; while nobody is seated its rows are read-only.
@@ -140,6 +142,7 @@ impl ScreenArg for SettingsPage {
             SettingsPage::Subtitles => 115,
             SettingsPage::Bazarr => 116,
             SettingsPage::SpeechDock => 117,
+            SettingsPage::Seerr => 121,
             SettingsPage::Favourites => 101,
             SettingsPage::Privacy => 102,
             SettingsPage::Legal => 103,
@@ -185,6 +188,7 @@ impl LogicalState for SettingsPage {
             | SettingsPage::Subtitles
             | SettingsPage::Bazarr
             | SettingsPage::SpeechDock
+            | SettingsPage::Seerr
             | SettingsPage::Contribute
             | SettingsPage::Playback
             | SettingsPage::AudioSubtitles
@@ -209,6 +213,7 @@ impl LogicalState for SettingsPage {
             SettingsPage::Subtitles => "subtitles",
             SettingsPage::Bazarr => "bazarr",
             SettingsPage::SpeechDock => "speechdock",
+            SettingsPage::Seerr => "seerr",
             SettingsPage::Playback => "playback",
             SettingsPage::AudioSubtitles => "audio-subtitles",
             SettingsPage::Favourites => "favourites",
@@ -374,6 +379,7 @@ mod tests {
             SettingsPage::Subtitles,
             SettingsPage::Bazarr,
             SettingsPage::SpeechDock,
+            SettingsPage::Seerr,
             SettingsPage::Contribute,
             SettingsPage::Playback,
             SettingsPage::AudioSubtitles,

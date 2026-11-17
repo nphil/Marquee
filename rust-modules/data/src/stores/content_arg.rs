@@ -14,6 +14,9 @@ pub enum ContentArg {
     /// the 12 bytes of the catalog id (`watchlist::decode_hex` / `encode_hex`). Appended last so the
     /// recorded tags of every earlier variant stand.
     Catalog { hex: [u8; 12] },
+    /// A Seerr title's page (`screens::requests`): what it is, whether it is asked for, and the
+    /// buttons to ask or to play it. Identified by its kind and TMDB id.
+    RequestTitle { kind: plx_plex::plex::seerr::Kind, tmdb: u32 },
 }
 
 impl plx_machine::machine::LogicalState for ContentArg {
@@ -26,6 +29,7 @@ impl plx_machine::machine::LogicalState for ContentArg {
                 c.u32(3).u32(u32::from(id.sid.raw())).str(&id.rk).u64(id.sec as u64).u64(id.tag as u64).str(&id.name);
             }
             Self::Catalog { hex } => { c.u32(4).str(&crate::watchlist::encode_hex(hex)); }
+            Self::RequestTitle { kind, tmdb } => { c.u32(5).u32(*kind as u32).u32(*tmdb); }
         }
     }
     fn probe(&self, out: &mut String) { out.push_str("content_arg"); }
@@ -43,6 +47,7 @@ impl ContentArg {
                 a == b && x == y,
             (Self::Collection(a), Self::Collection(b)) => a.same_collection(b),
             (Self::Catalog { hex: a }, Self::Catalog { hex: b }) => a == b,
+            (Self::RequestTitle { kind: a, tmdb: x }, Self::RequestTitle { kind: b, tmdb: y }) => a == b && x == y,
             _ => false,
         }
     }

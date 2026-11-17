@@ -1,0 +1,264 @@
+{
+  "seerr.title": {
+    "value": "Requests",
+    "description": "Settings > Integrations > Requests page. Row label on the Settings root and page title. Also the title of the Requests area."
+  },
+  "seerr.root_detail": {
+    "value": "Ask for movies and shows.",
+    "description": "Settings > Integrations > Requests page. Detail line under the Requests row on the Settings root. One short sentence."
+  },
+  "seerr.copy": {
+    "value": "Requests lets you ask for movies and shows that are not in the library yet. It uses Seerr. Turn it on and check the address.",
+    "description": "Settings > Integrations > Requests page. Narrative copy beside the page. Seerr is a product name; keep it."
+  },
+  "seerr.enabled": {
+    "value": "Show Requests",
+    "description": "Settings > Integrations > Requests page. Switch row label: turns the Requests area on."
+  },
+  "seerr.enabled_detail": {
+    "value": "Adds Requests to the top bar",
+    "description": "Settings > Integrations > Requests page. Line under the switch row."
+  },
+  "seerr.address": {
+    "value": "Address",
+    "description": "Settings > Integrations > Requests page. Row label: where Seerr runs (its web address)."
+  },
+  "seerr.address_detail": {
+    "value": "https:// or http://",
+    "description": "Settings > Integrations > Requests page. Line under the Address row: how the address starts. Keep https:// and http:// as they are."
+  },
+  "seerr.test": {
+    "value": "Test connection",
+    "description": "Settings > Integrations > Requests page. Action row: ask Seerr whether the address works and sign in."
+  },
+  "seerr.forget": {
+    "value": "Forget this link",
+    "description": "Settings > Integrations > Requests page. Action row: remove the stored address and sign-in."
+  },
+  "seerr.forget_detail": {
+    "value": "Removes the address and the sign-in",
+    "description": "Settings > Integrations > Requests page. Line under the Forget row."
+  },
+  "seerr.forget_sure": {
+    "value": "Press OK again",
+    "description": "Settings > Integrations > Requests page. Value on the Forget row after the first OK: press again to confirm."
+  },
+  "seerr.not_set": {
+    "value": "Not set",
+    "description": "Settings > Integrations > Requests page. Address row value when no address is stored."
+  },
+  "seerr.summary_off": {
+    "value": "Off",
+    "description": "Settings root. Value of the Requests row while Requests is off."
+  },
+  "seerr.problem_scheme": {
+    "value": "The address must start with https:// or http://.",
+    "description": "Settings > Integrations > Requests page. Status when the typed address has no https:// or http://."
+  },
+  "seerr.problem_plaintext": {
+    "value": "Plain http:// is only for addresses on your home network. Use https:// for any other.",
+    "description": "Settings > Integrations > Requests page. Status when http:// is typed for an address that is not on the home network."
+  },
+  "seerr.problem_host": {
+    "value": "That is not a valid address.",
+    "description": "Settings > Integrations > Requests page. Status when the typed address cannot be used."
+  },
+  "seerr.status_off": {
+    "value": "Requests is off. Turn it on to see Requests in the top bar.",
+    "description": "Settings > Integrations > Requests page. Status line while the switch is off."
+  },
+  "seerr.status_unset": {
+    "value": "Not set up. Add the address of your Seerr, then test.",
+    "description": "Settings > Integrations > Requests page. Status line while no address is stored."
+  },
+  "seerr.status_untested": {
+    "value": "Not tested yet. Choose Test connection to check the address.",
+    "description": "Settings > Integrations > Requests page. Status line when an address is stored but not tried."
+  },
+  "seerr.status_testing": {
+    "value": "Checking… Signing in to Seerr.",
+    "description": "Settings > Integrations > Requests page. Status line while the test runs."
+  },
+  "seerr.status_connected": {
+    "value": "Connected · Seerr {version}, signed in as {name}.",
+    "description": "Settings > Integrations > Requests page. Status line after a good test. {version} is Seerr's version number, {name} the viewer's name.",
+    "args": {
+      "name": "str",
+      "version": "str"
+    }
+  },
+  "seerr.status_unreachable": {
+    "value": "Can't reach Seerr. No answer from that address. Check it and that this TV is on the same network.",
+    "description": "Settings > Integrations > Requests page, and the Requests area. Seerr did not answer."
+  },
+  "seerr.status_not_seerr": {
+    "value": "That is not Seerr. The address answers, but not like Seerr. Check the address.",
+    "description": "Settings > Integrations > Requests page, and the Requests area. The address answered but is not Seerr."
+  },
+  "seerr.status_no_plex": {
+    "value": "Seerr needs the Plex account that is signed in on this TV. Sign in to Plex first.",
+    "description": "Settings > Integrations > Requests page, and the Requests area. No Plex account is signed in."
+  },
+  "seerr.status_refused": {
+    "value": "Seerr refused the sign-in. This Plex account may not have access to Seerr.",
+    "description": "Settings > Integrations > Requests page, and the Requests area. Seerr did not accept the Plex sign-in."
+  },
+  "seerr.status_rate": {
+    "value": "Seerr says too many tries. Wait a minute and try again.",
+    "description": "Settings > Integrations > Requests page, and the Requests area. Seerr is limiting the number of sign-ins."
+  },
+  "seerr.status_forbidden": {
+    "value": "Seerr does not let this account ask for titles.",
+    "description": "Settings > Integrations > Requests page, and the Requests area. The account has no permission to request."
+  },
+  "seerr.status_already": {
+    "value": "Already requested.",
+    "description": "The Requests area. A request for this title is already in."
+  },
+  "seerr.status_failed": {
+    "value": "Seerr could not do that. Try again later.",
+    "description": "The Requests area. Seerr answered with an error."
+  },
+  "requests.title": {
+    "value": "Requests",
+    "description": "Requests area. Page title and the crumb above a title's page."
+  },
+  "requests.tab": {
+    "value": "Requests",
+    "description": "Requests area. Label of the top bar pill. One word."
+  },
+  "requests.placeholder": {
+    "value": "Search to request",
+    "description": "Requests area. Placeholder in the search field."
+  },
+  "requests.mine": {
+    "value": "My requests",
+    "description": "Requests area. Row heading: the titles the viewer asked for."
+  },
+  "requests.trending": {
+    "value": "Trending",
+    "description": "Requests area. Row heading: titles many people watch now."
+  },
+  "requests.movies": {
+    "value": "Popular movies",
+    "description": "Requests area. Row heading."
+  },
+  "requests.shows": {
+    "value": "Popular shows",
+    "description": "Requests area. Row heading."
+  },
+  "requests.upcoming": {
+    "value": "Coming soon",
+    "description": "Requests area. Row heading: movies not out yet."
+  },
+  "requests.results": {
+    "value": "Results",
+    "description": "Requests area. Row heading over search results."
+  },
+  "requests.loading": {
+    "value": "Loading…",
+    "description": "Requests area. Shown while the first rows load."
+  },
+  "requests.searching": {
+    "value": "Searching…",
+    "description": "Requests area. Shown while a search runs."
+  },
+  "requests.empty": {
+    "value": "Nothing to show yet",
+    "description": "Requests area. Shown when no row has any title."
+  },
+  "requests.failed": {
+    "value": "Requests can't be reached",
+    "description": "Requests area. Heading shown when Seerr did not answer; the reason follows below it."
+  },
+  "requests.no_results": {
+    "value": "No results for “{query}”",
+    "description": "Requests area. Shown when a search found nothing. {query} is what was typed.",
+    "args": {
+      "query": "str"
+    }
+  },
+  "requests.badge_requested": {
+    "value": "Requested",
+    "description": "Requests area. Badge on a poster: asked for, waiting for approval. One short word."
+  },
+  "requests.badge_approved": {
+    "value": "Approved",
+    "description": "Requests area. Badge on a poster: approved, not downloading yet."
+  },
+  "requests.badge_downloading": {
+    "value": "Downloading",
+    "description": "Requests area. Badge on a poster: on its way."
+  },
+  "requests.badge_partly": {
+    "value": "Partly there",
+    "description": "Requests area. Badge on a poster: some of a series is in the library."
+  },
+  "requests.badge_available": {
+    "value": "Available",
+    "description": "Requests area. Badge on a poster: in the library."
+  },
+  "requests.badge_blocked": {
+    "value": "Blocked",
+    "description": "Requests area. Badge on a poster: Seerr does not allow requests for it."
+  },
+  "requests.badge_declined": {
+    "value": "Declined",
+    "description": "Requests area. Badge on a poster: the request was turned down."
+  },
+  "requests.badge_failed": {
+    "value": "Failed",
+    "description": "Requests area. Badge on a poster: the request could not be completed."
+  },
+  "requests.play": {
+    "value": "Play",
+    "description": "Requests area, a title's page. Action row: play the title from the Plex library."
+  },
+  "requests.play_detail": {
+    "value": "It is in your library",
+    "description": "Requests area, a title's page. Line under Play."
+  },
+  "requests.request": {
+    "value": "Request",
+    "description": "Requests area, a title's page. Action row: ask Seerr for the title."
+  },
+  "requests.already": {
+    "value": "Already requested",
+    "description": "Requests area, a title's page. Shown instead of Request when Seerr already has a request for the title."
+  },
+  "requests.available": {
+    "value": "Already available",
+    "description": "Requests area, a title's page. Shown instead of Request when the title is already in the library."
+  },
+  "requests.unavailable": {
+    "value": "Can't be requested",
+    "description": "Requests area, a title's page. Shown instead of Request when Seerr does not allow it."
+  },
+  "requests.not_yet": {
+    "value": "Not out yet",
+    "description": "Requests area, a title's page. Shown instead of Request when the title has not been released."
+  },
+  "requests.seasons": {
+    "value": "Seasons",
+    "description": "Requests area, a title's page. Section heading over the season choices of a series."
+  },
+  "requests.season": {
+    "value": "Season {number}",
+    "description": "Requests area, a title's page. Row label for one season. {number} is the season number.",
+    "args": {
+      "number": "i64"
+    }
+  },
+  "requests.specials": {
+    "value": "Specials",
+    "description": "Requests area, a title's page. Row label for the extra episodes of a series (season zero)."
+  },
+  "requests.sending": {
+    "value": "Sending the request…",
+    "description": "Requests area, a title's page. Status line while the request is on its way."
+  },
+  "requests.sent": {
+    "value": "Requested. It will show up here when it is ready.",
+    "description": "Requests area, a title's page. Status line after a request went through."
+  }
+}

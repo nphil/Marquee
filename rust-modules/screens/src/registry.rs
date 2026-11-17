@@ -82,6 +82,89 @@ pub enum AppFx {
     ItemMenu(ItemMenuReq),
     /// The player-HUD page's commands on the package store, executed by the Bridge (PR10).
     Huds(HudCmd),
+    /// The Requests page's calls to Seerr, run by the Bridge's driver off the frame thread.
+    Requests(RequestsCmd),
+}
+
+/// What the Requests page asks of the app's Seerr driver. Every answer comes back down the channel
+/// the command carries, as a [`RequestsReply`] the page reads on its tick.
+#[derive(Clone)]
+pub enum RequestsCmd {
+    /// The page opened: sign in, then answer the viewer's requests and the first page of each shelf.
+    Open(std::sync::mpsc::Sender<RequestsReply>),
+    /// Page `page` (from 1) of a discover shelf.
+    Shelf { shelf: plx_plex::plex::seerr::Shelf, page: u32, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// The viewer's requests after the first `skip`.
+    Mine { skip: u32, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// Page `page` of the titles matching `query`.
+    Search { query: String, page: u32, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// One title's page: its seasons, whether it is asked for, where it is in Plex.
+    Detail { kind: plx_plex::plex::seerr::Kind, tmdb: u32, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// Ask for the title (these seasons of a series). The driver reads the title's status again
+    /// first and sends nothing when it is already asked for.
+    Request {
+        kind: plx_plex::plex::seerr::Kind,
+        tmdb: u32,
+        seasons: Vec<u32>,
+        reply: std::sync::mpsc::Sender<RequestsReply>,
+    },
+}
+
+/// A title the viewer asked for, with how that request stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AskedTitle {
+    pub title: plx_plex::plex::seerr::Title,
+    pub badge: Option<plx_plex::plex::seerr::Badge>,
+}
+
+/// A title's page as the Requests page shows it: Seerr's facts and, when Plex has it on a server
+/// this TV knows, that server and the item's ratingKey.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitlePage {
+    pub detail: plx_plex::plex::seerr::Detail,
+    pub plex: Option<(plx_plex::plex::ServerId, String)>,
+    /// What Seerr's request settings allow, which decides whether a series offers a season picker.
+    pub rules: plx_plex::plex::seerr::Rules,
+}
+
+/// One answer of the Seerr driver.
+pub enum RequestsReply {
+    /// Signed in: the server's request rules, and the Plex server whose photo proxy fetches posters.
+    Ready { rules: plx_plex::plex::seerr::Rules, art: Option<plx_plex::plex::ServerId> },
+    Shelf {
+        shelf: plx_plex::plex::seerr::Shelf,
+        page: u32,
+        result: Result<plx_plex::plex::seerr::Page<plx_plex::plex::seerr::Title>, plx_plex::plex::seerr::SeerrError>,
+    },
+    /// The requests after `skip`, and whether more follow.
+    Mine { skip: u32, result: Result<(Vec<AskedTitle>, bool), plx_plex::plex::seerr::SeerrError> },
+    Search {
+        query: String,
+        page: u32,
+        result: Result<plx_plex::plex::seerr::Page<plx_plex::plex::seerr::Title>, plx_plex::plex::seerr::SeerrError>,
+    },
+    Detail { kind: plx_plex::plex::seerr::Kind, tmdb: u32, result: Result<TitlePage, plx_plex::plex::seerr::SeerrError> },
+    Requested { kind: plx_plex::plex::seerr::Kind, tmdb: u32, result: Result<(), plx_plex::plex::seerr::SeerrError> },
+    /// Signing in failed: nothing else comes.
+    Failed(plx_plex::plex::seerr::SeerrError),
+}
+
+/// The plain words for why a call to Seerr did not go through; the Settings page and the Requests
+/// pages say the same sentences.
+pub fn seerr_error_text(error: plx_plex::plex::seerr::SeerrError) -> &'static str {
+    use plx_platform::i18n::msg;
+    use plx_plex::plex::seerr::SeerrError as E;
+    match error {
+        E::NotSet => msg::seerr_status_unset(),
+        E::Unreachable | E::TimedOut => msg::seerr_status_unreachable(),
+        E::NotSeerr | E::NotFound => msg::seerr_status_not_seerr(),
+        E::NoPlexAccount => msg::seerr_status_no_plex(),
+        E::SignInRefused => msg::seerr_status_refused(),
+        E::RateLimited => msg::seerr_status_rate(),
+        E::Forbidden => msg::seerr_status_forbidden(),
+        E::AlreadyRequested => msg::seerr_status_already(),
+        E::Refused => msg::seerr_status_failed(),
+    }
 }
 
 /// What the Player HUD settings page asks of the package store (`plx_data::hudpacks::HudStore`). The
@@ -141,6 +224,16 @@ pub enum PreferenceCmd {
     BazarrTest { reply: std::sync::mpsc::Sender<Result<plx_plex::plex::bazarr::Status, plx_plex::plex::bazarr::BazarrError>> },
     /// Save a validated SpeechDock origin through the session write door.
     SpeechDockOrigin { origin: String, reply: std::sync::mpsc::Sender<bool> },
+    /// Settings > Integrations > Requests: one edit of the stored Seerr link, written through the
+    /// session's ticketed update; `reply` learns whether it is durable.
+    SeerrLink { change: plx_plex::plex::session::SeerrChange, reply: std::sync::mpsc::Sender<bool> },
+    /// Read the stored link as the page may know it: the address and whether Requests is on.
+    SeerrRead { reply: std::sync::mpsc::Sender<(String, bool)> },
+    /// Sign in to the stored Seerr as the seated Plex account and answer its version and the
+    /// Seerr user's name, or why it could not. The session it sets is kept.
+    SeerrTest {
+        reply: std::sync::mpsc::Sender<Result<(plx_plex::plex::seerr::Status, plx_plex::plex::seerr::Me), plx_plex::plex::seerr::SeerrError>>,
+    },
 }
 
 /// Whether an item has a context menu to open (`item_menu::has_actions`): the one predicate the
@@ -322,6 +415,8 @@ pub enum HomeTab {
     Shows,
     /// The Watchlist mark, before Search (docs/watchlist-plan.md §2.4 W45).
     Watchlist,
+    /// The Requests mark, after the Watchlist's; on the strip only while Seerr is set up.
+    Requests,
     Search,
 }
 
@@ -1429,6 +1524,8 @@ pub enum AppMsg {
     Consent(ConsentCmd),
     /// A command of the player-HUD package store, delivered to [`MachineId::Huds`].
     Huds(HudCmd),
+    /// A Requests page's call to Seerr, delivered to [`MachineId::Requests`].
+    Requests(RequestsCmd),
     RestartReply { correlation: u32, accepted: bool },
     SelectionReply { correlation: u32, accepted: bool, flow_epoch: u64 },
     BackReply { correlation: u32, resumed: bool },
@@ -1854,6 +1951,10 @@ pub mod page_id {
     pub const WATCHLIST: ScreenId = ScreenId(25);
     pub const LIBRARY_COLLECTIONS: ScreenId = ScreenId(28);
     pub const LIBRARY_RECOMMENDED: ScreenId = ScreenId(29);
+    /// 31, forward of the Versions panel's 30.
+    pub const REQUESTS: ScreenId = ScreenId(31);
+    /// 32: a Seerr title's page, pushed over the Requests page.
+    pub const REQUEST_TITLE: ScreenId = ScreenId(32);
 }
 
 /// **A screen argument: everything the container needs to mount one screen, and nothing else.**
@@ -1953,6 +2054,9 @@ pub enum AppArg {
     /// from the bookmark mark. It carries nothing — the list is the store's, the order is the
     /// store's sort and filter.
     Watchlist,
+    /// The Requests page (`screens::requests`): what Seerr suggests and what the viewer asked
+    /// for, a peer of the Watchlist on the strip. It carries nothing: what it shows is Seerr's.
+    Requests,
     /// Playback. Its panels are NOT here — they are entries on the player page's own
     /// `ModalStack` ([`Self::PlayerOverlay`]), and the container owns which one is up.
     Player,
@@ -2021,6 +2125,8 @@ impl LogicalState for AppArg {
             Self::Search => { c.u32(0).u32(9); }
             // 11, after Player's 10: a page tag is a screen's identity in a recording, allocated forward.
             Self::Watchlist => { c.u32(0).u32(11); }
+            // 14, forward of LibraryRecommended's 13.
+            Self::Requests => { c.u32(0).u32(14); }
             Self::Player => { c.u32(0).u32(10); }
             // 12 and 13, forward of Watchlist's 11 (both are in `ARG_SHAPE`).
             Self::LibraryCollections { section } => { c.u32(0).u32(12).u32(*section); }
@@ -2041,7 +2147,7 @@ impl plx_ui::screen::ScreenArg for AppArg {
     /// them fade the bar with the page.
     fn chrome(&self) -> Chrome {
         match self {
-            AppArg::Home | AppArg::Library | AppArg::Search | AppArg::Watchlist => Chrome::TabBar,
+            AppArg::Home | AppArg::Library | AppArg::Search | AppArg::Watchlist | AppArg::Requests => Chrome::TabBar,
             // The two sub-pages of a library keep the bar, as the Library they are pushed over.
             AppArg::LibraryCollections { .. } | AppArg::LibraryRecommended { .. } => Chrome::TabBar,
             AppArg::Login
@@ -2089,6 +2195,7 @@ impl plx_ui::screen::ScreenArg for AppArg {
             AppArg::ItemMenu(_) => 20,
             // 25 and 26, forward of Collection's 24: the Watchlist page and its Sort & Filter menu.
             AppArg::Watchlist => page_id::WATCHLIST.0,
+            AppArg::Requests => page_id::REQUESTS.0,
             AppArg::WatchlistMenu(_) => 26,
             // The seven page ids are the ones `Legacy(Route)` computed, unchanged: an id is a
             // screen's identity in a recorded state and in `same_instance`, so they are allocated
@@ -2114,6 +2221,8 @@ impl plx_ui::screen::ScreenArg for AppArg {
             AppArg::Content(ContentArg::Collection(_)) => page_id::COLLECTION.0,
             // 27, forward of the Watchlist menu's 26: the catalog page (plan W6).
             AppArg::Content(ContentArg::Catalog { .. }) => 27,
+            // 32, forward of the Requests page's 31.
+            AppArg::Content(ContentArg::RequestTitle { .. }) => page_id::REQUEST_TITLE.0,
             // 30, forward of the Recommended page's 29.
             AppArg::VersionsPanel(_) => 30,
         })
@@ -2298,6 +2407,9 @@ where
                 Box::new(page)
             }
             AppArg::Content(ContentArg::Catalog { hex }) => Box::new(crate::catalog::CatalogScreen::new(entry, *hex)),
+            AppArg::Content(ContentArg::RequestTitle { kind, tmdb }) => {
+                Box::new(crate::requests::title::TitleScreen::new(entry, *kind, *tmdb))
+            }
             // the first-run Favourites screen is OWNED (§14: "retirement 5b Onboard"); the route
             // word stays the loop's while the loop still names the page
             AppArg::Onboard => Box::new(crate::onboard::OnboardScreen::first_run(
@@ -2352,6 +2464,7 @@ where
             // The list is the store's: the page mounts on "loading" and the application feeds it
             // the rows, the options and the matched facts (`WatchlistIn`) on its first frames.
             AppArg::Watchlist => Box::new(crate::watchlist::page::WatchlistScreen::loading(entry)),
+            AppArg::Requests => Box::new(crate::requests::RequestsScreen::new(entry, id)),
             // Phase 9: the player is an OWNED screen — the instance that holds the HUD, the scrub
             // gesture, the held-key timer, the control row's springs and the Up Next countdown,
             // and that answers `RenderStrategy::VideoPlane`. Its transport is pinned from the
@@ -2486,6 +2599,7 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             | AppArg::LibraryRecommended { .. }
             | AppArg::Search
             | AppArg::Watchlist
+            | AppArg::Requests
             | AppArg::Player
             | AppArg::Content(_) => {
                 panic!("a page argument is not a surface: its word is `route=`")
@@ -2821,6 +2935,7 @@ mod arg_tests {
             AppArg::LibraryRecommended { section: 0 },
             AppArg::Search,
             AppArg::Watchlist,
+            AppArg::Requests,
         ] {
             assert!((r.chrome() == Chrome::TabBar), "a bar-wearing page carries the chip");
         }
