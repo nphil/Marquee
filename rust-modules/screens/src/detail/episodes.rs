@@ -7,6 +7,7 @@
 use std::ffi::CString;
 
 use plx_data::metadata::{Detail, Episode};
+use std::collections::HashSet;
 use plx_machine::machine::GroupId;
 use plx_ui::hstack::{Align, HStack, Item};
 use plx_ui::text_lift::{TextLift, TOP_CENTRE};
@@ -28,6 +29,11 @@ pub const LEAD_CELLS: usize = 1;
 pub const W: f32 = 420.0;
 pub const H: f32 = 236.0;
 pub const GAP: f32 = 28.0;
+/// Whether spoiler protection covers `ep` here: the switch is on, the episode is unwatched and
+/// unstarted, and the viewer has not revealed it on this page (`revealed` holds episode keys).
+pub fn covered(ep: &Episode, revealed: &HashSet<String>) -> bool {
+    !revealed.contains(&ep.rk) && crate::spoilers::protects(ep.watched, ep.resume_ms)
+}
 pub const META_TOP: f32 = 30.0;
 const TITLE_DY: f32 = 46.0;
 const TITLE_LEAD: f32 = 34.0;
@@ -331,6 +337,7 @@ pub fn draw(
     lift: impl Fn(usize) -> TextLift,
     measure: &dyn plx_machine::machine::Measure,
     meta: plx_data::metadata::MetadataView<'_>,
+    revealed: &HashSet<String>,
 ) {
     // read ONCE per strip: `season_loading` is two SeqCst loads, and the per-cell hook below must
     // stay a branch on this local
@@ -355,7 +362,7 @@ pub fn draw(
         if left_out(i) {
             continue;
         }
-        draw_cell(p, d, i, ep, focused, scale(i), dip(i), &lift(i), cap_top, measure);
+        draw_cell(p, d, i, ep, focused, scale(i), dip(i), &lift(i), cap_top, measure, revealed);
         if reloading {
             plx_ui::placeholder::note(p, plx_ui::placeholder::Reason::StaleEpisodes, &ep.rk);
             plx_ui::placeholder::stale_cover(p, cell_rect(x), CARD_RADIUS);
@@ -376,6 +383,7 @@ pub fn draw_focused(
     lift: &TextLift,
     measure: &dyn plx_machine::machine::Measure,
     meta: plx_data::metadata::MetadataView<'_>,
+    revealed: &HashSet<String>,
 ) {
     let Some(episode) = d.episodes.get(index) else {
         return;
@@ -398,6 +406,7 @@ pub fn draw_focused(
         lift,
         kicker_cap_top(),
         measure,
+        revealed,
     );
     if reloading {
         plx_ui::placeholder::note(cell, plx_ui::placeholder::Reason::StaleEpisodes, &episode.rk);
@@ -422,6 +431,7 @@ fn draw_cell(
     lift: &TextLift,
     kicker_cap_top: f32,
     measure: &dyn plx_machine::machine::Measure,
+    revealed: &HashSet<String>,
 ) {
     let x = strip_x(i);
     let still_focused = focused == Some((i, Row::Still));
@@ -438,7 +448,8 @@ fn draw_cell(
         card,
         d.sid.raw(),
         &ep.thumb,
-        (640, 360),
+        // A covered still is requested at the blur size, never the readable one (`SPOILER_RES`).
+        if covered(ep, revealed) && !ep.thumb.is_empty() { widgets::SPOILER_RES } else { (640, 360) },
         CARD_RADIUS,
         focused_here,
         drawn_scale,
@@ -502,7 +513,9 @@ fn draw_cell(
         .max_lines(2)
         .draw(p, Rect::new(text_x, text_top + TITLE_DY, TEXT_W, 0.0));
         if !ep.summary.is_empty() {
-            TextView::new(&ep.summary, theme::size::CAPTION, theme::EP_SUMMARY_INK)
+            // The layout above is measured on the real summary, so covering it moves nothing.
+            let hidden = covered(ep, revealed).then(|| crate::spoilers::hidden_note(true));
+            TextView::new(hidden.unwrap_or(&ep.summary), theme::size::CAPTION, theme::EP_SUMMARY_INK)
             .with_measure(measure)
             .leading(SUMMARY_LEAD)
             .max_lines(SUMMARY_MAX_LINES)
@@ -666,7 +679,7 @@ mod tests {
         let d = Detail::default();
         let ep = Episode { dur_ms: 100, ..Default::default() };
         plx_ui::draw_census::capture(|| {
-            draw_cell(Painter::recording(), &d, 0, &ep, None, scale, 1.0, lift, kicker_cap_top(), &measure)
+            draw_cell(Painter::recording(), &d, 0, &ep, None, scale, 1.0, lift, kicker_cap_top(), &measure, &HashSet::new())
         })
     }
 
@@ -675,7 +688,7 @@ mod tests {
         let measure = plx_ui::fixture::FixtureMeasure;
         let d = Detail::default();
         plx_ui::draw_census::capture_text(|| {
-            draw_cell(Painter::recording(), &d, 0, ep, None, 1.0, 1.0, &TextLift::new(), kicker_cap_top(), &measure)
+            draw_cell(Painter::recording(), &d, 0, ep, None, 1.0, 1.0, &TextLift::new(), kicker_cap_top(), &measure, &HashSet::new())
         })
         .into_iter()
         .map(|(text, _)| text)
@@ -857,7 +870,7 @@ mod tests {
         let platter_bottom = text_top + (bottom - META_BOTTOM_PAD) + PLATTER_PAD;
         let d = Detail::default();
         let runs = plx_ui::draw_census::capture_runs(|| {
-            draw_cell(Painter::recording(), &d, 0, &ep, None, 1.0, 1.0, &TextLift::new(), kicker_cap_top(), &measure)
+            draw_cell(Painter::recording(), &d, 0, &ep, None, 1.0, 1.0, &TextLift::new(), kicker_cap_top(), &measure, &HashSet::new())
         });
         let chip = runs.iter().find(|r| r.text == "TV-14").expect("the rating chip is drawn");
         assert!(chip.at.y + theme::size::MICRO as f32 <= platter_bottom + 0.5, "chip run at {} + MICRO past platter bottom {platter_bottom}", chip.at.y);

@@ -1220,6 +1220,7 @@ pub struct UpNext {
     pub thumb: String,
     pub dur_ms: i64,
     pub resume_ms: i64,
+    pub watched: bool,
 }
 
 
@@ -1243,6 +1244,7 @@ pub(super) fn up_next_of(r: &plx_plex::plex::QueueRow) -> Option<UpNext> {
         thumb: r.thumb.clone(),
         dur_ms: r.dur_ms,
         resume_ms: r.resume_ms,
+        watched: r.watched,
     })
 }
 

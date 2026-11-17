@@ -77,6 +77,7 @@ fn body(entry: EntryId, rk: &str) -> DetailScreen {
         refresh_gen: 0,
         scroll_target: 0.0, free: false, episode_free: false, episode_scroll: Spring::at(0.0), tab_scroll: Spring::at(0.0),
         episode_cells: episodes::Cells::new(),
+        revealed: Default::default(),
             ep_want: Default::default(),
             strip_seat: Default::default(),
         about_card_lift: plx_ui::text_lift::TextLift::new(),

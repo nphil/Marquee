@@ -145,6 +145,7 @@ pub(super) fn bare_held(sid: ServerId, rk: &str) -> DetailScreen {
         episode_scroll: Spring::at(0.0),
         tab_scroll: Spring::at(0.0),
         episode_cells: episodes::Cells::new(),
+        revealed: Default::default(),
             ep_want: Default::default(),
             strip_seat: Default::default(),
         about_card_lift: plx_ui::text_lift::TextLift::new(),
@@ -4591,7 +4592,7 @@ fn a_hole_in_view_draws_a_skeleton_and_fills_on_landing_without_moving_the_focus
         let (_, frame) = plx_ui::placeholder::capture_declared(|| {
             let meta = test_store().view();
             let d = screen.detail(meta).unwrap();
-            episodes::draw(plx_ui::Painter::root(), d, 0.0, screen.episode_scroll.pos, None, |_| 1.0, |_| 1.0, |_| false, |_| Default::default(), &measure, meta);
+            episodes::draw(plx_ui::Painter::root(), d, 0.0, screen.episode_scroll.pos, None, |_| 1.0, |_| 1.0, |_| false, |_| Default::default(), &measure, meta, &screen.revealed);
         });
         frame.of(plx_ui::placeholder::Reason::CardSkeleton)
     };

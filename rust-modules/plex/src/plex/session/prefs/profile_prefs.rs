@@ -34,11 +34,11 @@
 //! * **No `extensions`**: a field a later build adds is not carried by this one.
 use super::{
     Fallback, Parse, ProfileKeyed, ProfileRecords, Preferences, Row, Scope, Setting, SettingsWrite,
-    DolbyVisionModePref, IntroSkipDelayPref, CreditsSkipDelayPref, InstantDpadSeekingPref, RememberAudioChoicesPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipIntervalPref,
+    DolbyVisionModePref, IntroSkipDelayPref, CreditsSkipDelayPref, InstantDpadSeekingPref, RememberAudioChoicesPref, SpoilerProtectionPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipIntervalPref,
     HudSelectionPref, SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
 };
 use crate::plex::session::{
-    AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitleLook,
+    AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, SpoilerProtection, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitleLook,
     SubtitlePosition, SubtitleSize, SubtitleTone, UnderPosters,
 };
 use crate::plex::AudioEnhancements;
@@ -70,6 +70,8 @@ pub struct ProfilePrefs {
     pub instant_dpad_seeking: Option<InstantDpadSeeking>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub remember_audio_choices: Option<RememberAudioChoices>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub spoiler_protection: Option<SpoilerProtection>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub intro_skip_delay: Option<AutoSkipDelay>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
@@ -176,6 +178,7 @@ profile_setting!(
     SkipIntervalPref = skip_interval,
     InstantDpadSeekingPref = instant_dpad_seeking,
     RememberAudioChoicesPref = remember_audio_choices,
+    SpoilerProtectionPref = spoiler_protection,
     IntroSkipDelayPref = intro_skip_delay,
     CreditsSkipDelayPref = credits_skip_delay,
     DolbyVisionModePref = dolby_vision_mode,

@@ -36,7 +36,7 @@
 //! assignment. `subtitle_offsets` is the other tenant of the door and is declared the same way
 //! ([`SubtitleOffsetsPref`]).
 use super::{
-    AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
+    AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, SpoilerProtection, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
     PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
     SubtitleLook, SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
@@ -134,6 +134,9 @@ pub struct Preferences {
     /// Whether explicit audio selections are remembered for this profile.
     #[serde(default, deserialize_with = "de_soft_remember_audio_choices", skip_serializing_if = "RememberAudioChoices::is_default")]
     pub remember_audio_choices: RememberAudioChoices,
+    /// Whether unwatched episodes are shown blurred, with their descriptions hidden, until revealed.
+    #[serde(default, deserialize_with = "de_soft_spoiler_protection", skip_serializing_if = "SpoilerProtection::is_default")]
+    pub spoiler_protection: SpoilerProtection,
     #[serde(default, deserialize_with = "de_soft_auto_skip_delay", skip_serializing_if = "AutoSkipDelay::is_default")]
     pub intro_skip_delay: AutoSkipDelay,
     #[serde(default, deserialize_with = "de_soft_credits_countdown_delay", skip_serializing_if = "CreditsCountdownDelay::is_default")]
@@ -533,6 +536,8 @@ setting!(InstantDpadSeekingPref: InstantDpadSeeking = instant_dpad_seeking, "ins
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(RememberAudioChoicesPref: RememberAudioChoices = remember_audio_choices, "remember_audio_choices", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(SpoilerProtectionPref: SpoilerProtection = spoiler_protection, "spoiler_protection", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(IntroSkipDelayPref: AutoSkipDelay = intro_skip_delay, "intro_skip_delay", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(CreditsSkipDelayPref: CreditsCountdownDelay = credits_skip_delay, "credits_skip_delay", Profile fallback LegacyInstallKey,
@@ -673,6 +678,7 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<SkipIntervalPref>(),
     Descriptor::of::<InstantDpadSeekingPref>(),
     Descriptor::of::<RememberAudioChoicesPref>(),
+    Descriptor::of::<SpoilerProtectionPref>(),
     Descriptor::of::<IntroSkipDelayPref>(),
     Descriptor::of::<CreditsSkipDelayPref>(),
     Descriptor::of::<DolbyVisionModePref>(),
@@ -1413,6 +1419,13 @@ where D: Deserializer<'de> {
 fn de_soft_remember_audio_choices<'de, D>(d: D) -> Result<RememberAudioChoices, D::Error>
 where D: Deserializer<'de> {
     let Ok(v) = serde_json::Value::deserialize(d) else { return Ok(RememberAudioChoices::default()); };
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
+/// Spoiler protection is a preference too: a spelling this build does not know degrades to Off.
+fn de_soft_spoiler_protection<'de, D>(d: D) -> Result<SpoilerProtection, D::Error>
+where D: Deserializer<'de> {
+    let Ok(v) = serde_json::Value::deserialize(d) else { return Ok(SpoilerProtection::default()); };
     Ok(serde_json::from_value(v).unwrap_or_default())
 }
 

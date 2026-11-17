@@ -1,0 +1,18 @@
+{
+  "spoilers.title": {
+    "value": "Spoiler protection",
+    "description": "Settings root row title (a switch): hides what an unwatched episode would give away. Short."
+  },
+  "spoilers.detail": {
+    "value": "Blur unwatched episodes and hide their descriptions.",
+    "description": "Detail line under the Spoiler protection row on the Settings root. One short sentence."
+  },
+  "spoilers.hidden": {
+    "value": "Description hidden. Press OK to show.",
+    "description": "Replaces an unwatched episode's description while Spoiler protection is on, where OK reveals it. OK is the remote's select key."
+  },
+  "spoilers.hidden_short": {
+    "value": "Description hidden.",
+    "description": "Replaces an unwatched episode's description while Spoiler protection is on, where nothing on this screen reveals it."
+  }
+}

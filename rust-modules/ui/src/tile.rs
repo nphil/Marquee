@@ -84,6 +84,10 @@ pub struct TileFacts<'a> {
     /// The four-corner ambient colours the item's artwork lends the page behind it, when it has
     /// any.
     pub blur: Option<[[f32; 3]; 4]>,
+    /// Spoiler protection applies to this tile: an episode not yet watched while the profile's
+    /// switch is on. The still is then requested at [`crate::widgets::SPOILER_RES`], so it draws
+    /// blurred, and the full picture is never fetched.
+    pub spoiler: bool,
     // ---- CONTRACT FREEZE: the facts the "Under posters" caption reads (P2 fills them in
     // `screens::registry::tile_facts::of`; `child_count` above is generalised by P2 to a show's
     // season count). All are the row's own facts copied across; `None` / `false` = unknown.

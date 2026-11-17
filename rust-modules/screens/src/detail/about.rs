@@ -248,6 +248,7 @@ impl Rows {
         tracks: bool,
         card_lift: &TextLift,
         lang_lift: &TextLift,
+        hidden: Option<&str>,
         measure: &dyn plx_machine::machine::Measure,
     ) {
         let x = plx_ui::consts::MARGIN_X;
@@ -289,21 +290,25 @@ impl Rows {
                     }),
                 );
             }
-            let syn = synopsis(&d.summary, measure);
+            // Covered by spoiler protection: the note stands where the synopsis does (the card is
+            // sized on the real one), and there is nothing to open until OK reveals it.
+            let syn = synopsis(hidden.unwrap_or(&d.summary), measure);
             syn.draw(p, Rect::new(ix, card.y + CARD_PAD + 100.0, SYNOPSIS_W, 0.0));
-            // The MORE the synopsis dissolves into: bottom-right, or bottom-LEFT for an Arabic or
-            // Hebrew synopsis, which is drawn right-aligned and dissolves at its left end.
-            let (more_x, more_align) =
-                if syn.is_rtl() { (card.x + CARD_PAD, 0) } else { (card.x + card.w - CARD_PAD, 2) };
-            p.text(
-                plx_ui::text_view::more_mark().as_ptr(),
-                more_x,
-                card.y + card.h - CARD_PAD - theme::size::CAPTION as f32,
-                theme::size::CAPTION,
-                theme::TEXT_TERTIARY,
-                more_align,
-                1,
-            );
+            if hidden.is_none() {
+                // The MORE the synopsis dissolves into: bottom-right, or bottom-LEFT for an Arabic or
+                // Hebrew synopsis, which is drawn right-aligned and dissolves at its left end.
+                let (more_x, more_align) =
+                    if syn.is_rtl() { (card.x + CARD_PAD, 0) } else { (card.x + card.w - CARD_PAD, 2) };
+                p.text(
+                    plx_ui::text_view::more_mark().as_ptr(),
+                    more_x,
+                    card.y + card.h - CARD_PAD - theme::size::CAPTION as f32,
+                    theme::size::CAPTION,
+                    theme::TEXT_TERTIARY,
+                    more_align,
+                    1,
+                );
+            }
         });
 
         self.draw_information(p, x, top + COL_Y, measure);
@@ -636,7 +641,7 @@ mod tests {
 
     fn census(rows: &Rows, d: &Detail, card: &TextLift, lang: &TextLift) -> Vec<(u64, Rect)> {
         let measure = plx_ui::fixture::FixtureMeasure;
-        plx_ui::draw_census::capture(|| rows.draw(Painter::recording(), d, 0.0, true, card, lang, &measure))
+        plx_ui::draw_census::capture(|| rows.draw(Painter::recording(), d, 0.0, true, card, lang, None, &measure))
     }
 
     /// A focused About card grows its own content and nothing else: the Information column, drawn
@@ -722,7 +727,7 @@ mod tests {
         let d = Detail::default();
         let draw = |rows: &Rows| {
             plx_ui::draw_census::capture_runs(|| {
-                rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), &measure)
+                rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), None, &measure)
             })
         };
         let y_of = |runs: &[plx_ui::draw_census::Run], text: &str| {
@@ -764,7 +769,7 @@ mod tests {
         let mut rows = Rows::new();
         rows.access = vec![(plx_platform::i18n::msg::widgets_badge_subtitles(), plx_platform::i18n::msg::browse_detail_subtitles())];
         let runs = plx_ui::draw_census::capture_runs(|| {
-            rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), &measure)
+            rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), None, &measure)
         });
         let y_of = |text: &str| runs.iter().find(|r| r.text == text).map(|r| r.at.y).unwrap_or_else(|| panic!("{text} not drawn"));
         let head = y_of(plx_platform::i18n::msg::browse_detail_accessibility());
@@ -800,7 +805,7 @@ mod tests {
             d.summary = summary.into();
             let card = rows.card_rect(&d, 0.0, &measure);
             let runs = plx_ui::draw_census::capture_runs(|| {
-                rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), &measure)
+                rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), None, &measure)
             });
             let mark = runs.iter().find(|r| r.text == more).expect("the card's MORE");
             let want = if rtl { (0, card.x + CARD_PAD) } else { (2, card.x + card.w - CARD_PAD) };
@@ -828,7 +833,7 @@ mod tests {
             d.summary = "A summary.".into();
             let card = rows.card_rect(&d, 0.0, &measure);
             let runs = plx_ui::draw_census::capture_runs(|| {
-                rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), &measure)
+                rows.draw(Painter::recording(), &d, 0.0, false, &TextLift::new(), &TextLift::new(), None, &measure)
             });
             let at = |text: &str| {
                 let r = runs.iter().find(|r| r.text == text).unwrap_or_else(|| panic!("{text:?} not drawn: {runs:?}"));

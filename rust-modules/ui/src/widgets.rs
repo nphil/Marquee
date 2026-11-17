@@ -399,6 +399,9 @@ impl Art<'_> {
 /// The size a landscape still is transcoded at — [`crate::card_row::RowStyle::EPISODE`]'s tile,
 /// so the server scales once and the texture is 1:1 on the panel.
 const STILL_RES: (c_int, c_int) = (420, 236);
+/// The size a spoiler-protected still is transcoded at. The texture is stretched over the whole
+/// tile with linear filtering, which is the blur: the server never sends the readable picture.
+pub const SPOILER_RES: (c_int, c_int) = (32, 18);
 /// The box a portrait poster card asks the transcoder for. The collection fan baker requests its
 /// members at this box too, so a member already fetched for a card is a disk hit, not a refetch.
 pub const POSTER_RES: (c_int, c_int) = (250, 375);
@@ -750,7 +753,11 @@ pub fn resolve_card_art(p: Painter, rect: Rect, art: &Art<'_>) -> ArtImage {
 pub fn card_art_request<'a>(art: &Art<'a>) -> Option<(u16, &'a str, c_int, c_int)> {
     Some(match art {
         Art::Poster(m) => { let m = (*m)?; (m.src, m.thumb, POSTER_RES.0, POSTER_RES.1) }
-        Art::Still(m) => { let m = (*m)?; (m.src, still_key(&m), STILL_RES.0, STILL_RES.1) }
+        Art::Still(m) => {
+            let m = (*m)?;
+            let res = if m.spoiler && !m.still.is_empty() { SPOILER_RES } else { STILL_RES };
+            (m.src, still_key(&m), res.0, res.1)
+        }
         Art::Thumb { sid, key, res } | Art::Person { sid, key, res } => (*sid, *key, res.0, res.1),
     })
 }

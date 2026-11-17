@@ -39,7 +39,7 @@ use plx_plex::plex::session::{
     DolbyVisionMode, DolbyVisionModePref, InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
     ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitleLook, SubtitleLookPref, SubtitlePosition,
-    RememberAudioChoices, RememberAudioChoicesPref,
+    RememberAudioChoices, RememberAudioChoicesPref, SpoilerProtection, SpoilerProtectionPref,
     AutoSkipDelay, CreditsCountdownDelay, IntroSkipDelayPref, CreditsSkipDelayPref,
     SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TrailerAutoplayPref, UnderPosters,
     UnderPostersPref,
@@ -153,6 +153,12 @@ macro_rules! packed_by_index {
 }
 packed_by_index!(AutoSkipDelay = 0; CreditsCountdownDelay = 1; DolbyVisionMode = 0; InstantDpadSeeking = 0; NextEpisodeMode = 0; SkipInterval = 1; DeckPress = 0; SubtitleSize = 1, alignment = true; SubtitlePosition = 0, alignment = true; SubtitleTone = 0, alignment = true; HdrOverlayBrightness = 1);
 
+impl Packed for SpoilerProtection {
+    const SEED: u8 = 0;
+    fn to_u8(self) -> u8 { self.index() }
+    fn from_u8(value: u8) -> Self { Self::from_index(value) }
+}
+
 impl Packed for RememberAudioChoices {
     const SEED: u8 = 1;
     fn to_u8(self) -> u8 { if self == Self::On { 1 } else { 0 } }
@@ -265,6 +271,7 @@ live_cell!(
     pub(super) SKIP_INTERVAL: SkipInterval, "skip interval preference"
 );
 live_cell!(pub(super) REMEMBER_AUDIO_CHOICES: RememberAudioChoices, "remember audio choices");
+live_cell!(pub(super) SPOILER_PROTECTION: SpoilerProtection, "spoiler protection");
 live_cell!(pub(super) INTRO_SKIP_DELAY: AutoSkipDelay, "intro skip delay");
 live_cell!(pub(super) CREDITS_SKIP_DELAY: CreditsCountdownDelay, "credits skip delay");
 live_cell!(
@@ -398,6 +405,7 @@ macro_rules! live_setting {
 live_setting!(DirectPlayModePref, DIRECT_PLAY_MODE, "direct play mode");
 live_setting!(InstantDpadSeekingPref, INSTANT_DPAD_SEEKING, "instant D-pad seeking");
 live_setting!(RememberAudioChoicesPref, REMEMBER_AUDIO_CHOICES, "remember audio choices");
+live_setting!(SpoilerProtectionPref, SPOILER_PROTECTION, "spoiler protection");
 live_setting!(IntroSkipDelayPref, INTRO_SKIP_DELAY, "intro skip delay");
 live_setting!(CreditsSkipDelayPref, CREDITS_SKIP_DELAY, "credits skip delay");
 live_setting!(DolbyVisionModePref, DOLBY_VISION_MODE, "Dolby Vision mode");
@@ -463,6 +471,7 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<NextEpisodeModePref>(),
     LiveRow::of::<SkipIntervalPref>(),
     LiveRow::of::<RememberAudioChoicesPref>(),
+    LiveRow::of::<SpoilerProtectionPref>(),
     LiveRow::of::<IntroSkipDelayPref>(),
     LiveRow::of::<CreditsSkipDelayPref>(),
     LiveRow::of::<InstantDpadSeekingPref>(),
@@ -851,6 +860,7 @@ choices! {
     NextEpisode => NextEpisodeModePref,
     SkipInterval => SkipIntervalPref,
     RememberAudioChoices => RememberAudioChoicesPref,
+    SpoilerProtection => SpoilerProtectionPref,
     IntroSkipDelay => IntroSkipDelayPref,
     CreditsSkipDelay => CreditsSkipDelayPref,
     InstantDpadSeeking => InstantDpadSeekingPref,
@@ -985,6 +995,17 @@ pub fn skip_interval() -> SkipInterval { SkipIntervalPref::live() }
 pub fn restore_skip_interval(interval: SkipInterval) { restore_live::<SkipIntervalPref>(interval) }
 /// Blocking persistence seam, as [`set_next_episode_mode`].
 pub fn set_skip_interval(interval: SkipInterval) -> bool { confirm::<SkipIntervalPref>(interval) }
+
+/// Whether the seated profile hides unwatched episodes' pictures and descriptions until revealed.
+pub fn spoiler_protection() -> bool { SpoilerProtectionPref::live().is_on() }
+
+/// The one rule for which episodes spoiler protection covers: unwatched and not started (a started
+/// episode has already shown the viewer how it opens), with the switch `on`.
+pub fn covers_spoiler(on: bool, watched: bool, resume_ms: i64) -> bool { on && !watched && resume_ms <= 0 }
+
+/// [`covers_spoiler`] against the seated profile's live switch.
+pub fn spoiler_covers(watched: bool, resume_ms: i64) -> bool { covers_spoiler(spoiler_protection(), watched, resume_ms) }
+pub fn restore_spoiler_protection(value: SpoilerProtection) { restore_live::<SpoilerProtectionPref>(value) }
 
 pub fn remember_audio_choices() -> RememberAudioChoices { RememberAudioChoicesPref::live() }
 pub fn restore_remember_audio_choices(value: RememberAudioChoices) { restore_live::<RememberAudioChoicesPref>(value) }

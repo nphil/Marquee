@@ -376,7 +376,12 @@ pub fn draw_over(
             l.still,
             plx_media::route::item_sid(plx_media::route::cur_sid(ps)).raw(),
             &u.thumb,
-            (480, 270),
+            // Spoiler protection: the readable still is never requested for an unseen episode.
+            if !u.thumb.is_empty() && plx_media::route::spoiler_covers(u.watched, u.resume_ms) {
+                plx_ui::widgets::SPOILER_RES
+            } else {
+                (480, 270)
+            },
             10.0,
             false,
             1.0,

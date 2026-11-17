@@ -53,7 +53,7 @@
 use super::origin::Origin;
 use super::probe::Location;
 mod playback_options;
-pub use playback_options::{AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices};
+pub use playback_options::{AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, SpoilerProtection};
 mod bazarr_link;
 pub use bazarr_link::{BazarrChange, BazarrLink, UrlProblem};
 mod bazarr_import;
@@ -63,7 +63,7 @@ pub use subtitle_look::{
     AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, COLORS, SIZE_STEPS,
 };
 
-pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, persist_profile_tour_seen, put_own, stored_effective, stored_effective_hud, tenure, tour_seen as profile_tour_seen, HudSelectionPref, AudioEnhancementsPref,
+pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, SpoilerProtectionPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, persist_profile_tour_seen, put_own, stored_effective, stored_effective_hud, tenure, tour_seen as profile_tour_seen, HudSelectionPref, AudioEnhancementsPref,
     DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsPref,
     ProfilePrefsRecord, ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipIntervalPref,
     SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};

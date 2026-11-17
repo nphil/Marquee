@@ -987,6 +987,7 @@ enum RootId {
     Language,
     AutoSignIn,
     TrailerAutoplay,
+    SpoilerProtection,
     Resolution,
     /// One server's switch. Its key is [`PLAINTEXT_KEY_BASE`] plus its position in the section
     /// ([`root_form`] assigns it); its identity is the machine, so a rebuild keeps the row.
@@ -1025,6 +1026,7 @@ impl FormId for RootId {
             RootId::TraceDelete => 17,
             RootId::Tour => 18,
             RootId::HomeRows => 20,
+            RootId::SpoilerProtection => 21,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1039,6 +1041,7 @@ enum Action {
     Door,
     AutoSignIn,
     TrailerAutoplay,
+    SpoilerProtection,
     PlaybackTrace,
     TraceExport,
     TraceDelete,
@@ -1058,6 +1061,8 @@ pub struct RootPage {
     /// and the receipt of its `route::choose` (Confirm) write. A `false` (or dropped) receipt means
     /// the pick was not saved, and the row goes back to the stored value.
     pending_trailer: Option<(bool, std::sync::mpsc::Receiver<bool>)>,
+    /// The spoiler-protection switch picked here and not yet answered, like [`Self::pending_trailer`].
+    pending_spoilers: Option<(bool, std::sync::mpsc::Receiver<bool>)>,
     /// The servers the signed-in account answered plx_platform::i18n::msg::settings_plaintext_question() for, then the
     /// ones discovery offers it for and nobody has answered, by row — the `(machine_id, allowed)`
     /// each switch shows.
@@ -1076,6 +1081,8 @@ struct RootState {
     sel: RowKey,
     auto_sign_in: bool,
     trailer_autoplay: bool,
+    /// Written to the canon only when on, so every default root's digest is unchanged.
+    spoiler_protection: bool,
     language: plx_platform::i18n::Preference,
     /// What shows under a poster, as the Under posters row summarises it. Written to the canon only
     /// when it is not the default, so every default root's digest is unchanged.
@@ -1093,6 +1100,9 @@ struct RootState {
 impl LogicalState for RootState {
     fn write(&self, w: &mut Canon) {
         w.u32(self.sel.0).bool(self.auto_sign_in).bool(self.trailer_autoplay).str(self.language.tag());
+        if self.spoiler_protection {
+            w.u8(0xd2);
+        }
         if self.under_posters != plx_plex::plex::session::UnderPosters::DEFAULT {
             w.u8(self.under_posters.pack());
         }
@@ -1116,6 +1126,7 @@ impl LogicalState for RootState {
             self.sel.0, self.auto_sign_in, self.trailer_autoplay, self.language.tag()
         ));
         out.push_str(&format!(" trace={:?}", self.trace));
+        if self.spoiler_protection { out.push_str(" spoiler_protection=on"); }
         if !self.plaintext.is_empty() {
             out.push_str(&format!(" plaintext={:?}", self.plaintext));
         }
@@ -1149,6 +1160,7 @@ struct RootInputs {
     library_count: i64,
     auto_sign_in: bool,
     trailer_autoplay: bool,
+    spoiler_protection: bool,
     resolution: UiResolution,
     /// Whether this set is offered the Interface resolution row at all: webOS 1-3 only
     /// (`plx_platform::tv::device::ui_resolution_offered`). A plain flag, like the others, so the
@@ -1273,6 +1285,15 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
                 .detail(plx_platform::i18n::msg::settings_trailers_detail())
                 .toggle(inputs.trailer_autoplay),
         )
+        .item_if(
+            signed_in,
+            RootId::SpoilerProtection,
+            RowKind::Toggle,
+            Action::SpoilerProtection,
+            Row::new(plx_platform::i18n::msg::spoilers_title())
+                .detail(plx_platform::i18n::msg::spoilers_detail())
+                .toggle(inputs.spoiler_protection),
+        )
         // Signed in AND on webOS 1-3 only (`resolution_offered`), like the switches above for the
         // first: the signed-out root is the sign-in path's own short list. On webOS 4+ the root is
         // the same list without this row. The value is install-wide and survives sign-out; signing
@@ -1387,7 +1408,7 @@ impl RootPage {
             form: FormTable::new(super::registry::BAND),
             session_watch: Default::default(),
             session_snapshot: Default::default(),
-            pending_auto: None, pending_trailer: None,
+            pending_auto: None, pending_trailer: None, pending_spoilers: None,
             plaintext_rows: Vec::new(),
             pending_plaintext: None,
             alert: PlaintextAlert::new(ALERT_GROUP, super::registry::ALERT, super::registry::ALERT + 1),
@@ -1396,6 +1417,7 @@ impl RootPage {
                 sel: RowKey(0),
                 auto_sign_in: false,
                 trailer_autoplay: true,
+                spoiler_protection: false,
                 language: plx_platform::i18n::Preference::System,
                 under_posters: plx_plex::plex::session::UnderPosters::DEFAULT,
                 subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
@@ -1422,11 +1444,16 @@ impl RootPage {
             plx_plex::plex::session::stored_effective::<plx_plex::plex::session::TrailerAutoplayPref>(
                 sess, &plx_plex::plex::session::current_seat())
         }, |(value, _)| *value);
+        let spoiler_protection = self.pending_spoilers.as_ref().map_or_else(|| {
+            plx_plex::plex::session::stored_effective::<plx_plex::plex::session::SpoilerProtectionPref>(
+                sess, &plx_plex::plex::session::current_seat()).is_on()
+        }, |(value, _)| *value);
         let resolution = sess.ui_resolution();
         let resolution_offered = plx_platform::tv::device::ui_resolution_offered();
         let multi_user = sess.home_users.len() > 1;
         self.state.auto_sign_in = auto_sign_in;
         self.state.trailer_autoplay = trailer_autoplay;
+        self.state.spoiler_protection = spoiler_protection;
         self.state.language = plx_platform::i18n::saved_preference();
         self.state.under_posters = plx_media::route::under_posters();
         self.state.subtitle_preset = plx_media::route::subtitle_look().preset;
@@ -1436,7 +1463,7 @@ impl RootPage {
         let form = root_form(&RootInputs {
             trace: self.state.trace,
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
-            auto_sign_in, trailer_autoplay, resolution, resolution_offered, language: self.state.language,
+            auto_sign_in, trailer_autoplay, spoiler_protection, resolution, resolution_offered, language: self.state.language,
             under_posters: self.state.under_posters, plaintext,
             subtitle_preset: self.state.subtitle_preset, bazarr,
         });
@@ -1551,6 +1578,16 @@ impl RootPage {
                 self.pending_trailer = Some((on, receipt));
                 self.rebuild(directory);
             }
+            Action::SpoilerProtection => {
+                let on = !self.state.spoiler_protection;
+                let (reply, receipt) = std::sync::mpsc::channel();
+                fx.push(Fx::App(AppFx::Preferences(super::registry::PreferenceCmd::Choose(
+                    plx_media::route::Choice::SpoilerProtection(
+                        if on { plx_plex::plex::session::SpoilerProtection::On } else { plx_plex::plex::session::SpoilerProtection::Off }),
+                    reply))));
+                self.pending_spoilers = Some((on, receipt));
+                self.rebuild(directory);
+            }
             Action::Plaintext(ServerMachineId(machine)) => {
                 use plx_plex::plex::session::PlaintextChoice;
                 let Some(on) = self.plaintext_rows.iter().find(|(m, _)| *m == machine).map(|(_, on)| *on) else {
@@ -1651,6 +1688,14 @@ impl Machine<InnerHost> for RootPage {
                     if let Some(snapshot) = plx_plex::plex::session::peek_settled() {
                         self.session_snapshot = snapshot;
                         self.pending_trailer = None;
+                        landed = true;
+                    }
+                }
+                if self.pending_spoilers.as_ref().is_some_and(|(_, receipt)| !matches!(receipt.try_recv(),
+                    Err(std::sync::mpsc::TryRecvError::Empty))) {
+                    if let Some(snapshot) = plx_plex::plex::session::peek_settled() {
+                        self.session_snapshot = snapshot;
+                        self.pending_spoilers = None;
                         landed = true;
                     }
                 }

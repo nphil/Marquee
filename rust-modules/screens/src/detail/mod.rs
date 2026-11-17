@@ -30,6 +30,7 @@ mod placeholder_tests;
 
 use plx_data::metadata::{Detail, Extra, Spot};
 use crate::registry::{key_cap, unlive_excess, EvictOrder, PlayIntent};
+use crate::spoilers;
 use plx_plex::plex::ServerId;
 use plx_data::stores::metadata::MetadataCmd;
 use plx_data::stores::viewstate::ViewStateCmd;
@@ -312,6 +313,9 @@ pub struct DetailScreen {
     /// plate also shows for the still's pop — see `episodes::draw_cell`), keyed by episode so the
     /// state does not grow with the season.
     episode_cells: episodes::Cells,
+    /// Episodes (by rating key) the viewer revealed on this page; spoiler protection covers the
+    /// rest. Page-local on purpose: leaving and coming back covers them again.
+    revealed: std::collections::HashSet<String>,
     /// The About card's and the Languages column's focus lifts (`Located::About(0)` / `(1)`).
     about_card_lift: TextLift,
     about_lang_lift: TextLift,
@@ -595,6 +599,7 @@ impl DetailScreen {
             episode_free: false,
             tab_scroll: Spring::at(0.0),
             episode_cells: episodes::Cells::new(),
+            revealed: Default::default(),
             ep_want: EpWant::default(),
             strip_seat: StripSeat::default(),
             about_card_lift: TextLift::new(),
@@ -970,6 +975,7 @@ impl DetailScreen {
                 &self.episode_lift(i),
                 f.measure,
                 meta,
+                &self.revealed,
             ),
             Some(Located::Related(_)) => self.related.redraw_focused(
                 f,
@@ -2632,6 +2638,7 @@ impl<H: ContentLike + crate::registry::MetadataLike> Screen<H> for DetailScreen 
                             |i| self.episode_lift(i),
                             f.measure,
                             meta,
+                            &self.revealed,
                         );
                         if meta.season_loading() {
                             plx_ui::placeholder::note(below_hero, plx_ui::placeholder::Reason::SeasonSpinner, &self.rk);
@@ -2701,6 +2708,7 @@ impl<H: ContentLike + crate::registry::MetadataLike> Screen<H> for DetailScreen 
                         self.tracks_available(meta),
                         &self.about_card_lift,
                         &self.about_lang_lift,
+                        self.about_hidden(d),
                         f.measure,
                     ),
                     _ => {}
@@ -2827,6 +2835,25 @@ impl DetailScreen {
             .unwrap_or((self.sid, self.rk.clone(), String::new()))
     }
 
+    /// The episode this page's hero and picture are about, when spoiler protection covers it: the
+    /// on-deck episode of a show, or the episode itself. Its still's path (maybe empty) is returned.
+    fn covered_episode<'d>(&self, d: &'d Detail) -> Option<&'d str> {
+        let (rk, watched, resume_ms, still) = if d.is_show {
+            let ep = hero::hero_episode(d)?;
+            (&ep.rk, ep.watched, ep.resume_ms, &ep.thumb)
+        } else if d.kind == "episode" {
+            (&d.rk, d.watched, d.resume_ms, &d.thumb)
+        } else {
+            return None;
+        };
+        (!self.revealed.contains(rk) && spoilers::protects(watched, resume_ms)).then_some(still.as_str())
+    }
+
+    /// What the About card shows in place of an unrevealed episode's description; OK reveals it.
+    fn about_hidden(&self, d: &Detail) -> Option<&'static str> {
+        (d.kind == "episode" && self.covered_episode(d).is_some()).then(|| spoilers::hidden_note(true))
+    }
+
     fn draw_backdrop(
         &self,
         p: Painter,
@@ -2840,7 +2867,12 @@ impl DetailScreen {
         let art_alpha = (1.0 - sf) * self.preview_art;
         let (sid, _, path) = self.art_identity(d);
         let (texture, width, height) = if art_alpha > 0.01 {
-            plx_ui::widgets::resolve_tex_wh_on(sid.raw(), &path, 1920, 1080, 0)
+            let res = if d.and_then(|d| self.covered_episode(d)).is_some_and(|still| !still.is_empty()) {
+                plx_ui::widgets::SPOILER_RES
+            } else {
+                (1920, 1080)
+            };
+            plx_ui::widgets::resolve_tex_wh_on(sid.raw(), &path, res.0, res.1, 0)
         } else {
             (0, 0.0, 0.0)
         };
@@ -2954,7 +2986,8 @@ impl DetailScreen {
             .draw(logo_alpha, band, cx.measure);
 
         let (lead, synopsis) = hero_blurb(d, self.selected());
-        let synopsis_view = plx_ui::hero_synopsis(&synopsis, &lead).with_measure(measure);
+        let note = d.and_then(|d| self.covered_episode(d)).map(|_| spoilers::hidden_note(false));
+        let synopsis_view = plx_ui::hero_synopsis(note.unwrap_or(&synopsis), &lead).with_measure(measure);
         let chain = self.hero_chain(measure, meta);
         // Two gates, and the difference is the whole behaviour. `prose` recedes the moment a
         // picture is up: the identity line and the rating marks are how you decide whether to
@@ -4425,7 +4458,15 @@ impl DetailScreen {
                         self.play_episode_at(i, false, None, fx, meta);
                     }
                     episodes::Action::OpenDetail(sid, rk) => {
-                        self.content(fx, ContentReq::Push(ContentArg::Detail { sid, rk }))
+                        // A covered episode's first OK reveals it in place; the next opens it.
+                        let covered = episodes::locate(local)
+                            .and_then(|(i, _)| self.detail(meta)?.episodes.get(i))
+                            .is_some_and(|ep| episodes::covered(ep, &self.revealed));
+                        if covered {
+                            self.revealed.insert(rk);
+                        } else {
+                            self.content(fx, ContentReq::Push(ContentArg::Detail { sid, rk }))
+                        }
                     }
                     episodes::Action::None => {}
                 }
@@ -4483,7 +4524,15 @@ impl DetailScreen {
                     );
                 }
             }
-            Some(Located::About(0)) => self.content(fx, ContentReq::Panel(ContentPanel::About)),
+            Some(Located::About(0)) => {
+                let covered = self.detail(meta).filter(|d| self.about_hidden(d).is_some()).map(|d| d.rk.clone());
+                match covered {
+                    Some(rk) => {
+                        self.revealed.insert(rk);
+                    }
+                    None => self.content(fx, ContentReq::Panel(ContentPanel::About)),
+                }
+            }
             Some(Located::About(1)) => {
                 self.content(fx, ContentReq::Panel(ContentPanel::Tracks { page: 1 }))
             }

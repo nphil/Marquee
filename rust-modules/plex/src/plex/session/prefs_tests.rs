@@ -12,11 +12,11 @@ use super::prefs::{Descriptor, Fallback, ListRow, Parse, ProfileMemory, Row, Sco
 use super::prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, AudioEnhancementsPref, AutoSignInPref, DeckPressPref, UnderPostersPref, DirectPlayModePref, LastHeroBlurPref,
     LastLibraryRow, LibraryViewsRow, NextEpisodeModePref, PlaintextConsentRow, QualityPref, ServerKeyPinsRow,
     HdrOverlayBrightnessPref, SkipIntervalPref, SubtitleLookPref, SubtitleOffsetsPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref,
-    HoldHintTaughtPref, TrailerAutoplayPref, UiResolutionPref};
+    HoldHintTaughtPref, SpoilerProtectionPref, TrailerAutoplayPref, UiResolutionPref};
 use super::{
     AutoSkipDelay, CreditsCountdownDelay, DolbyVisionMode, InstantDpadSeeking, RememberAudioChoices, CanonicalSessionPreferences, DeckPress, UnderPosters, UnderPostersDetails, DirectPlayMode, LastLibrary, LibraryViews, NextEpisodeMode,
     PlaintextChoice, PlaintextConsent, PlaybackQuality, Preferences, ServerKeyPin, Session, SkipInterval,
-    HdrOverlayBrightness, HoldHintTaught, SubtitleLook, SubtitleOffsetEntry, SubtitlePosition, SubtitleSize, SubtitleTone, UiResolution,
+    HdrOverlayBrightness, HoldHintTaught, SpoilerProtection, SubtitleLook, SubtitleOffsetEntry, SubtitlePosition, SubtitleSize, SubtitleTone, UiResolution,
 };
 use serde::de::{self, Deserializer, Visitor};
 use serde_json::{json, Value};
@@ -112,6 +112,7 @@ fn every_marker_names_its_own_field() {
     check_row::<NextEpisodeModePref>(NextEpisodeMode::Off);
     check_row::<SkipIntervalPref>(SkipInterval::Seconds30);
     check_row::<InstantDpadSeekingPref>(InstantDpadSeeking::On);
+    check_row::<SpoilerProtectionPref>(SpoilerProtection::On);
     check_row::<RememberAudioChoicesPref>(RememberAudioChoices::Off);
     check_row::<IntroSkipDelayPref>(AutoSkipDelay::Seconds3);
     check_row::<CreditsSkipDelayPref>(CreditsCountdownDelay::Seconds10);
@@ -131,7 +132,7 @@ fn every_marker_names_its_own_field() {
     // `the_subtitle_offsets_row_names_its_own_field`) and the per-profile record list
     // (`ProfilePrefsPref`, `profile_prefs_tests::nothing_picked_serializes_to_no_key`): a row needs
     // its line in one of the four places.
-    assert_eq!(DESCRIPTORS.len(), 22 + 5 + 2 + 1 + 1, "plus `HudSelectionPref`, a `String` row checked by `profile_prefs_tests`");
+    assert_eq!(DESCRIPTORS.len(), 23 + 5 + 2 + 1 + 1, "plus `HudSelectionPref`, a `String` row checked by `profile_prefs_tests`");
 }
 
 /// The list rows do what `check_row` proves for the `Copy` ones: the marker names its own field
@@ -236,6 +237,7 @@ fn the_declared_live_and_settings_facts_are_the_ones_main_has() {
         ("subtitle_tone", None),
         ("audio_enhancements", None),
         ("trailer_autoplay", Some(Confirm)),
+        ("spoiler_protection", Some(Confirm)),
     ] {
         let d = row(key);
         assert_eq!(d.settings, settings, "{key}");
@@ -356,6 +358,7 @@ fn garbage_fixtures() -> Vec<(&'static str, Vec<Value>)> {
         ("ui_resolution", generic()),
         ("hold_hint_taught", generic()),
         ("trailer_autoplay", not_a_bool()),
+        ("spoiler_protection", generic()),
         ("last_hero_blur", vec![Value::Null, json!("zzz"), json!(17), json!([1, "x"]), json!([[1, 2, 3]]), json!({"unexpected": 1})]),
         // A list's garbage is anything that is not an array; a mixed array is driven separately.
         ("plaintext_consent", not_a_list()),

@@ -50,6 +50,25 @@ impl RememberAudioChoices {
     pub fn is_default(&self) -> bool { *self == Self::default() }
 }
 
+/// Whether unwatched episodes hide their stills (blurred) and descriptions until the viewer reveals
+/// them — one per profile. Absence is `Off`: every build before the preference showed everything.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpoilerProtection {
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "on")]
+    On,
+}
+
+impl SpoilerProtection {
+    pub const LADDER: [Self; 2] = [Self::Off, Self::On];
+    pub fn from_index(i: u8) -> Self { Self::LADDER.get(i as usize).copied().unwrap_or_default() }
+    pub fn index(self) -> u8 { Self::LADDER.iter().position(|&m| m == self).unwrap_or(0) as u8 }
+    pub fn is_default(&self) -> bool { *self == Self::default() }
+    pub fn is_on(self) -> bool { self == Self::On }
+}
+
 /// Whether Left/Right on a hidden transport jumps at once instead of first revealing the scrubber —
 /// one per profile, like [`super::DeckPress`]. Absence is `Off`, the reveal-first behaviour every
 /// build before the preference had.

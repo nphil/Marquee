@@ -49,7 +49,7 @@ fn value(page: &SubtitlesPage, field: Field) -> Option<String> {
 fn inputs() -> RootInputs {
     RootInputs {
         signed_in: true, multi_user: false, library_count: 0,
-        auto_sign_in: false, trailer_autoplay: true, resolution: plx_plex::plex::session::UiResolution::Auto, resolution_offered: false,
+        auto_sign_in: false, trailer_autoplay: true, spoiler_protection: false, resolution: plx_plex::plex::session::UiResolution::Auto, resolution_offered: false,
         language: plx_platform::i18n::Preference::System,
         under_posters: plx_plex::plex::session::UnderPosters::DEFAULT, plaintext: Vec::new(),
         subtitle_preset: LookPreset::Marquee,

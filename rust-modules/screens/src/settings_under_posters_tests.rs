@@ -416,7 +416,7 @@ fn text_fit_inputs() -> RootInputs {
     RootInputs {
         trace: plx_platform::playback_trace::Status::Off,
         signed_in: true, multi_user: false, library_count: 0,
-        auto_sign_in: false, trailer_autoplay: true, resolution: UiResolution::Auto, resolution_offered: false,
+        auto_sign_in: false, trailer_autoplay: true, spoiler_protection: false, resolution: UiResolution::Auto, resolution_offered: false,
         language: plx_platform::i18n::Preference::System,
         under_posters: plx_plex::plex::session::UnderPosters::DEFAULT, plaintext: Vec::new(),
         subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,

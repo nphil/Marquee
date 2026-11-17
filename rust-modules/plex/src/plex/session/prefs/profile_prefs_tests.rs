@@ -59,6 +59,7 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         skip_interval: Some(SkipInterval::Seconds30),
         instant_dpad_seeking: Some(InstantDpadSeeking::On),
         remember_audio_choices: Some(crate::plex::session::RememberAudioChoices::Off),
+        spoiler_protection: Some(crate::plex::session::SpoilerProtection::On),
         intro_skip_delay: Some(crate::plex::session::AutoSkipDelay::Seconds3),
         credits_skip_delay: Some(crate::plex::session::CreditsCountdownDelay::Seconds10),
         dolby_vision_mode: Some(DolbyVisionMode::Off),
@@ -77,7 +78,7 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         .filter(|d| d.fallback == Fallback::LegacyInstallKey)
         .map(|d| d.key.to_string())
         .collect();
-    assert_eq!(rows.len(), 19, "every per-profile setting has a legacy fallback");
+    assert_eq!(rows.len(), 20, "every per-profile setting has a legacy fallback");
     assert_eq!(fields, rows, "ProfilePrefs and the rows with a legacy fallback drifted");
     assert!(DESCRIPTORS.iter().filter(|d| d.fallback == Fallback::LegacyInstallKey).all(|d| d.scope == Scope::Profile));
 }
