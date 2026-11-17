@@ -467,6 +467,7 @@ fn mount_page(
         SettingsPage::Language => Box::new(LanguagePage::new(entry)),
         SettingsPage::UnderPosters => Box::new(under_posters::UnderPostersPage::new(entry)),
         SettingsPage::UnderPostersDetails => Box::new(under_posters::DetailsPage::new(entry)),
+        SettingsPage::HomeRows => Box::new(home_rows::HomeRowsPage::new(entry, cx.views)),
         SettingsPage::Subtitles => Box::new(subtitles::SubtitlesPage::new(entry)),
         SettingsPage::Bazarr => Box::new(bazarr::BazarrPage::new(entry)),
         SettingsPage::SpeechDock => Box::new(speechdock::SpeechDockPage::new(entry)),
@@ -977,6 +978,7 @@ struct ServerMachineId(String);
 enum RootId {
     Favourites,
     UnderPosters,
+    HomeRows,
     Playback,
     Subtitles,
     Bazarr,
@@ -1022,6 +1024,7 @@ impl FormId for RootId {
             RootId::TraceExport => 16,
             RootId::TraceDelete => 17,
             RootId::Tour => 18,
+            RootId::HomeRows => 20,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1205,6 +1208,14 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::under_posters_title())
                 .detail(plx_platform::i18n::msg::under_posters_detail())
                 .value(under_posters::summary(inputs.under_posters))
+                .chevron(true),
+        )
+        .item(
+            RootId::HomeRows,
+            RowKind::Nav(SettingsPage::HomeRows),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::home_rows_title())
+                .detail(plx_platform::i18n::msg::home_rows_detail())
                 .chevron(true),
         );
     let playback = FormSection::new(plx_platform::i18n::msg::settings_playback_section())
@@ -1764,6 +1775,8 @@ impl Screen<InnerHost> for RootPage {
 
 #[path = "settings_under_posters.rs"]
 mod under_posters;
+#[path = "settings_home.rs"]
+mod home_rows;
 #[path = "settings_subtitles.rs"]
 mod subtitles;
 #[path = "settings_bazarr.rs"]

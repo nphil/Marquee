@@ -29,6 +29,8 @@ pub enum SettingsPage {
     UnderPosters,
     /// Settings > Libraries > Under posters > Details: the picker of the one details line.
     UnderPostersDetails,
+    /// Settings > Libraries > Home rows: the order of the profile's Home rows, and which are hidden.
+    HomeRows,
     /// Settings > Subtitles: every field of the subtitle look beside a live preview.
     Subtitles,
     /// Settings > Integrations > Bazarr: the address and API key the player's "Wrong subtitles?" asks.
@@ -134,6 +136,7 @@ impl ScreenArg for SettingsPage {
             SettingsPage::Contribute => 111,
             SettingsPage::UnderPosters => 113,
             SettingsPage::UnderPostersDetails => 114,
+            SettingsPage::HomeRows => 120,
             SettingsPage::Subtitles => 115,
             SettingsPage::Bazarr => 116,
             SettingsPage::SpeechDock => 117,
@@ -178,6 +181,7 @@ impl LogicalState for SettingsPage {
             | SettingsPage::Language
             | SettingsPage::UnderPosters
             | SettingsPage::UnderPostersDetails
+            | SettingsPage::HomeRows
             | SettingsPage::Subtitles
             | SettingsPage::Bazarr
             | SettingsPage::SpeechDock
@@ -201,6 +205,7 @@ impl LogicalState for SettingsPage {
             SettingsPage::Contribute => "contribute",
             SettingsPage::UnderPosters => "under-posters",
             SettingsPage::UnderPostersDetails => "under-posters-details",
+            SettingsPage::HomeRows => "home-rows",
             SettingsPage::Subtitles => "subtitles",
             SettingsPage::Bazarr => "bazarr",
             SettingsPage::SpeechDock => "speechdock",
@@ -365,6 +370,7 @@ mod tests {
             SettingsPage::Language,
             SettingsPage::UnderPosters,
             SettingsPage::UnderPostersDetails,
+            SettingsPage::HomeRows,
             SettingsPage::Subtitles,
             SettingsPage::Bazarr,
             SettingsPage::SpeechDock,
