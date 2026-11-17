@@ -492,6 +492,10 @@ pub struct PlaybackSession {
     /// every frame, so a still that was not cached yet was declined for ever and the player
     /// screen never came to rest.
     up_next: Option<std::sync::Arc<UpNext>>,
+    /// The Up Next episode's own item, fetched once while its offer is on screen
+    /// ([`warm_up_next`]), for the queue play that starts it ([`request_play_queue_item`]). Any
+    /// play request retires it.
+    next_item: Option<NextItem>,
     /// The whole queue behind the item now playing — the playing row included, in queue order,
     /// projected to `plex::QueueRow` ON THE RESOLVE WORKER (a `Metadata` row carries its entire
     /// Media/Part/Stream/Role tree; a show's queue is dozens of them, and this device is 32-bit).
@@ -619,6 +623,7 @@ impl PlaybackSession {
         title: [0; 128],
         ctxline: [0; 96],
         up_next: None,
+        next_item: None,
         queue: Vec::new(),
         now_ms: 0,
         preview: false,
@@ -713,6 +718,7 @@ impl PlaybackSession {
             up_next,
             now_ms,
             queue: _,
+            next_item: _,
             preview: _,
             resolved_as_preview,
         } = self;
@@ -785,6 +791,7 @@ impl PlaybackSession {
             up_next: up_next.clone(),
             now_ms: *now_ms,
             queue: Vec::new(),
+            next_item: None,
             // A screen copy is not the live preview. The loop reads the real session.
             preview: false,
             resolved_as_preview: *resolved_as_preview,
@@ -8240,6 +8247,53 @@ pub fn up_next(ps: &PlaybackSession) -> Option<&UpNext> {
     ps.up_next.as_deref()
 }
 
+/// The Up Next episode's item, on its way or arrived ([`warm_up_next`]).
+pub(super) struct NextItem {
+    sid: ServerId,
+    rk: String,
+    /// Filled by the fetch's worker, which holds it weakly: the session dropping the warm is what
+    /// cancels it.
+    item: std::sync::Arc<Mutex<Option<plx_data::metadata::PlayingItem>>>,
+}
+
+/// **The next episode, fetched ahead.** MAIN THREAD, on every frame the Up Next offer is on
+/// screen: the episode's own item (its track lists and markers, the `GET /library/metadata/{rk}` a
+/// start plans from) is fetched once on a worker, so the press or the countdown's end does not
+/// wait for it. Only that fetch moves: the server's playback decision registers a session, so it
+/// still happens at the start. A play request retires the warm, and an answer arriving after that
+/// is dropped.
+pub fn warm_up_next(ps: &mut PlaybackSession) {
+    let Some((sid, rk)) = next_item_wanted(ps) else { return };
+    let item = std::sync::Arc::new(Mutex::new(None));
+    let slot = std::sync::Arc::downgrade(&item);
+    ps.next_item = Some(NextItem { sid, rk: rk.clone(), item });
+    let Some(client) = plx_plex::plex::client_for(sid) else { return };
+    plx_base::task::spawn_small("up next item", move || {
+        let fetched = plx_data::metadata::fetch_playing_item(client, sid, &rk, None).map(|(item, _)| item);
+        if let Some(slot) = slot.upgrade() {
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = fetched;
+        }
+    });
+}
+
+/// The next episode to fetch ahead, or `None`: no next episode, or its warm already made.
+fn next_item_wanted(ps: &PlaybackSession) -> Option<(ServerId, String)> {
+    let next = ps.up_next.as_deref().filter(|next| !next.rk.is_empty())?;
+    let sid = item_sid(cur_sid(ps));
+    let made = ps.next_item.as_ref().is_some_and(|n| n.sid == sid && n.rk == next.rk);
+    (!made).then(|| (sid, next.rk.clone()))
+}
+
+/// Retire the warm, handing its item over when it is the one `(sid, rk)` starts and has arrived.
+fn take_next_item(ps: &mut PlaybackSession, sid: ServerId, rk: &str) -> Option<plx_data::metadata::PlayingItem> {
+    let next = ps.next_item.take()?;
+    if next.sid != item_sid(sid) || next.rk != rk {
+        return None;
+    }
+    let mut item = next.item.lock().unwrap_or_else(|e| e.into_inner());
+    item.take()
+}
+
 /// The current playback's queue rows, in queue order, the row now playing among them — locate it
 /// with `plex::queue_index_of(rows, pq_item_id().parse().unwrap_or(0), &cur_rk())`, which is the
 /// ONE implementation of the identity rule (item id, rating key as the fallback). Empty until a
@@ -8694,10 +8748,11 @@ pub fn request_play_queue_item(
         &row.show_title
     };
     let queue = super::queue_navigation::QueueContinuation::capture(ps, row);
+    let warmed = take_next_item(ps, row.sid, &row.rk);
     request_play_with_queue(ps, meta, caps, PlaybackRequest {
         sid: row.sid, rk: row.rk.clone(), part: row.part.clone(), vcodec: row.vcodec.clone(),
         acodec: row.acodec.clone(), title: title.clone(), ctx: ctx.into(), preview: false, version: None,
-    }, None, None, false, crate::player::report::AttemptOrigin::Fresh, queue)
+    }, None, None, false, crate::player::report::AttemptOrigin::Fresh, queue, warmed)
 }
 
 /// Same resolve door as [`request_play`], flagged as a preview. Does not push a route. Resume is
@@ -8778,7 +8833,7 @@ fn request_play_inner(
     drain_previous: bool,
     origin: crate::player::report::AttemptOrigin,
 ) -> bool {
-    request_play_with_queue(ps, meta, caps, request, retry, trace_generation, drain_previous, origin, None)
+    request_play_with_queue(ps, meta, caps, request, retry, trace_generation, drain_previous, origin, None, None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8792,6 +8847,8 @@ fn request_play_with_queue(
     drain_previous: bool,
     origin: crate::player::report::AttemptOrigin,
     queue: Option<super::queue_navigation::QueueContinuation>,
+    // The Up Next episode's item fetched ahead (`warm_up_next`), when this plays it.
+    warmed: Option<plx_data::metadata::PlayingItem>,
 ) -> bool {
     ps.finished = false; // a flag the previous stop never took must not mark THIS item
     let sid = request.sid;
@@ -8853,6 +8910,7 @@ fn request_play_with_queue(
         // very episode from here, the one now on screen. The retained rows go with it, for the
         // same reason and because a fresh `Vec` also hands their strings back to the allocator.
         s.up_next = None;
+        s.next_item = None;
         s.queue = Vec::new();
         // …and the PREVIOUS item's refusal, for the same reason and one more: `player::state()`
         // derives `Error` from it, so a verdict left standing would put the failure read-out over
@@ -8886,6 +8944,9 @@ fn request_play_with_queue(
     // captured HERE, on the main thread, and moved into the worker — see ResolveEnv
     let mut env = request_env(ps, meta.view(), &request, retry);
     env.queue_continuation = queue;
+    if env.cached_item.is_none() && env.version.is_none() {
+        env.cached_item = warmed;
+    }
     let gen = PLAY_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     if let Some(resume_ns) = retry.map(|r| r.resume_ns).filter(|ns| *ns > 0) {
         *PLAY_RESUME.lock().unwrap_or_else(|e| e.into_inner()) = Some((gen, resume_ns));
@@ -9464,6 +9525,7 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
             title,
             ctxline,
             up_next: plan.up_next.map(std::sync::Arc::new),
+            next_item: None,
             queue: plan.queue,
             // The frame tick is the MACHINE's, not the plan's: a landing replaces the session's
             // contents and must not rewind the stamp `Player::set_now` wrote this iteration.

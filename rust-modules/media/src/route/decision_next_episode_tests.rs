@@ -75,3 +75,31 @@ fn every_publication_lends_the_same_up_next_thumb() {
     assert_eq!(a.thumb, "/library/metadata/2011003/thumb/1");
     assert_eq!(a.thumb.as_ptr(), b.thumb.as_ptr(), "two frames must see one card identity");
 }
+
+/// **The next episode's item is fetched once and handed only to the play that starts it.** An
+/// answer still on its way hands nothing over, and a start takes the warm either way.
+#[test]
+fn the_up_next_item_is_fetched_once_and_handed_only_to_its_own_start() {
+    let sid = ServerId::from_raw(7);
+    let mut ps = PlaybackSession::IDLE;
+    ps.cur_sid = sid;
+    assert!(next_item_wanted(&ps).is_none(), "no next episode, nothing to fetch");
+    ps.up_next = Some(UpNext { rk: "2011004".into(), ..Default::default() }.into());
+    assert_eq!(next_item_wanted(&ps), Some((sid, "2011004".to_string())));
+    let warmed = |ps: &mut PlaybackSession, item: Option<plx_data::metadata::PlayingItem>| {
+        ps.next_item = Some(NextItem { sid, rk: "2011004".into(), item: std::sync::Arc::new(Mutex::new(item)) });
+    };
+
+    warmed(&mut ps, None);
+    assert!(next_item_wanted(&ps).is_none(), "once per next episode");
+    assert!(take_next_item(&mut ps, sid, "2011004").is_none(), "nothing arrived yet");
+    assert!(ps.next_item.is_none());
+
+    warmed(&mut ps, Some(test_support::fourk_item(sid, Vec::new())));
+    assert!(take_next_item(&mut ps, sid, "2011005").is_none(), "another episode's start drops it");
+    assert!(ps.next_item.is_none());
+
+    warmed(&mut ps, Some(test_support::fourk_item(sid, Vec::new())));
+    assert_eq!(take_next_item(&mut ps, sid, "2011004").map(|item| item.rk), Some("rk-4k".to_string()));
+    assert!(ps.next_item.is_none());
+}

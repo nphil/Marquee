@@ -322,7 +322,8 @@ unsafe fn end_frame(app: &mut App, fr: &mut Frame, memory_guard: &mut super::mem
 /// player adds to `player_hud::slot`: the first credits offer stays on after its marker ends while a
 /// successor is queued (`up_next::Countdown::credits_offer`), and an episode whose marker-inclusive
 /// fetch carries no intro or credits marker says so once, as a toast. Styled subtitles given up as
-/// too slow to draw (`ass::take_styling_given_up`) are told once the same way.
+/// too slow to draw (`ass::take_styling_given_up`) are told once the same way. While the Up Next
+/// offer is up, the next episode's item is fetched ahead (`route::warm_up_next`).
 fn begin_frame(app: &mut App) -> Frame {
     let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
     if fr.ctrl.is_discs() && plx_media::route::up_next(&app.player.session).is_some() {
@@ -330,6 +331,9 @@ fn begin_frame(app: &mut App) -> Frame {
             p.up_next.credits_offer(plx_media::player::playpos_ns() / 1_000_000)) {
             fr.ctrl = plx_appkit::player_hud::ControlSlot::UpNext(marker);
         }
+    }
+    if plx_appkit::up_next::is_shown(fr.ctrl) {
+        plx_media::route::warm_up_next(&mut app.player.session);
     }
     if super::bridge::player(&app.pages).is_some_and(|p| !p.marker_notice_shown) {
         let checked = {
