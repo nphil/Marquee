@@ -81,7 +81,11 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   keep the synchronous release. The log reads `native lifecycle: off-frame Unload epoch=N released
   X ms after the stop`.
 - `pump.rs` — the **main-thread pump** (was `bufferfeed_pump`): each frame it drives bind → Play →
-  feed and services seeks.
+  feed and services seeks. `pump` is `pump_engine` followed by `watch_stalls`, which hands the pure
+  `stall_watch::StallWatch` one `Observation` a tick and runs its `Action`: a quiet restart at the
+  playhead (`engine::reload_at` in direct play, a transcode seek flight otherwise, both logged
+  `stall:`) when player and source wait on each other for `STALL_PATIENCE_MS`, or a `Notice` the
+  screen reads (`player::stall_notice`, `picture_frozen`) while the server is the hold-up.
 - `threads.rs` — the workers beside the demuxer: **`load_thread`** (construct Starfish + `Load()`,
   which owns its own GMainContext) and **`timeline_thread`** (the ~10 s `/:/timeline` progress
   reporter). The **demux thread body is `ff::demux`** (spawned by `engine::start_bufferfeed`): open

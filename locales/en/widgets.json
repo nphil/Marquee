@@ -23,6 +23,14 @@
     "value": "Plex intro and credits markers missing. Check Plex Analyze and detection.",
     "description": "Playback marker control: widgets.skip.missing_both"
   },
+  "widgets.stall.waiting_network": {
+    "value": "Waiting for the network",
+    "description": "Caption over a playback whose picture has stopped while the next part of the film is still on its way from the server."
+  },
+  "widgets.stall.lower_quality": {
+    "value": "Press OK to play at lower quality",
+    "description": "Second line of the caption after a long wait for the network: OK continues this playback at a lower quality. The saved quality setting does not change."
+  },
   "widgets.menu.scaling": {
     "value": "Video scaling",
     "description": "Opens the current picture scaling choices."

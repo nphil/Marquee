@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Plex-intromarkering ontbreekt. Controleer Plex-analyse en introdetectie.",
   "widgets.skip.missing_credits": "Plex-aftitelingsmarkering ontbreekt. Controleer Plex-analyse en aftitelingsdetectie.",
   "widgets.skip.missing_both": "Plex-markeringen voor intro en aftiteling ontbreken. Controleer Plex-analyse en detectie.",
+  "widgets.stall.waiting_network": "Wachten op het netwerk",
+  "widgets.stall.lower_quality": "Druk op OK om in lagere kwaliteit af te spelen",
   "widgets.menu.scaling": "Videoschaling",
   "widgets.scaling.fit": "Passend",
   "widgets.scaling.fill": "Vullen / bijsnijden",

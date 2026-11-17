@@ -25,6 +25,8 @@ pub struct AuQueue {
     base_bytes: c_long, // the cap the caller chose at aq_new; headroom is granted on top of it
     releasing: c_int, // headroom released but not yet drained: `aq_pop` walks `max_bytes` down
     pops: u64, // AUs the consumer has popped, ever: a producer's evidence that the lane is draining
+    pushes: u64, // AUs the producer has appended, ever: the consumer's evidence that the source works
+    parked: c_int, // the producer is waiting for room right now
     eof: c_int,
     abort: c_int,
     m: libc::pthread_mutex_t,
@@ -288,6 +290,7 @@ fn aq_push_park(
         libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
         let mut admitted = false;
         while !admitted && (*q).queued_bytes > (*q).max_bytes && (*q).abort == 0 {
+            (*q).parked = 1;
             if let Some(g) = gate {
                 libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
                 if let Some(drain) = drain.as_mut() {
@@ -304,6 +307,7 @@ fn aq_push_park(
                         continue;
                     }
                     if g.fail_at_ceiling {
+                        (*q).parked = 0;
                         libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
                         libc::free(n as *mut c_void);
                         return PUSH_CEILING;
@@ -343,6 +347,7 @@ fn aq_push_park(
                 );
             }
         }
+        (*q).parked = 0;
         if (*q).abort != 0 {
             libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
             libc::free(n as *mut c_void);
@@ -355,6 +360,7 @@ fn aq_push_park(
         }
         (*q).tail = n;
         (*q).queued_bytes += len as c_long;
+        (*q).pushes += 1;
         libc::pthread_cond_signal(ptr::addr_of_mut!((*q).not_empty));
         libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
         0
@@ -578,6 +584,34 @@ pub fn aq_pops(q: *mut AuQueue) -> u64 {
     }
 }
 
+/// How many AUs the producer has appended to this queue since it was created. Monotonic: a
+/// consumer that sees it unchanged across an interval learns the source queued nothing then.
+pub fn aq_pushes(q: *mut AuQueue) -> u64 {
+    if q.is_null() {
+        return 0;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let n = (*q).pushes;
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+        n
+    }
+}
+
+/// Is the producer waiting for room in this queue right now? The consumer's view of a source that
+/// has stopped because the lane is full, as opposed to one still reading.
+pub fn aq_parked(q: *mut AuQueue) -> bool {
+    if q.is_null() {
+        return false;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let parked = (*q).parked != 0;
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+        parked
+    }
+}
+
 pub fn aq_bytes(q: *mut AuQueue) -> c_long {
     if q.is_null() {
         return 0;
@@ -646,6 +680,33 @@ mod tests {
         let n = aq_pop(q, ptr::null_mut());
         assert!(!n.is_null(), "the queue had an AU to pop");
         unsafe { libc::free(n as *mut c_void) };
+    }
+
+    /// The consumer's view of its source: every append counts, and a producer waiting for room
+    /// reads as parked until a pop lets its push through.
+    #[test]
+    fn pushes_count_appends_and_parked_lasts_while_the_producer_waits_for_room() {
+        let mut q = aq_new(100);
+        let qp = &mut *q as *mut AuQueue;
+        push_n(qp, 1, 120);
+        assert_eq!(aq_pushes(qp), 1);
+        assert!(!aq_parked(qp), "a push that found room never parked");
+        let addr = qp as usize;
+        let producer = std::thread::spawn(move || {
+            let au = [0u8; 10];
+            aq_push(addr as *mut AuQueue, au.as_ptr(), au.len() as c_int, 1, 0, 1)
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !aq_parked(qp) {
+            assert!(std::time::Instant::now() < deadline, "the producer never parked");
+            std::thread::yield_now();
+        }
+        assert_eq!(aq_pushes(qp), 1, "a parked push has not appended");
+        pop_one(qp);
+        assert_eq!(producer.join().unwrap(), 0);
+        assert!(!aq_parked(qp));
+        assert_eq!(aq_pushes(qp), 2);
+        aq_destroy(qp);
     }
 
     /// **The demuxer's shape.** The video lane holds far more than its base cap (headroom was

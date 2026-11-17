@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Plex-Intromarkierung fehlt. Plex-Analyse und Introerkennung prüfen.",
   "widgets.skip.missing_credits": "Plex-Abspannmarkierung fehlt. Plex-Analyse und Abspannerkennung prüfen.",
   "widgets.skip.missing_both": "Plex-Intro- und Abspannmarkierungen fehlen. Plex-Analyse und Erkennung prüfen.",
+  "widgets.stall.waiting_network": "Warten auf das Netzwerk",
+  "widgets.stall.lower_quality": "OK drücken, um in niedrigerer Qualität abzuspielen",
   "widgets.menu.scaling": "Videoskalierung",
   "widgets.scaling.fit": "Einpassen",
   "widgets.scaling.fill": "Füllen / Zuschneiden",

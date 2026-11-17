@@ -56,6 +56,9 @@ pub struct PlayerAdapter {
     /// once the Load actually launches (`None`: no preview start is queued). Admission is taken
     /// when the queued start runs, never when it is merely queued.
     preview_admission: Option<bool>,
+    /// The freeze safety net's memory (`stall_watch`), held beside the Engine slot because it must
+    /// outlive the reloads it asks for.
+    stall: super::stall_watch::StallWatch,
     /// The URI-mode probe's session (issue #1064, dev trigger `plxnative-uriprobe`): the probe plays
     /// through `com.webos.media` instead of an [`Engine`], so it lives BESIDE the engine slot and
     /// never in it. [`is_live`](Self::is_live) stays Engine-only: the Engine paths (`pump`, the
@@ -101,6 +104,7 @@ impl PlayerAdapter {
             release: super::release::NativeRelease::new(),
             queued_watch: QueuedWatch::Unwatched,
             preview_admission: None,
+            stall: super::stall_watch::StallWatch::default(),
             #[cfg(feature = "devtriggers")]
             uri: None,
         }
@@ -366,6 +370,11 @@ impl PlayerAdapter {
     #[inline]
     pub fn split(&mut self) -> (Option<&mut Engine>, &MainThread) {
         (self.engine.as_mut(), &self.mt)
+    }
+
+    /// The freeze safety net's memory, for the pump's last word on each tick.
+    pub(super) fn stall_watch(&mut self) -> &mut super::stall_watch::StallWatch {
+        &mut self.stall
     }
 }
 

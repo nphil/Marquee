@@ -609,6 +609,7 @@ pub(crate) fn player_requests(
             PlayerReq::PlayAutomatically => {
                 play_automatically(&mut player.session, pa, bridge.metadata_mut());
             }
+            PlayerReq::PlayLowerQuality => plx_media::route::play_lower_quality(&mut player.session),
             PlayerReq::RepairSandbox => {
                 if player.session.jail_load_blocked {
                     pa.repair_sandbox(&mut player.repair, plx_platform::tv::sandbox::blocks_native_video());

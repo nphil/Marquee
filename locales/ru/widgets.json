@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Нет метки заставки Plex. Проверьте анализ и обнаружение заставок.",
   "widgets.skip.missing_credits": "Нет метки титров Plex. Проверьте анализ и обнаружение титров.",
   "widgets.skip.missing_both": "Нет меток заставки и титров Plex. Проверьте анализ и обнаружение.",
+  "widgets.stall.waiting_network": "Ожидание сети",
+  "widgets.stall.lower_quality": "Нажмите OK, чтобы смотреть в более низком качестве",
   "widgets.menu.scaling": "Масштаб видео",
   "widgets.scaling.fit": "Вписать",
   "widgets.scaling.fill": "Заполнить / обрезать",

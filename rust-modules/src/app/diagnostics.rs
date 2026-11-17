@@ -990,8 +990,12 @@ fn pipeline_rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::
         plx_platform::i18n::msg::browse_diagnostics_field_queues(),
         plx_platform::i18n::msg::browse_diagnostics_queues(&decimal(mb_f(d.aq_audio), 2), &decimal(mb_f(ca), 1), &decimal(mb_f(d.aq_video), 1), &decimal(mb_f(cv), 1)),
     ));
+    let mut frames = frames_str(d, now);
+    if d.stall_restarts > 0 {
+        frames = plx_platform::i18n::msg::browse_diagnostics_stall_restarts(&frames, &d.stall_restarts.to_string());
+    }
     v.push(
-        Field::new(plx_platform::i18n::msg::browse_diagnostics_field_frames(), frames_str(d, now))
+        Field::new(plx_platform::i18n::msg::browse_diagnostics_field_frames(), frames)
             .fault(!d.seen_frame && d.load_completed && since(d.load_at, now) > STALL_MS),
     );
     debug_assert_eq!(v.len(), LEFT_ROWS);

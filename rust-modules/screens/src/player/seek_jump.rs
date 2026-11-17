@@ -36,6 +36,16 @@ impl PlayerScreen {
 
     fn commit_jump<H: AppLike>(&mut self, ps: &plx_media::route::PlaybackSession,
         forward: bool, now: u32, fx: &mut Effects<'_, H>, chapters: &[plx_data::metadata::Chapter]) {
+        // A jump from a picture that has stood still lands somewhere the viewer cannot see
+        // coming: the press raises the controls instead (`player::picture_frozen`).
+        if plx_media::player::picture_frozen() {
+            self.scrub.cancel();
+            self.seek_burst.reset();
+            self.hud.dismissed = false;
+            self.hud.extend(now, input::HUD_LINGER_MS);
+            self.publish();
+            return;
+        }
         if let Some(target) = self.jump_by(ps, signed_step(forward), false, now, chapters) {
             Self::ask(fx, PlayerReq::CommitSeek(target));
         }
@@ -234,6 +244,34 @@ mod tests {
         assert!(page.hud.dismissed);
         assert_eq!(key(&mut page, consts::WCODE_FASTFORWARD, Edge::Up, 1_050),
             vec![PlayerReq::CommitSeek(50_000_000_000)]);
+    }
+
+    #[test]
+    fn jump_keys_on_a_frozen_picture_raise_the_controls_instead_of_jumping() {
+        struct Frozen;
+        impl Drop for Frozen {
+            fn drop(&mut self) {
+                plx_media::player::SHARED.stall_notice.store(0, Relaxed);
+            }
+        }
+        let _g = plx_base::testlock::serial();
+        let _playback = PlaybackFixture::new();
+        plx_media::player::SHARED
+            .stall_notice
+            .store(plx_media::player::StallNotice::Frozen as u8, Relaxed);
+        let _frozen = Frozen;
+        // the instant D-pad jump on a hidden transport
+        let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
+        page.hud.dismissed = true;
+        assert!(key(&mut page, consts::SDLK_RIGHT, Edge::Down, 1_000).is_empty());
+        assert!(!page.hud.dismissed && page.hud.until > 1_000);
+        // the FF tap, released
+        let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
+        page.hud.dismissed = true;
+        assert!(key(&mut page, consts::WCODE_FASTFORWARD, Edge::Down, 1_000).is_empty());
+        assert!(key(&mut page, consts::WCODE_FASTFORWARD, Edge::Up, 1_050).is_empty());
+        assert!(!page.hud.dismissed && page.hud.until > 1_050);
+        assert!(!page.scrub.is_live());
     }
 
     #[test]

@@ -580,6 +580,9 @@ pub struct Shared {
     /// see `appkit::player_hud::busy_surface`. Monotone within a session (false→true only), which is
     /// what lets two readers in one frame sample it independently without disagreeing.
     pub seen_frame: AtomicBool,
+    /// The freeze safety net's notice for the screen, a [`super::stall_watch::Notice`] as `u8`.
+    /// The pump writes it on every tick it runs; the session reset clears it.
+    pub stall_notice: AtomicU8,
     /// **The raw pts of the first audio AU the demuxer pushed since its last open or seek**.
     /// Written by `ff::demux` BEFORE that push, so the feed thread that pops the AU
     /// sees it. The audio lane uses it to tell the real start of a late audio track (an MKV
@@ -893,6 +896,9 @@ pub struct Shared {
     /// a different failure from a connection that answered 401.
     pub dg_http_status: AtomicI32,
     pub dg_net_rx: AtomicI64,
+    /// How many times the freeze safety net has restarted this playback. The pump republishes its
+    /// own count every tick, so the reset a restart's reload makes does not lose it.
+    pub dg_stall_restarts: AtomicU32,
     /// WHY the media transfer died, when it was a curl transfer dying mid-body (issue #504): the
     /// libcurl code (0 = none recorded), the transfer's age in ms (-1 = unknown) and whether the
     /// reopen that follows a failed read was refused as well. Written by the demux thread beside
@@ -1067,6 +1073,7 @@ impl Shared {
             dg_transport_reopen_failed: AtomicBool::new(false),
             dg_demux_exit: AtomicU8::new(0),
             dg_net_rx: AtomicI64::new(0),
+            dg_stall_restarts: AtomicU32::new(0),
             side_anchor: Mutex::new(None),
             side_subs_owner: AtomicBool::new(false),
             dg_load_at: AtomicU32::new(0),
@@ -1109,6 +1116,7 @@ impl Shared {
             pres_fed: AtomicI64::new(0),
             frames: AtomicI32::new(0),
             seen_frame: AtomicBool::new(false),
+            stall_notice: AtomicU8::new(0),
             first_audio_pts: AtomicI64::new(i64::MIN),
             audio_switch: AtomicU8::new(AudioSwitch::None as u8),
             audio_pick_ms: AtomicI64::new(0),
@@ -1796,6 +1804,7 @@ impl Shared {
         self.dg_transport_reopen_failed.store(false, Ordering::Relaxed);
         self.dg_demux_exit.store(0, Ordering::Relaxed);
         self.dg_net_rx.store(0, Ordering::Relaxed);
+        self.dg_stall_restarts.store(0, Ordering::Relaxed);
         self.dg_load_at.store(0, Ordering::Relaxed);
         self.dg_frame_at.store(0, Ordering::Relaxed);
         self.dg_vpres_ct.store(0, Ordering::Relaxed);
@@ -1836,6 +1845,7 @@ impl Shared {
         // places (declaration, `new`, here): a reload that forgot the bit would silently suppress
         // the centred read-out for the rest of the app's life.
         self.seen_frame.store(false, Ordering::Relaxed);
+        self.stall_notice.store(0, Ordering::Relaxed);
         self.first_audio_pts.store(i64::MIN, Ordering::Relaxed);
         // an audio pick's rebuild has begun (a reload keeps the pick's meaning for this session);
         // any other reset ends it

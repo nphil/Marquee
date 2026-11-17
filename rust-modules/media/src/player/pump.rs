@@ -1589,6 +1589,12 @@ fn update_alignment(ps: &crate::route::PlaybackSession, now: u32) {
 }
 
 pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, now: u32) {
+    pump_engine(ps, pa, now);
+    // After the whole tick, its early returns included: a wait that never ends is often one.
+    watch_stalls(ps, pa, now);
+}
+
+fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, now: u32) {
     use super::shared::PlaybackState;
     update_alignment(ps, now);
     super::subsync::update(ps, now);
@@ -2595,6 +2601,77 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
                 dur / 1_000_000_000
             ));
         }
+    }
+}
+
+/// The freeze safety net (`stall_watch`): one observation per tick, the notice published for the
+/// screen, the action run. A restart reopens at the playhead the way a seek does, so the audio and
+/// subtitle picks carry over.
+fn watch_stalls(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, now: u32) {
+    use super::stall_watch::Action;
+    let obs = stall_observation(ps, pa);
+    let watch = pa.stall_watch();
+    let (notice, action) = watch.step(now, obs);
+    let restarts = watch.restarts();
+    SHARED.stall_notice.store(notice as u8, Relaxed);
+    SHARED.dg_stall_restarts.store(restarts, Relaxed);
+    match action {
+        Action::None => {}
+        Action::Restart { at_ns } => {
+            let transcoding = crate::route::is_transcoding(ps);
+            super::log(&format!(
+                "stall: the player waits on a parked source; restart #{restarts} at {}s ({})",
+                at_ns / 1_000_000_000,
+                if transcoding { "transcode" } else { "direct" },
+            ));
+            if transcoding {
+                start_transcode_seek_flight(ps, pa, at_ns, false);
+            } else {
+                settle_reload(super::engine::reload_at(ps, pa, at_ns), "stall restart");
+            }
+        }
+        Action::GaveUp { at_ns } => super::log(&format!(
+            "stall: stuck again at {}s, where the last restart reopened; waiting instead",
+            at_ns / 1_000_000_000
+        )),
+    }
+}
+
+/// This tick as the freeze safety net sees it. Not covered: a sample-mode or preview playback, an
+/// Engine still opening or at its end, a viewer pause, a seek not yet dispatched, and every
+/// rebuild in flight (a server transcode that is starting is one), each of which has its own owner.
+fn stall_observation(ps: &crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) -> super::stall_watch::Observation {
+    use super::shared::PlaybackState;
+    let playback = crate::route::playback_trace_generation();
+    let (Some(eng), _) = pa.split() else {
+        return super::stall_watch::Observation { playback, ..Default::default() };
+    };
+    let lanes = [eng.aq_video.as_deref(), eng.aq_audio.as_deref()];
+    let lane = |q: &crate::aq::AuQueue| q as *const crate::aq::AuQueue as *mut crate::aq::AuQueue;
+    let queued = lanes.iter().flatten().map(|q| crate::aq::aq_pushes(lane(q))).sum();
+    // An in-place seek's reopen has its own watchdog (`SEEK_STUCK_MS`): a source waiting on that
+    // is not stuck, whatever its lanes say.
+    let parked = !(eng.flushed && eng.rebase_pending) && lanes.iter().flatten().any(|q| crate::aq::aq_parked(lane(q)));
+    let covered = matches!(eng.source, Source::Stream)
+        && eng.stage >= Stage::Playing
+        && !eng.eos_pushed
+        && !SHARED.ended.load(Relaxed)
+        && !TX.paused.load(Relaxed)
+        && TX.seek_to_ns.load(Relaxed) < 0
+        && matches!(super::state(ps), PlaybackState::Buffering | PlaybackState::Seeking | PlaybackState::Playing)
+        && !crate::route::preview_request(ps)
+        && !crate::route::flight_outstanding()
+        && !crate::route::original_recovery_pending()
+        && !super::claim_hold::active();
+    super::stall_watch::Observation {
+        playback,
+        covered,
+        seen_frame: SHARED.seen_frame.load(Relaxed),
+        holding: eng.prime_play || SHARED.hls_rebuffering.load(Relaxed) || SHARED.seeking.load(Relaxed),
+        position_ns: super::intended_pos_ns(ps),
+        queued,
+        parked,
+        can_lower: crate::route::lower_quality(ps).is_some(),
     }
 }
 

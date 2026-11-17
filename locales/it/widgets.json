@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Marcatore introduzione Plex mancante. Controlla Analizza e il rilevamento delle introduzioni.",
   "widgets.skip.missing_credits": "Marcatore titoli Plex mancante. Controlla Analizza e il rilevamento dei titoli.",
   "widgets.skip.missing_both": "Marcatori introduzione e titoli Plex mancanti. Controlla Analizza e il rilevamento.",
+  "widgets.stall.waiting_network": "In attesa della rete",
+  "widgets.stall.lower_quality": "Premi OK per riprodurre a qualità inferiore",
   "widgets.menu.scaling": "Ridimensionamento video",
   "widgets.scaling.fit": "Adatta",
   "widgets.scaling.fill": "Riempi / ritaglia",

@@ -60,6 +60,7 @@ mod foreground_flight_tests;
 #[cfg(all(test, feature = "hostsim"))]
 mod resume_tests;
 mod shared;
+mod stall_watch; // the freeze safety net: a player waiting on a source that has stopped (pure machine); `pump` drives it
 pub mod sidecar;
 pub mod speechdock_settings;
 pub mod blend; // "Blend with video": the caption's brightness follows the scene, eased (pure)
@@ -87,6 +88,7 @@ pub use shared::HlsClockFenceError;
 pub use shared::SubRect;
 pub use plx_data::metadata::track_names::TrackNames;
 pub use shared::UserPauseCursor;
+pub use stall_watch::Notice as StallNotice;
 use shared::{
     HlsPauseCompletion, HlsPlayCompletion, HlsUserPause, HlsUserResume, Shared, SubBitmap,
     Transport,
@@ -723,6 +725,15 @@ pub fn frames() -> i32 {
 /// a reload, both of which do blank the video plane. See [`shared::Shared::seen_frame`].
 pub fn seen_frame() -> bool {
     SHARED.seen_frame.load(Relaxed)
+}
+/// What the freeze safety net says about the picture right now: still for a while, waiting for the
+/// network, or waiting long enough that OK offers a lower quality. See `stall_watch`.
+pub fn stall_notice() -> StallNotice {
+    StallNotice::from_u8(SHARED.stall_notice.load(Relaxed))
+}
+/// The picture has stood still long enough that a key press must not skip somewhere else.
+pub fn picture_frozen() -> bool {
+    stall_notice() != StallNotice::None
 }
 pub fn duration_ns() -> i64 {
     SHARED.duration_ns.load(Relaxed)
@@ -1592,6 +1603,8 @@ pub struct Diag {
     pub cb_err_at: u32,
     pub http_status: i32,
     pub net_rx: i64,
+    /// Quiet restarts the freeze safety net has made in this playback.
+    pub stall_restarts: u32,
     /// Playable content-time reserve derived from the elementary-stream tails and the displayed
     /// movie position. Unlike `abr_buffer_ms`, this is transport/controller independent and is
     /// therefore present for Manual Original and fixed qualities too. `None` means one required
@@ -1761,6 +1774,7 @@ pub fn diag(ps: &crate::route::PlaybackSession) -> Diag {
         cb_err_at: SHARED.dg_cb_err_at.load(Relaxed),
         http_status: SHARED.dg_http_status.load(Relaxed),
         net_rx: SHARED.dg_net_rx.load(Relaxed),
+        stall_restarts: SHARED.dg_stall_restarts.load(Relaxed),
         playable_buffer_ms,
         load_at: SHARED.dg_load_at.load(Relaxed),
         frame_at: SHARED.dg_frame_at.load(Relaxed),

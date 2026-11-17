@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Falta la marca de introducción de Plex. Revisa Analizar y la detección de introducciones.",
   "widgets.skip.missing_credits": "Falta la marca de créditos de Plex. Revisa Analizar y la detección de créditos.",
   "widgets.skip.missing_both": "Faltan las marcas de introducción y créditos de Plex. Revisa Analizar y la detección.",
+  "widgets.stall.waiting_network": "Esperando a la red",
+  "widgets.stall.lower_quality": "Pulsa OK para reproducir en menor calidad",
   "widgets.menu.scaling": "Escala de vídeo",
   "widgets.scaling.fit": "Ajustar",
   "widgets.scaling.fill": "Llenar / recortar",

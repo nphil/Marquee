@@ -223,6 +223,8 @@ pub struct PlayerScreen {
     failure_sel: usize,
     /// Did a failure own the frame at the last Tick — the edge that resets `failure_sel`.
     failure_up: bool,
+    /// BACK put the long wait's lower-quality offer away; the next wait offers it again.
+    stall_offer_hidden: bool,
     /// The transport clocks' prewarm memo — a render resource, not logical state (`prepare`).
     clock_warm: plx_appkit::player_hud::motion::ClockWarm,
     /// **This frame's snapshot of everything the HUD's presentation reads from the player's
@@ -267,6 +269,7 @@ impl PlayerScreen {
             repair_scroll: 0,
             failure_sel: 0,
             failure_up: false,
+            stall_offer_hidden: false,
             clock_warm: Default::default(),
             model: HudModel::default(),
             compiled,
@@ -379,6 +382,9 @@ impl PlayerScreen {
             plx_appkit::player_hud::draw_subtitle_message(message, subs_lift, band, &self.model, measure);
             message_drawn = true;
         }
+        if let Some(message) = self.stall_caption() {
+            plx_appkit::player_hud::draw_subtitle_message(&message, subs_lift, band, &self.model, measure);
+        }
         self.draw_subtitle_bitmap(subs_lift, band); // PGS/VobSub image subs
         // a style picker is open and nothing is on screen to judge it by: a sample line, in the
         // plain caption's size, position and ink, which a pick moves as it would the real caption
@@ -387,6 +393,25 @@ impl PlayerScreen {
                 plx_platform::i18n::msg::widgets_tracks_style_sample(), subs_lift, band, &self.model, measure,
             );
         }
+    }
+
+    /// The freeze safety net's caption (`player::stall_notice`): a wait for the network, and
+    /// after a long one the lower-quality offer under it.
+    fn stall_caption(&self) -> Option<String> {
+        use plx_media::player::StallNotice;
+        use plx_platform::i18n::msg;
+        match plx_media::player::stall_notice() {
+            StallNotice::None | StallNotice::Frozen => None,
+            StallNotice::Offer if !self.stall_offer_hidden => {
+                Some(format!("{}\n{}", msg::widgets_stall_waiting_network(), msg::widgets_stall_lower_quality()))
+            }
+            StallNotice::Network | StallNotice::Offer => Some(msg::widgets_stall_waiting_network().to_owned()),
+        }
+    }
+
+    /// Is the lower-quality offer on screen, for OK to take and BACK to put away?
+    fn stall_offer_up(&self) -> bool {
+        plx_media::player::stall_notice() == plx_media::player::StallNotice::Offer && !self.stall_offer_hidden
     }
 
     /// Draw the image-subtitle display set — the render half this screen owns.
@@ -605,6 +630,7 @@ impl PlayerScreen {
         // the sidecar failure notice lapsing on the wall clock: nothing else on the screen moves
         // then, so the instant it expires still owes a frame
         mix(u64::from(plx_media::player::sidecar::notice_shown()));
+        mix(plx_media::player::stall_notice() as u64 + 16 * u64::from(self.stall_offer_hidden));
         mix(plx_media::player::active_bitmap_key(pos).unwrap_or(0) as u64);
         mix(u64::from(hud_up));
         // a style picker's sample line follows the picks it previews
@@ -879,6 +905,9 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                     self.failure_sel = 0;
                 }
                 self.failure_up = failed;
+                if plx_media::player::stall_notice() != plx_media::player::StallNotice::Offer {
+                    self.stall_offer_hidden = false;
+                }
                 if failed && self.hud.sections.any() {
                     // a failure owns the frame outright: the sections go with the picture they were over
                     self.hud.sections = Sections::NONE;
@@ -1337,6 +1366,12 @@ impl PlayerScreen {
                 self.key_back_scrub(now);
                 Handled::Yes
             }
+            // BACK over the long wait's lower-quality offer puts the offer away; the wait and the
+            // transport stay as they are
+            Key::Back if edge == Edge::Down && self.stall_offer_up() => {
+                self.stall_offer_hidden = true;
+                Handled::Yes
+            }
             Key::Back if edge == Edge::Down && self.hud.back_leaves_at_press => {
                 Self::ask(fx, PlayerReq::Exit);
                 Handled::Yes
@@ -1454,6 +1489,10 @@ impl PlayerScreen {
             if let Some(section) = Section::of_tab(tab as i32) {
                 Self::ask(fx, PlayerReq::Command(HudCommand::ToggleSection(section)));
             }
+        } else if self.stall_offer_up() {
+            // the press answers the long wait's offer: this playback continues at a lower quality
+            self.stall_offer_hidden = true;
+            Self::ask(fx, PlayerReq::PlayLowerQuality);
         } else {
             let req = self.toggle_play(None, now);
             Self::ask(fx, req);
@@ -3579,6 +3618,33 @@ mod step_ladder_tests {
         assert!(!page.hud.visible_at_press, "a hand-hidden transport is not on screen at the press");
         let (_, reqs) = press(&mut page, 0, WCODE_BACK, Edge::Down);
         assert_eq!(reqs, vec![PlayerReq::Exit], "the second BACK leaves");
+    }
+
+    /// **The long wait's offer: OK takes it, BACK puts it away.** With the offer on screen, OK asks
+    /// for the lower quality instead of pausing and BACK hides the offer without leaving; once
+    /// hidden, OK is play/pause again, and the next wait offers it anew.
+    #[test]
+    fn ok_takes_the_lower_quality_offer_and_back_puts_it_away() {
+        use plx_media::player::StallNotice;
+        use std::sync::atomic::Ordering::Relaxed;
+        struct Quiet;
+        impl Drop for Quiet {
+            fn drop(&mut self) {
+                plx_media::player::SHARED.stall_notice.store(0, Relaxed);
+            }
+        }
+        let notice = |n: StallNotice| plx_media::player::SHARED.stall_notice.store(n as u8, Relaxed);
+        let _g = plx_base::testlock::serial();
+        let _quiet = Quiet;
+        notice(StallNotice::Offer);
+        let mut page = PlayerScreen::new(ENTRY, plx_appkit::player_hud::loaded::classic_for_test());
+        let (handled, reqs) = press(&mut page, 0, WCODE_BACK, Edge::Down);
+        assert_eq!((handled, reqs), (Handled::Yes, vec![]), "BACK only puts the offer away");
+        assert_eq!(press(&mut page, SDLK_RETURN, 0, Edge::Down).1, vec![PlayerReq::Transport(None)]);
+        notice(StallNotice::Network);
+        tick(&mut page, 1_016);
+        notice(StallNotice::Offer);
+        assert_eq!(press(&mut page, SDLK_RETURN, 0, Edge::Down).1, vec![PlayerReq::PlayLowerQuality]);
     }
 
     /// A server-shaped Skip Intro segment.

@@ -7592,7 +7592,7 @@ pub fn set_quality(ps: &mut PlaybackSession, q: Quality) {
     }
 
     let q = supported_quality(q);
-    let unchanged = q == quality();
+    let unchanged = q == quality() && q == desired_quality();
     // Hold the explicit user-staging phase across persistence, Session projection changes and
     // pending-action publication. Re-selecting the current row remains a true no-op.
     let _edit = (!unchanged).then(|| begin_user_quality_boundary(q));
@@ -7775,6 +7775,56 @@ fn apply_quality_choice(ps: &mut PlaybackSession, q: Quality) {
         crate::player::report::AttemptOrigin::QualityChange,
     );
     crate::player::request_transcode_refresh(ps);
+}
+
+/// The rung a long network wait offers ("Play at lower quality"): the highest preset at or under
+/// half of what is playing now. `None` when the rate is unknown, nothing is low enough, or the
+/// playback may not leave the original file.
+pub fn lower_quality(ps: &PlaybackSession) -> Option<Quality> {
+    if forced_direct_play(ps) {
+        return None;
+    }
+    let current_kbps = if is_transcoding(ps) { cur_ceiling(ps).map_or(0, |c| c.max_kbps) } else { ps.cur_src.0 };
+    lower_quality_rung(current_kbps)
+}
+
+fn lower_quality_rung(current_kbps: i64) -> Option<Quality> {
+    QUALITY_LADDER.into_iter().find(|q| q.ceiling().is_some_and(|c| c.max_kbps * 2 <= current_kbps))
+}
+
+/// Take the offer: re-decide THIS playback at [`lower_quality`]'s rung the way a picker choice
+/// would, leaving the saved preference alone so the next playback starts from it again. The
+/// picker's own row for that preference stays live (`set_quality` compares against the desired
+/// rung too), so it brings this playback back.
+pub fn play_lower_quality(ps: &mut PlaybackSession) {
+    let Some(q) = lower_quality(ps) else { return };
+    crate::player::log(&format!("quality: {q:?} for this playback, taken from the network-wait offer"));
+    let _edit = begin_user_quality_boundary(q);
+    crate::player::report::note_quality_selected_for(playback_trace_generation(), q);
+    if original_recovery_pending() {
+        let mut control = PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(pending) = control.pending_original.as_mut() {
+            pending.deferred_quality = Some(q);
+        }
+        return;
+    }
+    apply_quality_choice(ps, q);
+}
+
+#[cfg(test)]
+mod lower_quality_tests {
+    use super::*;
+
+    #[test]
+    fn the_offer_is_the_highest_rung_at_or_under_half_the_current_rate() {
+        assert_eq!(lower_quality_rung(40_000), Some(Quality::P1080High));
+        assert_eq!(lower_quality_rung(39_999), Some(Quality::P1080));
+        assert_eq!(lower_quality_rung(8_000), Some(Quality::P720));
+        assert_eq!(lower_quality_rung(4_000), Some(Quality::P720Low));
+        assert_eq!(lower_quality_rung(1_440), Some(Quality::P480));
+        assert_eq!(lower_quality_rung(1_439), None, "nothing is half of a rate this low");
+        assert_eq!(lower_quality_rung(0), None, "an unknown rate offers nothing");
+    }
 }
 
 /// **One bounded measurement of the actual file, as an observation and nothing more.** It reports

@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Marcador de introdução Plex em falta. Verifique Analisar e a deteção de introduções.",
   "widgets.skip.missing_credits": "Marcador de créditos Plex em falta. Verifique Analisar e a deteção de créditos.",
   "widgets.skip.missing_both": "Marcadores de introdução e créditos Plex em falta. Verifique Analisar e a deteção.",
+  "widgets.stall.waiting_network": "A aguardar a rede",
+  "widgets.stall.lower_quality": "Prima OK para reproduzir em qualidade inferior",
   "widgets.menu.scaling": "Escala do vídeo",
   "widgets.scaling.fit": "Ajustar",
   "widgets.scaling.fill": "Preencher / recortar",

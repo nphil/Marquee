@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Repère de début Plex absent. Vérifier Analyser et la détection des génériques de début.",
   "widgets.skip.missing_credits": "Repère de fin Plex absent. Vérifier Analyser et la détection des génériques de fin.",
   "widgets.skip.missing_both": "Repères de début et de fin Plex absents. Vérifier Analyser et la détection.",
+  "widgets.stall.waiting_network": "En attente du réseau",
+  "widgets.stall.lower_quality": "Appuyez sur OK pour lire en qualité inférieure",
   "widgets.menu.scaling": "Cadrage vidéo",
   "widgets.scaling.fit": "Ajuster",
   "widgets.scaling.fill": "Remplir / recadrer",

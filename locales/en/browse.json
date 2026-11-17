@@ -1324,6 +1324,15 @@
     "translate": false,
     "description": "Diagnostics panel: frames frozen"
   },
+  "browse.diagnostics.stall_restarts": {
+    "value": "{frames} · restarts {count}",
+    "args": {
+      "frames": "str",
+      "count": "str"
+    },
+    "translate": false,
+    "description": "Diagnostics panel: the frames row after the freeze safety net restarted this playback"
+  },
   "browse.diagnostics.manual_quality": {
     "value": "Manual · {quality}",
     "args": {

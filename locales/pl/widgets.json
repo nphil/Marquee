@@ -5,6 +5,8 @@
   "widgets.skip.missing_intro": "Brak znacznika czołówki Plex. Sprawdź analizę i wykrywanie czołówek.",
   "widgets.skip.missing_credits": "Brak znacznika napisów Plex. Sprawdź analizę i wykrywanie napisów.",
   "widgets.skip.missing_both": "Brak znaczników czołówki i napisów Plex. Sprawdź analizę i wykrywanie.",
+  "widgets.stall.waiting_network": "Oczekiwanie na sieć",
+  "widgets.stall.lower_quality": "Naciśnij OK, aby odtwarzać w niższej jakości",
   "widgets.menu.scaling": "Skalowanie wideo",
   "widgets.scaling.fit": "Dopasuj",
   "widgets.scaling.fill": "Wypełnij / przytnij",

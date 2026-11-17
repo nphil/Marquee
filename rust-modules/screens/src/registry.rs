@@ -315,6 +315,9 @@ pub enum PlayerReq {
     /// The failure read-out's fix for Force Direct Play: set the Direct Play preference to Auto —
     /// the same persisted value Settings writes — and resolve the failed item again under it.
     PlayAutomatically,
+    /// OK on a long network wait's offer: this playback continues at a lower rung
+    /// (`route::play_lower_quality`), and the saved quality stays as it is.
+    PlayLowerQuality,
     /// A transport key FELL THROUGH the panel (§ `overlay_transport_key_tests`): a viewer holding
     /// the track menu, the Info card or the Chapters strip open still expects PAUSE/PLAY to work,
     /// and the panel stays up. `true` = the key was PLAY, `false` = PAUSE; a PLAYPAUSE toggle is
