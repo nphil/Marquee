@@ -4188,6 +4188,11 @@ pub(crate) fn consent_up(d: &Dispatcher<AppHost>) -> bool {
     surface_up(d, is_first_run_consent)
 }
 
+/// Is any surface up at all (any phase but hidden)?
+pub(crate) fn any_surface_up(d: &Dispatcher<AppHost>) -> bool {
+    surface_up(d, |_| true)
+}
+
 /// Is the tree's top PAGE engine-focused rather than ladder-focused — i.e. does the DISPATCHER
 /// draw it? The predicate is the screen's own `FocusSource`, not a list of routes, so a page
 /// migrated in a later phase joins this answer by being written, not by being enumerated here.

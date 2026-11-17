@@ -1,0 +1,77 @@
+{
+  "tour.row": {
+    "value": "Show the tour again",
+    "description": "Settings root, About section. Row label that reopens the short first-run tour of the remote. Must fit one row."
+  },
+  "tour.row_detail": {
+    "value": "A quick guide to the remote.",
+    "description": "Settings root, About section. Detail line under the 'Show the tour again' row. One short sentence."
+  },
+  "tour.next": {
+    "value": "Next",
+    "description": "Tour. The one button that moves on to the next page of the tour. One word."
+  },
+  "tour.step": {
+    "value": "{n} of {total}",
+    "description": "Tour. Progress next to the Next button, e.g. '2 of 6'. {n} is the current page, {total} the number of pages.",
+    "args": {
+      "n": "i64",
+      "total": "i64"
+    }
+  },
+  "tour.skip_hint": {
+    "value": "Press {key} to skip the tour",
+    "description": "Tour, first run only. Complete sentence under the page text. {key} is the remote's BACK button drawn as a keycap; keep exactly one occurrence. Must fit one line of the narrative column.",
+    "args": {
+      "key": "str"
+    }
+  },
+  "tour.move.title": {
+    "value": "Move around",
+    "description": "Tour page 1 title. Teaches the arrow keys and OK."
+  },
+  "tour.move.copy": {
+    "value": "Use the arrow keys to move between posters and buttons. Press OK to open the one you picked.",
+    "description": "Tour page 1 text, shown beside a picture of the remote's arrow keys and OK. OK is the remote's OK button."
+  },
+  "tour.back.title": {
+    "value": "Go back",
+    "description": "Tour page 2 title. Teaches the Back button."
+  },
+  "tour.back.copy": {
+    "value": "Press Back to go back one step. It closes menus, and it leaves the player too.",
+    "description": "Tour page 2 text, shown beside a picture of the remote's BACK button."
+  },
+  "tour.menu.title": {
+    "value": "Hold OK for more",
+    "description": "Tour page 3 title. Teaches pressing and holding OK on a poster."
+  },
+  "tour.menu.copy": {
+    "value": "Hold OK on a poster to open its menu. You can play it from the start, mark it as watched, add it to your Watchlist or delete it.",
+    "description": "Tour page 3 text, shown beside a row of posters and an OK key filling up. The actions named are the item menu's own: Play from Start, Mark as Watched, Add to Watchlist, Delete."
+  },
+  "tour.controls.title": {
+    "value": "While you watch",
+    "description": "Tour page 4 title. Teaches the player's controls."
+  },
+  "tour.controls.copy": {
+    "value": "Press Up or Down to show the controls. Move down to the tabs to see Info and Chapters.",
+    "description": "Tour page 4 text, shown beside the Up and Down keys and the words Info and Chapters (the player's tab names)."
+  },
+  "tour.seek.title": {
+    "value": "Skip around",
+    "description": "Tour page 5 title. Teaches jumping and scrubbing in the player."
+  },
+  "tour.seek.copy": {
+    "value": "Press Left or Right to jump a few seconds. Hold the key to scrub faster.",
+    "description": "Tour page 5 text, shown beside the Left and Right keys with the Right key filling up to show a hold. Scrubbing means moving quickly through the video."
+  },
+  "tour.profile.title": {
+    "value": "Settings and profiles",
+    "description": "Tour page 6 title. Teaches where Settings and profile switching live."
+  },
+  "tour.profile.copy": {
+    "value": "Press Up to reach your profile at the top left, then OK. Change profile switches who is watching, and Settings has everything else.",
+    "description": "Tour page 6 text, shown beside the Up and OK keys and the menu entries 'Change profile' and 'Settings'."
+  }
+}

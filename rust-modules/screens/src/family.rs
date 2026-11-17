@@ -59,6 +59,9 @@ pub enum SettingsPage {
     Picker(PickerKind),
     /// The Player HUD page: the installed packages, the drop folder and the chosen HUD (`hud_settings`).
     PlayerHud,
+    /// The first-run tour (`true`: shown once after sign-in, nothing to go back to) or the same tour
+    /// re-opened from the Settings root (`false`: BACK returns there).
+    Tour(bool),
 }
 
 /// Which preference a [`SettingsPage::Picker`] edits. The parent page (`Playback` for the local ones,
@@ -143,6 +146,7 @@ impl ScreenArg for SettingsPage {
             SettingsPage::ConsentStage(_) => 107,
             SettingsPage::Picker(_) => 112,
             SettingsPage::PlayerHud => 118,
+            SettingsPage::Tour(_) => 119,
         })
     }
     fn title(&self) -> Option<&str> {
@@ -186,6 +190,7 @@ impl LogicalState for SettingsPage {
             | SettingsPage::PlayerHud
             | SettingsPage::About => 0,
             SettingsPage::Document(i) | SettingsPage::Preview(i) | SettingsPage::ConsentStage(i) => *i,
+            SettingsPage::Tour(first) => u8::from(*first),
             SettingsPage::Picker(kind) => *kind as u8,
         });
     }
@@ -210,6 +215,7 @@ impl LogicalState for SettingsPage {
             SettingsPage::ConsentStage(_) => "stage",
             SettingsPage::Picker(_) => "picker",
             SettingsPage::PlayerHud => "player-hud",
+            SettingsPage::Tour(_) => "tour",
         });
         if let SettingsPage::Document(i) | SettingsPage::Preview(i) | SettingsPage::ConsentStage(i) = self {
             out.push_str(&format!("[{i}]"));
@@ -374,6 +380,7 @@ mod tests {
             SettingsPage::ConsentStage(0),
             SettingsPage::Picker(PickerKind::Quality),
             SettingsPage::PlayerHud,
+            SettingsPage::Tour(true),
         ];
         let mut ids: Vec<u32> = pages.iter().map(|p| plx_ui::screen::ScreenArg::id(p).0).collect();
         ids.sort_unstable();

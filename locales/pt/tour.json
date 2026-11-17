@@ -1,0 +1,19 @@
+{
+  "tour.row": "Ver a visita guiada outra vez",
+  "tour.row_detail": "Um guia rápido do telecomando.",
+  "tour.next": "Seguinte",
+  "tour.step": "{n} de {total}",
+  "tour.skip_hint": "Prima {key} para saltar a visita",
+  "tour.move.title": "Mover-se",
+  "tour.move.copy": "Use as setas para se mover entre cartazes e botões. Prima OK para abrir o que escolheu.",
+  "tour.back.title": "Voltar",
+  "tour.back.copy": "Prima Voltar para recuar um passo. Fecha os menus e também sai do leitor.",
+  "tour.menu.title": "Mantenha OK premido",
+  "tour.menu.copy": "Mantenha OK premido num cartaz para abrir o respetivo menu. Pode reproduzi-lo do início, marcá-lo como visto, adicioná-lo à lista para ver ou eliminá-lo.",
+  "tour.controls.title": "Enquanto vê",
+  "tour.controls.copy": "Prima Cima ou Baixo para mostrar os controlos. Desça até aos separadores para ver Info e Capítulos.",
+  "tour.seek.title": "Saltar no vídeo",
+  "tour.seek.copy": "Prima Esquerda ou Direita para saltar alguns segundos. Mantenha a tecla premida para avançar mais depressa.",
+  "tour.profile.title": "Definições e perfis",
+  "tour.profile.copy": "Prima Cima para chegar ao seu perfil, no canto superior esquerdo, e depois OK. Mudar de perfil altera quem está a ver, e as Definições têm tudo o resto."
+}

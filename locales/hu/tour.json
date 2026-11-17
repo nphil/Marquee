@@ -1,0 +1,19 @@
+{
+  "tour.row": "Az útmutató újbóli megjelenítése",
+  "tour.row_detail": "Rövid útmutató a távirányítóhoz.",
+  "tour.next": "Tovább",
+  "tour.step": "{n} / {total}",
+  "tour.skip_hint": "Az útmutató kihagyásához nyomja meg: {key}",
+  "tour.move.title": "Mozgás",
+  "tour.move.copy": "A nyílgombokkal lépkedhet a plakátok és gombok között. Az OK gombbal megnyithatja a kiválasztottat.",
+  "tour.back.title": "Visszalépés",
+  "tour.back.copy": "A Vissza gombbal egy lépést léphet vissza. Bezárja a menüket, és kilép a lejátszóból is.",
+  "tour.menu.title": "Tartsa nyomva az OK-t",
+  "tour.menu.copy": "Tartsa nyomva az OK gombot egy plakáton a menüjének megnyitásához. Lejátszhatja az elejéről, megjelölheti megnézettként, felveheti a Figyelőlistára vagy törölheti.",
+  "tour.controls.title": "Nézés közben",
+  "tour.controls.copy": "A Fel vagy Le gombbal megjelenítheti a vezérlőket. Lépjen le a lapokhoz az Infó és a Fejezetek megtekintéséhez.",
+  "tour.seek.title": "Ugrás a videóban",
+  "tour.seek.copy": "A Balra vagy Jobbra gombbal néhány másodpercet ugorhat. Tartsa nyomva a gombot a gyorsabb tekeréshez.",
+  "tour.profile.title": "Beállítások és profilok",
+  "tour.profile.copy": "A Fel gombbal érje el a profilját a bal felső sarokban, majd nyomjon OK-t. A Profilváltás a nézőt cseréli, a Beállításokban pedig minden más megtalálható."
+}

@@ -1,0 +1,19 @@
+{
+  "tour.row": "Rivedi la guida",
+  "tour.row_detail": "Una guida rapida al telecomando.",
+  "tour.next": "Avanti",
+  "tour.step": "{n} di {total}",
+  "tour.skip_hint": "Premi {key} per saltare la guida",
+  "tour.move.title": "Spostarsi",
+  "tour.move.copy": "Usa le frecce per spostarti tra locandine e pulsanti. Premi OK per aprire ciò che hai scelto.",
+  "tour.back.title": "Tornare indietro",
+  "tour.back.copy": "Premi Indietro per tornare di un passo. Chiude i menu ed esce anche dal player.",
+  "tour.menu.title": "Tieni premuto OK per altro",
+  "tour.menu.copy": "Tieni premuto OK su una locandina per aprirne il menu. Puoi riprodurla dall'inizio, segnarla come già vista, aggiungerla alla Watchlist o eliminarla.",
+  "tour.controls.title": "Durante la visione",
+  "tour.controls.copy": "Premi Su o Giù per mostrare i controlli. Scendi fino alle schede per vedere Info e Capitoli.",
+  "tour.seek.title": "Saltare nel video",
+  "tour.seek.copy": "Premi Sinistra o Destra per saltare di qualche secondo. Tieni premuto il tasto per scorrere più veloce.",
+  "tour.profile.title": "Impostazioni e profili",
+  "tour.profile.copy": "Premi Su per raggiungere il tuo profilo in alto a sinistra, poi OK. Cambia profilo sceglie chi sta guardando, e Impostazioni contiene tutto il resto."
+}

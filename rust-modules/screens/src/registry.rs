@@ -1488,6 +1488,8 @@ pub enum LoopReq {
     OnboardDone,
     /// The first-run Favourites screen's BACK: the profile picker. Same retirement.
     OnboardBack,
+    /// The first-run tour was finished or skipped: remember it for the seated profile so it is not offered again.
+    TourSeen,
     /// **Phase 10, the profile menu's five rows.** `screens::account_menu` is a surface on the
     /// shared `ModalStack` and owns its own rows, cursor and dismissal — but not one of the five
     /// things a row DOES. Three call `plx_session::auth` and then flip `app.route` (a screen may not

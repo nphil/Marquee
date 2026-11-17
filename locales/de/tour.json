@@ -1,0 +1,19 @@
+{
+  "tour.row": "Rundgang erneut zeigen",
+  "tour.row_detail": "Eine kurze Anleitung zur Fernbedienung.",
+  "tour.next": "Weiter",
+  "tour.step": "{n} von {total}",
+  "tour.skip_hint": "Drücke {key}, um den Rundgang zu überspringen",
+  "tour.move.title": "So bewegst du dich",
+  "tour.move.copy": "Mit den Pfeiltasten wechselst du zwischen Postern und Schaltflächen. Mit OK öffnest du, was du gewählt hast.",
+  "tour.back.title": "Zurück",
+  "tour.back.copy": "Mit Zurück gehst du einen Schritt zurück. Das schließt Menüs und verlässt auch den Player.",
+  "tour.menu.title": "OK gedrückt halten",
+  "tour.menu.copy": "Halte OK auf einem Poster gedrückt, um sein Menü zu öffnen. Du kannst es von Anfang an abspielen, als gesehen markieren, zur Merkliste hinzufügen oder löschen.",
+  "tour.controls.title": "Beim Schauen",
+  "tour.controls.copy": "Drücke Oben oder Unten, um die Bedienelemente einzublenden. Gehe nach unten zu den Reitern für Info und Kapitel.",
+  "tour.seek.title": "Vor und zurück springen",
+  "tour.seek.copy": "Mit Links oder Rechts springst du ein paar Sekunden. Halte die Taste gedrückt, um schneller zu spulen.",
+  "tour.profile.title": "Einstellungen und Profile",
+  "tour.profile.copy": "Drücke Oben, um dein Profil links oben zu erreichen, dann OK. „Profil wechseln“ ändert, wer schaut, und die Einstellungen enthalten alles Weitere."
+}

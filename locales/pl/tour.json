@@ -1,0 +1,19 @@
+{
+  "tour.row": "Pokaż przewodnik ponownie",
+  "tour.row_detail": "Krótki przewodnik po pilocie.",
+  "tour.next": "Dalej",
+  "tour.step": "{n} z {total}",
+  "tour.skip_hint": "Naciśnij {key}, aby pominąć przewodnik",
+  "tour.move.title": "Poruszanie się",
+  "tour.move.copy": "Strzałkami przechodzisz między plakatami i przyciskami. Naciśnij OK, aby otworzyć wybraną pozycję.",
+  "tour.back.title": "Wracanie",
+  "tour.back.copy": "Naciśnij Wstecz, aby cofnąć się o jeden krok. Zamyka menu i wychodzi też z odtwarzacza.",
+  "tour.menu.title": "Przytrzymaj OK po więcej",
+  "tour.menu.copy": "Przytrzymaj OK na plakacie, aby otworzyć jego menu. Możesz odtworzyć go od początku, oznaczyć jako obejrzany, dodać do obejrzenia lub usunąć.",
+  "tour.controls.title": "Podczas oglądania",
+  "tour.controls.copy": "Naciśnij w górę lub w dół, aby pokazać sterowanie. Zejdź do kart, aby zobaczyć Informacje i Rozdziały.",
+  "tour.seek.title": "Przeskakiwanie",
+  "tour.seek.copy": "Naciśnij w lewo lub w prawo, aby przeskoczyć o kilka sekund. Przytrzymaj klawisz, aby przewijać szybciej.",
+  "tour.profile.title": "Ustawienia i profile",
+  "tour.profile.copy": "Naciśnij w górę, aby dotrzeć do swojego profilu w lewym górnym rogu, a potem OK. „Zmień profil” zmienia osobę oglądającą, a w Ustawieniach jest cała reszta."
+}

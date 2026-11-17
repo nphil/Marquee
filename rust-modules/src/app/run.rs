@@ -2314,6 +2314,7 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
 /// person / detail open requests, the login and profiles landings (`install_pms`), the glass
 /// load, and the nav oscillator.
 pub(crate) unsafe fn land_results(app: &mut App, fr: &mut Frame) {
+        super::tour::poll(&mut app.pages, app.boot_initial.is_some());
         if app.ok_armed {
             // PRESS-AND-HOLD → the item context menu, on the latch `press::tick` has always set
             // and nothing ever read (`LONG_MS`, `is_long`). It fires while the key is still DOWN,
@@ -2564,6 +2565,13 @@ fn loop_requests(app: &mut App) {
             // pin): Home, with the trail reset so BACK from it is the root press.
             plx_screens::registry::LoopReq::OnboardDone => {
                 enter_home_from_onboard(&mut app.pages);
+            }
+            // The tour was finished or skipped: kept for this profile only; a controlled run brings
+            // its own session and leaves the install's alone.
+            plx_screens::registry::LoopReq::TourSeen => {
+                if app.boot_initial.is_none() {
+                    super::tour::mark_seen();
+                }
             }
             // Phase 10, the profile menu's five rows. The surface has already asked the container
             // to dismiss it in the same drain — what is left is the part a screen may not do.

@@ -1,0 +1,19 @@
+{
+  "tour.row": "Rondleiding opnieuw tonen",
+  "tour.row_detail": "Een korte uitleg van de afstandsbediening.",
+  "tour.next": "Volgende",
+  "tour.step": "{n} van {total}",
+  "tour.skip_hint": "Druk op {key} om de rondleiding over te slaan",
+  "tour.move.title": "Navigeren",
+  "tour.move.copy": "Gebruik de pijltjestoetsen om tussen posters en knoppen te gaan. Druk op OK om je keuze te openen.",
+  "tour.back.title": "Terug",
+  "tour.back.copy": "Druk op Terug om één stap terug te gaan. Het sluit menu’s en verlaat ook de speler.",
+  "tour.menu.title": "Houd OK vast voor meer",
+  "tour.menu.copy": "Houd OK vast op een poster om het menu te openen. Je kunt hem vanaf het begin afspelen, als bekeken markeren, aan je Kijklijst toevoegen of verwijderen.",
+  "tour.controls.title": "Tijdens het kijken",
+  "tour.controls.copy": "Druk op Omhoog of Omlaag om de bediening te tonen. Ga omlaag naar de tabbladen voor Info en Hoofdstukken.",
+  "tour.seek.title": "Vooruit en terug springen",
+  "tour.seek.copy": "Druk op Links of Rechts om een paar seconden te springen. Houd de toets vast om sneller te spoelen.",
+  "tour.profile.title": "Instellingen en profielen",
+  "tour.profile.copy": "Druk op Omhoog om je profiel linksboven te bereiken en dan op OK. Profiel wisselen verandert wie er kijkt, en Instellingen heeft de rest."
+}

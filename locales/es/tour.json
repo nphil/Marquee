@@ -1,0 +1,19 @@
+{
+  "tour.row": "Ver la guía otra vez",
+  "tour.row_detail": "Una guía rápida del mando.",
+  "tour.next": "Siguiente",
+  "tour.step": "{n} de {total}",
+  "tour.skip_hint": "Pulsa {key} para saltar la guía",
+  "tour.move.title": "Muévete",
+  "tour.move.copy": "Usa las flechas para moverte entre carteles y botones. Pulsa OK para abrir lo que elegiste.",
+  "tour.back.title": "Volver",
+  "tour.back.copy": "Pulsa Atrás para volver un paso. Cierra los menús y también sale del reproductor.",
+  "tour.menu.title": "Mantén OK para más",
+  "tour.menu.copy": "Mantén OK sobre un cartel para abrir su menú. Puedes reproducirlo desde el principio, marcarlo como visto, añadirlo a la lista de seguimiento o eliminarlo.",
+  "tour.controls.title": "Mientras ves algo",
+  "tour.controls.copy": "Pulsa Arriba o Abajo para mostrar los controles. Baja hasta las pestañas para ver Información y Capítulos.",
+  "tour.seek.title": "Salta en el vídeo",
+  "tour.seek.copy": "Pulsa Izquierda o Derecha para saltar unos segundos. Mantén la tecla para avanzar más rápido.",
+  "tour.profile.title": "Ajustes y perfiles",
+  "tour.profile.copy": "Pulsa Arriba para llegar a tu perfil, arriba a la izquierda, y luego OK. Cambiar perfil cambia quién está viendo, y Ajustes tiene todo lo demás."
+}

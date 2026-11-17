@@ -484,6 +484,7 @@ fn mount_page(
         SettingsPage::Favourites => Box::new(super::onboard::OnboardScreen::settings(entry, cx.views)),
         SettingsPage::Picker(kind) => Box::new(super::preferences::PickerPage::new(entry, kind)),
         SettingsPage::PlayerHud => Box::new(super::hud_settings::HudPage::new(entry)),
+        SettingsPage::Tour(first_run) => Box::new(super::tour::TourPage::new(entry, first_run)),
     }
 }
 
@@ -994,6 +995,7 @@ enum RootId {
     TraceDelete,
     Legal,
     About,
+    Tour,
 }
 
 /// The first key of the per-server switches: past every fixed [`RootId`] key.
@@ -1019,6 +1021,7 @@ impl FormId for RootId {
             RootId::PlaybackTrace => 15,
             RootId::TraceExport => 16,
             RootId::TraceDelete => 17,
+            RootId::Tour => 18,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1345,6 +1348,14 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
         Action::Door,
         Row::new(plx_platform::i18n::msg::settings_about_title())
             .detail(plx_platform::i18n::msg::settings_about_detail())
+            .chevron(true),
+    )
+    .item(
+        RootId::Tour,
+        RowKind::Nav(SettingsPage::Tour(false)),
+        Action::Door,
+        Row::new(plx_platform::i18n::msg::tour_row())
+            .detail(plx_platform::i18n::msg::tour_row_detail())
             .chevron(true),
     );
     Form::new()

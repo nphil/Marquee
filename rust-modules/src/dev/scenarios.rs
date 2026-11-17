@@ -1259,6 +1259,7 @@ fn settings_boot_arm(app: &mut App, fr: &mut Frame) {
                 "picker-skip-interval" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipInterval),
                 // root → Playback → the Player HUD page (`SettingsPage::boot_trail`; BACK dismisses the surface, see there)
                 "player-hud" => plx_screens::family::SettingsPage::PlayerHud,
+                "tour" => plx_screens::family::SettingsPage::Tour(true),
                 "audio" => plx_screens::family::SettingsPage::AudioSubtitles,
                 _other => {
                     #[cfg(feature = "devtriggers")]

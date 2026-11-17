@@ -1,0 +1,19 @@
+{
+  "tour.row": "Revoir la visite guidée",
+  "tour.row_detail": "Un guide rapide de la télécommande.",
+  "tour.next": "Suivant",
+  "tour.step": "{n} sur {total}",
+  "tour.skip_hint": "Appuyez sur {key} pour passer la visite",
+  "tour.move.title": "Se déplacer",
+  "tour.move.copy": "Utilisez les flèches pour passer d’une affiche ou d’un bouton à l’autre. Appuyez sur OK pour ouvrir votre choix.",
+  "tour.back.title": "Revenir en arrière",
+  "tour.back.copy": "Appuyez sur Retour pour revenir d’une étape. Cela ferme les menus et quitte aussi le lecteur.",
+  "tour.menu.title": "Maintenez OK pour plus",
+  "tour.menu.copy": "Maintenez OK sur une affiche pour ouvrir son menu. Vous pouvez la lire depuis le début, la marquer comme vue, l’ajouter à la liste de suivi ou la supprimer.",
+  "tour.controls.title": "Pendant la lecture",
+  "tour.controls.copy": "Appuyez sur Haut ou Bas pour afficher les commandes. Descendez jusqu’aux onglets pour voir Infos et Chapitres.",
+  "tour.seek.title": "Avancer et reculer",
+  "tour.seek.copy": "Appuyez sur Gauche ou Droite pour sauter quelques secondes. Maintenez la touche pour défiler plus vite.",
+  "tour.profile.title": "Paramètres et profils",
+  "tour.profile.copy": "Appuyez sur Haut pour atteindre votre profil en haut à gauche, puis sur OK. « Changer de profil » change la personne qui regarde, et Paramètres contient tout le reste."
+}
