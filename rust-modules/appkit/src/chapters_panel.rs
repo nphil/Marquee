@@ -35,7 +35,7 @@ const AT_TOLERANCE_NS: i64 = 250_000_000;
 /// goes on to the previous chapter's, as a previous-track key does.
 const BACK_RESTART_NS: i64 = 3_000_000_000;
 /// The furthest a step is pulled onto a chapter start: 45 % of the step, never more than this.
-const SNAP_CAP_NS: i64 = 8_000_000_000;
+const SNAP_REACH_NS: i64 = 8_000_000_000;
 
 fn start_ns(c: &metadata::Chapter) -> i64 {
     c.start_ms.saturating_mul(1_000_000)
@@ -67,11 +67,11 @@ pub fn chapter_jump(chapters: &[metadata::Chapter], base_ns: i64, forward: bool)
 }
 
 /// A step from `base_ns` that lands at `target_ns` near a chapter start ahead of it lands ON that start:
-/// the nearest start past `base_ns` in the step's direction within 45 % of the step ([`SNAP_CAP_NS`] at
+/// the nearest start past `base_ns` in the step's direction within 45 % of the step ([`SNAP_REACH_NS`] at
 /// most). The first chapter's start is the item's beginning and never pulls.
 pub fn chapter_snap(chapters: &[metadata::Chapter], base_ns: i64, target_ns: i64) -> i64 {
     let step = target_ns.saturating_sub(base_ns);
-    let reach = (step.saturating_abs() / 100 * 45).min(SNAP_CAP_NS);
+    let reach = (step.saturating_abs() / 100 * 45).min(SNAP_REACH_NS);
     chapters
         .iter()
         .skip(1)
