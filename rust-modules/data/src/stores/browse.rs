@@ -79,6 +79,10 @@ pub enum BrowseCmd {
     /// though it were a decision (`plex::pins::answers`). An EMPTY list is still a commit — the
     /// question was put and every default was left alone.
     ApplyPins(Vec<(usize, bool)>),
+    /// Settings > Home's commit: every row it listed, in the order the viewer left them, each with
+    /// whether the profile hides it. Recorded in the profile's Home record beside its pins
+    /// (`plex::home_rows::record_edit`).
+    SetHomeRows(Vec<(crate::pms::HomeRowId, bool)>),
     RetryDiscovery,
     /// The profile/account switch: wipe everything and supersede everything in flight.
     Reset,
@@ -162,14 +166,14 @@ impl BrowseStore {
     }
 
     /// Run one command for a caller that holds no session: the Stores fan-outs, which send only
-    /// `ApplyView`, `HubsInvalidateAll`, `HubsInvalidateServer` and `ListingsChanged`. A pin or
-    /// discovery command is refused here, because the session it must read was never handed:
-    /// those reach [`BrowseStore::run_with_session`].
+    /// `ApplyView`, `HubsInvalidateAll`, `HubsInvalidateServer` and `ListingsChanged`. A pin,
+    /// layout or discovery command is refused here, because the session it must read was never
+    /// handed: those reach [`BrowseStore::run_with_session`].
     pub fn run(&mut self, cmd: BrowseCmd, keys: &ClientKeys) -> bool {
-        if matches!(cmd, BrowseCmd::ApplyPins(_) | BrowseCmd::Discovery(_)) {
-            debug_assert!(false, "a pin or discovery command reached a step handed no session");
+        if matches!(cmd, BrowseCmd::ApplyPins(_) | BrowseCmd::SetHomeRows(_) | BrowseCmd::Discovery(_)) {
+            debug_assert!(false, "a pin, layout or discovery command reached a step handed no session");
             plx_base::eventlog::log(
-                "browse: a pin or discovery command reached a step handed no session — dropped");
+                "browse: a pin, layout or discovery command reached a step handed no session — dropped");
             return false;
         }
         self.run_with_session(cmd, keys, &plx_plex::plex::session::Session::default())
@@ -754,7 +758,7 @@ impl<H: super::StoreEffectHost> Machine<H> for BrowseStore {
             // The registry is read by the host, never in a step (`plx_plex::plex::ClientKeys`, and
             // the session `Bridge::browse_session` reads), and a machine step is handed no keys and
             // no session: this arm cannot decide a section-hubs or directory read, and `run` refuses
-            // a pin or discovery command it would have to read the session for. It is
+            // a pin, layout or discovery command it would have to read the session for. It is
             // not how the application drives Browse, which calls `Stores::browse_run` and
             // `BrowseStore::pump_with_gate` and `discover_pump_with_gate` with the keys it filled
             // and starts the jobs they leave (`Bridge::browse_run`, `Bridge::browse_discover_pump`);

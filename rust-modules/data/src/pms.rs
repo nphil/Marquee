@@ -374,6 +374,9 @@ pub struct PmsState {
     /// starting a worker is IO and a step does none. A `Reset` clears it: the sources the jobs were
     /// asked for are gone with it.
     pub(crate) jobs: Vec<crate::stores::StoreJob>,
+    /// What Settings > Home lists ([`offered_rows`]), with the catalog generation and scope key it
+    /// was built for.
+    offered: (Option<(u32, u32)>, Arc<[HomeRowOffer]>),
 }
 
 /// Everything a [`publish_staged`] verdict depends on.
@@ -389,6 +392,36 @@ struct PublishKey {
 
 /// The id of the merged Continue Watching row, which a page ask names instead of one server's hub.
 const DECK_ID: &str = "home.continue";
+
+/// A Home row's name in this run, as the profile's layout keeps it: its server's slot (`None` for
+/// the merged Continue Watching row, which is every server's), its hub family and its library
+/// (`plx_plex::plex::home_rows::family_and_section`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HomeRowId {
+    pub sid: Option<ServerId>,
+    pub hub: String,
+    pub section: i64,
+}
+
+/// One entry of the profile's Home layout, resolved to this run's server slots: the merge puts the
+/// rows it names first, in this order, and leaves out the hidden ones.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HomeRowRule {
+    pub id: HomeRowId,
+    pub hidden: bool,
+}
+
+/// A row Settings > Home lists, in Home's order, hidden ones included. Rows sharing a name (the
+/// actor rails of one library) are one entry, titled by the first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HomeRowOffer {
+    pub id: HomeRowId,
+    pub title: String,
+    /// The "Shared by" credit of the row's server; empty for the account's own and for Continue
+    /// Watching.
+    pub source: String,
+    pub hidden: bool,
+}
 
 /// One move of the Continue Watching deck that is waiting on server reads: it runs when every
 /// server it asked has landed or is retrying, so one failing server never holds the others.
@@ -416,6 +449,7 @@ impl Default for PmsState {
             staged_gen: 0,
             publish_memo: None,
             jobs: Vec::new(),
+            offered: (None, Arc::from(Vec::new())),
         }
     }
 }
@@ -1626,17 +1660,52 @@ fn carry_descriptors(old: &SourceBuild, new: &mut SourceBuild) {
     }
 }
 
-/// The shelves that publish a row, in catalog order after the deck: `(source, shelf)` indices.
-/// The single definition of that order, shared by the merge's output and the ring.
-fn published_order(srcs: &[Src], pins: &[(ServerId, i64, bool)]) -> Vec<(usize, usize)> {
-    let mut order = Vec::with_capacity(srcs.iter().filter_map(|source| source.last.as_ref()).map(|build| build.shelves.len()).sum());
+/// A row the merge can publish: the merged Continue Watching deck, or shelf `j` of source `i`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    Deck,
+    Shelf(usize, usize),
+}
+
+/// Every row with something to show, in the profile's order ([`HomeRowRule`]), with whether the
+/// profile hid it. `deck` is whether Continue Watching has cards; it leads unless the layout moved
+/// it, and the shelves follow source by source in roster order. A row the layout does not name
+/// (new to Home, or the profile never arranged it) comes after every named one, shown.
+fn arranged(srcs: &[Src], scope: &BrowseScope, deck: bool) -> Vec<(Slot, bool)> {
+    let capacity = usize::from(deck) + srcs.iter().filter_map(|source| source.last.as_ref()).map(|build| build.shelves.len()).sum::<usize>();
+    let mut slots = Vec::with_capacity(capacity);
+    let mut ranks = Vec::with_capacity(capacity);
+    if deck {
+        slots.push(Slot::Deck);
+        ranks.push(scope.rank(None, DECK_ID, ""));
+    }
     for (i, source) in srcs.iter().enumerate() {
         let Some(build) = &source.last else { continue };
         for (j, shelf) in build.shelves.iter().enumerate() {
-            if shelf.released() || shelf.items.iter().any(|m| item_pinned(pins, m)) { order.push((i, j)); }
+            if shelf.released() || shelf.items.iter().any(|m| item_pinned(&scope.pins, m)) {
+                slots.push(Slot::Shelf(i, j));
+                ranks.push(scope.rank(Some(source.sid), &shelf.hub_id, &shelf.key));
+            }
         }
     }
-    order
+    plx_plex::plex::home_rows::arrange(&ranks).into_iter().map(|(k, hidden)| (slots[k], hidden)).collect()
+}
+
+/// The shelves that publish a row, in catalog order, the deck aside: `(source, shelf)` indices.
+/// The single definition of that order, shared by the merge's output and the ring.
+fn published_order(srcs: &[Src], scope: &BrowseScope) -> Vec<(usize, usize)> {
+    arranged(srcs, scope, false).into_iter()
+        .filter_map(|(slot, hidden)| match slot {
+            Slot::Shelf(i, j) if !hidden => Some((i, j)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The catalog index of every row of `hubs` but the deck, in order: the rows [`published_order`]'s
+/// shelves publish as, wherever the profile put Continue Watching.
+fn shelf_rows(hubs: &[HubRow]) -> impl Iterator<Item = usize> + '_ {
+    hubs.iter().enumerate().filter(|(_, hub)| hub.hub_id != DECK_ID).map(|(row, _)| row)
 }
 
 /// Whether `shelf` can give its cards up, and what it keeps to ask for them again. A row the pager
@@ -1651,13 +1720,11 @@ fn give_up_cards(shelf: &mut Shelf) -> bool {
 /// Gives the cards of every row outside the held range up to its descriptor. `hubs` is the merge
 /// that was just built from `srcs`; returns the rows that changed as `(row, source)`, `row` being
 /// the index into that merge's `hubs` and `source` the index into `srcs`.
-fn settle_ring(srcs: &mut [Src], pins: &[(ServerId, i64, bool)], hubs: &[HubRow], hold: (usize, usize)) -> Vec<(usize, usize)> {
-    let order = published_order(srcs, pins);
-    let deck = hubs.len().saturating_sub(order.len());
+fn settle_ring(srcs: &mut [Src], scope: &BrowseScope, hubs: &[HubRow], hold: (usize, usize)) -> Vec<(usize, usize)> {
+    let order = published_order(srcs, scope);
     let (lo, hi) = clamp_hold(hold);
     let mut released = Vec::new();
-    for (k, &(i, j)) in order.iter().enumerate() {
-        let row = k + deck;
+    for (&(i, j), row) in order.iter().zip(shelf_rows(hubs)) {
         if (lo..=hi).contains(&row) { continue; }
         let Some(shelf) = srcs[i].last.as_mut().and_then(|build| build.shelves.get_mut(j)) else { continue };
         if shelf.released() { continue; }
@@ -1682,7 +1749,7 @@ fn settle_ring(srcs: &mut [Src], pins: &[(ServerId, i64, bool)], hubs: &[HubRow]
 /// pins that the patch is the merge it replaces).
 fn merge_held(srcs: &mut [Src], scope: &BrowseScope, hold: (usize, usize)) -> (HubBuild, bool) {
     let mut build = merge_with_scope(srcs, scope);
-    let released = settle_ring(srcs, &scope.pins, &build.1, hold);
+    let released = settle_ring(srcs, scope, &build.1, hold);
     if released.is_empty() { return (build, false); }
     // the pool's cards, before the slices they sit in are overwritten
     let pool: Vec<(Arc<PmsMovie>, String, usize)> = build.2.iter()
@@ -1698,15 +1765,14 @@ fn merge_held(srcs: &mut [Src], scope: &BrowseScope, hold: (usize, usize)) -> (H
 }
 
 /// The rows to read again: held, a descriptor, not stalled. Per source, in catalog order.
-/// `published_rows` is the published catalog's row count, which with the shelves' own order says how
-/// many deck rows lead it.
-fn wanted_reloads(srcs: &[Src], pins: &[(ServerId, i64, bool)], published_rows: usize, hold: (usize, usize)) -> Vec<Vec<(String, String)>> {
+/// `published` is the published catalog's rows, which say where the profile's Continue Watching
+/// sits among them.
+fn wanted_reloads(srcs: &[Src], scope: &BrowseScope, published: &[HubRow], hold: (usize, usize)) -> Vec<Vec<(String, String)>> {
     let (lo, hi) = clamp_hold(hold);
-    let order = published_order(srcs, pins);
-    let deck = published_rows.saturating_sub(order.len());
+    let order = published_order(srcs, scope);
     let mut wanted = vec![Vec::new(); srcs.len()];
-    for (k, (i, j)) in order.into_iter().enumerate() {
-        if !(lo..=hi).contains(&(k + deck)) { continue; }
+    for ((i, j), row) in order.into_iter().zip(shelf_rows(published)) {
+        if !(lo..=hi).contains(&row) { continue; }
         let Some(shelf) = srcs[i].last.as_ref().and_then(|build| build.shelves.get(j)) else { continue };
         if shelf.released() && !srcs[i].stalled.iter().any(|(id, key)| shelf.is(id, key)) {
             wanted[i].push((shelf.hub_id.clone(), shelf.key.clone()));
@@ -1722,7 +1788,7 @@ fn wanted_reloads(srcs: &[Src], pins: &[(ServerId, i64, bool)], published_rows: 
 fn pump_reloads(state: &mut PmsState, adapter: &PmsAdapter, scope: &BrowseScope,
     launch: &mut dyn FnMut(HubRequest)) -> crate::stores::EndpointRefreshSet {
     let mut endpoints = crate::stores::EndpointRefreshSet::default();
-    let wanted = wanted_reloads(&state.srcs, &scope.pins, published_home(state).hubs.len(), state.hold);
+    let wanted = wanted_reloads(&state.srcs, scope, &published_home(state).hubs, state.hold);
     let mut srcs = std::mem::take(&mut state.srcs);
     let mut ask = false;
     for (source, want) in srcs.iter_mut().zip(&wanted) {
@@ -1906,13 +1972,14 @@ fn publish_staged(state: &mut PmsState, scope: &BrowseScope, home_top_visible: b
     settle_deck(&mut srcs, true);
     let candidate = merge_with_scope(&srcs, scope);
     let change = shift(published_home(state), &candidate);
-    let deck = candidate.1.len().saturating_sub(published_order(&srcs, &scope.pins).len());
+    // the deck is wherever the profile put it; a `Rows` verdict means both catalogs share one shape
+    let deck = |row: usize| candidate.1.get(row).is_some_and(|hub| hub.hub_id == DECK_ID);
     let (lo, hi) = clamp_hold(state.hold);
     let waits = home_top_visible && match &change {
         Shift::None | Shift::Meta => false,
         Shift::Structural => true,
-        Shift::Rows(rows) => rows.iter().any(|&k| if k < deck {
-            press_live || focused_hub.is_some_and(|f| f < deck)
+        Shift::Rows(rows) => rows.iter().any(|&k| if deck(k) {
+            press_live || focused_hub.is_some_and(deck)
         } else {
             (lo..=hi).contains(&k)
         }),
@@ -2282,13 +2349,16 @@ pub fn allot(budget: usize, want: &[usize]) -> Vec<usize> {
 /// PURE — no statics, no I/O — which is what makes the ordering, the annotation and the budget
 /// gradeable on the host.
 ///
-/// The shape of Home, in order:
+/// The shape of Home, in order, until the profile arranges it (Settings > Home, [`arranged`]):
 /// 1. **Continue Watching**, merged across every source and sorted by `lastViewedAt` descending, so
 ///    a borrowed item holds first position exactly when the owner watched it last. It carries NO
 ///    annotation (see [`HubRow::source`]). This is the official client's own shape: the owner's
 ///    screenshots show a friend's two films sitting BETWEEN their own three, in one row.
 /// 2. **Every other shelf**, source by source in roster order — the owned server's first, then each
 ///    shared server's, contiguously, because adjacency is the grouping device.
+///
+/// A profile's layout moves rows it names to the front in its order and leaves out the ones it hid;
+/// the rest keep this shape after them.
 ///
 /// A source that has never answered contributes nothing at all: no heading, no empty shelf, no
 /// placeholder row. One that answered and has since failed keeps the shelves it last had, which is
@@ -2349,25 +2419,15 @@ fn deck_roster(srcs: &[Src]) -> Vec<crate::stores::deck_group::Source<'_>> {
         .map(|s| crate::stores::deck_group::Source { held: &s.copies, eligible: s.deck_eligible() }).collect()
 }
 
-fn merge_with_scope(srcs: &[Src], scope: &BrowseScope) -> HubBuild {
-    let pins = &scope.pins;
+/// The merged Continue Watching deck: its cards, each with the handle of the server it came from,
+/// the listing offset of its window and whether more follows. Once the deck is placed it is the
+/// merge of every server's lane window (`stores::deck`); before that (a fixture that never settled)
+/// it is the previews, sorted.
+fn merged_deck<'a>(srcs: &'a [Src], pins: &[(ServerId, i64, bool)]) -> (Vec<(&'a str, &'a CwItem)>, usize, bool) {
     let live = live_sources(srcs);
     let roster = deck_roster(srcs);
-
-    let mut new_cat: Vec<Arc<PmsMovie>> = Vec::new();
-    let mut new_hubs: Vec<HubRow> = Vec::new();
-    // Parallel to `new_cat`: the HANDLE of the source each row came from. The hero pool is the only
-    // reader, and it needs the fact per ITEM rather than per shelf — the merged deck's own `source`
-    // is empty by design, so a slot that took its handle from its shelf would attribute every
-    // borrowed film in Continue Watching to nobody, and `own_items_first` would think our own
-    // library already opened the door.
-    let mut row_handle: Vec<&str> = Vec::new();
-
-    // ---- 1. the merged deck ----
-    // Once the deck is placed it is the merge of every server's lane window (`stores::deck`); before
-    // that (a fixture that never settled) it is the previews, sorted.
     let lanes: Vec<&deck::Lane> = live.iter().map(|(_, b)| &b.lane).collect();
-    let (mut cw, deck_offset, deck_more): (Vec<(&str, &CwItem)>, usize, bool) =
+    let (mut cw, offset, more): (Vec<(&str, &CwItem)>, usize, bool) =
         if !lanes.is_empty() && lanes.iter().all(|lane| lane.placed) {
             let (cards, before, after) = deck::merge_deck(&lanes);
             let offset = if before { lanes.iter().map(|lane| lane.lo).sum::<usize>().max(1) } else { 0 };
@@ -2384,74 +2444,99 @@ fn merge_with_scope(srcs: &[Src], scope: &BrowseScope) -> HubBuild {
             (crate::stores::deck_group::present(cw, &roster, pins), 0, false)
         };
     cw.truncate(MAX_SHELF_ITEMS);
-    for (h, c) in &cw {
-        new_cat.push(Arc::clone(&c.m));
-        row_handle.push(h);
-    }
-    if !new_cat.is_empty() {
-        new_hubs.push(HubRow {
-            // the hub id the rest of the module matches on (hero-pool eligibility,
-            // `hub_is_continue`), rather than the dedicated hub's own "continueWatching"
-            title: plx_platform::i18n::msg::browse_home_continue_watching().to_string(),
-            hub_id: "home.continue".to_string(),
-            key: String::new(),
-            source: String::new(),
-            total: 0,
-            start: 0,
-            len: new_cat.len(),
-            offset: deck_offset, more: deck_more, epoch: 0,
-        });
-    }
+    (cw, offset, more)
+}
 
-    // ---- 2. every other shelf, grouped by source ----
-    // Every shelf with something to show publishes a row; none is left off. A shelf that holds
-    // cards publishes them (pin-filtered first, so an unpinned library's whole shelf disappears
-    // rather than becoming an empty heading); a shelf that gave them up to the ring publishes as
-    // many placeholder slots as it last showed, which carry its server so the row keeps its identity.
-    let sids: Vec<ServerId> = srcs.iter().filter(|s| s.last.is_some()).map(|s| s.sid).collect();
+/// The shelf a [`Slot::Shelf`] names.
+fn slot_shelf(srcs: &[Src], i: usize, j: usize) -> Option<&Shelf> {
+    srcs.get(i)?.last.as_ref()?.shelves.get(j)
+}
+
+fn merge_with_scope(srcs: &[Src], scope: &BrowseScope) -> HubBuild {
+    let pins = &scope.pins;
+    let (cw, deck_offset, deck_more) = merged_deck(srcs, pins);
+    let order = arranged(srcs, scope, !cw.is_empty());
+
     // the catalog is built in one pass of known size: no regrowth of three tables of thousands
-    let (rows, cards) = live.iter().flat_map(|(_, b)| b.shelves.iter())
-        .fold((0, 0), |(rows, cards), sh| (rows + 1, cards + if sh.released() { sh.shown } else { sh.items.len().min(MAX_SHELF_ITEMS) }));
-    new_hubs.reserve(rows);
-    new_cat.reserve(cards);
-    row_handle.reserve(cards);
+    let (rows, cards) = order.iter().filter(|(_, hidden)| !hidden).fold((0, 0), |(rows, cards), (slot, _)| {
+        let len = match *slot {
+            Slot::Deck => cw.len(),
+            Slot::Shelf(i, j) => slot_shelf(srcs, i, j)
+                .map_or(0, |sh| if sh.released() { sh.shown } else { sh.items.len().min(MAX_SHELF_ITEMS) }),
+        };
+        (rows + 1, cards + len)
+    });
+    let mut new_cat: Vec<Arc<PmsMovie>> = Vec::with_capacity(cards);
+    let mut new_hubs: Vec<HubRow> = Vec::with_capacity(rows);
+    // Parallel to `new_cat`: the HANDLE of the source each row came from. The hero pool is the only
+    // reader, and it needs the fact per ITEM rather than per shelf — the merged deck's own `source`
+    // is empty by design, so a slot that took its handle from its shelf would attribute every
+    // borrowed film in Continue Watching to nobody, and `own_items_first` would think our own
+    // library already opened the door.
+    let mut row_handle: Vec<&str> = Vec::with_capacity(cards);
+    // one placeholder per source, shared by every released row of it
+    let mut slots: Vec<Option<Arc<PmsMovie>>> = vec![None; srcs.len()];
 
-    for (i, (handle, b)) in live.iter().enumerate() {
-        // one placeholder, shared by every released row of the source
-        let mut slot: Option<Arc<PmsMovie>> = None;
-        for sh in &b.shelves {
-            let start = new_cat.len();
-            if sh.released() {
-                let slot = slot.get_or_insert_with(|| placeholder_slot(sids[i]));
-                for _ in 0..sh.shown {
-                    new_cat.push(Arc::clone(slot));
-                    row_handle.push(handle);
+    // Every row with something to show publishes, in the profile's order, unless the profile hid
+    // it. A shelf that holds cards publishes them (pin-filtered first, so an unpinned library's
+    // whole shelf disappears rather than becoming an empty heading); a shelf that gave them up to
+    // the ring publishes as many placeholder slots as it last showed, which carry its server so the
+    // row keeps its identity.
+    for (slot, hidden) in order {
+        if hidden { continue; }
+        let start = new_cat.len();
+        let row = match slot {
+            Slot::Deck => {
+                for (h, c) in &cw {
+                    new_cat.push(Arc::clone(&c.m));
+                    row_handle.push(h);
                 }
-            } else {
-                let mut cards = publishable(sh, pins);
-                let Some(first) = cards.next() else {
-                    continue;
-                };
-                for m in std::iter::once(first).chain(cards) {
-                    new_cat.push(Arc::clone(m));
-                    row_handle.push(handle);
+                HubRow {
+                    // the hub id the rest of the module matches on (hero-pool eligibility,
+                    // `hub_is_continue`), rather than the dedicated hub's own "continueWatching"
+                    title: plx_platform::i18n::msg::browse_home_continue_watching().to_string(),
+                    hub_id: DECK_ID.to_string(),
+                    key: String::new(),
+                    source: String::new(),
+                    total: 0,
+                    start,
+                    len: cw.len(),
+                    offset: deck_offset, more: deck_more, epoch: 0,
                 }
             }
-            new_hubs.push(HubRow {
-                title: sh.title.clone(),
-                hub_id: sh.hub_id.clone(),
-                key: sh.key.clone(),
-                source: (*handle).to_string(),
-                total: sh.total,
-                start,
-                len: new_cat.len() - start,
-                offset: sh.offset, more: sh.more, epoch: sh.epoch,
-            });
-        }
+            Slot::Shelf(i, j) => {
+                let Some(sh) = slot_shelf(srcs, i, j) else { continue };
+                let handle = srcs[i].handle.as_str();
+                if sh.released() {
+                    let placeholder = slots[i].get_or_insert_with(|| placeholder_slot(srcs[i].sid));
+                    for _ in 0..sh.shown {
+                        new_cat.push(Arc::clone(placeholder));
+                        row_handle.push(handle);
+                    }
+                } else {
+                    for m in publishable(sh, pins) {
+                        new_cat.push(Arc::clone(m));
+                        row_handle.push(handle);
+                    }
+                }
+                HubRow {
+                    title: sh.title.clone(),
+                    hub_id: sh.hub_id.clone(),
+                    key: sh.key.clone(),
+                    source: handle.to_string(),
+                    total: sh.total,
+                    start,
+                    len: new_cat.len() - start,
+                    offset: sh.offset, more: sh.more, epoch: sh.epoch,
+                }
+            }
+        };
+        new_hubs.push(row);
     }
 
-    // ---- 3. the rotating hero pool ----
-    // Continue Watching items first, then Recently Added, deduped by the item's IDENTITY. Require
+    // ---- the rotating hero pool ----
+    // Continue Watching items and Recently Added ones, in the rows' order (the deck first unless
+    // the profile moved it; a hidden row gives none), deduped by the item's IDENTITY. Require
     // landscape `art` (the hero draws a full-bleed backdrop) and skip seasons (a bare "Season 1"
     // makes a poor billboard). Capped at HERO_MAX.
     let mut new_pool: Vec<HeroSlot> = Vec::new();
@@ -2492,6 +2577,57 @@ fn merge_with_scope(srcs: &[Src], scope: &BrowseScope) -> HubBuild {
     // opens the door is not knowable until every shelf has contributed.
     own_items_first(&mut new_pool);
     (new_cat, new_hubs, new_pool)
+}
+
+/// What Settings > Home lists: every row with something to show, in Home's order, hidden ones
+/// included, one entry per row name. The deck's title and the shelves' are the catalog's own.
+fn offered_rows(srcs: &[Src], scope: &BrowseScope) -> Vec<HomeRowOffer> {
+    let deck = !merged_deck(srcs, &scope.pins).0.is_empty();
+    let mut out: Vec<HomeRowOffer> = Vec::new();
+    for (slot, hidden) in arranged(srcs, scope, deck) {
+        let (id, title, source) = match slot {
+            Slot::Deck => (
+                HomeRowId { sid: None, hub: DECK_ID.to_string(), section: 0 },
+                plx_platform::i18n::msg::browse_home_continue_watching().to_string(),
+                String::new(),
+            ),
+            Slot::Shelf(i, j) => {
+                let Some(sh) = slot_shelf(srcs, i, j) else { continue };
+                let (hub, section) = plx_plex::plex::home_rows::family_and_section(&sh.hub_id, &sh.key);
+                (HomeRowId { sid: Some(srcs[i].sid), hub: hub.to_string(), section }, sh.title.clone(), srcs[i].handle.clone())
+            }
+        };
+        if out.iter().any(|offer| offer.id == id) { continue; }
+        out.push(HomeRowOffer { id, title, source, hidden });
+    }
+    out
+}
+
+/// Rebuilds what Settings > Home lists when the catalog or the profile's layout moved; the list
+/// keeps its identity while its content holds, so the page re-renders only on a real change.
+fn refresh_offered(state: &mut PmsState, scope: &BrowseScope) {
+    let stamp = (state.catalog_gen, scope.cache_key());
+    if state.offered.0 == Some(stamp) { return; }
+    let rows = offered_rows(&state.srcs, scope);
+    if *state.offered.1 != *rows { state.offered.1 = Arc::from(rows); }
+    state.offered.0 = Some(stamp);
+}
+
+/// The rows Settings > Home lists ([`offered_rows`]), as of this owner's last step.
+pub fn home_rows_offered(state: &PmsState) -> Arc<[HomeRowOffer]> {
+    Arc::clone(&state.offered.1)
+}
+
+/// `offers` in the order of `layout`, with its hidden flags. Home's owner steps only while Home is
+/// up, so the rows it last offered can predate the layout an edit just recorded; Settings > Home
+/// lists them through this so it shows the layout as recorded.
+pub fn arrange_offers(offers: &[HomeRowOffer], layout: &[HomeRowRule]) -> Vec<HomeRowOffer> {
+    let ranks: Vec<_> = offers.iter()
+        .map(|offer| layout.iter().position(|rule| rule.id == offer.id).map(|at| (at, layout[at].hidden)))
+        .collect();
+    plx_plex::plex::home_rows::arrange(&ranks).into_iter()
+        .map(|(k, hidden)| HomeRowOffer { hidden, ..offers[k].clone() })
+        .collect()
 }
 
 // ---- fetch state machine: PER SOURCE loading / ready / failed + the automatic-retry backoff ----
@@ -3012,6 +3148,8 @@ struct BrowseScope<'a> {
     /// Borrowed from the host's one buffer ([`BrowseScope::retained`]), so an idle per-frame step
     /// allocates nothing for it; a standalone fixture owns the keys it read.
     clients: std::borrow::Cow<'a, ClientKeys>,
+    /// The profile's Home layout ([`HomeRowRule`]), borrowed from the retained directory.
+    rows: &'a [HomeRowRule],
 }
 
 impl<'a> BrowseScope<'a> {
@@ -3019,23 +3157,33 @@ impl<'a> BrowseScope<'a> {
     /// code only: a production step is handed them ([`BrowseScope::retained`]).
     #[cfg(any(test, feature = "test-support"))]
     fn standalone() -> Self {
-        Self { sections_gen: 0, pins: Vec::new(), clients: std::borrow::Cow::Owned(registry_keys_for_test()) }
+        Self { sections_gen: 0, pins: Vec::new(), clients: std::borrow::Cow::Owned(registry_keys_for_test()), rows: &[] }
     }
 
-    fn retained(directory: crate::stores::browse::DirectoryView<'_>, clients: &'a ClientKeys) -> Self {
+    fn retained(directory: crate::stores::browse::DirectoryView<'a>, clients: &'a ClientKeys) -> Self {
         Self {
             sections_gen: directory.sections_gen(),
             pins: directory.favorite_sections().to_vec(),
             clients: std::borrow::Cow::Borrowed(clients),
+            rows: directory.home_layout(),
         }
     }
 
-    /// Semantic pin-table identity. Browse generations are owner-local, so two independent stores
-    /// may both report generation zero while naming different libraries. The replayed cache fields
-    /// are fixed-width atomics; fold the actual `(server, section, pin)` input into that existing
-    /// shape instead of adding a global owner selector.
+    /// The layout entry naming the row `hub_id` (listing `key`) of server `sid` — `None` for the
+    /// merged deck — as `(entry index, hidden)`.
+    fn rank(&self, sid: Option<ServerId>, hub_id: &str, key: &str) -> Option<(usize, bool)> {
+        if self.rows.is_empty() { return None; }
+        let (hub, section) = plx_plex::plex::home_rows::family_and_section(hub_id, key);
+        let at = self.rows.iter().position(|rule| rule.id.sid == sid && rule.id.hub == hub && rule.id.section == section)?;
+        Some((at, self.rows[at].hidden))
+    }
+
+    /// Semantic pin-table and layout identity. Browse generations are owner-local, so two
+    /// independent stores may both report generation zero while naming different libraries. The
+    /// replayed cache fields are fixed-width atomics; fold the actual `(server, section, pin)` input
+    /// and the layout into that existing shape instead of adding a global owner selector.
     fn cache_key(&self) -> u32 {
-        if self.pins.is_empty() {
+        if self.pins.is_empty() && self.rows.is_empty() {
             return 0;
         }
         let mut hash = 0x811c_9dc5u32;
@@ -3050,6 +3198,16 @@ impl<'a> BrowseScope<'a> {
             fold(&sid.raw().to_le_bytes());
             fold(&section.to_le_bytes());
             fold(&[*pinned as u8]);
+        }
+        for rule in self.rows {
+            match rule.id.sid {
+                Some(sid) => { fold(&[1]); fold(&sid.raw().to_le_bytes()); }
+                None => fold(&[0]),
+            }
+            fold(rule.id.hub.as_bytes());
+            fold(&[0]);
+            fold(&rule.id.section.to_le_bytes());
+            fold(&[rule.hidden as u8]);
         }
         hash
     }
@@ -3613,8 +3771,11 @@ pub fn tick_with_directory(
 ) -> crate::stores::EndpointRefreshSet {
     #[cfg(any(test, feature = "test-support"))]
     plx_base::testlock::assert_held("the pms hub catalog (owned tick)");
-    emitting(state, adapter, |state, launch| step_landings_with_scope(state, adapter, Some(dt), Vec::new,
-        &BrowseScope::retained(directory, clients), launch))
+    let scope = BrowseScope::retained(directory, clients);
+    let endpoints = emitting(state, adapter, |state, launch| step_landings_with_scope(state, adapter, Some(dt), Vec::new,
+        &scope, launch));
+    refresh_offered(state, &scope);
+    endpoints
 }
 
 /// An addressed arrival may update the catalog behind another page, but must not advance retry
@@ -3643,8 +3804,10 @@ pub fn land_with_directory(
     clients: &ClientKeys,
 ) -> crate::stores::StoreOutcome {
     let before = state.catalog_gen;
+    let scope = BrowseScope::retained(directory, clients);
     let endpoints = emitting(state, adapter, |state, launch| step_landings_with_scope(state, adapter, None,
-        || vec![landing.clone()], &BrowseScope::retained(directory, clients), launch));
+        || vec![landing.clone()], &scope, launch));
+    refresh_offered(state, &scope);
     crate::stores::StoreOutcome { changed: state.catalog_gen != before, endpoints }
 }
 
@@ -3666,7 +3829,10 @@ pub fn run_with_directory(
     if matches!(cmd, crate::stores::hubs::HubsCmd::Publish { .. }) && !has_staged(state) {
         return crate::stores::StoreOutcome::default(); // the per-frame question, before anything is built
     }
-    run_with_scope(state, adapter, cmd, &BrowseScope::retained(directory, clients))
+    let scope = BrowseScope::retained(directory, clients);
+    let out = run_with_scope(state, adapter, cmd, &scope);
+    refresh_offered(state, &scope);
+    out
 }
 
 /// One addressed command. Launches refused since the last step are settled first
@@ -4200,7 +4366,7 @@ pub fn hold_for_test(state: &mut PmsState, lo: usize, hi: usize) -> bool {
 pub fn land_ring_rows_for_test(state: &mut PmsState, items: usize, salt: &dyn Fn(usize) -> usize) -> bool {
     plx_base::testlock::assert_held("the pms hub catalog (land_ring_rows_for_test)");
     let scope = BrowseScope::standalone();
-    let wanted = wanted_reloads(&state.srcs, &scope.pins, published_home(state).hubs.len(), state.hold);
+    let wanted = wanted_reloads(&state.srcs, &scope, &published_home(state).hubs, state.hold);
     let mut srcs = std::mem::take(&mut state.srcs);
     let mut landed = false;
     for (source, want) in srcs.iter_mut().zip(wanted) {
@@ -4238,7 +4404,7 @@ pub fn land_ring_rows_for_test(state: &mut PmsState, items: usize, salt: &dyn Fn
 pub fn land_kept_rows_for_test(state: &mut PmsState) -> bool {
     plx_base::testlock::assert_held("the pms hub catalog (land_kept_rows_for_test)");
     let scope = BrowseScope::standalone();
-    let wanted = wanted_reloads(&state.srcs, &scope.pins, published_home(state).hubs.len(), state.hold);
+    let wanted = wanted_reloads(&state.srcs, &scope, &published_home(state).hubs, state.hold);
     let mut srcs = std::mem::take(&mut state.srcs);
     let mut landed = false;
     for (source, want) in srcs.iter_mut().zip(wanted) {
@@ -4546,6 +4712,10 @@ mod hero_pool_tests;
 #[cfg(test)]
 #[path = "pms_multi_source_merge_tests.rs"]
 mod multi_source_merge_tests;
+
+#[cfg(test)]
+#[path = "pms_home_layout_tests.rs"]
+mod home_layout_tests;
 
 #[cfg(test)]
 #[path = "pms_recent_paging_tests.rs"]

@@ -127,6 +127,11 @@ impl HubsStore {
         crate::pms::hubs_snapshot(&self.state)
     }
 
+    /// The rows Settings > Home lists, hidden ones included (`pms::home_rows_offered`).
+    pub fn home_rows(&self) -> Arc<[crate::pms::HomeRowOffer]> {
+        crate::pms::home_rows_offered(&self.state)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn state(&self) -> &crate::pms::PmsState { &self.state }
 

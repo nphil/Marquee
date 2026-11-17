@@ -908,6 +908,7 @@ fn an_unpinned_library_publishes_nothing() {
         sections_gen: 0,
         pins: vec![(sid(0), 1, true), (sid(1), 1, false)],
         clients: Default::default(),
+        rows: &[],
     };
     let (items, hubs, _) = merge_with_scope(&srcs, &scope);
     assert!(hubs.iter().all(|h| h.source.is_empty()), "nothing of the unpinned library is drawn");
@@ -1191,7 +1192,7 @@ fn an_unpinned_roster_first_copy_does_not_hide_the_pinned_one() {
         ready(h[0].0, "", vec![card(h[0].0, "own", "Estudios sociales", Some(4), 2, true, 100)]),
         ready(h[1].0, "friend", vec![card(h[1].0, "theirs", "Social Studies", Some(4), 1, true, 900)]),
     ]);
-    let scope = BrowseScope { sections_gen: 1, pins: vec![(h[0].0, 2, false), (h[1].0, 1, true)], clients: Default::default() };
+    let scope = BrowseScope { sections_gen: 1, pins: vec![(h[0].0, 2, false), (h[1].0, 1, true)], clients: Default::default(), rows: &[] };
     let (cat, hubs, _) = merge_with_scope(&o.state.srcs, &scope);
     let deck: Vec<_> = cat[hubs[0].start..hubs[0].start + hubs[0].len].iter().map(|m| m.rk.clone()).collect();
     assert_eq!(deck, ["theirs"], "the show does not vanish");

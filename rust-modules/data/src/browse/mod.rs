@@ -1106,8 +1106,12 @@ pub struct BrowseState {
     /// cleared with it on a reset, so a profile switch can never open one person's library in
     /// another's view.
     view_memory: plx_plex::plex::session::LibraryViews,
+    /// This profile's Home record (pins and Home layout); replaced only through
+    /// [`set_recorded`](Self::set_recorded), which moves [`home_rows_gen`](Self::home_rows_gen).
     recorded: Option<plx_plex::plex::session::HomePins>,
     pending_pins: Option<(String, std::sync::Arc<std::sync::Mutex<PinWrite>>)>,
+    /// Moves whenever the recorded Home layout does, so the directory republishes it.
+    home_rows_gen: u32,
 }
 
 /// Shared by a cloned Browse snapshot, so consuming a receipt never makes another clone
@@ -1225,6 +1229,7 @@ impl Default for BrowseState {
             view_memory: Default::default(),
             recorded: None,
             pending_pins: None,
+            home_rows_gen: 0,
             session_generation: plx_plex::plex::session::visible_generation(),
         }
     }
@@ -2456,7 +2461,7 @@ impl BrowseState {
             let libraries = self.lib_refs();
             plx_plex::plex::pins::resolve(&libraries, record.as_ref())
         };
-        self.recorded = record;
+        self.set_recorded(record);
         let was_pinned = self.sections.get(self.cur()).is_some_and(|section| section.pinned);
         let mut moved = false;
         for (index, on) in want.into_iter().enumerate() {
@@ -2588,8 +2593,72 @@ impl BrowseState {
             Some(next)
         }).ok()?;
         self.pending_pins = Some((pending_user, std::sync::Arc::new(std::sync::Mutex::new(PinWrite { ticket, saved: None }))));
-        self.recorded = Some(record.clone());
+        self.set_recorded(Some(record.clone()));
         Some(record)
+    }
+    /// Replaces the profile's Home record; a layout that moved with it republishes.
+    fn set_recorded(&mut self, record: Option<plx_plex::plex::session::HomePins>) {
+        fn layout(record: Option<&plx_plex::plex::session::HomePins>) -> &[plx_plex::plex::session::HomeRow] {
+            record.map_or(&[], |record| record.rows.as_slice())
+        }
+        if layout(self.recorded.as_ref()) != layout(record.as_ref()) {
+            self.home_rows_gen = self.home_rows_gen.wrapping_add(1);
+        }
+        self.recorded = record;
+    }
+    /// Moves whenever the profile's recorded Home layout does.
+    pub fn home_rows_gen(&self) -> u32 {
+        self.home_rows_gen
+    }
+    /// The profile's Home layout resolved to this run's server slots. An entry whose server is not
+    /// in the table names no row this run and is left out here; it stays recorded.
+    pub fn home_layout(&self) -> Vec<crate::pms::HomeRowRule> {
+        let Some(record) = self.recorded.as_ref() else { return Vec::new() };
+        record.rows.iter().filter_map(|row| {
+            let sid = if row.server.is_empty() {
+                None
+            } else {
+                Some(self.sources.iter().find(|source| source.machine_id == row.server)?.sid)
+            };
+            Some(crate::pms::HomeRowRule {
+                id: crate::pms::HomeRowId { sid, hub: row.hub.clone(), section: row.section },
+                hidden: row.hidden,
+            })
+        }).collect()
+    }
+    /// Settings > Home's commit (`BrowseCmd::SetHomeRows`): the rows it listed, in their new order,
+    /// each with whether the profile hides it, recorded beside the pins through the same write and
+    /// pending receipt as [`record_pins_from`](Self::record_pins_from). The worker recomputes the
+    /// edit against the stored record, so pins written while it was queued survive. A row whose
+    /// server has no machine id yet cannot be named and stays unarranged.
+    fn set_home_rows_from(&mut self, rows: &[(crate::pms::HomeRowId, bool)], session: &plx_plex::plex::session::Session) {
+        if session.client_id.is_empty() { return; }
+        let user = plx_plex::plex::session::current_profile_key();
+        let offered: Vec<plx_plex::plex::session::HomeRow> = rows.iter().filter_map(|(id, hidden)| {
+            let server = match id.sid {
+                None => String::new(),
+                Some(sid) => self.sources.iter()
+                    .find(|source| source.sid == sid && !source.machine_id.is_empty())?.machine_id.clone(),
+            };
+            Some(plx_plex::plex::session::HomeRow {
+                server, hub: id.hub.clone(), section: id.section, hidden: *hidden, ..Default::default()
+            })
+        }).collect();
+        let blank = |user: &str| plx_plex::plex::session::HomePins { user: user.to_owned(), ..Default::default() };
+        let mut record = self.recorded.as_ref().or_else(|| session.pins_for(&user)).cloned()
+            .unwrap_or_else(|| blank(&user));
+        record.rows = plx_plex::plex::home_rows::record_edit(&record.rows, offered.clone());
+        let pending_user = user.clone();
+        let Ok(ticket) = plx_plex::plex::session::queue_update_ticket(move |session| {
+            let mut stored = session.pins_for(&user).cloned().unwrap_or_else(|| blank(&user));
+            stored.rows = plx_plex::plex::home_rows::record_edit(&stored.rows, offered);
+            let mut next = session.clone();
+            next.set_pins_for(&user, stored);
+            Some(next)
+        }) else { return };
+        self.pending_pins = Some((pending_user, std::sync::Arc::new(std::sync::Mutex::new(PinWrite { ticket, saved: None }))));
+        self.set_recorded(Some(record));
+        plx_machine::idle::invalidate();
     }
     #[cfg(test)]
     fn apply_pins(&mut self, answers: &[(usize, bool)]) {
@@ -2779,7 +2848,7 @@ impl BrowseState {
         self.sources = Vec::new();
         self.sections = Vec::new();
         self.states = Vec::new();
-        self.recorded = None;
+        self.set_recorded(None);
         self.remembered = Vec::new();
         self.view_memory = Default::default();
         self.tab_shape = u32::MAX;
@@ -2964,6 +3033,10 @@ impl BrowseState {
             }
             BrowseCmd::ApplyPins(edits) => {
                 self.apply_pins_from(&edits, session);
+                true
+            }
+            BrowseCmd::SetHomeRows(rows) => {
+                self.set_home_rows_from(&rows, session);
                 true
             }
             BrowseCmd::RetryDiscovery => {

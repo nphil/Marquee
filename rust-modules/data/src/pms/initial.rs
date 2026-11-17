@@ -115,6 +115,7 @@ impl Initial {
             staged_gen: 0,
             publish_memo: None,
             jobs: Vec::new(),
+            offered: (None, Arc::from(Vec::new())),
         };
         let adapter = super::PmsAdapter {
             next_request: AtomicU32::new(self.next_request),

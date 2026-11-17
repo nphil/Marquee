@@ -239,3 +239,34 @@ fn the_harness_pump_observes_the_write_before_the_roster_sync() {
     let _ = browse.pump();
     assert_eq!(pending_write_saved(&browse), None, "the roster sync consumed the saved write");
 }
+
+/// Settings > Home's commit is recorded beside the pins, named by machine id, and read back
+/// resolved to the run's servers; a later pin commit keeps it.
+#[test]
+fn a_home_rows_commit_survives_the_next_pin_commit() {
+    let _serial = plx_base::testlock::serial();
+    let t = TempPins::new("pins-input-home-rows");
+    t.watching("u-owner");
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    let friend = ServerId::from_raw(7);
+    browse.state.sources[1].sid = friend;
+    let shelf = crate::pms::HomeRowId { sid: Some(friend), hub: "movie.recentlyadded".into(), section: 1 };
+    let deck = crate::pms::HomeRowId { sid: None, hub: "home.continue".into(), section: 0 };
+    let before = browse.state.home_rows_gen();
+    browse.state.set_home_rows_from(&[(shelf.clone(), true), (deck.clone(), false)], &peek());
+    assert_ne!(browse.state.home_rows_gen(), before, "the directory republishes the layout");
+    let layout = [
+        crate::pms::HomeRowRule { id: shelf, hidden: true },
+        crate::pms::HomeRowRule { id: deck, hidden: false },
+    ];
+    assert_eq!(browse.state.home_layout(), layout);
+    browse.state.apply_pins(&[(2, true)]);
+    plx_base::storage_worker::drain_for_test();
+    browse.observe_pin_write();
+    let stored = peek().pins_for("u-owner").cloned().expect("the record was written");
+    let rows: Vec<(&str, bool)> = stored.rows.iter().map(|row| (row.server.as_str(), row.hidden)).collect();
+    assert_eq!(rows, [("nas-home", true), ("", false)], "the pin commit kept the layout");
+    browse.state.resolve_pins_from(&peek(), "u-owner");
+    assert_eq!(browse.state.home_layout(), layout, "the stored record reads back the same layout");
+}

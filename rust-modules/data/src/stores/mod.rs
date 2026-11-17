@@ -619,6 +619,7 @@ impl Stores {
         -> browse::BrowsePublications {
         let mut browse = self.browse.borrow_mut();
         browse.capture_directory(directory);
+        directory.offer_home_rows(self.hubs.home_rows());
         browse::BrowsePublications {
             listing: browse.listing_snapshot(),
             directory: directory.clone(),

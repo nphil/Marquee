@@ -451,6 +451,8 @@ struct DirectoryData {
     sources: Vec<(ServerId, super::SrcGroup)>,
     sections: Vec<SectionView>,
     favorites: Vec<(ServerId, i64, bool)>,
+    /// The profile's Home layout, resolved to this run's server slots.
+    home_layout: Vec<crate::pms::HomeRowRule>,
 }
 
 /// Retained by the Bridge-owned `BrowseStore` and captured from its `BrowseState`, never a new
@@ -460,7 +462,7 @@ struct DirectoryData {
 pub struct DirectorySnapshot {
     preferred: [Option<usize>; 2],
     kind_fetch: [SecFetch; 2],
-    stamp: Option<(u32, u32, usize, usize)>,
+    stamp: Option<(u32, u32, usize, usize, u32)>,
     data: Arc<DirectoryData>,
     /// The current library's listing as it stands (an O(1) handle on its immutable pages), for a
     /// page that illustrates the library without being on it ([`DirectoryView::sample`]).
@@ -470,6 +472,9 @@ pub struct DirectorySnapshot {
     discovery: SecFetch,
     sections_gen: u32,
     tabs_gen: u32,
+    /// The rows Home offers to arrange, attached by the stores beside the Browse capture
+    /// ([`Self::offer_home_rows`]): Settings > Home lists them against [`DirectoryView::home_layout`].
+    offered: Arc<[crate::pms::HomeRowOffer]>,
 }
 
 impl Default for DirectorySnapshot {
@@ -485,6 +490,7 @@ impl Default for DirectorySnapshot {
             discovery: SecFetch::Loading,
             sections_gen: 0,
             tabs_gen: 0,
+            offered: Arc::from(Vec::new()),
         }
     }
 }
@@ -496,6 +502,7 @@ impl DirectorySnapshot {
             state.source_list_gen(),
             state.cur(),
             state.sources().len(),
+            state.home_rows_gen(),
         );
         if self.stamp != Some(stamp) {
             self.data = Arc::new(DirectoryData {
@@ -507,6 +514,7 @@ impl DirectorySnapshot {
                         key: section.key, kind: section.kind, row,
                     }).collect(),
                 favorites: state.favorite_sections(),
+                home_layout: state.home_layout(),
             });
             self.stamp = Some(stamp);
         }
@@ -532,11 +540,12 @@ impl DirectorySnapshot {
         Self {
             preferred: [None; 2],
             kind_fetch: [fetch; 2],
-            stamp: Some((epoch, 0, 0, 1)),
+            stamp: Some((epoch, 0, 0, 1, 0)),
             data: Arc::new(DirectoryData {
                 sources: vec![(sid, source)],
                 sections: Vec::new(),
                 favorites: Vec::new(),
+                home_layout: Vec::new(),
             }),
             items: super::SecItems::default(),
             source: Some(0),
@@ -544,7 +553,13 @@ impl DirectorySnapshot {
             discovery: fetch,
             sections_gen: 0,
             tabs_gen: 0,
+            offered: Arc::from(Vec::new()),
         }
+    }
+
+    /// Attaches the rows Home offers to arrange (`stores::hubs::HubsStore::home_rows`).
+    pub fn offer_home_rows(&mut self, rows: Arc<[crate::pms::HomeRowOffer]>) {
+        self.offered = rows;
     }
 
     /// This directory with `items` as the current library's listing (what [`DirectoryView::sample`] reads).
@@ -563,6 +578,7 @@ impl DirectorySnapshot {
             && self.tabs_gen == other.tabs_gen
             && self.preferred == other.preferred
             && self.kind_fetch == other.kind_fetch
+            && Arc::ptr_eq(&self.offered, &other.offered)
     }
     /// The single builder behind both `fixture` and the selector matrix suite: a section table
     /// AND the source table `library_label` reads a handle from. `fixture` used to hardcode
@@ -586,11 +602,12 @@ impl DirectorySnapshot {
         Self {
             preferred,
             kind_fetch: [SecFetch::Ready; 2],
-            stamp: Some((epoch, 0, current, source_count)),
+            stamp: Some((epoch, 0, current, source_count, 0)),
             data: Arc::new(DirectoryData {
                 sources,
                 sections,
                 favorites,
+                home_layout: Vec::new(),
             }),
             items: super::SecItems::default(),
             source: None,
@@ -598,6 +615,7 @@ impl DirectorySnapshot {
             discovery: SecFetch::Ready,
             sections_gen: 0,
             tabs_gen: 0,
+            offered: Arc::from(Vec::new()),
         }
     }
 
@@ -643,6 +661,14 @@ impl<'a> DirectoryView<'a> {
     #[allow(dead_code)]
     pub fn favorite_sections(self) -> &'a [(ServerId, i64, bool)] {
         &self.0.data.favorites
+    }
+    /// The profile's Home layout (`pms::HomeRowRule`): what the Hubs merge orders and hides by.
+    pub fn home_layout(self) -> &'a [crate::pms::HomeRowRule] {
+        &self.0.data.home_layout
+    }
+    /// The rows Home offers to arrange, hidden ones included, as Home last merged them.
+    pub fn home_rows(self) -> &'a [crate::pms::HomeRowOffer] {
+        &self.0.offered
     }
     #[allow(dead_code)]
     pub fn tab_kind(self, tab: usize) -> Option<super::SecKind> {
