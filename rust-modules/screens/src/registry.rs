@@ -44,6 +44,9 @@ pub mod tile_facts;
 /// The Under posters setting read once, and the one builder of a focused poster's caption.
 pub mod captions;
 
+/// What stands in for a covered episode under Spoiler protection, shared by every screen that shows one.
+pub mod spoilers;
+
 /// The application's effects (spec §3.1). `Store` since phase 4; `Consent` and `Loop` since 5b.
 pub enum AppFx {
     Session(plx_session::auth::SessionCmd),

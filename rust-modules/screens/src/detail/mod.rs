@@ -30,7 +30,7 @@ mod placeholder_tests;
 
 use plx_data::metadata::{Detail, Extra, Spot};
 use crate::registry::{key_cap, unlive_excess, EvictOrder, PlayIntent};
-use crate::spoilers;
+use crate::registry::spoilers;
 use plx_plex::plex::ServerId;
 use plx_data::stores::metadata::MetadataCmd;
 use plx_data::stores::viewstate::ViewStateCmd;

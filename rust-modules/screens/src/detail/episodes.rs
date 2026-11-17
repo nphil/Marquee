@@ -32,7 +32,7 @@ pub const GAP: f32 = 28.0;
 /// Whether spoiler protection covers `ep` here: the switch is on, the episode is unwatched and
 /// unstarted, and the viewer has not revealed it on this page (`revealed` holds episode keys).
 pub fn covered(ep: &Episode, revealed: &HashSet<String>) -> bool {
-    !revealed.contains(&ep.rk) && crate::spoilers::protects(ep.watched, ep.resume_ms)
+    !revealed.contains(&ep.rk) && crate::registry::spoilers::protects(ep.watched, ep.resume_ms)
 }
 pub const META_TOP: f32 = 30.0;
 const TITLE_DY: f32 = 46.0;
@@ -514,7 +514,7 @@ fn draw_cell(
         .draw(p, Rect::new(text_x, text_top + TITLE_DY, TEXT_W, 0.0));
         if !ep.summary.is_empty() {
             // The layout above is measured on the real summary, so covering it moves nothing.
-            let hidden = covered(ep, revealed).then(|| crate::spoilers::hidden_note(true));
+            let hidden = covered(ep, revealed).then(|| crate::registry::spoilers::hidden_note(true));
             TextView::new(hidden.unwrap_or(&ep.summary), theme::size::CAPTION, theme::EP_SUMMARY_INK)
             .with_measure(measure)
             .leading(SUMMARY_LEAD)

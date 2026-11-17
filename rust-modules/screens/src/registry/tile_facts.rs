@@ -97,7 +97,7 @@ pub fn of(m: &PmsMovie) -> TileFacts<'_> {
         }),
         watched: m.watched,
         unwatched: m.unwatched,
-        spoiler: m.kind == KIND_EPISODE && !m.still.is_empty() && crate::spoilers::protects(m.watched, m.resume_ms),
+        spoiler: m.kind == KIND_EPISODE && !m.still.is_empty() && super::spoilers::protects(m.watched, m.resume_ms),
         // Only a collection's thumb can be a composite, and only a collection tile reads the
         // flag, so the path is parsed for those alone rather than for every tile every frame.
         composite_thumb: m.kind == KIND_COLLECTION && is_composite_thumb(&m.thumb),

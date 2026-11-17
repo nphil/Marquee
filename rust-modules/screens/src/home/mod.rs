@@ -3821,8 +3821,8 @@ fn hero_content(hero: &PmsMovie, source: &str, p: Painter, dx: f32, measure: &dy
         plx_appkit::hero_layout::episode_lead(i64::from(hero.season_index), i64::from(hero.ep_index), &hero.title)
     } else { String::new() };
     // An unwatched, unstarted episode's synopsis is covered by spoiler protection.
-    let note = (episode && !hero.summary.is_empty() && crate::spoilers::protects(hero.watched, hero.resume_ms))
-        .then(|| crate::spoilers::hidden_note(false));
+    let note = (episode && !hero.summary.is_empty() && crate::registry::spoilers::protects(hero.watched, hero.resume_ms))
+        .then(|| crate::registry::spoilers::hidden_note(false));
     let summary = note.unwrap_or(&hero.summary);
     let synopsis = (!hero.summary.is_empty() || !lead.is_empty())
         .then(|| plx_ui::hero_synopsis(summary, &lead));
