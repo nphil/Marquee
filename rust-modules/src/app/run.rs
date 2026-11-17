@@ -112,6 +112,7 @@ pub(crate) unsafe fn run(app: &mut App) {
     let watchdog = plx_base::task::watchdog::LoopWatch::start();
     let mut clock_notice = super::clock_notice::ClockNotice::new();
     let mut hint_taught = super::hint_taught::HintTaught::new();
+    let mut memory_guard = super::memory_guard::MemoryGuard::new();
     while app.running {
         watchdog.advance();
         plx_telemetry::telemetry::session::tick(matches!(app.route(), AppArg::Player));
@@ -304,9 +305,17 @@ pub(crate) unsafe fn run(app: &mut App) {
             wslg_frame_budget,
         );
         if fr.present { watchdog.presented(); }
-        report(app, fr);
-        heartbeat(app, fr);
+        end_frame(app, fr, &mut memory_guard);
     }
+}
+
+/// The iteration's tail, after the present: the frame's report, the heartbeat, and the memory
+/// guard's look — after the draw, so art this frame put on screen counts as on screen when memory
+/// is short.
+unsafe fn end_frame(app: &mut App, fr: &mut Frame, memory_guard: &mut super::memory_guard::MemoryGuard) {
+    report(app, fr);
+    heartbeat(app, fr);
+    memory_guard.poll(fr.now);
 }
 
 /// **This iteration's frame, with the control row resolved** (`Frame::begin`), plus the two offers the

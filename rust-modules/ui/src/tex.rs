@@ -402,6 +402,20 @@ pub fn resident_bytes() -> usize {
     CACHE.with(|c| c.borrow().resident_bytes())
 }
 
+/// **Memory is short** (the app's memory guard): hold residency under `bytes`, or under the
+/// ordinary ceiling again for `None`, and release at once what is over it and not on screen.
+/// Released art comes back as it is drawn. GL thread.
+pub fn squeeze(bytes: Option<usize>, up: &mut dyn Uploader) {
+    let ordinary = TEX_RESIDENT_BYTES_MAX * render_area();
+    let unresident = mutate_cache(|c| {
+        c.hold_under(bytes.map_or(ordinary, |b| b.min(ordinary)), up);
+        c.take_unresident().collect::<Vec<_>>()
+    });
+    for (key, refused) in unresident {
+        with_source(|s| s.unresident(key, refused), ());
+    }
+}
+
 /// Free every resident texture (app exit, GL thread).
 pub fn shutdown(up: &mut dyn Uploader) {
     mutate_cache(|c| c.drain_all(up));
@@ -685,6 +699,21 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         Some(k) != protect && !e.return_pin && !(e.drawn_frame != 0 && e.drawn_frame + 1 >= self.frame)
     }
 
+    /// The [`TexCache::victim_ok`] entries in the order pressure frees them: heavy (a
+    /// [`Class::Residency`] upload) before light, oldest `last_used` first within each.
+    fn victims(&self, protect: Option<K>) -> Vec<(K, u64, usize)> {
+        let mut victims: Vec<(K, u64, usize)> = self
+            .resident
+            .iter()
+            .filter(|&(&k, e)| self.victim_ok(k, e, protect))
+            .map(|(&k, e)| (k, e.last_used, e.bytes))
+            .collect();
+        // One backdrop left behind by a page frees what dozens of posters would, and comes back
+        // from the disk tier; losing a poster costs a tile a visible blink.
+        victims.sort_unstable_by_key(|&(_, last_used, bytes)| (class_for(bytes) != Class::Residency, last_used));
+        victims
+    }
+
     /// Make `room` more slots fit under `cap` and `incoming` more bytes fit under `bytes_max` by
     /// evicting [`TexCache::victim_ok`] entries, the heavy ones (a [`Class::Residency`] upload) before
     /// the light, oldest `last_used` first within each. Returns `true` if the
@@ -710,18 +739,9 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         if fits(self.resident.len(), self.bytes) {
             return true;
         }
-        // Victims, heavy (Residency) entries first and oldest `last_used` first within each
-        // class — the exact order the removal loop below frees them in, so the simulation below
-        // matches the real eviction exactly.
-        let mut victims: Vec<(K, u64, usize)> = self
-            .resident
-            .iter()
-            .filter(|&(&k, e)| self.victim_ok(k, e, protect))
-            .map(|(&k, e)| (k, e.last_used, e.bytes))
-            .collect();
-        // One backdrop left behind by a page frees what dozens of posters would, and comes back
-        // from the disk tier; losing a poster costs a tile a visible blink.
-        victims.sort_unstable_by_key(|&(_, last_used, bytes)| (class_for(bytes) != Class::Residency, last_used));
+        // Victims in the order the removal loop below frees them, so the simulation below matches
+        // the real eviction exactly.
+        let victims = self.victims(protect);
 
         let mut count = self.resident.len();
         let mut bytes = self.bytes;
@@ -753,6 +773,26 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
             }
         }
         true
+    }
+
+    /// Hold residency under `bytes_max` from now on, and release now what is over it and may go,
+    /// in [`TexCache::victims`] order: what was on screen a moment ago stays, and so does a
+    /// pinned return viewport. Released keys join [`TexCache::unresident`] like any eviction.
+    pub fn hold_under(&mut self, bytes_max: usize, up: &mut dyn Uploader) {
+        self.bytes_max = bytes_max;
+        if self.bytes <= bytes_max {
+            return;
+        }
+        for (k, _, _) in self.victims(None) {
+            if self.bytes <= bytes_max {
+                break;
+            }
+            if let Some(e) = self.resident.remove(&k) {
+                self.bytes = self.bytes.saturating_sub(e.bytes);
+                up.free(e.tex);
+                self.unresident.push_back((k, false));
+            }
+        }
     }
 
     /// The renderer's question. A hit is a use (LRU) AND a draw (stamps [`Entry::drawn_frame`]
@@ -1061,6 +1101,43 @@ mod tests {
         assert!(c.resolve(3).is_some(), "the arrival is resident");
         assert!(c.resolve(2).is_none(), "the heavy entry went first");
         assert_eq!(c.take_unresident().collect::<Vec<_>>(), vec![(2, false)]);
+    }
+
+    /// Memory pressure lowers the ceiling at once: what is over it goes now, the heavy entry and
+    /// then the oldest, never what was drawn a moment ago. The lower ceiling then holds for
+    /// arrivals, and lifting it releases nothing.
+    #[test]
+    fn a_squeeze_releases_off_screen_art_now_and_holds_the_lower_ceiling() {
+        const LIGHT: usize = 900_000;
+        const HEAVY: usize = 2_000_000;
+        let mut c: TexCache<u32> = TexCache::with_budget(8, 8_000_000);
+        let mut up = StubUp { next: 0, freed: vec![], warmed: vec![] };
+        let mut present = Present::new();
+        let mut b = Budget::new();
+        let mut frame = |c: &mut TexCache<u32>, at: u64| {
+            b.begin_frame(at);
+            c.prepare(&mut b, &mut up, &mut PresentHandle(&mut present), || at)
+        };
+        for (at, key, bytes) in [(0, 1, LIGHT), (20_000, 2, HEAVY), (40_000, 3, LIGHT), (60_000, 4, LIGHT)] {
+            c.accept(sized(key, bytes));
+            assert_eq!(frame(&mut c, at), 1, "key {key} lands");
+        }
+        assert!(c.resolve(4).is_some(), "key 4 is on screen");
+        let mut gl = StubUp { next: 0, freed: vec![], warmed: vec![] };
+        c.hold_under(1_000_000, &mut gl);
+        assert_eq!(
+            c.take_unresident().collect::<Vec<_>>(),
+            vec![(2, false), (1, false), (3, false)],
+            "the heavy entry, then the oldest; what is on screen stays even over the ceiling"
+        );
+        assert_eq!((c.resident_bytes(), gl.freed.len()), (LIGHT, 3));
+        c.accept(sized(5, LIGHT));
+        assert_eq!(frame(&mut c, 80_000), 0, "an arrival over the lower ceiling is refused");
+        assert_eq!(c.take_unresident().collect::<Vec<_>>(), vec![(5, true)]);
+        c.hold_under(8_000_000, &mut gl);
+        assert_eq!((c.resident_bytes(), gl.freed.len()), (LIGHT, 3), "lifting it releases nothing");
+        c.accept(sized(5, LIGHT));
+        assert_eq!(frame(&mut c, 100_000), 1, "the ordinary ceiling admits it again");
     }
 
     /// F2: an image bigger than the whole byte budget, with nothing on screen blocking it, is

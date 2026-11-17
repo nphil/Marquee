@@ -454,6 +454,8 @@ struct Store {
     clock: c_uint,
     frame: c_uint,
     quit: bool,
+    /// The memory guard found the TV short of memory: prefetch starts nothing ([`rest_warms`]).
+    warms_resting: bool,
     workers: Vec<JoinHandle<()>>,
 }
 impl Store {
@@ -463,6 +465,7 @@ impl Store {
             clock: 0,
             frame: 0,
             quit: false,
+            warms_resting: false,
             workers: Vec::new(),
         }
     }
@@ -1110,6 +1113,11 @@ fn lookup(srv: ServerId, key_s: &str, touch: Touch) -> (Hit, Warm) {
     // (`declines_request` is always false in a frame dump: a frozen clock never leaves `Unknown`.)
     let decline = touch == Touch::Draw && plx_ui::card_motion::declines_request();
     let mut g = store();
+    // Memory is short (`app/memory_guard.rs`): a prefetch starts nothing until it recovers, and
+    // `Full` stops the screen's warm loop for this frame. A draw still asks.
+    if g.warms_resting && touch != Touch::Draw {
+        return (None, Warm::Full);
+    }
     let cache_gen = plx_platform::imgcache::generation();
     let (token_gen, grant_epoch) = plx_plex::plex::client_for(srv)
         .map_or((0, 0), |c| (c.token_gen(), c.grant_epoch()));
@@ -1683,6 +1691,11 @@ pub(crate) fn prepare(
     n
 }
 
+/// The memory guard: rest the prefetch (warms and the lookahead) while the TV is short of memory.
+pub(crate) fn rest_warms(on: bool) {
+    store().warms_resting = on;
+}
+
 /// Why the worker got no bytes to decode. Three arms rather than one flag because they send the
 /// reader to three different places: an unresolved server is registry state, no usable response is
 /// the network or the token, and a 2xx with nothing in it is an answer that arrived and was empty.
@@ -2098,9 +2111,10 @@ fn workers_for(cores: Option<usize>, mem_total_kib: Option<u64>) -> usize {
     }
 }
 
-/// `MemTotal` in KiB from the text of `/proc/meminfo`.
-fn mem_total_kib(meminfo: &str) -> Option<u64> {
-    let line = meminfo.lines().find(|l| l.starts_with("MemTotal:"))?;
+/// A `Key:  1234 kB` line of `/proc/meminfo` or `/proc/self/status` (`key` with its colon): the
+/// number, in KiB. The memory guard (`app/memory_guard.rs`) reads its samples through it too.
+pub(crate) fn proc_kib(text: &str, key: &str) -> Option<u64> {
+    let line = text.lines().find(|l| l.starts_with(key))?;
     line.split_whitespace().nth(1)?.parse().ok()
 }
 
@@ -2116,7 +2130,7 @@ pub(crate) fn init() {
         g.workers.clear();
     }
     let cores = std::thread::available_parallelism().ok().map(std::num::NonZeroUsize::get);
-    let mem = std::fs::read_to_string("/proc/meminfo").ok().and_then(|t| mem_total_kib(&t));
+    let mem = std::fs::read_to_string("/proc/meminfo").ok().and_then(|t| proc_kib(&t, "MemTotal:"));
     let workers = workers_for(cores, mem);
     plx_base::eventlog::log(&format!("posters: workers={workers} cores={cores:?} mem_kib={mem:?}"));
     // filter_map, not map: a refused worker is one fewer decoder, not a dead app. Artwork degrades
@@ -3515,6 +3529,29 @@ mod tests {
         store().slots = [Pslot::ZERO; PT_CAP];
     }
 
+    /// Memory is short: a warm and the lookahead claim nothing and answer `Full`, which stops a
+    /// screen's warm loop; a draw still claims its slot. Resumed, a warm claims again (into an
+    /// emptied store: the draw's outstanding visible slot would refuse it on its own).
+    #[test]
+    fn a_short_memory_rests_the_prefetch_but_not_the_draw() {
+        let (_fresh, sid, _) = one_server();
+        let path = |n: u32| key_for(sid, &format!("/library/metadata/{n}/thumb"), 2, 2, 0);
+        store().slots = [Pslot::ZERO; PT_CAP];
+        rest_warms(true);
+        for touch in [Touch::Warm, Touch::Ahead] {
+            let (hit, warm) = lookup(sid, &path(42), touch);
+            assert!(hit.is_none());
+            assert_eq!(warm, Warm::Full);
+        }
+        assert!(store().slots.iter().all(|s| s.state == P_EMPTY), "no slot was claimed");
+        let _ = lookup(sid, &path(42), Touch::Draw);
+        assert_eq!(store().slots.iter().filter(|s| s.state == P_WANT).count(), 1, "a draw still asks");
+        rest_warms(false);
+        store().slots = [Pslot::ZERO; PT_CAP];
+        assert_eq!(lookup(sid, &path(43), Touch::Warm).1, Warm::Claimed);
+        store().slots = [Pslot::ZERO; PT_CAP];
+    }
+
     /// **Deterministic deadline progression (adjudication on PR #182, item 2).** The tight-loop
     /// test above ([`a_key_evicted_and_reevicted_in_rapid_succession_does_not_rearm_without_bound`])
     /// never lets real time move — the host clock stub is frozen — so it proves the FIRST cooldown
@@ -4227,12 +4264,14 @@ mod tests {
     }
 
     #[test]
-    fn mem_total_kib_reads_the_meminfo_line() {
-        assert_eq!(mem_total_kib("MemTotal:        2678680 kB\nMemFree:          145440 kB\n"), Some(2_678_680));
-        assert_eq!(mem_total_kib("MemFree: 1 kB\nMemTotal: 7 kB\n"), Some(7), "not only the first line");
-        assert_eq!(mem_total_kib("MemFree: 1 kB\n"), None);
-        assert_eq!(mem_total_kib("MemTotal: lots kB\n"), None);
-        assert_eq!(mem_total_kib(""), None);
+    fn proc_kib_reads_the_named_line() {
+        let meminfo = "MemTotal:        2678680 kB\nMemFree:          145440 kB\nMemAvailable:     612000 kB\n";
+        assert_eq!(proc_kib(meminfo, "MemTotal:"), Some(2_678_680));
+        assert_eq!(proc_kib(meminfo, "MemAvailable:"), Some(612_000), "not only the first line");
+        assert_eq!(proc_kib("Name:\tplxnative\nVmRSS:\t  119044 kB\n", "VmRSS:"), Some(119_044));
+        assert_eq!(proc_kib("MemFree: 1 kB\n", "MemTotal:"), None);
+        assert_eq!(proc_kib("MemTotal: lots kB\n", "MemTotal:"), None);
+        assert_eq!(proc_kib("", "MemTotal:"), None);
     }
 
     /// The prefetch gate sees every stage of a fetch. If this ever loosens, the prefetch quietly

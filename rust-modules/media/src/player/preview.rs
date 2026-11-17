@@ -99,6 +99,8 @@ pub enum Start {
     Cached(Fact),
     BreakerOpen,
     BudgetSpent,
+    /// The TV is short of memory (the app's memory guard); autoplay resumes when it recovers.
+    MemoryShort,
     Busy,
 }
 
@@ -155,6 +157,8 @@ pub struct Machine {
     key: Option<(u32, String)>,
     /// The last `blocked` answer that was logged, so the reason is written once per change.
     told: Option<(u32, String, Option<Start>)>,
+    /// The app's memory guard found the TV short of memory ([`rest_for_memory`]).
+    memory_short: bool,
 }
 
 impl Default for Machine {
@@ -171,6 +175,7 @@ impl Default for Machine {
             last_num: 0,
             key: None,
             told: None,
+            memory_short: false,
         }
     }
 }
@@ -215,6 +220,8 @@ impl Machine {
     fn block_reason(&self, sid: ServerId, rk: &str, enabled: bool) -> Option<Start> {
         if !enabled {
             Some(Start::Disabled)
+        } else if self.memory_short {
+            Some(Start::MemoryShort)
         } else if self.breaker {
             Some(Start::BreakerOpen)
         } else if self.cycles >= CYCLE_BUDGET {
@@ -562,6 +569,12 @@ pub fn request_start(sid: ServerId, rk: &str, now_ms: u32) -> Start {
     let (start, phase) = with_mut(|m| (m.start(sid, rk, now_ms, enabled()), m.phase));
     crate::player::log(&format!("preview: start rk={rk} -> {start:?} phase={phase:?}"));
     start
+}
+
+/// The app's memory guard: hold autoplay while the TV is short of memory, resume once it is not.
+/// A trailer already playing carries on.
+pub fn rest_for_memory(short: bool) {
+    with_mut(|m| m.memory_short = short);
 }
 
 pub fn note_no_extra(sid: ServerId, rk: &str) {
@@ -1311,5 +1324,15 @@ mod tests {
         assert_eq!(m.start(sid(), "rk", 0, false), Start::Disabled);
         assert_eq!(m.phase(), Phase::Idle);
         assert_eq!(m.cycles(), 0);
+    }
+
+    #[test]
+    fn a_short_memory_holds_autoplay_until_it_recovers() {
+        let mut m = Machine::default();
+        m.memory_short = true;
+        assert_eq!(m.start(sid(), "rk", 0, true), Start::MemoryShort);
+        assert_eq!(m.phase(), Phase::Idle);
+        m.memory_short = false;
+        assert_eq!(m.start(sid(), "rk", 0, true), Start::Accepted);
     }
 }
