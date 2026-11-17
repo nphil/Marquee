@@ -243,6 +243,8 @@
   "widgets.tracks.track_ordinal": "Traccia {number}",
   "widgets.tracks.capsule_later": "Sottotitoli ritardati: {duration}",
   "widgets.tracks.capsule_earlier": "Sottotitoli anticipati: {duration}",
+  "widgets.tracks.synced_earlier": "Sottotitoli sincronizzati, anticipati di {duration}",
+  "widgets.tracks.synced_later": "Sottotitoli sincronizzati, ritardati di {duration}",
   "widgets.tracks.capsule_original": "Sincronizzazione originale",
   "widgets.region.gb": "Regno Unito",
   "widgets.region.us": "Stati Uniti",

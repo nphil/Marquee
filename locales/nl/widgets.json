@@ -239,6 +239,8 @@
   "widgets.tracks.track_ordinal": "Spoor {number}",
   "widgets.tracks.capsule_later": "Ondertiteling {duration} later",
   "widgets.tracks.capsule_earlier": "Ondertiteling {duration} eerder",
+  "widgets.tracks.synced_earlier": "Ondertiteling gesynchroniseerd, {duration} eerder",
+  "widgets.tracks.synced_later": "Ondertiteling gesynchroniseerd, {duration} later",
   "widgets.tracks.capsule_original": "Originele timing",
   "widgets.region.gb": "Verenigd Koninkrijk",
   "widgets.region.us": "Verenigde Staten",

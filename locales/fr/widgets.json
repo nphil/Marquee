@@ -243,6 +243,8 @@
   "widgets.tracks.track_ordinal": "Piste {number}",
   "widgets.tracks.capsule_later": "Sous-titres {duration} plus tard",
   "widgets.tracks.capsule_earlier": "Sous-titres {duration} plus tôt",
+  "widgets.tracks.synced_earlier": "Sous-titres synchronisés, {duration} plus tôt",
+  "widgets.tracks.synced_later": "Sous-titres synchronisés, {duration} plus tard",
   "widgets.tracks.capsule_original": "Synchro d’origine",
   "widgets.region.gb": "Royaume-Uni",
   "widgets.region.us": "États-Unis",

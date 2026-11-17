@@ -247,6 +247,8 @@
   "widgets.tracks.track_ordinal": "Дарожка {number}",
   "widgets.tracks.capsule_later": "Субцітры на {duration} пазней",
   "widgets.tracks.capsule_earlier": "Субцітры на {duration} раней",
+  "widgets.tracks.synced_earlier": "Субцітры сінхранізаваны, на {duration} раней",
+  "widgets.tracks.synced_later": "Субцітры сінхранізаваны, на {duration} пазней",
   "widgets.tracks.capsule_original": "Зыходная сінхранізацыя",
   "widgets.region.gb": "Вялікабрытанія",
   "widgets.region.us": "ЗША",

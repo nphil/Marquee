@@ -239,6 +239,8 @@
   "widgets.tracks.track_ordinal": "{number}. sáv",
   "widgets.tracks.capsule_later": "Felirat késleltetése: {duration}",
   "widgets.tracks.capsule_earlier": "Felirat előrehozása: {duration}",
+  "widgets.tracks.synced_earlier": "Felirat szinkronizálva, előrehozás: {duration}",
+  "widgets.tracks.synced_later": "Felirat szinkronizálva, késleltetés: {duration}",
   "widgets.tracks.capsule_original": "Eredeti időzítés",
   "widgets.region.gb": "Egyesült Királyság",
   "widgets.region.us": "Egyesült Államok",

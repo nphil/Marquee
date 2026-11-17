@@ -1081,6 +1081,20 @@
     "value": "Original timing",
     "description": "On-video timing control of the player: subtitles use the file's own timing (no offset)."
   },
+  "widgets.tracks.synced_earlier": {
+    "value": "Subtitles synced, {duration} earlier",
+    "description": "Short notice after the player matched a downloaded subtitle to the file's own subtitle track and now shows it this much earlier. The duration is already formatted, e.g. \"2.4 s\".",
+    "args": {
+      "duration": "str"
+    }
+  },
+  "widgets.tracks.synced_later": {
+    "value": "Subtitles synced, {duration} later",
+    "description": "Short notice after the player matched a downloaded subtitle to the file's own subtitle track and now shows it this much later. The duration is already formatted, e.g. \"2.4 s\".",
+    "args": {
+      "duration": "str"
+    }
+  },
   "widgets.region.gb": {
     "value": "United Kingdom",
     "description": "Region name shown under a subtitle track's language when the track carries no name of its own (a BCP-47 region subtag)."

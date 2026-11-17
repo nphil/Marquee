@@ -129,6 +129,8 @@ struct State {
     /// The complete selected file, kept across Off→On so re-picking is instant.
     loaded: Option<(Selection, Content)>,
     failed: Option<(Selection, Failure, Instant)>,
+    /// The automatic sync's shift for a file (`subsync`), kept across Off→On like `loaded`.
+    synced: Option<(Selection, i64)>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -139,7 +141,20 @@ static STATE: Mutex<State> = Mutex::new(State {
     running: false,
     loaded: None,
     failed: None,
+    synced: None,
 });
+
+/// The shift of `synced` while its file is the one wanted, else 0: what the draw reads every frame
+/// ([`sync_offset_ms`]) without taking the lock. Written under the lock by [`publish_sync`].
+static SYNC_MS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+fn publish_sync(st: &State) {
+    let ms = match (&st.want, &st.synced) {
+        (Some(want), Some((selection, ms))) if want == selection => *ms,
+        _ => 0,
+    };
+    SYNC_MS.store(ms as i32, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Signalled, under [`STATE`], whenever the download worker goes idle or a restyle worker has
 /// finished: what the tests wait on instead of the clock.
@@ -207,6 +222,52 @@ pub(super) fn alignment_snapshot(start_ms: i64, end_ms: i64, limit: usize) -> Op
             authored_end_ms: cue.authored_end_ms, start_ms: cue.start_ms, end_ms: cue.end_ms,
             text: cue.text.clone() }).collect();
     Some(AlignmentSnapshot { generation, source_id, source_revision, stream_id, source_sha256, cues })
+}
+
+/// A loaded text sidecar an automatic sync is for (`subsync`): which file, so a look made for one
+/// can never move another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SyncTarget(Selection);
+
+/// The selected sidecar, once it is a converted text file that has arrived.
+pub(super) fn sync_target() -> Option<SyncTarget> {
+    let st = state();
+    let (selection, content) = st.loaded.as_ref()?;
+    (st.want.as_ref() == Some(selection) && content.text.is_some()).then(|| SyncTarget(selection.clone()))
+}
+
+/// Is `target` still the selected, loaded text sidecar? [`sync_target`] without the copy.
+pub(super) fn is_sync_target(target: &SyncTarget) -> bool {
+    let st = state();
+    st.want.as_ref() == Some(&target.0)
+        && st.loaded.as_ref().is_some_and(|(selection, content)| *selection == target.0 && content.text.is_some())
+}
+
+/// `target`'s converted script, for a comparison off the frame thread.
+pub(super) fn sync_script(target: &SyncTarget) -> Option<Arc<text_ass::TextScript>> {
+    let st = state();
+    let (selection, content) = st.loaded.as_ref()?;
+    if *selection != target.0 {
+        return None;
+    }
+    content.text.as_ref().map(|hold| hold.script.clone())
+}
+
+/// Worker-only: draw `target` `ms` later (earlier when negative) from now on. False when the
+/// viewer has moved on to another file.
+pub(super) fn apply_sync(target: &SyncTarget, ms: i64) -> bool {
+    let mut st = state();
+    if st.want.as_ref() != Some(&target.0) {
+        return false;
+    }
+    st.synced = Some((target.0.clone(), ms));
+    publish_sync(&st);
+    true
+}
+
+/// The automatic sync's shift of the selected sidecar in milliseconds, 0 when it has none.
+pub(super) fn sync_offset_ms() -> i64 {
+    i64::from(SYNC_MS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 impl TextHold {
@@ -301,6 +362,7 @@ fn select_with_fetch(
         st.generation = st.generation.wrapping_add(1);
         st.alignment_generation = st.alignment_generation.wrapping_add(1);
         st.want = Some(selection.clone());
+        publish_sync(&st);
         st.failed = None;
         st.pending = None;
         if matches!(&st.loaded, Some((source, _)) if *source == selection) {
@@ -369,6 +431,7 @@ pub fn deselect() {
     st.pending = None;
     st.want = None;
     st.failed = None;
+    publish_sync(&st);
 }
 
 /// Is a sidecar the selected subtitle? True from the pick, before its file has arrived — the
@@ -411,6 +474,8 @@ fn select_for_test(stream_id: i64, codec: &str, script: Option<&[u8]>) {
         server: plx_plex::plex::ServerId::UNSET, stream_id, key: String::new(), codec: codec.to_owned(),
     };
     st.want = Some(selection.clone());
+    st.synced = None;
+    publish_sync(&st);
     st.loaded = script.map(|s| {
         let content = decode(s.to_vec(), codec).expect("fixture: an authored script");
         (selection, content)
@@ -452,6 +517,8 @@ pub fn reset() {
     st.want = None;
     st.loaded = None;
     st.failed = None;
+    st.synced = None;
+    publish_sync(&st);
 }
 
 /// **Honour the sidecar this part shows from the start**: `planned`, the stream id the resolve chose
@@ -835,6 +902,34 @@ mod tests {
         assert!(Arc::ptr_eq(&ass_source(false).unwrap(), &first));
         reset();
         assert!(ass_source(false).is_none(), "new item drops the old source");
+    }
+
+    /// The automatic sync's shift belongs to its file: kept through Off→On and drawn only while
+    /// that file is selected, gone with a new item, never applied to a file the viewer left.
+    #[test]
+    fn a_sync_shift_follows_its_file() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        finish_download();
+        let pick = || select_with_fetch(plx_plex::plex::ServerId::from_raw(0), 42, "/library/streams/42".into(),
+            "srt".into(), |_, _, _| Some(b"1\n00:00:01,000 --> 00:00:02,000\nHello\n".to_vec()));
+        pick();
+        finish_download();
+        let target = sync_target().expect("a loaded text file");
+        assert_eq!(sync_script(&target).map(|script| script.cues), Some(1));
+        assert!(apply_sync(&target, -2_400));
+        assert_eq!(sync_offset_ms(), -2_400);
+        let clock = super::super::sidecar_clock_ns(&crate::route::PlaybackSession::IDLE, 10_000_000_000);
+        assert_eq!(clock, 12_400_000_000, "2.4 s earlier: the draw reads the file 2.4 s ahead");
+        deselect();
+        assert_eq!(sync_offset_ms(), 0, "nothing to shift while Off");
+        assert!(!apply_sync(&target, 1_000), "a file the viewer left is never moved");
+        pick();
+        assert!(is_sync_target(&target));
+        assert_eq!(sync_offset_ms(), -2_400, "the same file again keeps its shift");
+        reset();
+        assert_eq!(sync_offset_ms(), 0, "a new item starts unshifted");
+        assert!(sync_target().is_none());
     }
 
     #[test]

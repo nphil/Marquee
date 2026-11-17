@@ -1531,12 +1531,19 @@ fn inject_refuse601(ps: &crate::route::PlaybackSession, eng: &Engine) {
     super::sf_on_event(eng.native_epoch, 18, 601, std::ptr::null());
 }
 
+/// Is SpeechDock aligning the selected subtitle's words to the audio? Set by [`update_alignment`];
+/// the automatic sync (`subsync`) leaves such a subtitle alone.
+static ALIGNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(super) fn aligning() -> bool {
+    ALIGNING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 // Capture only facts from the resolved playing session. The worker owns all cue parsing,
 // hashing, HTTP, and publication; the pump never performs those operations.
 fn update_alignment(ps: &crate::route::PlaybackSession, now: u32) {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, Ordering};
     static LAST: AtomicU32 = AtomicU32::new(0);
-    static ACTIVE: AtomicBool = AtomicBool::new(false);
     let last = LAST.load(Ordering::Relaxed);
     if now.wrapping_sub(last) < 250 { return; }
     LAST.store(now, Ordering::Relaxed);
@@ -1566,15 +1573,17 @@ fn update_alignment(ps: &crate::route::PlaybackSession, now: u32) {
                 subtitle_stream_id: sub.to_string(), subtitle_codec: p.subtitle_codec?.to_owned(),
             },
             subtitle_source_kind: if sidecar { "sidecar" } else { "embedded" }.to_owned(),
-            language: language.to_owned(), subtitle_offset_ms: super::subtitle_offset_ms(),
+            language: language.to_owned(),
+            // a sidecar's automatic sync moves its clock like the viewer's offset does
+            subtitle_offset_ms: super::subtitle_offset_ms() + super::sidecar::sync_offset_ms(),
             position_ms: super::playpos_ns().max(0) / 1_000_000, track,
             style_generation: super::text_style::generation(),
         })
     })();
     if let Some(snapshot) = snapshot {
-        ACTIVE.store(true, Ordering::Relaxed);
+        ALIGNING.store(true, Ordering::Relaxed);
         super::alignment::update(snapshot);
-    } else if ACTIVE.swap(false, Ordering::Relaxed) {
+    } else if ALIGNING.swap(false, Ordering::Relaxed) {
         super::alignment::invalidate();
     }
 }
@@ -1582,6 +1591,7 @@ fn update_alignment(ps: &crate::route::PlaybackSession, now: u32) {
 pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, now: u32) {
     use super::shared::PlaybackState;
     update_alignment(ps, now);
+    super::subsync::update(ps, now);
     // A preroll closed by a path with no adapter in hand (`abandon_seek`) leaves its mute behind;
     // the one place every closer funnels through is the next tick.
     if !TX.seek_preroll_active() {

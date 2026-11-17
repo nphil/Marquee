@@ -247,6 +247,8 @@
   "widgets.tracks.track_ordinal": "Ścieżka {number}",
   "widgets.tracks.capsule_later": "Napisy o {duration} później",
   "widgets.tracks.capsule_earlier": "Napisy o {duration} wcześniej",
+  "widgets.tracks.synced_earlier": "Napisy zsynchronizowane, o {duration} wcześniej",
+  "widgets.tracks.synced_later": "Napisy zsynchronizowane, o {duration} później",
   "widgets.tracks.capsule_original": "Bez przesunięcia",
   "widgets.region.gb": "Wielka Brytania",
   "widgets.region.us": "Stany Zjednoczone",

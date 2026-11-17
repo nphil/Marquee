@@ -243,6 +243,8 @@
   "widgets.tracks.track_ordinal": "Pista {number}",
   "widgets.tracks.capsule_later": "Subtítulos {duration} más tarde",
   "widgets.tracks.capsule_earlier": "Subtítulos {duration} antes",
+  "widgets.tracks.synced_earlier": "Subtítulos sincronizados, {duration} antes",
+  "widgets.tracks.synced_later": "Subtítulos sincronizados, {duration} más tarde",
   "widgets.tracks.capsule_original": "Sincronización original",
   "widgets.region.gb": "Reino Unido",
   "widgets.region.us": "Estados Unidos",

@@ -883,6 +883,28 @@ fn displayed_ready(store: &Store, snapshot: &EmbeddedSnapshot) -> bool {
         && ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready)
 }
 
+/// The text tracks the store holds, each with how many cues: what `subsync` picks the video's own
+/// subtitle from.
+pub(super) fn text_tracks() -> Vec<(i32, usize)> {
+    let store = store();
+    if store.awaiting_reopen {
+        return Vec::new();
+    }
+    store.text.iter().map(|(track, text)| (*track, text.raw.len())).collect()
+}
+
+/// The cues `track` holds as received: start and end in milliseconds of the playback clock, and
+/// the decoded text. Only the stretch around the playhead the store keeps.
+pub(super) fn text_cues(track: i32) -> Vec<(i64, i64, Arc<str>)> {
+    let store = store();
+    match store.text.get(&track) {
+        Some(text) if !store.awaiting_reopen => {
+            text.raw.iter().map(|((start, end, _), cue)| (*start, *end, cue.text.clone())).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Called by the alignment worker, never by the frame renderer.
 pub(super) fn alignment_snapshot(track: i32, window_start_ms: i64, window_end_ms: i64) -> Option<EmbeddedSnapshot> {
     if super::desired_sub_idx() != track || super::sidecar::selected() { return None; }

@@ -247,6 +247,8 @@
   "widgets.tracks.track_ordinal": "Дорожка {number}",
   "widgets.tracks.capsule_later": "Субтитры позже на {duration}",
   "widgets.tracks.capsule_earlier": "Субтитры раньше на {duration}",
+  "widgets.tracks.synced_earlier": "Субтитры синхронизированы, раньше на {duration}",
+  "widgets.tracks.synced_later": "Субтитры синхронизированы, позже на {duration}",
   "widgets.tracks.capsule_original": "Исходная синхронизация",
   "widgets.region.gb": "Великобритания",
   "widgets.region.us": "США",

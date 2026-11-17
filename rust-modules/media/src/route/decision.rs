@@ -926,6 +926,16 @@ pub fn alignment_playback_identity<'a>(
     })
 }
 
+/// The language of the embedded subtitle track the demuxer numbers `track`
+/// (`metadata::sub_render_ordinal`), from the landing's track list; `None` when it is not known.
+pub fn embedded_subtitle_language(ps: &PlaybackSession, track: i32) -> Option<&str> {
+    let subs = &ps.track_ctx.as_ref()?.subs;
+    (0..subs.len())
+        .find(|&i| plx_data::metadata::sub_render_ordinal(subs, i) == track)
+        .map(|i| subs[i].lang_code.as_str())
+        .filter(|lang| !lang.is_empty())
+}
+
 /// Whole-file transport requirement captured by the playback resolve. Diagnostics uses it for
 /// manual Original, where no adaptive controller exists to publish `dg_abr_kbps`.
 pub fn transport_kbps(ps: &PlaybackSession) -> i64 {

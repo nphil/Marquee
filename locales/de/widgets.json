@@ -239,6 +239,8 @@
   "widgets.tracks.track_ordinal": "Spur {number}",
   "widgets.tracks.capsule_later": "Untertitel {duration} später",
   "widgets.tracks.capsule_earlier": "Untertitel {duration} früher",
+  "widgets.tracks.synced_earlier": "Untertitel synchronisiert, {duration} früher",
+  "widgets.tracks.synced_later": "Untertitel synchronisiert, {duration} später",
   "widgets.tracks.capsule_original": "Originales Timing",
   "widgets.region.gb": "Vereinigtes Königreich",
   "widgets.region.us": "Vereinigte Staaten",

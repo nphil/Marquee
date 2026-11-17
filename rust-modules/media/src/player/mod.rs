@@ -67,6 +67,7 @@ pub mod paint; // what the player paints with a text caption besides libass's pi
 pub mod reveal; // "Reveal as spoken": a cue shown a word or a line at a time, timed by estimate (pure)
 pub mod sub_charset; // legacy-encoding text subtitles (GBK, Big5, Shift_JIS, ...) read as UTF-8; decided once per track
 pub mod subside; // the side subtitle reader's thread and state (dev trigger `plxnative-subside`)
+mod subsync; // a downloaded subtitle's constant shift against the video's own track (pure matcher + worker)
 #[cfg(feature = "hostsim")]
 pub mod sim_video; // the simulator's decoded picture, for screenshots (see its doc)
 pub mod text_ass; // text subtitles to ASS: dialect converter, synthesized header, sidecar scripts (pure)
@@ -2047,6 +2048,7 @@ pub fn reset_play_rate() {
 pub fn reset_subtitle() {
     SHARED.desired_sub_idx.store(-1, Relaxed);
     sidecar::reset(); // …and the previous item's external subtitle file with it
+    subsync::reset(); // …and that file's automatic sync
     SUBTITLE_OFFSET_MS.store(0, Relaxed); // …and the timing offset tuned against that file
 }
 /// select the audio stream index the demuxer feeds at the FIRST Load (before start_bufferfeed) —
@@ -2210,7 +2212,8 @@ pub fn subtitle_draw(ps: &crate::route::PlaybackSession) -> Option<(std::sync::A
 /// 0.6 s to 2.2 s on one file) and the sidecar drew early. The side reader measures that constant
 /// (`ff::subside`, `delta = part_time − playhead`) and this adds it, so the renderer is asked for
 /// the content time actually on screen. The viewer's timing offset is subtracted after this, by the
-/// caller, and composes with it.
+/// caller, and composes with it. The automatic sync's shift (`subsync`) is subtracted here: like the
+/// delta it corrects the file, not the viewer's taste.
 ///
 /// Moved only when ALL hold: the selection is a sidecar, the app draws it over a live remux
 /// ([`crate::route::SubtitlePresenter::ClientOverRemux`]) and the reader matched this run's first
@@ -2225,10 +2228,18 @@ pub fn subtitle_draw(ps: &crate::route::PlaybackSession) -> Option<(std::sync::A
 /// position for that moment, then the position drops by the snap, which `ass_source::Clock::sample`
 /// treats as a break and rewinds, so a cue already shown early can appear a second time once.
 pub fn sidecar_clock_ns(ps: &crate::route::PlaybackSession, playhead_ns: i64) -> i64 {
+    playhead_ns
+        .saturating_add(sidecar_delta_ns(ps).unwrap_or(0))
+        .saturating_sub(sidecar::sync_offset_ms() * 1_000_000)
+}
+
+/// What [`sidecar_clock_ns`] adds to the playhead to reach the file's time: nothing on a direct
+/// play, the side reader's measured delta over a remux, `None` until that is measured.
+fn sidecar_delta_ns(ps: &crate::route::PlaybackSession) -> Option<i64> {
     if !crate::route::sidecar_over_remux(ps) {
-        return playhead_ns;
+        return Some(0);
     }
-    subside::exact_delta_ns().map_or(playhead_ns, |delta| playhead_ns.saturating_add(delta))
+    subside::exact_delta_ns()
 }
 
 /// The oldest cue end a store must still hold: the LATEST delay ([`SUBTITLE_OFFSET_LATEST_MS`])

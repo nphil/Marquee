@@ -243,6 +243,8 @@
   "widgets.tracks.track_ordinal": "Faixa {number}",
   "widgets.tracks.capsule_later": "Legendas {duration} mais tarde",
   "widgets.tracks.capsule_earlier": "Legendas {duration} mais cedo",
+  "widgets.tracks.synced_earlier": "Legendas sincronizadas, {duration} mais cedo",
+  "widgets.tracks.synced_later": "Legendas sincronizadas, {duration} mais tarde",
   "widgets.tracks.capsule_original": "Sincronização original",
   "widgets.region.gb": "Reino Unido",
   "widgets.region.us": "Estados Unidos",
