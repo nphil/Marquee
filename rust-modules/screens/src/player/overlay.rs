@@ -336,6 +336,12 @@ impl PlayerOverlayScreen {
         self.kind
     }
 
+    /// Is a style picker open in the track menu? The player then draws the caption as it will sit,
+    /// under no dim and with no transport ([`HudPolicy::Preview`]).
+    pub fn previews_style(&self) -> bool {
+        matches!(&self.panel, Panel::Tracks(p) if p.previews_style())
+    }
+
     /// **Re-address a panel that is already up.** The two disc icons open the one track menu on
     /// their own tab, so the second press has to move the tab of the entry that exists rather than
     /// present a second one — `same_instance` says they ARE the same instance, and this is the
@@ -1040,7 +1046,9 @@ impl<H: crate::registry::PlayerLike + crate::registry::MetadataLike> Screen<H> f
         if self.suppressed {
             return plx_ui::screen::Scrim::NONE;
         }
-        match self.panel {
+        match &self.panel {
+            // a style picker is judged on the caption itself, which the dim would tint
+            Panel::Tracks(p) if p.previews_style() => plx_ui::screen::Scrim::NONE,
             Panel::Tracks(_) => plx_ui::screen::Scrim::over_video(DIM_PLAYER),
             Panel::More(_) => plx_ui::screen::Scrim::over_video(DIM_SHEET),
             // The capsule sits over the video in the transport's own band — no dim.

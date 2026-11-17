@@ -116,6 +116,13 @@ pub enum HudPolicy {
     /// `OverlayKind::hud_policy`): the transport, the caption lift and the pointer/D-pad stops
     /// under it are all withheld. Outranks `Lifted` when both kinds of surface are up.
     Hidden,
+    /// A style picker of the track menu is open (`OverlayKind::Tracks` on a Size, Position, Color
+    /// or look page, [`plx_appkit::track_menu::TrackMenuState::previews_style`]): the transport is
+    /// withheld and the caption sits where it will with the transport down, so a pick is seen on
+    /// it. With no caption on screen a sample line stands in. Unlike `Hidden` the transport comes
+    /// back untouched when the picker closes, since the panel is still the viewer's. Outranks
+    /// `Lifted`, and `Hidden` outranks it.
+    Preview,
 }
 
 fn subtitle_pixel_bounds(rect: Rect, (dw, dh): (i32, i32), (vx, vy, vw, vh): (i32, i32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
@@ -359,8 +366,10 @@ impl PlayerScreen {
         band: plx_media::player::text_style::HudBand,
     ) {
         self.render.subtitle_bounds = self.render.ass.draw(subs_lift, band, &self.model);
+        let mut message_drawn = false;
         if let Some(message) = self.render.ass.error() {
             plx_appkit::player_hud::draw_subtitle_message(message, subs_lift, band, &self.model, measure);
+            message_drawn = true;
         }
         // a sidecar that produced nothing says so for a few seconds; the server burning the
         // selection draws it already, so no second notice then
@@ -368,8 +377,16 @@ impl PlayerScreen {
             .filter(|_| !plx_media::route::subtitles_burned(ps))
         {
             plx_appkit::player_hud::draw_subtitle_message(message, subs_lift, band, &self.model, measure);
+            message_drawn = true;
         }
         self.draw_subtitle_bitmap(subs_lift, band); // PGS/VobSub image subs
+        // a style picker is open and nothing is on screen to judge it by: a sample line, in the
+        // plain caption's size, position and ink, which a pick moves as it would the real caption
+        if self.hud_policy == HudPolicy::Preview && self.render.subtitle_bounds.is_none() && !message_drawn {
+            plx_appkit::player_hud::draw_subtitle_message(
+                plx_platform::i18n::msg::widgets_tracks_style_sample(), subs_lift, band, &self.model, measure,
+            );
+        }
     }
 
     /// Draw the image-subtitle display set — the render half this screen owns.
@@ -590,6 +607,11 @@ impl PlayerScreen {
         mix(u64::from(plx_media::player::sidecar::notice_shown()));
         mix(plx_media::player::active_bitmap_key(pos).unwrap_or(0) as u64);
         mix(u64::from(hud_up));
+        // a style picker's sample line follows the picks it previews
+        if self.hud_policy == HudPolicy::Preview {
+            mix(0x5A17 + (u64::from(self.model.sub_size.index()) << 8) + (u64::from(self.model.sub_position.index()) << 16)
+                + (u64::from(self.model.sub_tone.index()) << 24) + (u64::from(self.model.sub_look.brightness) << 32));
+        }
         mix(u64::from(
             self.row
                 .since_play_ms(now)
@@ -620,7 +642,7 @@ impl PlayerScreen {
     /// too) sees the same answer the frame draws.
     pub fn hud_up(&self, ps: &plx_media::route::PlaybackSession, now: u32) -> bool {
         self.hud.visible(ps, now, plx_media::player::TX.paused.load(std::sync::atomic::Ordering::Relaxed))
-            && self.hud_policy != HudPolicy::Hidden
+            && !matches!(self.hud_policy, HudPolicy::Hidden | HudPolicy::Preview)
     }
 
     /// **Push this frame's [`HudPolicy`]** (`app/run.rs`, from `bridge::player_hud_policy`) — and
@@ -3251,6 +3273,28 @@ mod step_ladder_tests {
         page.record_stops(&mut f, page.hud_drawn(ps, 1_000));
         let got: Vec<u32> = f.into_stops().iter().map(|s| s.key.elem).collect();
         assert_eq!(got, Vec::<u32>::new(), "no scrub/row/tab stop registers under the capsule");
+    }
+
+    /// **`HudPolicy::Preview` (a style picker is open) puts the caption where it will sit and hides
+    /// the transport — and gives the transport back, undismissed, when the picker closes.** Unlike
+    /// `Hidden` it leaves no dismissal behind, since the menu is still the viewer's; and the frame is
+    /// owed when a pick moves the sample line.
+    #[test]
+    fn the_preview_policy_hides_the_transport_without_lifting_and_hands_it_back() {
+        let _g = plx_base::testlock::serial();
+        let mut page = PlayerScreen::new(ENTRY, plx_appkit::player_hud::loaded::classic_for_test());
+        let cx = cx();
+        let ps = TestHost::session(&cx);
+        page.set_hud_policy(HudPolicy::Lifted);
+        assert!(page.subs_lift(ps, 1_000) && page.hud_drawn(ps, 1_000));
+        page.set_hud_policy(HudPolicy::Preview);
+        assert!(!page.subs_lift(ps, 1_000), "the caption sits where it will with the transport down");
+        assert!(!page.hud_drawn(ps, 1_000));
+        let before = page.clock_fingerprint(ps, 1_000);
+        page.model.sub_size = plx_plex::plex::session::SubtitleSize::Large;
+        assert_ne!(before, page.clock_fingerprint(ps, 1_000), "a size pick owes the sample line a frame");
+        page.set_hud_policy(HudPolicy::Lifted);
+        assert!(page.hud_drawn(ps, 1_000), "the transport returns with the menu, not dismissed");
     }
 
     /// **A prepared player frame queues the transport's clocks, and only while the playbar is

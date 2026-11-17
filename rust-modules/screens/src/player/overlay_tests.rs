@@ -1005,6 +1005,29 @@ fn the_player_panels_dim_through_the_container_in_the_neutral_dim_whatever_the_i
     assert_eq!(Screen::<TestHost>::scrim(&bare).source, UnderlaySource::Flat, "no envelope: the same neutral dim");
 }
 
+/// **A style picker is judged on the caption: no dim over it, and the panel says so.** The Style page
+/// that lists the fields keeps the dim; the picker under it (Size, Position, a colour or look page)
+/// asks the player for the preview (`previews_style`) and the dim goes; BACK brings both back.
+#[test]
+fn a_style_picker_takes_the_dim_off_the_caption_and_asks_for_the_preview() {
+    use plx_ui::screen::Screen;
+    use plx_ui::theme::underlay::DIM_PLAYER;
+    let _g = plx_base::testlock::serial();
+    let ps = plx_media::route::PlaybackSession::IDLE;
+    let meta = plx_data::stores::metadata::MetadataStore::default();
+    let mut page = PlayerOverlayScreen::new(&ps, meta.view(), ENTRY, OverlayKind::Tracks { tab: 1 });
+    assert!(!page.previews_style());
+    assert_eq!(Screen::<TestHost>::scrim(&page).alpha, DIM_PLAYER);
+    open_row(&mut page, TrackRow::Style);
+    assert!(!page.previews_style(), "the page that lists the fields is still the menu");
+    open_row(&mut page, TrackRow::OpenField(StyleField::Size));
+    assert!(page.previews_style());
+    assert_eq!(Screen::<TestHost>::scrim(&page).alpha, 0.0, "nothing dims the caption being judged");
+    press(&mut page, 0, WCODE_BACK, Edge::Down);
+    assert!(!page.previews_style());
+    assert_eq!(Screen::<TestHost>::scrim(&page).alpha, DIM_PLAYER);
+}
+
 /// **A pointer click on a row activates THAT row** — the keys the panel registers as hit stops, the
 /// keys its `Focusable` places, and what `Activate(key)` spends all agree. The cursor is left on
 /// Off (never moved by a `FocusMoved`), so a click that still read the cursor would commit the

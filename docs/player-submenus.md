@@ -27,6 +27,23 @@ because the overlay's state shape changed on purpose.
   server lists the new stream the panel selects it and closes (`docs/pms-api.md` §8). A result
   the playing item already carries as a sidecar (same release name and language) reads "Added"
   and OK is inert, since adding it again would list one subtitle twice.
+- **Bazarr search (`SearchOffer::WithBazarr`):** with Bazarr linked, a **Search for subtitles** row sits
+  under Off and Forced only, ahead of the languages (`TrackRow::OpenBazarr`, page
+  `TrackPage::BazarrSearch`), and the bottom row reads **Search with Plex**. Once a movie or episode has
+  played for 10 s (`player::prefetch`, `SETTLE_MS`, playing time) the player opens the Bazarr search in
+  the background, so the page opens on its candidates; it closes with the part or the player and
+  never downloads or switches anything: a candidate is applied only when picked.
+- **Style pickers are a card at the top (`TrackMenuState::previews_style`):** the Size, Position, Color
+  and look pages (`TrackPage::Picker`, not the Style page that lists them) collapse the menu to a card
+  of at most 480 px against the top safe edge, in the menu's own right-hand column; the table scrolls
+  inside it. The scrim is dropped (`Scrim::NONE`), the transport is withheld and the captions sit at
+  their normal base (`HudPolicy::Preview`, `bridge::player_hud_policy`: Hidden, then Preview, then
+  Lifted), so the real caption is seen under the pick as it is changed. With no caption on screen a
+  sample line, "Subtitles will look like this" (`widgets.tracks.style_sample`), is drawn in its place;
+  it is the app's plain caption, so it follows size, position, colour and brightness, and not font,
+  edge or background. BACK returns to the Style page with the menu back at the bottom and the
+  transport as it was. `PanelMotion::jump` places the card at once on the mode change rather than
+  springing a bottom-anchored panel across the screen.
 - **Keys:** UP/DOWN move; OK or RIGHT on a Nav row pushes; on a sub-page LEFT/BACK pops and focus
   returns to the opener by semantic id; on the root LEFT/RIGHT switch tabs as before (RIGHT on a
   Nav row pushes instead); BACK on the root dismisses; clicking the "< TITLE" band pops. A track
@@ -173,8 +190,9 @@ On the root the change refreshes in place. On a sub-page the page is refreshed i
 ## Decisions
 
 - **Minimum width (owner):** the in-player popovers (Tracks, More) have a floor, `theme::layout::PLAYER_MENU_MIN_W` (440 px at 1080p), set on their `TableView` (`min_panel_w`), so a small page does not shrink to its labels. A floor only: wider content still grows the panel to `MENU_MAX_W`. At 440 the locked-renderer note takes two lines in English and Belarusian and three in Spanish (two needs ~520).
-- **Geometry while the Position picker is open (owner): accept the overlap.** Panel bottom is fixed;
-  at High the caption may pass behind the panel. No preview shift, no page-dependent HUD policy.
+- **Geometry while a style picker is open (owner): the menu moves, the caption does not.** The picker is
+  a card at the top and the caption stays where it will sit, so no pick is judged behind the panel.
+  This replaces the earlier decision to accept the overlap at High.
 - **Evidence for the animation PR:** host tests for running vs resting (a transition reports
   animating and stops requesting frames at rest; push then pop reverses and settles); on device a
   frame-time capture during repeated push/pop with cues uploading, plus a motion capture the owner

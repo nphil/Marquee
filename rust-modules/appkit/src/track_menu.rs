@@ -317,6 +317,12 @@ pub enum TrackPage {
 }
 
 impl TrackPage {
+    /// A page of choices for the caption's own style: the menu hands the screen to the subtitle
+    /// while one is open ([`TrackMenuState::previews_style`]).
+    fn is_style_picker(self) -> bool {
+        matches!(self, Self::Picker(_))
+    }
+
     /// The title band's text; a language page is titled by its language (`other` is the page
     /// model, [`TrackMenuState::other`]).
     fn title(self, other: &[OtherLang]) -> String {
@@ -424,17 +430,23 @@ pub(crate) fn place_panel(anchor: Rect, size: (f32, f32)) -> plx_ui::popover::An
     )
 }
 
+/// How tall the top card of a style picker may grow: it stays a card at the top of the screen, and
+/// a longer page scrolls inside it, so the caption below stays in view.
+const STYLE_CARD_MAX_H: f32 = 480.0;
+
 /// **A tab root's natural panel**, placed beside `anchor` — the layout of `table` as the panel would
 /// hug it. Each tab hugs its own rows (shared menu rule); the edge the opener's segment ends at is
 /// fixed, so switching tabs moves only the far edge.
 ///
 /// The panel grows away from the opener and its height is capped at the room on that side, so a
 /// long list (an item with many audio dubs) SCROLLS inside the panel instead of the panel itself
-/// spilling over the opener or past the safe frame.
+/// spilling over the opener or past the safe frame. `top_card` (a style picker is open,
+/// [`TrackMenuState::previews_style`]) lays it out as a card at the top of the screen instead.
 fn table_natural(
     table: &TableView,
     anchor: Rect,
     measure: &dyn plx_machine::machine::Measure,
+    top_card: bool,
 ) -> plx_ui::popover::Anchored {
     let pw = table.menu_panel_width(measure);
     // A note row wraps, so its line count depends on the width: it is resolved HERE, against the
@@ -442,6 +454,13 @@ fn table_natural(
     // `draw`) can read the count a rebuild left stale. Idempotent and a few short strings.
     table.fit_notes(pw, measure);
     let ph = table.measured_height().max(160.0);
+    if top_card {
+        // The same column as the open menu, at the top of the safe frame, dropping from the top:
+        // the caption (or the sample line standing in for it) is left in the clear below.
+        let x = place_panel(anchor, (pw, ph)).rect.x;
+        let rect = Rect::new(x, plx_ui::consts::SAFE.y, pw, ph.min(STYLE_CARD_MAX_H));
+        return plx_ui::popover::Anchored { rect, side: plx_ui::popover::Side::Below };
+    }
     place_panel(anchor, (pw, ph))
 }
 
@@ -650,6 +669,9 @@ pub struct TrackMenuState {
     /// The side of [`Self::anchor`] the panel took, as of the last placement: where its rise
     /// comes from.
     side: std::cell::Cell<plx_ui::popover::Side>,
+    /// Whether the panel was last laid out as the top card ([`Self::previews_style`]): the card
+    /// jumps to its new place when this changes rather than springing across the screen.
+    top_card: bool,
 }
 
 /// **What the track menu DECIDED**, for the loop to perform (spec §2.2).
@@ -842,6 +864,7 @@ impl TrackMenuState {
             removal_watching: false,
             anchor: crate::player_hud::classic::ctrl_row_hit_rect(),
             side: std::cell::Cell::new(plx_ui::popover::Side::Above),
+            top_card: false,
         };
         s.form.table.min_panel_w = theme::layout::PLAYER_MENU_MIN_W;
         s.sync_item(ps, meta);
@@ -2533,8 +2556,11 @@ impl TrackMenuState {
     /// [`TableView::layout_rev`]: text is measured when the table changed, not once per caller per
     /// frame. What is on screen is [`Self::shown_rect`], which springs toward this.
     fn panel_rect(&self, measure: &dyn plx_machine::machine::Measure) -> Rect {
-        self.motion.natural(self.form.table.layout_rev(), || {
-            let placed = table_natural(&self.form.table, self.anchor, measure);
+        let top = self.previews_style();
+        // the layout's own revision, and which place it was laid out for
+        let rev = self.form.table.layout_rev().wrapping_add(u32::from(top) << 31);
+        self.motion.natural(rev, || {
+            let placed = table_natural(&self.form.table, self.anchor, measure, top);
             self.side.set(placed.side);
             placed.rect
         })
@@ -2544,6 +2570,13 @@ impl TrackMenuState {
     /// [`Self::panel_rect`], the bottom and right on the anchor.
     fn shown_rect(&self, measure: &dyn plx_machine::machine::Measure) -> Rect {
         self.motion.shown(self.panel_rect(measure))
+    }
+
+    /// **Is a style picker (Size, Position, Color or a look page) open?** The panel is then the
+    /// compact card at the top of the screen, and the player shows the caption as it will sit with
+    /// no dim and no transport over it (`HudPolicy::Preview`), so a pick is seen on the caption.
+    pub fn previews_style(&self) -> bool {
+        self.pages.top().is_some_and(TrackPage::is_style_picker)
     }
 
     /// **Is the panel mid-transition** — resizing to a new layout or sliding a page? The player
@@ -2582,6 +2615,11 @@ impl TrackMenuState {
         }
         // `update` subtracts its own top/bottom padding now — pass the panel's raw height.
         let natural = self.panel_rect(measure);
+        let top = self.previews_style();
+        if top != self.top_card {
+            self.top_card = top;
+            self.motion.jump();
+        }
         self.form.table.update(dt, natural.h);
         self.motion.step(dt, natural);
         self.motion.prewarm_text(natural, &self.form.table, measure);
@@ -2636,7 +2674,7 @@ impl TrackMenuState {
             let mut other = TrackTable::new(BAND_BASE);
             other.table.min_panel_w = theme::layout::PLAYER_MENU_MIN_W;
             other.set(form, None);
-            let natural = table_natural(&other.table, self.anchor, measure).rect;
+            let natural = table_natural(&other.table, self.anchor, measure, false).rect;
             PanelMotion::prewarm_background_text(natural, &other.table, measure)
         });
         self.background_owner = Some(owner);
@@ -6086,6 +6124,7 @@ mod focus_tests {
             removal_watching: false,
             anchor: crate::player_hud::classic::ctrl_row_hit_rect(),
             side: std::cell::Cell::new(plx_ui::popover::Side::Above),
+            top_card: false,
         }
     }
 
@@ -8198,6 +8237,38 @@ mod classic_placement_tests {
         assert!(tallest > 200.0, "something was measured: {tallest}");
         assert!(tallest <= NEED_H, "a page of {tallest} px is taller than NEED_H {NEED_H}");
         assert!(NEED_H <= 764.0 - plx_ui::consts::SAFE.y, "classic's room above the row holds NEED_H");
+        plx_plex::plex::reset_servers_for_test();
+    }
+
+    /// A style picker is a compact card at the top of the screen, in the open menu's column, so the
+    /// caption below it stays in view; leaving it puts the menu back where it was.
+    #[test]
+    fn a_style_picker_is_a_card_at_the_top_and_leaving_it_restores_the_menu() {
+        let _g = plx_base::testlock::serial();
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let store = item(0);
+        let mut menu = TrackMenuState::new(&ps, store.view(), 1, vec!["eng".into()]);
+        let root = menu.panel_rect(&ShippedMeasure);
+        assert!(!menu.previews_style());
+        for id in [TrackRow::Style, TrackRow::OpenField(StyleField::Size)] {
+            let i = menu.form.index_of(&id).unwrap();
+            menu.focus_row(i as c_int);
+            assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
+            assert_eq!(menu.previews_style(), id != TrackRow::Style, "only a picker is the card");
+        }
+        let card = menu.panel_rect(&ShippedMeasure);
+        assert_eq!(card.y, plx_ui::consts::SAFE.y, "against the top safe edge");
+        assert_eq!(card.x + card.w, root.x + root.w, "the open menu's column: the same right edge");
+        assert!(card.h <= STYLE_CARD_MAX_H, "compact: {}", card.h);
+        assert_eq!(menu.side.get(), plx_ui::popover::Side::Below, "it drops from the top");
+        menu.update(0.016, &ShippedMeasure, &ps, store.view());
+        assert_eq!(menu.shown_rect(&ShippedMeasure), card, "it is placed there, not carried across the screen");
+
+        menu.on_left(&ps, store.view());
+        menu.on_left(&ps, store.view());
+        assert!(!menu.previews_style());
+        menu.update(0.016, &ShippedMeasure, &ps, store.view());
+        assert_eq!(menu.panel_rect(&ShippedMeasure), root, "back where the menu opens");
         plx_plex::plex::reset_servers_for_test();
     }
 

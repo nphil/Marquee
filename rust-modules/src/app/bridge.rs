@@ -3382,6 +3382,7 @@ pub(crate) fn player_overlay_up(d: &Dispatcher<AppHost>) -> bool {
 ///
 /// [`HudPolicy::Hidden`] if ANY such player-overlay surface's kind says so
 /// (`OverlayKind::hud_policy` — today only `OverlayKind::Timing`); otherwise
+/// [`HudPolicy::Preview`] if a track menu in that set has a style picker open; otherwise
 /// [`HudPolicy::Lifted`] if ANY modal surface is up, a player panel or not (subtitles clear the
 /// transport while something is being read over them — the answer the loop read from
 /// `Dispatcher::surface_up` before the capsule existed); otherwise [`HudPolicy::Normal`]. So a
@@ -3391,11 +3392,23 @@ pub(crate) fn player_hud_policy(d: &Dispatcher<AppHost>) -> HudPolicy {
     let hides = |arg: &AppArg| matches!(arg, AppArg::PlayerOverlay(p) if p.kind.hud_policy() == HudPolicy::Hidden);
     if surface_up(d, hides) {
         HudPolicy::Hidden
+    } else if previews_style(d) {
+        HudPolicy::Preview
     } else if d.surface_up() {
         HudPolicy::Lifted
     } else {
         HudPolicy::Normal
     }
+}
+
+/// Is a style picker of the track menu open — the menu is a card at the top and the caption shows
+/// as it will sit ([`HudPolicy::Preview`])?
+fn previews_style(d: &Dispatcher<AppHost>) -> bool {
+    d.nav.modals.surfaces.iter()
+        .filter(|s| s.phase != Phase::Hidden && matches!(s.entry.arg, AppArg::PlayerOverlay(_)))
+        .filter_map(|s| s.entry.inst.as_ref()?.screen.as_any())
+        .filter_map(|s| s.downcast_ref::<plx_screens::player::overlay::PlayerOverlayScreen>())
+        .any(|s| s.previews_style())
 }
 
 /// Is a HUD section of the player page up, one still fading out included? Chapters and Info are the page's own

@@ -292,6 +292,13 @@ impl PanelMotion {
         Rect::new(self.left.pos, self.top.pos, (self.right - self.left.pos).max(0.0), (self.bottom - self.top.pos).max(0.0))
     }
 
+    /// Put the card at its next layout at once. A layout in a different place (the Tracks menu's
+    /// top card for a style picker) is arrived at by the page changing, not by an edge springing
+    /// across the screen: the top spring alone cannot carry a bottom-anchored card to the top.
+    pub fn jump(&mut self) {
+        self.placed = false;
+    }
+
     /// Is the panel mid-motion — the card still moving to its layout, or a page slide running?
     /// What `Screen::pointer_held` answers.
     pub fn transitioning(&self) -> bool {

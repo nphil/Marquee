@@ -118,7 +118,7 @@ fn caption_geometry_for_block(
 
 fn draw_caption_block(lines: &[String], lay: &CaptionLayout, model: &HudModel) {
     let cx = SCR_W * 0.5;
-    let ink = subtitle_ink(model); // white unless the viewer picked a dimmer tone (track menu)
+    let ink = dimmed_ink(model); // white unless the viewer picked a dimmer tone or brightness (track menu)
     let outline = theme::scrim_black(0.85);
     let p = Painter::root();
     for (i, ln) in lines.iter().enumerate() {
@@ -231,6 +231,17 @@ pub fn min_controls_top_y() -> f32 {
 /// neighbour.
 pub fn subtitle_ink(model: &HudModel) -> [f32; 4] {
     subtitle_ink_for(model.sub_tone)
+}
+
+/// [`subtitle_ink`] with the viewer's brightness taken off its light, which every plain caption
+/// and every bitmap subtitle gives up the same way.
+fn dimmed_ink(model: &HudModel) -> [f32; 4] {
+    let mut ink = subtitle_ink(model);
+    let dim = f32::from(model.sub_look.brightness) / 100.0;
+    for channel in &mut ink[..3] {
+        *channel *= dim;
+    }
+    ink
 }
 
 fn subtitle_ink_for(tone: plx_plex::plex::session::SubtitleTone) -> [f32; 4] {
@@ -363,11 +374,7 @@ pub fn draw_subtitle_bitmap(cache: &mut SubtitleBitmaps, hud_up: bool, band: Hud
             // the tone TINTS a bitmap: the image shader multiplies by it, so a PGS cue keeps its
             // authored colours and outline and only gives up light (white is the identity); the
             // viewer's brightness gives up more of it the same way
-            let mut tint = subtitle_ink(model);
-            let dim = f32::from(model.sub_look.brightness) / 100.0;
-            for channel in &mut tint[..3] {
-                *channel *= dim;
-            }
+            let tint = dimmed_ink(model);
             let p = Painter::root();
             for (tex, r) in set.iter() {
                 let dy = if overhangs(*r, band) { lift } else { 0.0 };
