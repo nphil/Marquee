@@ -52,7 +52,7 @@ mod track_memory_document_tests;
 #[cfg(test)]
 mod track_memory_tests;
 pub use profile_prefs::{
-    effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, put_own_hud, stored_effective_hud, put_own, stored_effective, ProfilePrefs, ProfilePrefsPref,
+    effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, persist_profile_tour_seen, put_own_hud, put_own_tour_seen, stored_effective_hud, put_own, stored_effective, tour_seen, ProfilePrefs, ProfilePrefsPref,
     ProfilePrefsRecord, ProfileSetting, ProfileWrite,
 };
 pub use track_memory::{

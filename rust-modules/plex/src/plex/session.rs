@@ -63,7 +63,7 @@ pub use subtitle_look::{
     AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, COLORS, SIZE_STEPS,
 };
 
-pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, put_own, stored_effective, stored_effective_hud, tenure, HudSelectionPref, AudioEnhancementsPref,
+pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, persist_profile_tour_seen, put_own, stored_effective, stored_effective_hud, tenure, tour_seen as profile_tour_seen, HudSelectionPref, AudioEnhancementsPref,
     DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsPref,
     ProfilePrefsRecord, ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipIntervalPref,
     SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};

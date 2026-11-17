@@ -67,8 +67,11 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         audio_enhancements: Some(AudioEnhancements { boost_dialog: true, normalize_loudness: true }),
         trailer_autoplay: Some(false),
         hud_selection: Some("com.example.hud".into()),
+        tour_seen: Some(true),
     };
-    let fields: BTreeSet<String> = serde_json::to_value(&full).unwrap().as_object().unwrap().keys().cloned().collect();
+    let mut fields: BTreeSet<String> = serde_json::to_value(&full).unwrap().as_object().unwrap().keys().cloned().collect();
+    // Not a setting: no legacy install key to fall back to, so no descriptor row.
+    assert!(fields.remove("tour_seen"));
     let rows: BTreeSet<String> = DESCRIPTORS
         .iter()
         .filter(|d| d.fallback == Fallback::LegacyInstallKey)
@@ -623,4 +626,16 @@ fn two_profiles_each_keep_their_own_hud_pick() {
     assert!(put_own_hud(&mut records, "b", STAMP, "y"));
     assert_eq!(own_prefs(&records, "a", STAMP).and_then(|p| p.hud_selection.as_deref()), Some("x"));
     assert_eq!(own_prefs(&records, "b", STAMP).and_then(|p| p.hud_selection.as_deref()), Some("y"));
+}
+
+/// The tour's seen flag is per profile: one profile finishing it leaves the other's record unset, and a repeat
+/// write changes nothing.
+#[test]
+fn two_profiles_each_keep_their_own_tour_seen() {
+    let mut records = Vec::new();
+    assert!(put_own_tour_seen(&mut records, "a", STAMP));
+    assert!(!put_own_tour_seen(&mut records, "a", STAMP), "already seen");
+    assert_eq!(own_prefs(&records, "a", STAMP).and_then(|p| p.tour_seen), Some(true));
+    assert_eq!(own_prefs(&records, "b", STAMP).and_then(|p| p.tour_seen), None);
+    assert!(!put_own_tour_seen(&mut records, "b", ""), "an empty stamp records nothing");
 }

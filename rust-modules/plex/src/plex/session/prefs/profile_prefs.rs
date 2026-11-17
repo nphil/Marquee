@@ -89,6 +89,10 @@ pub struct ProfilePrefs {
     /// The chosen player HUD's package id ([`HudSelectionPref`]); `None` reads the legacy install-wide key.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub hud_selection: Option<String>,
+    /// Whether this profile has finished or skipped the first-run tour. Not a [`Setting`]: it has no
+    /// legacy install-wide key to fall back to, and absent reads as "not seen".
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub tour_seen: Option<bool>,
 }
 
 impl ProfilePrefs {
@@ -182,6 +186,33 @@ profile_setting!(
 );
 
 const _: () = assert!(matches!(<HudSelectionPref as Row>::FALLBACK, Fallback::LegacyInstallKey));
+
+/// Whether the profile `seat` names has finished or skipped the first-run tour. Nobody seated reads as seen,
+/// since nothing could be remembered for them.
+pub fn tour_seen(session: &Session, seat: &Seat) -> bool {
+    match seat {
+        Seat::Seated { user, stamp } => {
+            own_prefs(&session.prefs.profile_prefs, user, stamp).and_then(|p| p.tour_seen) == Some(true)
+        }
+        Seat::Unseated => true,
+    }
+}
+
+/// [`put_own_hud`] for the tour's seen flag: the same refusals (an empty stamp, a profile that already holds it)
+/// and the same pruning.
+pub fn put_own_tour_seen(records: &mut Vec<ProfilePrefsRecord>, user: &str, stamp: &str) -> bool {
+    if stamp.is_empty() || own_prefs(records, user, stamp).and_then(|p| p.tour_seen) == Some(true) {
+        return false;
+    }
+    records.prune_foreign(stamp);
+    let at = records.position_of(user, stamp).unwrap_or_else(|| {
+        records.push(ProfilePrefsRecord { user: user.to_string(), account: stamp.to_string(), ..Default::default() });
+        records.len() - 1
+    });
+    records[at].prefs.tour_seen = Some(true);
+    records.prune_empty();
+    true
+}
 
 /// What a profile reads for [`HudSelectionPref`]: its own pick, else the legacy install-wide key; empty is the
 /// built-in. [`effective`]'s counterpart for a `String` value, which no [`Setting`] can carry.
@@ -319,6 +350,11 @@ pub fn persist_profile_pref<S: ProfileSetting>(w: &ProfileWrite, v: S::Value) ->
 /// guards (seat, tenure, credentials, an empty stamp).
 pub fn persist_profile_hud(w: &ProfileWrite, id: &str) -> bool {
     persist_profile_with(w, |records| put_own_hud(records, &w.user, &w.stamp, id))
+}
+
+/// [`persist_profile_hud`] for the tour's seen flag, under the same guards.
+pub fn persist_profile_tour_seen(w: &ProfileWrite) -> bool {
+    persist_profile_with(w, |records| put_own_tour_seen(records, &w.user, &w.stamp))
 }
 
 /// The read-modify-write both doors share: `put` edits the record list and says whether it changed.
