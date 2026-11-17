@@ -35,8 +35,8 @@ impl PlayerScreen {
     }
 
     fn commit_jump<H: AppLike>(&mut self, ps: &plx_media::route::PlaybackSession,
-        forward: bool, now: u32, fx: &mut Effects<'_, H>) {
-        if let Some(target) = self.jump_by(ps, signed_step(forward), false, now) {
+        forward: bool, now: u32, fx: &mut Effects<'_, H>, chapters: &[plx_data::metadata::Chapter]) {
+        if let Some(target) = self.jump_by(ps, signed_step(forward), false, now, chapters) {
             Self::ask(fx, PlayerReq::CommitSeek(target));
         }
     }
@@ -49,10 +49,12 @@ impl PlayerScreen {
     /// is a tap that dismisses it again (`hide`), and a seek CONTROL pressed on a visible one keeps
     /// it up and extends its linger. Both share the burst: presses inside
     /// [`BURST_GAP_MS`](plx_appkit::player_hud::seek_jump::BURST_GAP_MS) accumulate into one target, so keyframe rounding never eats the requested travel.
-    pub fn jump_by(&mut self, ps: &plx_media::route::PlaybackSession, step_ns: i64, keep_hud: bool, now: u32) -> Option<i64> {
+    /// A landing near one of `chapters`' starts ahead snaps onto it.
+    pub fn jump_by(&mut self, ps: &plx_media::route::PlaybackSession, step_ns: i64, keep_hud: bool, now: u32,
+        chapters: &[plx_data::metadata::Chapter]) -> Option<i64> {
         let duration = plx_media::player::duration_ns();
         if duration <= 0 { return None; }
-        let target = self.seek_burst.jump(now, plx_media::player::intended_pos_ns(ps), step_ns, duration);
+        let target = self.seek_burst.jump(now, plx_media::player::intended_pos_ns(ps), step_ns, duration, chapters);
         self.scrub.cancel();
         if keep_hud {
             self.hud.extend(now, input::HUD_LINGER_MS);
@@ -64,7 +66,7 @@ impl PlayerScreen {
     }
 
     pub(super) fn jump_key<H: AppLike>(&mut self, ps: &plx_media::route::PlaybackSession,
-        key: consts::Key, edge: Edge, now: u32, fx: &mut Effects<'_, H>) -> bool {
+        key: consts::Key, edge: Edge, now: u32, fx: &mut Effects<'_, H>, chapters: &[plx_data::metadata::Chapter]) -> bool {
         let (forward, transport) = match key {
             consts::Key::Left { alt } => (false, alt),
             consts::Key::Right { alt } => (true, alt),
@@ -107,7 +109,7 @@ impl PlayerScreen {
                     if self.transport_tap {
                         self.transport_tap = false;
                         // `commit_jump` publishes its own result
-                        self.commit_jump(ps, forward, now, fx);
+                        self.commit_jump(ps, forward, now, fx, chapters);
                         return true;
                     }
                     self.key_scrub_release(now);
@@ -121,7 +123,7 @@ impl PlayerScreen {
             self.seek_burst.reset();
             return false;
         }
-        if edge == Edge::Down { self.commit_jump(ps, forward, now, fx); }
+        if edge == Edge::Down { self.commit_jump(ps, forward, now, fx, chapters); }
         // The opt-in D-pad path is one immediate jump per fresh press, without a held scrub.
         true
     }
@@ -444,6 +446,33 @@ mod tests {
     }
 
     #[test]
+    fn up_and_down_move_a_pending_target_between_chapter_starts() {
+        let _g = plx_base::testlock::serial();
+        let _playback = PlaybackFixture::new();
+        let _interval =
+            player_hud::SkipIntervalGuard::set(plx_media::route::SkipInterval::Seconds10);
+        let chapter = |index: i64, start_ms: i64| plx_data::metadata::Chapter {
+            index, start_ms, title: format!("Chapter {index}"), thumb: String::new() };
+        let store = crate::player::overlay_tests::test_store();
+        plx_data::metadata::set_playing_chapters_for_test(store.state_mut(),
+            vec![chapter(1, 0), chapter(2, 30_000), chapter(3, 70_000)]);
+        let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
+        page.hud.visible_at_press = true;
+        for (sym, at, target) in [
+            (consts::SDLK_RIGHT, 1_000, 50_000_000_000),
+            (consts::SDLK_UP, 1_100, 70_000_000_000),
+            (consts::SDLK_DOWN, 1_200, 30_000_000_000),
+        ] {
+            assert!(key(&mut page, sym, Edge::Down, at).is_empty());
+            assert!(key(&mut page, sym, Edge::Up, at + 20).is_empty());
+            assert_eq!(page.scrub.ns, target);
+        }
+        assert_eq!(key(&mut page, consts::SDLK_RETURN, Edge::Down, 1_300),
+            vec![PlayerReq::SeekTo(30_000_000_000)]);
+        let _ = store.run(plx_data::stores::metadata::MetadataCmd::InstallPlaying(None));
+    }
+
+    #[test]
     fn seek_jump_do_not_raise_the_hud_during_seeking_but_buffering_still_does() {
         let _g = plx_base::testlock::serial();
         let _playback = PlaybackFixture::new();
@@ -503,11 +532,11 @@ mod tests {
         let _playback = PlaybackFixture::new();
         let ps = plx_media::route::PlaybackSession::IDLE;
         let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
-        assert_eq!(page.jump_by(&ps, 10_000_000_000, true, 1_000), Some(50_000_000_000));
+        assert_eq!(page.jump_by(&ps, 10_000_000_000, true, 1_000, &[]), Some(50_000_000_000));
         assert!(!page.hud.dismissed, "a control pressed on a visible transport does not hide it");
         assert!(page.hud.until > 1_000, "and extends its linger");
         let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
-        assert_eq!(page.jump_by(&ps, 10_000_000_000, false, 1_000), Some(50_000_000_000));
+        assert_eq!(page.jump_by(&ps, 10_000_000_000, false, 1_000, &[]), Some(50_000_000_000));
         assert!(page.hud.dismissed, "a jump key on a hidden transport dismisses it again");
         assert_eq!(page.hud.until, 0);
     }
@@ -519,10 +548,10 @@ mod tests {
         let ps = plx_media::route::PlaybackSession::IDLE;
         let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
         let step = 10_000_000_000;
-        assert_eq!(page.jump_by(&ps, step, true, 1_000), Some(50_000_000_000));
-        assert_eq!(page.jump_by(&ps, step, true, 1_300), Some(60_000_000_000), "a second press inside the gap accumulates");
-        assert_eq!(page.jump_by(&ps, -step, false, 1_500), Some(50_000_000_000), "a key joins the same burst");
-        assert_eq!(page.jump_by(&ps, step, true, 9_000), Some(50_000_000_000), "a press after the gap restarts from the playhead");
+        assert_eq!(page.jump_by(&ps, step, true, 1_000, &[]), Some(50_000_000_000));
+        assert_eq!(page.jump_by(&ps, step, true, 1_300, &[]), Some(60_000_000_000), "a second press inside the gap accumulates");
+        assert_eq!(page.jump_by(&ps, -step, false, 1_500, &[]), Some(50_000_000_000), "a key joins the same burst");
+        assert_eq!(page.jump_by(&ps, step, true, 9_000, &[]), Some(50_000_000_000), "a press after the gap restarts from the playhead");
     }
 
     #[test]
@@ -532,7 +561,7 @@ mod tests {
         plx_media::player::SHARED.duration_ns.store(0, Relaxed);
         let ps = plx_media::route::PlaybackSession::IDLE;
         let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
-        assert_eq!(page.jump_by(&ps, 10_000_000_000, true, 1_000), None);
+        assert_eq!(page.jump_by(&ps, 10_000_000_000, true, 1_000, &[]), None);
         assert!(page.hud.until == 0, "nothing to clamp against: the HUD is left alone");
     }
 
@@ -567,16 +596,16 @@ mod tests {
         };
         let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
         ok_down(&mut page, seek, 1_000);
-        assert_eq!(page.jump_by(&ps, step, true, 1_000), Some(50_000_000_000));
+        assert_eq!(page.jump_by(&ps, step, true, 1_000, &[]), Some(50_000_000_000));
         ok_down(&mut page, seek, 1_300);
-        assert_eq!(page.jump_by(&ps, step, true, 1_300), Some(60_000_000_000), "the second press accumulates");
+        assert_eq!(page.jump_by(&ps, step, true, 1_300, &[]), Some(60_000_000_000), "the second press accumulates");
 
         let mut page = PlayerScreen::new(EntryId(9), plx_appkit::player_hud::loaded::classic_for_test());
         ok_down(&mut page, seek, 1_000);
-        assert_eq!(page.jump_by(&ps, step, true, 1_000), Some(50_000_000_000));
+        assert_eq!(page.jump_by(&ps, step, true, 1_000, &[]), Some(50_000_000_000));
         ok_down(&mut page, Some(HudCommand::Next), 1_300);
         assert_eq!(
-            page.jump_by(&ps, step, true, 1_300),
+            page.jump_by(&ps, step, true, 1_300, &[]),
             Some(50_000_000_000),
             "an OK on another control ends the gesture, so the next jump starts from the playhead"
         );

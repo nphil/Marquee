@@ -1197,7 +1197,7 @@ impl PlayerScreen {
         if self.hud.sections.any() && self.modal() && matches!(key, Key::Left { alt: true } | Key::Right { alt: true }) {
             return Handled::Yes;
         }
-        if self.jump_key(ps, key, edge, now, fx) {
+        if self.jump_key(ps, key, edge, now, fx, plx_appkit::chapters_panel::seek_chapters(meta)) {
             return Handled::Yes;
         }
         if self.hud.visible_at_press && matches!(self.hud.nav.focus, GROUP_ROW | GROUP_STRIP)
@@ -1301,8 +1301,12 @@ impl PlayerScreen {
             // rules). A fresh press on a transport that is on screen is left unhandled for it: the
             // landing arrives as `FocusMoved` and `step` carries the travel's side effects. A
             // repeat or release is swallowed, as a held UP never walked the ring. A transport
-            // that is hidden spends the press on being raised, and moves nothing.
+            // that is hidden spends the press on being raised, and moves nothing. A seek target
+            // pending on the scrubber of an item with chapters takes the press instead (`chapter_key`).
             Key::Up | Key::Down => {
+                if self.chapter_key(key, edge, meta, now) {
+                    return Handled::Yes;
+                }
                 if at_edge {
                     return self.answer_edge(key, focused, plx_appkit::chapters_panel::has_chapters(meta), now, fx);
                 }
@@ -1593,6 +1597,31 @@ impl PlayerScreen {
         self.publish();
     }
 
+    /// **UP or DOWN while a seek target is pending on the scrubber** moves the target between chapter
+    /// starts: UP to the next chapter, DOWN back to the start of this one or the one before
+    /// (`chapters_panel::chapter_jump`). Like every key target it waits for OK. With no target pending,
+    /// off the scrubber, or on an item without two chapters, the keys travel as before. The press's
+    /// repeats and release are swallowed with it.
+    fn chapter_key(&mut self, key: consts::Key, edge: Edge, meta: plx_data::metadata::MetadataView<'_>, now: u32) -> bool {
+        let chapters = plx_appkit::chapters_panel::seek_chapters(meta);
+        let dur = plx_media::player::duration_ns();
+        if !self.scrub.is_live() || self.scrub.drag || !self.hud.visible_at_press || self.hud.nav.focus != GROUP_SCRUB
+            || chapters.is_empty() || dur <= 0
+        {
+            return false;
+        }
+        if edge == Edge::Down {
+            let forward = matches!(key, consts::Key::Up);
+            if let Some(start) = plx_appkit::chapters_panel::chapter_jump(chapters, self.scrub.ns, forward) {
+                self.scrub.disengage();
+                self.scrub.ns = Scrub::clamp_target(start, dur);
+            }
+            self.hud.extend(now, input::HUD_LINGER_MS);
+            self.publish();
+        }
+        true
+    }
+
     /// A FRESH LEFT/RIGHT press: port of `key_scrub`'s `ScrubPress` dispatch. It commits NOTHING,
     /// and neither does its release (`key_scrub_release`): the press moves the target, OK takes it.
     fn key_scrub_fresh<H: AppLike>(
@@ -1605,6 +1634,7 @@ impl PlayerScreen {
     ) {
         let fwd = matches!(key, consts::Key::Right { .. });
         let dur = plx_media::player::duration_ns();
+        let chapters = plx_appkit::chapters_panel::seek_chapters(meta);
         // **A key-up then a key-down inside the bounce window is one hold, not two gestures.**
         // The key driver was measured doing exactly that mid-hold, and the old code committed the
         // seek on the `Up` and began again on the `Down`. Now the pending release is cancelled and
@@ -1632,7 +1662,9 @@ impl PlayerScreen {
                 if dur > 0 {
                     self.scrub.begin(now, fwd);
                     let step = if fwd { input::scrub_step_ns() } else { -input::scrub_step_ns() };
-                    self.scrub.ns = Scrub::clamp_target(plx_media::player::intended_pos_ns(ps).saturating_add(step), dur);
+                    let base = plx_media::player::intended_pos_ns(ps);
+                    let landing = plx_appkit::chapters_panel::chapter_snap(chapters, base, base.saturating_add(step));
+                    self.scrub.ns = Scrub::clamp_target(landing, dur);
                 }
             }
             // Horizontal row travel is delegated to FocusEngine in handle_key.
@@ -1656,7 +1688,9 @@ impl PlayerScreen {
                 }
                 if !self.scrub.key.engaged {
                     let step = if fwd { input::scrub_step_ns() } else { -input::scrub_step_ns() };
-                    self.scrub.ns = Scrub::clamp_target(self.scrub.ns.max(0) + step, dur);
+                    let base = self.scrub.ns.max(0);
+                    let landing = plx_appkit::chapters_panel::chapter_snap(chapters, base, base.saturating_add(step));
+                    self.scrub.ns = Scrub::clamp_target(landing, dur);
                 }
                 self.scrub.key.press(now, fwd);
             }

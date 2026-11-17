@@ -79,7 +79,7 @@ use plx_ui::widgets::{ControlGround, TabPill, TransportButton, TransportFocus, T
 use plx_ui::{Painter, Rect, View};
 
 use super::classic::{
-    draw_player_title_at, draw_playbar_look, draw_scrim_at, draw_scrub_preview, hud_env, hud_tab_state, tab_labels,
+    draw_chapter_label, draw_player_title_at, draw_playbar_look, draw_scrim_at, draw_scrub_preview, hud_env, hud_tab_state, tab_labels,
     tab_of_section, Kicker, Playbar, PlaybarLook, TitleLook,
 };
 use super::geometry::{GROUP_ROW, GROUP_SECTION};
@@ -638,9 +638,11 @@ fn walk<H: Host>(
         }
         if let Some(kicker) = kicker_rect.take() { draw_title(f, row, q, Some(kicker), None); }
         // right after the bar's band, so the still floats over the title block and the row above it
-        // and under the tabs below, as classic orders them
+        // and under the tabs below, as classic orders them; the chapter's name stands over the still
         if let Some((live, track)) = bar.take() {
-            draw_scrub_preview(p, f.ps, f.model, row, live, track);
+            let card = draw_scrub_preview(p, f.ps, f.model, row, live, track);
+            let chapters = crate::chapters_panel::seek_chapters(f.meta);
+            draw_chapter_label(p, f.model, chapters, live, track, card, f.measure);
         }
     };
     // The stand-in's ops are the LAST span, carrying the id of the band that hosts them; they draw right

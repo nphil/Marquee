@@ -758,8 +758,9 @@ pub(super) fn bar_x(track: Rect, pos_ns: i64, dur_ns: i64) -> f32 {
 
 /// **The scrub preview** ([`crate::scrub_preview`]): while a live scrub preview is up, the still
 /// at the knob's position, floated above the knob; after it, the same still fading out. Draws
-/// nothing for a part with no BIF index, and nothing until the first still lands.
-pub(super) fn draw_scrub_preview(p: Painter, ps: &plx_media::route::PlaybackSession, model: &HudModel, row: &mut HudMotion, bar: Playbar, track: Rect) {
+/// nothing for a part with no BIF index, and nothing until the first still lands. Answers the card's
+/// rect when one was drawn.
+pub(super) fn draw_scrub_preview(p: Painter, ps: &plx_media::route::PlaybackSession, model: &HudModel, row: &mut HudMotion, bar: Playbar, track: Rect) -> Option<Rect> {
     use crate::scrub_preview::{card_size, draw, still_ms, PosterStills, Stills};
     let mut stills = PosterStills {
         sid: plx_media::route::item_sid(plx_media::route::cur_sid(ps)).raw(),
@@ -776,8 +777,8 @@ pub(super) fn draw_scrub_preview(p: Painter, ps: &plx_media::route::PlaybackSess
         let absent = row.preview.absent();
         row.preview.motion.observe(shown, target, absent, bar_x(track, bar.pos_ns, bar.dur_ns), bar.now)
     };
-    let Some(sh) = show else { return };
-    let Some((tex, tw, th)) = stills.tex(sh.ms) else { return };
+    let sh = show?;
+    let (tex, tw, th) = stills.tex(sh.ms)?;
     // In-place crossfade only between two resident stills of the same aspect; otherwise the swap is
     // immediate (the card's width would have to jump mid-fade).
     let prev = sh.prev.and_then(|(old, t)| {
@@ -787,6 +788,36 @@ pub(super) fn draw_scrub_preview(p: Painter, ps: &plx_media::route::PlaybackSess
     let (w, _) = card_size(tw, th);
     let r = scrub_preview_rect(track, sh.knob_x, w, sh.scale);
     draw(p.alpha(sh.alpha), r, tex, tw, th, prev);
+    Some(r)
+}
+
+/// The air between the chapter's name and the preview card under it.
+const CHAPTER_GAP: f32 = 10.0;
+
+/// **The chapter a pending seek target lands in** ([`crate::chapters_panel::chapter_at`]), named in a
+/// capsule over the knob: above the preview card while one is up (`card`), where the card's foot
+/// stands while none is. Only while a target is pending on an item with two chapters or more
+/// (`chapters` is [`crate::chapters_panel::seek_chapters`]).
+pub(super) fn draw_chapter_label(p: Painter, model: &HudModel, chapters: &[plx_data::metadata::Chapter], bar: Playbar, track: Rect,
+    card: Option<Rect>, measure: &dyn plx_machine::machine::Measure) {
+    use plx_ui::widgets::{badge, badge_w, BadgeStyle, BADGE_H};
+    if model.scrub_ns < 0 || bar.dur_ns <= 0 {
+        return;
+    }
+    let Some(at) = crate::chapters_panel::chapter_at(chapters, bar.pos_ns) else { return };
+    let full = crate::chapters_panel::chapter_name(&chapters[at]);
+    let name = plx_machine::machine::elide_by(&full, crate::scrub_preview::CARD_W_CAP, false, |s| badge_w(s, None, measure));
+    let w = badge_w(&name, None, measure);
+    let knob_x = bar_x(track, bar.pos_ns, bar.dur_ns);
+    let x = (knob_x - w * 0.5).clamp(track.x, (track.x + track.w - w).max(track.x));
+    let foot = match card {
+        Some(c) => c.y - CHAPTER_GAP,
+        None => {
+            let rest = crate::scrub_preview::card_rect(knob_x, track.x, track.w, track.y, w);
+            rest.y + rest.h
+        }
+    };
+    badge(p, x, foot - BADGE_H * 0.5, &name, None, BadgeStyle::OverArt, measure);
 }
 
 /// The shared preview card placement, over the playbar's compiled track.

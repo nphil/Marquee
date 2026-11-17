@@ -1236,8 +1236,9 @@ pub(crate) fn perform_hud_command(
         }
         HudCommand::Seek(by) => {
             let step = by.step_ns(plx_appkit::player_hud::scrub_step_ns());
+            let chapters = plx_appkit::chapters_panel::seek_chapters(bridge.metadata_view());
             let target = super::bridge::player_mut(pages)
-                .and_then(|screen| screen.jump_by(&player.session, step, true, now));
+                .and_then(|screen| screen.jump_by(&player.session, step, true, now, chapters));
             if let Some(target) = target {
                 commit_seek(target);
             }

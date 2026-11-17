@@ -22,12 +22,15 @@ impl SeekBurst {
         self.last
     }
 
-    pub fn jump(&mut self, now: u32, position: i64, step: i64, duration: i64) -> i64 {
+    /// One relative jump of `step` from the burst's last target, or from `position` once the burst has
+    /// lapsed. A landing near a chapter start ahead snaps onto it ([`crate::chapters_panel::chapter_snap`]).
+    pub fn jump(&mut self, now: u32, position: i64, step: i64, duration: i64, chapters: &[plx_data::metadata::Chapter]) -> i64 {
         let base = self
             .last
             .filter(|&(_, at)| now.wrapping_sub(at) <= BURST_GAP_MS)
             .map_or(position, |(target, _)| target);
-        let target = scrub_clamp_target(base.saturating_add(step), duration);
+        let landing = crate::chapters_panel::chapter_snap(chapters, base, base.saturating_add(step));
+        let target = scrub_clamp_target(landing, duration);
         self.last = Some((target, now));
         target
     }
@@ -41,21 +44,21 @@ mod tests {
         let mut burst = SeekBurst::IDLE;
         let second = 1_000_000_000;
         assert_eq!(
-            burst.jump(u32::MAX - 100, 40 * second, 60 * second, 100 * second),
+            burst.jump(u32::MAX - 100, 40 * second, 60 * second, 100 * second, &[]),
             97 * second
         );
         assert_eq!(
-            burst.jump(100, 40 * second, -60 * second, 100 * second),
+            burst.jump(100, 40 * second, -60 * second, 100 * second, &[]),
             37 * second
         );
-        assert_eq!(burst.jump(200, 40 * second, -60 * second, 100 * second), 0);
+        assert_eq!(burst.jump(200, 40 * second, -60 * second, 100 * second, &[]), 0);
         burst.reset();
         assert_eq!(
-            burst.jump(300, 40 * second, 10 * second, 100 * second),
+            burst.jump(300, 40 * second, 10 * second, 100 * second, &[]),
             50 * second
         );
         assert_eq!(
-            burst.jump(1_801, 43 * second, 10 * second, 100 * second),
+            burst.jump(1_801, 43 * second, 10 * second, 100 * second, &[]),
             53 * second
         );
     }

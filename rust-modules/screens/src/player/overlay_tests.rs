@@ -57,7 +57,7 @@ thread_local! {
         std::cell::UnsafeCell::new(plx_data::stores::metadata::MetadataStore::default());
 }
 
-fn test_store() -> &'static mut plx_data::stores::metadata::MetadataStore {
+pub(super) fn test_store() -> &'static mut plx_data::stores::metadata::MetadataStore {
     TEST_METADATA.with(|cell| unsafe { &mut *cell.get() })
 }
 

@@ -298,14 +298,9 @@ impl<'a, E> Cards<'a, E> {
         chapter_at_shown(self.chapters, model)
     }
 
-    /// The name a chapter shows: its title, or "Chapter N" when the server sent none.
+    /// The name a chapter shows ([`crate::chapters_panel::chapter_name`]).
     fn name(&self, i: usize) -> String {
-        let ch = &self.chapters[i];
-        if ch.title.trim().is_empty() {
-            plx_platform::i18n::msg::widgets_chapters_number(ch.index)
-        } else {
-            ch.title.clone()
-        }
+        crate::chapters_panel::chapter_name(&self.chapters[i])
     }
 }
 
