@@ -2283,9 +2283,30 @@ pub struct HomePins {
     pub on: Vec<PinnedLib>,
     /// … and the ones it turned OFF. See the type doc: absent from both is "never answered for".
     pub off: Vec<PinnedLib>,
+    /// The profile's Home layout: every row it arranged, in its order, hidden ones included
+    /// (`plex::home_rows`). Empty is the order the servers send, every row shown. Soft-parsed, so a
+    /// damaged layout costs the layout and never the pins beside it.
+    #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<HomeRow>,
     #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
     pub extensions: OpaqueExtensions,
 
+}
+
+/// One Home row as a profile arranged it, named by what survives a refetch: its server, its hub
+/// family and its library (`plex::home_rows::family_and_section`), never its position.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct HomeRow {
+    /// The server's machine id; empty for the merged Continue Watching row, which is every server's.
+    pub server: String,
+    pub hub: String,
+    /// The row's library; 0 for a row that spans libraries.
+    pub section: i64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+    #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
+    pub extensions: OpaqueExtensions,
 }
 
 impl HomePins {

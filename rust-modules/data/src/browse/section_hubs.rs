@@ -1747,6 +1747,7 @@ mod tests {
             asked: true,
             on: Vec::new(),
             off: Vec::new(),
+            rows: Vec::new(),
             extensions: Default::default(),
         });
         first.retry_cd = 120;

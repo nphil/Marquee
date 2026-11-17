@@ -89,6 +89,10 @@ pub mod grant;
 // never-empty floor are graded on the host rather than observed on a television.
 pub mod pins;
 
+// How a profile arranges its Home rows: pure order/hide rules over the layout kept in its Home
+// record beside the pins, applied by the Hubs merge and edited by Settings > Home.
+pub mod home_rows;
+
 // The plex.tv METADATA PROVIDER (`discover.provider.plex.tv`) — a third service, but one that
 // shares the account API's transport + identity headers exactly, so it only adds an
 // `impl AccountClient` block (same pattern as the PMS op files above). Its host is
