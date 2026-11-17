@@ -24,3 +24,4 @@ pub mod hls; // strict parser/auth/timeline for the measured one-variant PMS HLS
 pub mod player; // buffer-feed video engine (was playback.c) -- step 5
 pub mod speed_audio; // playback speed: decoded audio -> pitch-corrected 48 kHz stereo PCM (WSOLA)
 pub mod route; // play_movie route selection (direct-play vs transcode) -- step 3
+pub mod seekprev; // seek previews decoded on the TV for a film whose server keeps none

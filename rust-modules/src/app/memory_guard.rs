@@ -9,8 +9,9 @@
 //! A worse [`Level`] applies at once; a better one only after [`CALM_SAMPLES`] better samples in a
 //! row, so memory hovering at a threshold does not flap. A change is logged and acted on, on the
 //! frame thread: art that is not on screen is released down to a lower ceiling (`tex::squeeze`),
-//! the art prefetch rests (`poster::rest_warms`) and trailer autoplay holds
-//! (`preview::rest_for_memory`). Playback itself is left alone.
+//! the art prefetch rests (`poster::rest_warms`), trailer autoplay holds
+//! (`preview::rest_for_memory`) and the seek stills made on the TV are dropped and paused
+//! (`seekprev::rest_for_memory`). Playback itself is left alone.
 
 use std::sync::mpsc;
 
@@ -168,6 +169,7 @@ fn apply(level: Level, s: Sample) {
     plx_ui::tex::squeeze(ceiling, &mut super::adapters::poster::GfxUploader);
     super::adapters::poster::rest_warms(level != Level::Fine);
     plx_media::player::preview::rest_for_memory(level != Level::Fine);
+    plx_media::seekprev::rest_for_memory(level != Level::Fine);
 }
 
 #[cfg(test)]

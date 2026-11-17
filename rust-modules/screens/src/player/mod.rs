@@ -970,6 +970,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 // playback had ended; an instance is told exactly once.
                 self.render.subs.release();
                 self.render.ass.release();
+                self.row.release_stills();
                 self.render.subtitle_bounds = None;
                 if self.prefetch.leave() {
                     fx.push(Fx::App(AppFx::Store(plx_data::stores::StoreId::SubtitleSearch,
@@ -2645,6 +2646,9 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Screen<H> for PlayerScreen {
     }
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
         self.render.subtitle_bounds = None;
+        // Before anything paints, whether or not the transport draws: the generator's pictures are
+        // taken off its queue as they land, so none waits there for the next scrub.
+        self.row.sync_stills(&self.model);
         // The frame's publication of the playback session (spec §2.3) — see `AppViews::session`.
         let ps = H::session(f.cx);
         let now = f.cx.tick.ms;
@@ -2707,15 +2711,19 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Screen<H> for PlayerScreen {
     fn render(&self) -> RenderStrategy {
         RenderStrategy::VideoPlane
     }
-    /// The PGS/VobSub display set is the only render this screen owns (§8.3 rule (c)): the picture
-    /// is the hardware video plane, the HUD is drawn immediate-mode, and its glyphs and icons come
-    /// from the shared caches. `SubtitleBitmaps` uploads one texture per rect of the active cue and
-    /// deletes them itself, so it is the one thing on this screen whose bytes belong to this
-    /// instance rather than to a pool.
+    /// What this screen owns of the frame's render (§8.3 rule (c)): the PGS/VobSub display set and
+    /// the seek stills made on the TV. The picture is the hardware video plane, the HUD is drawn
+    /// immediate-mode, and its glyphs and icons come from the shared caches. `SubtitleBitmaps` and
+    /// `GeneratedStills` upload their textures and delete them themselves, so theirs are the bytes
+    /// that belong to this instance rather than to a pool.
     fn render_report(&self) -> plx_ui::frame::RenderReport {
         let bitmap = self.render.subs.render_report();
         let ass = self.render.ass.render_report();
-        plx_ui::frame::RenderReport { textures: bitmap.textures + ass.textures, bytes: bitmap.bytes + ass.bytes }
+        let stills = self.row.stills_report();
+        plx_ui::frame::RenderReport {
+            textures: bitmap.textures + ass.textures + stills.textures,
+            bytes: bitmap.bytes + ass.bytes + stills.bytes,
+        }
     }
     fn focus_source(&self) -> FocusSource {
         FocusSource::Engine
@@ -2902,7 +2910,7 @@ mod render_residency_tests {
     use plx_ui::frame::RenderReport;
     use plx_appkit::player_hud::SubtitleBitmaps;
 
-    /// **The player's own render is its image-subtitle display set, and only that** (§8.3 rule
+    /// **The player's own render is its image-subtitle display set and its generated seek stills** (§8.3 rule
     /// (c)). The picture is the hardware video plane, which is not ours at all; the HUD is drawn
     /// immediate-mode from the shared glyph and icon caches. A screen that owns a texture has to
     /// SAY so, or the frame's byte term is a sum over an empty inventory — which is what

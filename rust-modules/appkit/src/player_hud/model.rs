@@ -74,10 +74,21 @@ pub struct HudModel {
     /// `plx_media::player::bitmap_by_key`: the lookup `draw_subtitle_bitmap` calls when the key
     /// changes. Injected so this module never names the player.
     pub bitmap_by_key: BitmapLookup,
+    /// `plx_media::seekprev::feed()`: the seek-preview generator's epoch, and whether it makes
+    /// stills for this playback when its server keeps none.
+    pub seek_stills: plx_media::seekprev::Feed,
+    /// `plx_media::seekprev::take`: a picture the generator made since the last call. Injected,
+    /// like `bitmap_by_key`.
+    pub take_still: fn() -> Option<plx_media::seekprev::Picture>,
 }
 
 /// The lookup an idle model carries: no cue.
 fn no_bitmap(_key: i64) -> Option<(i32, i32, Vec<plx_media::player::SubRect>)> {
+    None
+}
+
+/// The queue an idle model carries: no picture.
+fn no_still() -> Option<plx_media::seekprev::Picture> {
     None
 }
 
@@ -106,6 +117,8 @@ impl Default for HudModel {
             stats: false,
             bitmap_key: None,
             bitmap_by_key: no_bitmap,
+            seek_stills: plx_media::seekprev::Feed::default(),
+            take_still: no_still,
         }
     }
 }

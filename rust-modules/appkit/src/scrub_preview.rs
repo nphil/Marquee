@@ -97,6 +97,102 @@ impl Stills for PosterStills {
     }
 }
 
+/// **Stills made on the TV** (`plx_media::seekprev`) for a playback whose server keeps none: one
+/// texture per ring slot, uploaded as the generator's pictures arrive. Held beside the memo in
+/// [`crate::player_hud::motion::HudMotion`] rather than in it, because the memo forgets itself on
+/// every new playback and textures need their release.
+pub struct GeneratedStills {
+    /// The generator's epoch these textures were made in; another voids them all.
+    epoch: u32,
+    slots: [Option<Generated>; plx_media::seekprev::SLOTS],
+}
+
+#[derive(Clone, Copy)]
+struct Generated {
+    tex: u32,
+    /// The movie time of the keyframe it shows.
+    ms: i64,
+    w: i32,
+    h: i32,
+}
+
+impl Default for GeneratedStills {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GeneratedStills {
+    pub const fn new() -> Self {
+        Self { epoch: 0, slots: [None; plx_media::seekprev::SLOTS] }
+    }
+
+    /// Turn the generator's new pictures (`take`) into textures. On the main thread, which owns GL.
+    pub fn sync(&mut self, feed: plx_media::seekprev::Feed, take: fn() -> Option<plx_media::seekprev::Picture>) {
+        if feed.epoch != self.epoch {
+            self.release();
+            self.epoch = feed.epoch;
+        }
+        while let Some(pic) = take() {
+            // The generator can move on between the feed's read and this one.
+            if pic.epoch != self.epoch {
+                self.release();
+                self.epoch = pic.epoch;
+            }
+            let whole = usize::try_from(pic.w).ok().zip(usize::try_from(pic.h).ok()).map(|(w, h)| w * h * 4);
+            let Some(slot) = self.slots.get_mut(usize::from(pic.slot)) else { continue };
+            if pic.w <= 0 || pic.h <= 0 || whole != Some(pic.rgba.len()) {
+                continue;
+            }
+            let tex = plx_gfx::gfx::upload_rgba(slot.map_or(0, |s| s.tex), pic.w, pic.h, pic.rgba.as_ptr());
+            *slot = (tex != 0).then_some(Generated { tex, ms: pic.at_ms, w: pic.w, h: pic.h });
+        }
+    }
+
+    /// The resident still nearest `ms` (its keyframe's time), at any distance: the card's motion
+    /// decides whether it stands for the target ([`Motion::observe`]).
+    pub fn nearest(&self, ms: i64) -> Option<i64> {
+        self.slots.iter().flatten().min_by_key(|s| (s.ms - ms).abs()).map(|s| s.ms)
+    }
+
+    fn at(&self, ms: i64) -> Option<Generated> {
+        self.slots.iter().flatten().find(|s| s.ms == ms).copied()
+    }
+
+    /// Free every texture: the player unmounted, or the generator voided them.
+    pub fn release(&mut self) {
+        for slot in &mut self.slots {
+            if let Some(s) = slot.take() {
+                plx_gfx::gfx::delete_tex(s.tex);
+            }
+        }
+    }
+
+    /// What the ring holds of the frame's render residency.
+    pub fn render_report(&self) -> plx_ui::frame::RenderReport {
+        let held = self.slots.iter().flatten();
+        plx_ui::frame::RenderReport {
+            textures: held.clone().count() as u32,
+            bytes: held.map(|s| s.w as usize * s.h as usize * 4).sum(),
+        }
+    }
+}
+
+impl Stills for GeneratedStills {
+    /// Resident or not: a probe asks for nothing, since the generator decides what is made.
+    fn look(&mut self, ms: i64) -> Look {
+        if self.at(ms).is_some() {
+            Look::Ready
+        } else {
+            Look::Failed
+        }
+    }
+
+    fn tex(&mut self, ms: i64) -> Option<(u32, f32, f32)> {
+        self.at(ms).map(|s| (s.tex, s.w as f32, s.h as f32))
+    }
+}
+
 /// The scrub preview's memo. Owned by the player's [`crate::player_hud::motion::HudMotion`].
 #[derive(Default)]
 pub struct ScrubPreview {
@@ -198,6 +294,12 @@ impl ScrubPreview {
     /// This playback's part has no index (a 404 before any still arrived).
     pub fn absent(&self) -> bool {
         self.absent
+    }
+
+    /// [`ScrubPreview::absent`] for the playback `owner` (part id, playback generation): `false`
+    /// while the memo still describes another playback.
+    pub fn absent_for(&self, owner: (i64, &str)) -> bool {
+        self.absent && self.owner.as_ref().is_some_and(|(p, g)| *p == owner.0 && g == owner.1)
     }
 }
 
@@ -751,6 +853,24 @@ mod tests {
         m.release();
         run(&mut m, &mut s, 600_000);
         assert_eq!(s.asked.len(), 1);
+    }
+
+    /// The TV's generator works for the playback the memo found without an index, and only that
+    /// one; its ring stands in with the still nearest the target.
+    #[test]
+    fn made_stills_stand_in_for_the_playback_found_without_an_index() {
+        let (mut m, mut s) = (ScrubPreview::new(), Server::new(false, 0));
+        assert!(!m.absent_for((7459, GEN)));
+        run(&mut m, &mut s, 0);
+        assert!(m.absent_for((7459, GEN)));
+        assert!(!m.absent_for((7459, "g2")), "another playback finds out for itself");
+        let mut ring = GeneratedStills::new();
+        for (slot, ms) in [(0, 50_000), (5, 1_230_000), (9, 2_000_000)] {
+            ring.slots[slot] = Some(Generated { tex: 1 + slot as u32, ms, w: 320, h: 180 });
+        }
+        assert_eq!(ring.nearest(1_000_000), Some(1_230_000));
+        assert_eq!(ring.tex(1_230_000), Some((6, 320.0, 180.0)));
+        assert_eq!(ring.render_report(), plx_ui::frame::RenderReport { textures: 3, bytes: 3 * 320 * 180 * 4 });
     }
 
     #[test]

@@ -551,6 +551,15 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     if let Some(hud) = app.bridge.huds_tick(fr.player) {
         adopt_hud(&mut app.bridge, &mut app.hud, hud);
     }
+    // The seek-preview generator's step (`plx_media::seekprev`), on every frame: its buffer gate has
+    // watched the playback by the time a scrub finds the server's stills missing, and work for a
+    // playback that ended or left the player stops. Ahead of the snapshot, which carries its feed.
+    let stills_absent = fr.player
+        && super::bridge::player(&app.pages).is_some_and(|p| {
+            let ps = &app.player.session;
+            p.row.stills_absent_for((plx_media::route::cur_part_id(ps), plx_media::route::sess_str(ps)))
+        });
+    plx_media::seekprev::pump(&app.player.session, stills_absent, fr.now);
     // ---- the player page's per-frame HUD SNAPSHOT (`HudModel`) ----
     //
     // Sampled ONCE here and pushed into the screen as a value, so nothing the page prepares or
@@ -737,6 +746,8 @@ fn hud_model(
         stats: crate::app::diagnostics::enabled(),
         bitmap_key: plx_media::player::active_bitmap_key(playpos_ns),
         bitmap_by_key: plx_media::player::bitmap_by_key,
+        seek_stills: plx_media::seekprev::feed(),
+        take_still: plx_media::seekprev::take,
     }
 }
 

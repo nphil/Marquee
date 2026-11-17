@@ -146,6 +146,9 @@ pub struct HudMotion {
     /// show and which one is in flight. Stepped where that art is probed, in the draw ([`super::render::draw`]); see
     /// [`crate::scrub_preview`].
     pub(super) preview: crate::scrub_preview::ScrubPreview,
+    /// **The stills made on the TV** for a playback whose server keeps none (`plx_media::seekprev`): GL
+    /// textures, synced at the top of the player's draw and released when it unmounts.
+    pub(super) stills: crate::scrub_preview::GeneratedStills,
     /// The knob's return to the playhead when a scrub is cancelled ([`crate::knob_spring`]).
     pub(super) spring: KnobSpring,
     /// **The chapters strip's Shelf** ([`super::strip`]): its pop, scroll and caption springs are LOGICAL state
@@ -214,6 +217,7 @@ impl HudMotion {
             play_at: None,
             pause_seen: None,
             preview: crate::scrub_preview::ScrubPreview::new(),
+            stills: crate::scrub_preview::GeneratedStills::new(),
             spring: KnobSpring::new(),
             strip: None,
             appear: [PopoverMotion::at(0.0); 2],
@@ -506,6 +510,28 @@ impl HudMotion {
     pub fn scrub_motion_animating(&self, now: u32) -> bool {
         self.preview.motion.animating(now)
             || self.spring.busy(now)
+    }
+
+    /// Take the seek-preview generator's new pictures into the ring's textures. Once per draw of the
+    /// player screen, on the main thread.
+    pub fn sync_stills(&mut self, model: &HudModel) {
+        self.stills.sync(model.seek_stills, model.take_still);
+    }
+
+    /// Free the generated stills' textures: the player unmounted.
+    pub fn release_stills(&mut self) {
+        self.stills.release();
+    }
+
+    /// What the generated stills hold of the frame's render residency.
+    pub fn stills_report(&self) -> plx_ui::frame::RenderReport {
+        self.stills.render_report()
+    }
+
+    /// Has the scrub card found that the playback `owner` (part id, playback generation) has no
+    /// server stills? The seek-preview generator works only then.
+    pub fn stills_absent_for(&self, owner: (i64, &str)) -> bool {
+        self.preview.absent_for(owner)
     }
 
     /// Control `i`'s focus pop this frame — the read half of the row's springs, for the two

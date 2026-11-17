@@ -757,8 +757,9 @@ pub(super) fn bar_x(track: Rect, pos_ns: i64, dur_ns: i64) -> f32 {
 }
 
 /// **The scrub preview** ([`crate::scrub_preview`]): while a live scrub preview is up, the still
-/// at the knob's position, floated above the knob; after it, the same still fading out. Draws
-/// nothing for a part with no BIF index, and nothing until the first still lands. Answers the card's
+/// at the knob's position, floated above the knob; after it, the same still fading out. For a part
+/// with no BIF index the stills come from the TV's own generator ([`crate::scrub_preview::GeneratedStills`]),
+/// and nothing is drawn where it makes none. Nothing until the first still lands. Answers the card's
 /// rect when one was drawn.
 pub(super) fn draw_scrub_preview(p: Painter, ps: &plx_media::route::PlaybackSession, model: &HudModel, row: &mut HudMotion, bar: Playbar, track: Rect) -> Option<Rect> {
     use crate::scrub_preview::{card_size, draw, still_ms, PosterStills, Stills};
@@ -773,16 +774,21 @@ pub(super) fn draw_scrub_preview(p: Painter, ps: &plx_media::route::PlaybackSess
     } else {
         let generation = plx_media::route::sess(ps);
         let target = still_ms(bar.pos_ns);
-        let shown = row.preview.step((stills.part, &generation), target, bar.now, |ms| stills.look(ms));
-        let absent = row.preview.absent();
+        let mut shown = row.preview.step((stills.part, &generation), target, bar.now, |ms| stills.look(ms));
+        let mut absent = row.preview.absent();
+        if absent {
+            shown = row.stills.nearest(target);
+            absent = !model.seek_stills.on;
+        }
         row.preview.motion.observe(shown, target, absent, bar_x(track, bar.pos_ns, bar.dur_ns), bar.now)
     };
     let sh = show?;
-    let (tex, tw, th) = stills.tex(sh.ms)?;
+    let source: &mut dyn Stills = if row.preview.absent() { &mut row.stills } else { &mut stills };
+    let (tex, tw, th) = source.tex(sh.ms)?;
     // In-place crossfade only between two resident stills of the same aspect; otherwise the swap is
     // immediate (the card's width would have to jump mid-fade).
     let prev = sh.prev.and_then(|(old, t)| {
-        let (otex, ow, oh) = stills.tex(old)?;
+        let (otex, ow, oh) = source.tex(old)?;
         ((ow / oh - tw / th).abs() < 0.01).then_some((otex, t))
     });
     let (w, _) = card_size(tw, th);

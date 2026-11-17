@@ -5798,6 +5798,10 @@ pub fn cur_part_id(ps: &PlaybackSession) -> i64 {
 pub fn sess(ps: &PlaybackSession) -> String {
     ps.sess.clone()
 }
+/// [`sess`] without the copy, for the per-frame owner check of the seek-preview generator.
+pub fn sess_str(ps: &PlaybackSession) -> &str {
+    &ps.sess
+}
 pub fn pq_id(ps: &PlaybackSession) -> String {
     ps.pq_id.clone()
 }
@@ -10736,6 +10740,28 @@ pub fn side_reader_target(ps: &PlaybackSession) -> Option<SideReaderTarget> {
         part_kbps: u32::try_from(ps.cur_transport_kbps).unwrap_or(0),
         ordinal,
     })
+}
+
+/// **Does this playback get seek previews made on the TV** when its server keeps none? A real
+/// (non-preview) playback of an H.264 or HEVC source at 1080p or below
+/// ([`crate::seekprev::eligible`]) from a server on the local network: every still is a ranged read
+/// of the Part, which a remote link would pay for out of the playback's own bandwidth.
+pub fn seek_preview_eligible(ps: &PlaybackSession) -> bool {
+    !ps.preview
+        && crate::seekprev::eligible(ps.cur_src.1, ps.cur_src.2, &ps.src_vcodec)
+        && cur_client(ps).is_some_and(|c| c.link() == Some(plx_plex::plex::probe::Location::Local))
+}
+
+/// The URL the seek-preview generator reads the Part through: a session identifier of its own, as
+/// the side reader's (PMS refuses the live session's identifier to a second reader). Carries the
+/// token; never logged. `None` without a server path for the Part or with its server gone.
+pub fn seek_preview_url(ps: &PlaybackSession) -> Option<String> {
+    let part = &ps.request.as_ref()?.part;
+    if !part.starts_with('/') || ps.sess.is_empty() {
+        return None;
+    }
+    let su = cur_client(ps)?.direct_play_url(part, &format!("{}-seek", ps.sess));
+    Some(format!("{}{}", su.origin.base(), su.path))
 }
 
 /// **Is the live route the enhancement's own Burn (M7)?** A Burn forces `remux: false` to get PMS

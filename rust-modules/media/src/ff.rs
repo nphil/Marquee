@@ -1968,6 +1968,8 @@ mod subs;
 pub(crate) mod native_audio;
 #[path = "ff_subside.rs"]
 pub(crate) mod subside;
+#[path = "ff_seekprev.rs"]
+pub(crate) mod seekprev;
 use subs::{SubKind, SubTracks};
 #[cfg(test)]
 use subs::{decode_bitmap_cue, open_sub_decoder, sub_kind};
@@ -5780,6 +5782,13 @@ fn hls_buffer_snapshot_with_playhead(
 
 fn hls_buffer_snapshot(output: Option<&HlsSegmentOutput>) -> crate::abr::BufferSnapshot {
     hls_buffer_snapshot_with_playhead(output).0
+}
+
+/// The playable reserve ahead of the playhead on either route (`disp_base` is 0 on direct play,
+/// whose tails are already movie time), `None` while a lane has not spoken since the open or the
+/// seek. Read by the seek-preview generator's buffer gate (`crate::seekprev::Gate`).
+pub(crate) fn playable_reserve_ms() -> Option<i64> {
+    hls_buffer_snapshot(None).buffered_ms()
 }
 
 /// Progressive Original uses absolute movie PTS, unlike offset-zero HLS, so no display-base
