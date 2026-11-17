@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Rangées de l’accueil",
+  "home_rows.detail": "Les rangées affichées sur l’accueil et leur ordre.",
+  "home_rows.copy": "OK prend une rangée, Haut ou Bas la déplace, OK la pose. Gauche ou Droite affiche ou masque une rangée. Chaque profil garde son propre ordre.",
+  "home_rows.shown": "Affichée",
+  "home_rows.hidden": "Masquée",
+  "home_rows.moving": "En déplacement",
+  "home_rows.moving_detail": "Haut ou Bas pour la déplacer, OK pour la poser.",
+  "home_rows.empty": "Les rangées apparaissent ici une fois l’accueil chargé."
+}

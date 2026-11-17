@@ -1,0 +1,34 @@
+{
+  "home_rows.title": {
+    "value": "Home rows",
+    "description": "Settings > Libraries row and page title: the page that orders Home's rows and hides some. Short."
+  },
+  "home_rows.detail": {
+    "value": "Which rows Home shows, and their order.",
+    "description": "Detail line under the Home rows row on the Settings root. One short sentence."
+  },
+  "home_rows.copy": {
+    "value": "OK picks up a row, Up or Down moves it, and OK puts it down. Left or Right shows or hides a row. Each profile keeps its own order.",
+    "description": "Home rows page header copy: how the remote's keys reorder rows and show or hide them; each profile has its own layout. OK, Up, Down, Left and Right are remote keys."
+  },
+  "home_rows.shown": {
+    "value": "Shown",
+    "description": "Home rows page: trailing word of a row Home shows. One word; a row is feminine where the language has gender."
+  },
+  "home_rows.hidden": {
+    "value": "Hidden",
+    "description": "Home rows page: trailing word of a row Home leaves out. One word; a row is feminine where the language has gender."
+  },
+  "home_rows.moving": {
+    "value": "Moving",
+    "description": "Home rows page: trailing word of the row being carried to a new place. One word."
+  },
+  "home_rows.moving_detail": {
+    "value": "Up or Down to move it, OK to put it down.",
+    "description": "Home rows page: detail line under the row being carried. Up, Down and OK are remote keys."
+  },
+  "home_rows.empty": {
+    "value": "Home’s rows appear here once Home has loaded.",
+    "description": "Home rows page: note shown while Home has not loaded any rows yet."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Rijen op Home",
+  "home_rows.detail": "Welke rijen Home toont, en in welke volgorde.",
+  "home_rows.copy": "OK pakt een rij op, Omhoog of Omlaag verplaatst hem, OK zet hem neer. Links of Rechts toont of verbergt een rij. Elk profiel houdt een eigen volgorde.",
+  "home_rows.shown": "Zichtbaar",
+  "home_rows.hidden": "Verborgen",
+  "home_rows.moving": "Verplaatsen",
+  "home_rows.moving_detail": "Omhoog of Omlaag verplaatst, OK zet neer.",
+  "home_rows.empty": "De rijen verschijnen hier zodra Home is geladen."
+}

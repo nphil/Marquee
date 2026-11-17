@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Righe della Home",
+  "home_rows.detail": "Quali righe mostra la Home e in che ordine.",
+  "home_rows.copy": "OK prende una riga, Su o Giù la sposta, OK la rilascia. Sinistra o Destra mostra o nasconde una riga. Ogni profilo ha il proprio ordine.",
+  "home_rows.shown": "Visibile",
+  "home_rows.hidden": "Nascosta",
+  "home_rows.moving": "In spostamento",
+  "home_rows.moving_detail": "Su o Giù per spostarla, OK per rilasciarla.",
+  "home_rows.empty": "Le righe compaiono qui quando la Home è caricata."
+}

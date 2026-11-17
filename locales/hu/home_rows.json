@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Kezdőlap sorai",
+  "home_rows.detail": "Mely sorokat mutat a Kezdőlap, és milyen sorrendben.",
+  "home_rows.copy": "Az OK felvesz egy sort, a Fel vagy Le mozgatja, az OK leteszi. A Balra vagy Jobbra megjelenít vagy elrejt egy sort. Minden profil saját sorrendet tart.",
+  "home_rows.shown": "Látható",
+  "home_rows.hidden": "Rejtett",
+  "home_rows.moving": "Áthelyezés",
+  "home_rows.moving_detail": "A Fel vagy Le mozgatja, az OK leteszi.",
+  "home_rows.empty": "A sorok itt jelennek meg, amint a Kezdőlap betöltődik."
+}

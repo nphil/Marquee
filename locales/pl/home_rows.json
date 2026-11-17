@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Rzędy na Głównej",
+  "home_rows.detail": "Które rzędy pokazuje Główna i w jakiej kolejności.",
+  "home_rows.copy": "OK podnosi rząd, Góra lub Dół go przesuwa, OK go odkłada. Lewo lub Prawo pokazuje lub ukrywa rząd. Każdy profil ma własną kolejność.",
+  "home_rows.shown": "Widoczny",
+  "home_rows.hidden": "Ukryty",
+  "home_rows.moving": "Przenoszenie",
+  "home_rows.moving_detail": "Góra lub Dół, by przesunąć; OK, by odłożyć.",
+  "home_rows.empty": "Rzędy pojawią się tu po wczytaniu Głównej."
+}

@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Filas de Inicio",
+  "home_rows.detail": "Qué filas muestra Inicio y en qué orden.",
+  "home_rows.copy": "OK toma una fila, Arriba o Abajo la mueve y OK la suelta. Izquierda o Derecha muestra u oculta una fila. Cada perfil guarda su propio orden.",
+  "home_rows.shown": "Visible",
+  "home_rows.hidden": "Oculta",
+  "home_rows.moving": "Moviendo",
+  "home_rows.moving_detail": "Arriba o Abajo para moverla, OK para soltarla.",
+  "home_rows.empty": "Las filas aparecen aquí cuando Inicio termine de cargar."
+}

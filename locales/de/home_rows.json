@@ -1,0 +1,10 @@
+{
+  "home_rows.title": "Zeilen auf Start",
+  "home_rows.detail": "Welche Zeilen Start zeigt, und ihre Reihenfolge.",
+  "home_rows.copy": "OK nimmt eine Zeile auf, Hoch oder Runter verschiebt sie, OK legt sie ab. Links oder Rechts blendet eine Zeile ein oder aus. Jedes Profil hat seine eigene Reihenfolge.",
+  "home_rows.shown": "Sichtbar",
+  "home_rows.hidden": "Ausgeblendet",
+  "home_rows.moving": "Wird verschoben",
+  "home_rows.moving_detail": "Hoch oder Runter verschiebt, OK legt ab.",
+  "home_rows.empty": "Die Zeilen erscheinen hier, sobald Start geladen ist."
+}
