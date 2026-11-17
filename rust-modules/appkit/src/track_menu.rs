@@ -965,13 +965,7 @@ impl TrackMenuState {
 
     /// The Audio tab's half of [`Self::derive_active`].
     fn derive_active_audio(ps: &plx_media::route::PlaybackSession, meta: metadata::MetadataView<'_>) -> c_int {
-        let Some(t) = tracks(meta) else { return 0 };
-        let asid = plx_media::route::cur_audio_sid(ps);
-        (asid > 0)
-            .then(|| t.audio.iter().position(|s| s.id == asid))
-            .flatten()
-            .or_else(|| t.audio.iter().position(|s| s.default))
-            .unwrap_or(0) as c_int
+        tracks(meta).and_then(|t| playing_audio(ps, &t.audio)).unwrap_or(0) as c_int
     }
 
     /// The Subtitles tab's half of [`Self::derive_active`] — what the live poll scans alone, the
@@ -2894,10 +2888,28 @@ fn format_offset(ms: i64) -> String {
 /// would otherwise promise a layout the downmix does not keep; the server mark outranks it. Always ONE line: the
 /// longest label is graded against the panel by `converted_audio_sub_lines_fit_the_panel_in_every_language`.
 fn audio_sub_line(ps: &plx_media::route::PlaybackSession, sub: String, s: &metadata::Stream) -> String {
+    let (converted, in_app) = audio_conversion(ps, s);
+    audio_sub_line_for(sub, converted, in_app)
+}
+
+/// Whether the server converts `s` for this playback, and whether the app decodes it to stereo: the
+/// two facts [`audio_sub_line`] names, which the playback chips read too.
+pub(crate) fn audio_conversion(ps: &plx_media::route::PlaybackSession, s: &metadata::Stream) -> (bool, bool) {
     let converted = plx_media::route::audio_converted_by_server(ps, &s.codec, s.channels, s.sampling_rate);
     let in_app = plx_platform::devcaps::app_decode_mixes_down(s.channels)
         && plx_media::route::audio_decoded_in_app(ps, &s.codec, s.channels, s.sampling_rate);
-    audio_sub_line_for(sub, converted, in_app)
+    (converted, in_app)
+}
+
+/// The playing audio track, an index into `audio`: the one the route carries
+/// (`route::cur_audio_sid`), else the file's flagged default, else the first; `None` with no track.
+pub(crate) fn playing_audio(ps: &plx_media::route::PlaybackSession, audio: &[metadata::Stream]) -> Option<usize> {
+    let asid = plx_media::route::cur_audio_sid(ps);
+    (asid > 0)
+        .then(|| audio.iter().position(|s| s.id == asid))
+        .flatten()
+        .or_else(|| audio.iter().position(|s| s.default))
+        .or((!audio.is_empty()).then_some(0))
 }
 
 /// [`audio_sub_line`] with the facts given — the pure choice, host-testable.
@@ -2914,7 +2926,7 @@ fn audio_sub_line_for(sub: String, converted: bool, decoded_in_app: bool) -> Str
 }
 
 /// "Stereo", "Mono", "5.1": the channel layout alone, with no codec name.
-fn audio_descriptor(s: &metadata::Stream) -> String {
+pub(crate) fn audio_descriptor(s: &metadata::Stream) -> String {
     if !s.layout.is_empty() {
         channel_short(&s.layout)
     } else if s.channels > 0 {

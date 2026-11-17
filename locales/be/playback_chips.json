@@ -1,0 +1,7 @@
+{
+  "widgets.chips.hdr": "HDR",
+  "widgets.chips.dolby_vision": "Dolby Vision",
+  "widgets.chips.dolby_atmos": "Dolby Atmos",
+  "widgets.chips.surround": "Аб’ёмны гук {layout}",
+  "widgets.chips.subtitles": "Субцітры: {language}"
+}

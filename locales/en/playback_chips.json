@@ -1,0 +1,28 @@
+{
+  "widgets.chips.hdr": {
+    "value": "HDR",
+    "description": "Chip shown for a few seconds in the corner of the picture when playback starts, and again when it changes: the picture is high dynamic range (HDR10, HDR10+ or HLG). The mark most TVs show; keep it unless your language spells it differently."
+  },
+  "widgets.chips.dolby_vision": {
+    "value": "Dolby Vision",
+    "description": "Chip shown for a few seconds in the corner of the picture when playback starts, and again when it changes: the picture is in Dolby Vision. A brand name; keep it as written."
+  },
+  "widgets.chips.dolby_atmos": {
+    "value": "Dolby Atmos",
+    "description": "Chip shown for a few seconds in the corner of the picture when playback starts, and again when it changes: the sound is Dolby Atmos. A brand name; keep it as written."
+  },
+  "widgets.chips.surround": {
+    "value": "{layout} surround",
+    "description": "Chip shown for a few seconds in the corner of the picture when playback starts, and again when it changes: the sound is surround. {layout} is its channel layout, such as 5.1 or 7.1. Keep it short: the chip holds about 30 characters.",
+    "args": {
+      "layout": "str"
+    }
+  },
+  "widgets.chips.subtitles": {
+    "value": "{language} subtitles",
+    "description": "Chip shown for a few seconds in the corner of the picture when playback starts, and again when it changes: the subtitles on screen. {language} is the subtitle track's language name as the server gives it, such as English. Keep it short: the chip holds about 30 characters.",
+    "args": {
+      "language": "str"
+    }
+  }
+}
