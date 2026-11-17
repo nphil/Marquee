@@ -192,11 +192,9 @@ pub struct Engine {
     pub placed_dst: Option<super::video_geometry::Viewport>,
     pub eos_pushed: bool, // Kodi VIDEO_DRAIN: pushEOS() sent once at true EOF
     pub rebase_pending: bool, // g_rebase_pending
-    // In-place seek only: keyframes this far AHEAD of the seek target are stale frames the demuxer
-    // produced from its pre-flush read position before the reopen+av_seek won the race (playback
-    // drifts forward during a long scrub) — reject them so the rebase anchors on the REAL post-seek
-    // keyframe, not the drifted one. `rebase_drops` caps the rejections so a sparse-keyframe file or
-    // a genuinely-failed av_seek can't hang the rebase.
+    // In-place seek only: a first keyframe far from the seek target (`SEEK_STALE_*_NS`) means the
+    // av_seek did not land near it, so it is rejected rather than anchored. `rebase_drops` caps the
+    // rejections so a sparse-keyframe file or a genuinely-failed av_seek can't hang the rebase.
     pub rebase_drops: i32,
     pub seek_armed_at: u32, // SDL-ticks when the current in-place seek was armed (stuck watchdog)
     pub seek_retries: i32,  // cheap reopen-retries attempted before escalating to a full reload
@@ -3234,8 +3232,8 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     }
 }
 
-/// free every queued AU + the held pending one, BOTH lanes (seek + teardown).
-pub fn drain_aq(eng: &mut Engine) {
+/// free every queued AU + the held pending one, BOTH lanes (teardown; a seek uses [`publish_seek`]).
+fn drain_aq(eng: &mut Engine) {
     drain_one(eng.aq_video.as_mut());
     drain_one(eng.aq_audio.as_mut());
     eng.pending_video = None;
@@ -3254,6 +3252,41 @@ fn drain_one(q: Option<&mut Box<AuQueue>>) {
             unsafe { libc::free(n as *mut c_void) };
         }
     }
+}
+
+/// Post an in-place seek's target to the demuxer (the pump's apply and its stuck retry) so that
+/// nothing read at the old position reaches the feed afterwards.
+///
+/// Draining the lanes and then posting let old AUs through: the one a demuxer parked on a full lane
+/// already held, whatever it read before taking the target, and on a stuck retry (which drained
+/// nothing) everything pushed since the previous target. After a backward seek such an AU anchored
+/// the rebase or set the audio lane's high-water ahead, the backjump guard then dropped the fresh
+/// audio, the clock never primed, and the demuxer parked on a video lane nobody drained. So the
+/// video lane is fenced with the post ([`crate::aq::aq_fence`]) until the demuxer takes the target
+/// ([`take_seek`]), and the audio lane, which holds until the video lane anchors, is emptied by the
+/// take. Emptying it here as well releases a demuxer parked on it, and happens before the post so
+/// it can never free audio read after the take. The held pending AUs are the old position's too.
+pub fn publish_seek(eng: &mut Engine, t: i64) {
+    drain_one(eng.aq_audio.as_mut());
+    let video = eng.aq_video.as_mut().map_or(std::ptr::null_mut(), |q| &mut **q as *mut AuQueue);
+    crate::aq::aq_fence(video, &SHARED.seek_to_ns, t);
+    eng.pending_video = None;
+    eng.pending_audio = None;
+}
+
+/// The demuxer's half of [`publish_seek`], at the top of every read: the posted target, or -1.
+/// Taking it lifts the video lane's fence and empties the audio lane, so from here on both hold
+/// only what is read after the take.
+pub(crate) fn take_seek(video: *mut AuQueue, audio: *mut AuQueue) -> i64 {
+    // Lock-free when nothing is posted; a post this read misses is taken on the next packet.
+    if SHARED.seek_to_ns.load(Ordering::Relaxed) < 0 {
+        return -1;
+    }
+    let t = crate::aq::aq_take_fence(video, &SHARED.seek_to_ns);
+    if t >= 0 {
+        crate::aq::aq_clear(audio);
+    }
+    t
 }
 
 /// feed streamed AUs from the demux queue; hold the current AU across ticks on
@@ -3275,33 +3308,26 @@ pub(crate) const PRIME_VIDEO_MAX_NS: i64 = 2_500_000_000;
 // ahead (audio buffer is cheap and it's the master clock) without unbounded race on odd muxes.
 pub(crate) const MAX_FEED_AHEAD_NS: i64 = 1_600_000_000;
 pub(crate) const AUDIO_SLACK_NS: i64 = 2_000_000_000;
-// A fed pts this far below a lane's high-water is a stale pre-seek AU (past the B-frame reorder
-// distance) → drop it rather than feed a backward jump.
+// A fed pts this far below a lane's high-water (past the B-frame reorder distance) is a backward
+// jump → drop it rather than feed it. A seek resets both high-waters, and no AU read before the
+// demuxer took the seek reaches the feed (`publish_seek`), so a seek cannot set one ahead.
 const STALE_BACKJUMP_NS: i64 = 2_000_000_000;
-// In-place-seek rebase guard: a first-keyframe this far from the seek target is a stale pre-reopen
-// frame from the drifted read position, not the real post-seek keyframe. av_seek(BACKWARD) lands
-// AT/BEFORE the target, so a valid anchor is never ahead and is at most ~one GOP behind — hence a
-// tight AHEAD bound and a looser BEHIND bound (to tolerate sparse keyframes). Capped by MAX_REBASE_DROPS.
+// In-place-seek landing guard: the first keyframe read after the demuxer took the seek this far
+// from the target means the av_seek did not land there. av_seek(BACKWARD) lands AT/BEFORE the
+// target, so a valid anchor is never ahead and is at most ~one GOP behind — hence a tight AHEAD
+// bound and a looser BEHIND bound (to tolerate sparse keyframes). Capped by MAX_REBASE_DROPS.
 const SEEK_STALE_AHEAD_NS: i64 = 6_000_000_000;
 const SEEK_STALE_BEHIND_NS: i64 = 30_000_000_000;
 const MAX_REBASE_DROPS: i32 = 240;
-// Audio counterpart of the rebase guard: an audio AU this far AHEAD of the video high-water is a
-// stale drifted frame (the demuxer's pre-reopen audio after a seek). Feeding it poisons
-// max_fed_audio_pts (and then the backjump guard drops all LEGIT audio until the demux catches
-// up to the poisoned mark → seconds of silence). Legit audio lead is bounded by the throttle to
-// ~MAX_FEED_AHEAD+AUDIO_SLACK (3.6s), so 5s has margin. It was 15s, and a stuck-retry seek fed
-// stale audio 14.9s ahead — 13s of user-audible silence after a rapid 10s-back tap burst.
-const AUDIO_STALE_AHEAD_NS: i64 = 5_000_000_000;
 /// How far past the start of its timeline the audio lane may feed whatever the clock says.
 ///
 /// **A track whose audio starts late must still reach Starfish before the clock can move.** An
 /// MKV audio `Delay` (an 11.008 s E-AC-3 track on a WEB-DL, 2026-10) puts the first audio AU
 /// seconds past the first video one. Starfish's clock waits for audio, so `pres_fed` sits at 0
-/// and the video lane stops [`MAX_FEED_AHEAD_NS`] in — and the audio AU, far past both, was
-/// dropped as stale by [`AUDIO_STALE_AHEAD_NS`] and would have been held by the throttle anyway.
-/// Nothing moved again: the picture buffered forever, while a resume past the gap played. The
-/// AU the demuxer marked as its first since the open or seek is the real start, never stale
-/// pre-seek audio (that was pushed before the mark), so it and the next 2 s are fed regardless.
+/// and the video lane stops [`MAX_FEED_AHEAD_NS`] in — and the audio AU, far past both, is held by
+/// the throttle. Nothing moved again: the picture buffered forever, while a resume past the gap
+/// played. The AU the demuxer marked as its first since the open or seek is the real start, so it
+/// and the next 2 s are fed regardless.
 /// 2 s is under the throttle's own audio lead ([`MAX_FEED_AHEAD_NS`] + [`AUDIO_SLACK_NS`]), so a
 /// track that starts on time is fed exactly as before.
 ///
@@ -4104,9 +4130,8 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
             if es == 1 && key != 0 {
                 let completing_in_place_seek = eng.flushed;
                 let mut segment_installed = false;
-                // In-place seek: drop a keyframe that landed well AHEAD of the target — it's a stale
-                // frame from the pre-flush read position (the reopen+av_seek hasn't taken effect yet),
-                // not the real post-seek keyframe. Capped so a failed av_seek can't hang the rebase.
+                // In-place seek: drop a first keyframe far from the target — the av_seek did not
+                // land there (SEEK_STALE_AHEAD_NS). Capped so a failed av_seek can't hang the rebase.
                 if eng.flushed {
                     let target = SHARED.seek_target_ns.load(Ordering::Relaxed);
                     let stale = target >= 0
@@ -4351,8 +4376,8 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
 
 /// Whether an audio AU at fed pts `fp` is in its timeline's lead-in: it is the AU the demuxer
 /// marked as the first since its open or seek (`opens`), or lies within [`AUDIO_LEAD_IN_NS`] past
-/// the one that was accepted (`start`). Lead-in audio is fed ahead of the clock: neither the
-/// stale-ahead drop nor the feed-ahead throttle applies to it.
+/// the one that was accepted (`start`). Lead-in audio is fed ahead of the clock: the feed-ahead
+/// throttle does not apply to it.
 fn audio_lead_in(fp: i64, opens: bool, start: Option<i64>) -> bool {
     opens || start.is_some_and(|s| fp >= s && fp - s < AUDIO_LEAD_IN_NS)
 }
@@ -4400,15 +4425,6 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
         let first_pts = SHARED.first_audio_pts.load(Ordering::Acquire);
         let opens = first_pts != i64::MIN && pts == first_pts;
         let lead_in = audio_lead_in(fp, opens, eng.audio_start_fp);
-        // Stale drifted audio from before a seek's reopen: far AHEAD of the freshly-anchored video.
-        // Drop it (else it poisons max_fed_audio_pts and stalls the audio clock → playback sticks).
-        // A late-starting track is far ahead too, legitimately, so it is measured from its own
-        // start as well as from the video (see AUDIO_LEAD_IN_NS).
-        let stale_ref = eng.max_fed_video_pts.max(eng.audio_start_fp.unwrap_or(i64::MIN));
-        if !lead_in && eng.max_fed_video_pts > 0 && fp > stale_ref + AUDIO_STALE_AHEAD_NS {
-            eng.pending_audio = None;
-            continue;
-        }
         if fp < eng.max_fed_audio_pts - STALE_BACKJUMP_NS {
             eng.pending_audio = None; // stale (a big backward jump)
             continue;
@@ -8751,7 +8767,7 @@ mod audio_lead_in_tests {
 /// demuxer's `first audio at 11008ms`, then no `feed a#` line at all and `timeline playing t=0s`
 /// for good. Starfish's clock waits for audio, so `pres_fed` stays 0 and the video lane stops
 /// [`MAX_FEED_AHEAD_NS`] in; the audio lane dropped every AU as stale because each was more than
-/// [`AUDIO_STALE_AHEAD_NS`] past that video. These tests drive the real lanes through
+/// 5 s past that video. These tests drive the real lanes through
 /// [`feed_both_lanes`] against the host feed seam, in the state a progressive start leaves:
 /// Play already issued, nothing presented (`pres_fed` 0, not [`PRES_NONE`]).
 #[cfg(all(test, feature = "hostsim"))]
@@ -8773,8 +8789,8 @@ mod late_audio_start_tests {
     }
 
     /// An engine past `SMP Play` at offset 0 holding the film's first 12 s: video from 0, audio
-    /// from [`AUDIO_DELAY_NS`]. `first_audio` is what the demuxer published as its first audio.
-    fn started_with_late_audio(first_audio: i64) -> Engine {
+    /// from [`AUDIO_DELAY_NS`], which the demuxer published as its first audio.
+    fn started_with_late_audio() -> Engine {
         let mut eng = super::prime_livelock_tests::engine_after_reload();
         eng.prime_play = false;
         let au = [0u8; 64];
@@ -8786,7 +8802,7 @@ mod late_audio_start_tests {
         for i in 0..200 {
             crate::aq::aq_push(qa, au.as_ptr(), au.len() as c_int, AUDIO_DELAY_NS + i * A_STEP_NS, 1, 2);
         }
-        SHARED.first_audio_pts.store(first_audio, Ordering::Relaxed);
+        SHARED.first_audio_pts.store(AUDIO_DELAY_NS, Ordering::Relaxed);
         eng
     }
 
@@ -8808,12 +8824,12 @@ mod late_audio_start_tests {
     fn a_track_whose_audio_starts_late_reaches_the_sink() {
         let _serial = plx_base::testlock::serial();
         let _restore = arm();
-        let mut eng = started_with_late_audio(AUDIO_DELAY_NS);
+        let mut eng = started_with_late_audio();
         run_ticks(&mut eng);
 
         // Precondition: the video lane fed and then stopped at the throttle, as on the device.
         assert!(
-            eng.max_fed_video_pts > 0 && eng.max_fed_video_pts < AUDIO_DELAY_NS - AUDIO_STALE_AHEAD_NS,
+            eng.max_fed_video_pts > 0 && eng.max_fed_video_pts < AUDIO_DELAY_NS - AUDIO_LEAD_IN_NS,
             "PRECONDITION FAILED, not the defect: video fed to {}ns — the host sink is not armed \
              or the throttle did not hold the video lane short of the audio",
             eng.max_fed_video_pts
@@ -8824,22 +8840,9 @@ mod late_audio_start_tests {
             "the lead-in was fed ahead of the clock (audio to {}ns)",
             eng.max_fed_audio_pts
         );
-        // Past the lead-in the throttle holds the audio — held, not dropped as stale.
+        // Past the lead-in the throttle holds the audio.
         let next = eng.pending_audio.as_ref().map(|n| unsafe { crate::aq::au_fields(n.0) }.2);
         assert_eq!(next, Some(eng.max_fed_audio_pts + A_STEP_NS), "the next AU waits for the clock");
-    }
-
-    #[test]
-    fn audio_far_ahead_that_does_not_open_the_timeline_is_still_dropped_as_stale() {
-        let _serial = plx_base::testlock::serial();
-        let _restore = arm();
-        // The demuxer has not marked these AUs: stale pre-seek audio looks exactly like this.
-        let mut eng = started_with_late_audio(i64::MIN);
-        run_ticks(&mut eng);
-
-        assert!(eng.max_fed_video_pts > 0, "PRECONDITION FAILED: the host sink fed no video");
-        assert_eq!(eng.max_fed_audio_pts, 0, "stale audio must not reach the sink");
-        assert_eq!(eng.audio_start_fp, None);
     }
 }
 

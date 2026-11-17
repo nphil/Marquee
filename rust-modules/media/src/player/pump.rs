@@ -2,7 +2,7 @@
 //! plex_run: the pending-seek handler, the ACB-bind state machine (Stage), and the
 //! feed dispatch. All ACB/Starfish control calls happen here on the main thread.
 use super::engine::{
-    arm_live_clock_prime, drain_aq, feed_both_lanes, feed_sample, Engine, Source,
+    arm_live_clock_prime, feed_both_lanes, feed_sample, publish_seek, Engine, Source,
 };
 use super::shared::{HlsPauseCompletion, HlsPrimeKind, HlsSeekPause, Stage};
 use super::{seek_mode, SeekMode, ACB_OK, SHARED, TX};
@@ -2114,7 +2114,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         // into a session whose mode no longer anchors in place), go straight to `reload_at`.
         if eng.seek_retries < 2 && !seek_reloads(seek_mode()) {
             eng.seek_retries += 1;
-            SHARED.seek_to_ns.store(tgt, Release); // re-publish; the demux thread seeks on it
+            publish_seek(eng, tgt); // re-post behind a fresh fence; the demux thread seeks on it
             SHARED.seek_target_ns.store(tgt, Relaxed); // rebase guard keys on the retried target
             eng.seek_armed_at = now;
             super::log(&format!(
@@ -2249,18 +2249,18 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
                 super::sink().flush(mt); // drop decoded/queued frames only after the clock is really held
             }
         }
-        drain_aq(eng);
-        // in-place direct-play seek: publish the target and let the DEMUX THREAD av_seek_frame
-        // between two reads (ff.rs's inner loop). Nothing here interrupts the socket: the pump
-        // used to shutdown(2) it to break the read so the outer loop would reopen+seek, but our
-        // AVIO is seekable, so libavformat just healed the broken read through `seek_cb` and read
-        // on — no reopen, no seek, and every direct-play seek escalated to a reload. See ff.rs.
+        // in-place direct-play seek: post the target behind the video lane's fence
+        // (`engine::publish_seek`) and let the DEMUX THREAD av_seek_frame between two reads
+        // (ff.rs's inner loop). Nothing here interrupts the socket: the pump used to shutdown(2)
+        // it to break the read so the outer loop would reopen+seek, but our AVIO is seekable, so
+        // libavformat just healed the broken read through `seek_cb` and read on — no reopen, no
+        // seek, and every direct-play seek escalated to a reload. See ff.rs.
         // eng.flushed → feed_stream fires setTimeToDecode+sendSegmentEvent on the first post-seek
         // keyframe. disp_base=0 (rebase to the landed keyframe).
+        publish_seek(eng, t);
         eng.flushed = true;
         eng.presentation_rearm_pending = false;
-        SHARED.seek_to_ns.store(t, Release); // the demux thread's av_seek target
-        SHARED.seek_target_ns.store(t, Relaxed); // rebase guard: reject stale drifted keyframes
+        SHARED.seek_target_ns.store(t, Relaxed); // rebase guard: reject a landing far off the target
         SHARED.disp_base.store(0, Relaxed);
         super::log(&format!(
             "seek(in-place): av_seek t={t} coalesced={coalesced}"
@@ -2276,13 +2276,6 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         eng.max_fed_video_pts = 0;
         eng.max_fed_audio_pts = 0;
         eng.audio_start_fp = None;
-        // Drop any AU held from BEFORE the seek (the per-lane BufferFull retry). drain_aq cleared the
-        // QUEUES but not these pending AUs; feeding a stale pre-seek AU after the seek re-bases it to
-        // the NEW pts_shift → a big A/V desync — the stale audio pts advances max_fed_audio_pts, then
-        // the STALE_BACKJUMP guard drops the fresh post-seek audio as "too far back" → no sound. The
-        // reopened stream supplies fresh post-seek AUs.
-        eng.pending_video = None;
-        eng.pending_audio = None;
         eng.prime_play = true; // paused above; Play once PRIME_NS is buffered (no fast-forward)
                                // "no post-seek frame presented yet" — the feed-ahead throttle feeds freely until the first
                                // real presented pts lands, instead of comparing the new fed pts against the STALE pre-seek
@@ -5470,6 +5463,15 @@ mod native_seek_pump_tests {
     const TARGET_NS: i64 = 905_000_000_000;
     const NEXT_NS: i64 = 1_200_000_000_000;
     const V_STEP_NS: i64 = 41_708_333;
+    const A_STEP_NS: i64 = 32_000_000;
+
+    /// `n` AUs from `ns`, `step` apart, into lane `q` (`es` 1 video, 2 audio); the first is a keyframe.
+    fn push_aus(q: *mut crate::aq::AuQueue, ns: i64, step: i64, n: i64, es: c_int) {
+        let au = [0u8; 64];
+        for i in 0..n {
+            crate::aq::aq_push(q, au.as_ptr(), au.len() as c_int, ns + i * step, c_int::from(i == 0), es);
+        }
+    }
 
     struct Rig {
         ps: crate::route::PlaybackSession,
@@ -5511,6 +5513,14 @@ mod native_seek_pump_tests {
             self.pa.engine().expect("engine")
         }
 
+        /// The engine's two lanes, as the demux thread holds them: (video, audio).
+        fn lanes(&mut self) -> (*mut crate::aq::AuQueue, *mut crate::aq::AuQueue) {
+            let eng = self.eng();
+            let qv = &mut **eng.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
+            let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
+            (qv, qa)
+        }
+
         /// The demux thread's job: the first keyframe at `ns` and the AUs after it.
         fn land_keyframe(&mut self, ns: i64) {
             self.land_keyframe_aus(ns, 60);
@@ -5519,13 +5529,10 @@ mod native_seek_pump_tests {
         /// [`Self::land_keyframe`] with `n` AUs: the prime wants `PRIME_VIDEO_MAX_NS` (2.5 s) of
         /// accepted video on an audioless stream, which is 61 of these.
         fn land_keyframe_aus(&mut self, ns: i64, n: i64) {
-            // The demux thread took the av_seek mailbox before it produced the keyframe.
-            SHARED.seek_to_ns.store(-1, Release);
-            let au = [0u8; 64];
-            let qv = &mut **self.eng().aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
-            for i in 0..n {
-                crate::aq::aq_push(qv, au.as_ptr(), au.len() as c_int, ns + i * V_STEP_NS, c_int::from(i == 0), 1);
-            }
+            // The demux thread takes the av_seek target before it reads the keyframe.
+            let (qv, qa) = self.lanes();
+            super::super::engine::take_seek(qv, qa);
+            push_aus(qv, ns, V_STEP_NS, n, 1);
         }
 
         /// Request a seek and frame until the pump has armed it (flushed, awaiting the keyframe).
@@ -5576,6 +5583,72 @@ mod native_seek_pump_tests {
         assert!(reloads().is_empty(), "no fresh Load");
         assert!(!rig.eng().flushed && !rig.eng().rebase_pending, "the seek is applied");
         assert_eq!(crate::player::seek_mode(), SeekMode::NativeSeek);
+    }
+
+    /// **A backward seek lands where av_seek landed, even when what the demuxer read before the
+    /// seek arrives after it.** Playing at 60 s, five seconds back: the demuxer had read on to
+    /// 60.5 s, and its keyframe and audio from there reach the lanes after the pump's apply.
+    /// Unfenced, that keyframe was inside the landing window and anchored the seek, and that audio
+    /// set the lane's high-water, so the backjump guard dropped the fresh audio: the clock waited
+    /// for audio that a demuxer parked on the undrained video lane never read.
+    #[test]
+    fn a_backward_seek_lands_on_the_new_position_when_old_aus_arrive_after_it() {
+        const BACK_NS: i64 = 55_000_000_000;
+        const LANDED_NS: i64 = 54_000_000_000; // av_seek(BACKWARD): the keyframe before the target
+        const READ_NS: i64 = 60_500_000_000; // where the demuxer was reading
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        rig.arm(BACK_NS);
+        let (qv, qa) = rig.lanes();
+        push_aus(qv, READ_NS, V_STEP_NS, 2, 1);
+        push_aus(qa, READ_NS, A_STEP_NS, 4, 2);
+        rig.frame();
+        assert!(rig.eng().rebase_pending, "nothing read before the take anchors the seek");
+
+        rig.land_keyframe_aus(LANDED_NS, 80);
+        SHARED.first_audio_pts.store(LANDED_NS, Relaxed);
+        push_aus(qa, LANDED_NS, A_STEP_NS, 100, 2);
+        for _ in 0..5 {
+            rig.frame();
+        }
+        assert_eq!(ffi_host::seek_log_for_test(), vec![LANDED_NS / 1_000_000], "anchored where av_seek landed");
+        assert_eq!(rig.eng().audio_start_fp, Some(LANDED_NS), "the fresh audio is fed from the landing");
+        assert!(rig.eng().max_fed_audio_pts < READ_NS, "no audio read before the take reached the sink");
+        assert!(!rig.eng().prime_play, "the clock primed");
+    }
+
+    /// **A stuck seek's retry feeds nothing the demuxer read for the target it replaces.** A second
+    /// tap back is coalesced while the first seek has read only audio; the retry posts the newer
+    /// target, and that audio (54 s, for a seek now landing at 49 s) used to stay queued ahead of
+    /// the fresh audio, because the retry re-posted without draining: fed first, it set the lane's
+    /// high-water and the backjump guard dropped the fresh audio behind it.
+    #[test]
+    fn a_stuck_retry_feeds_nothing_read_for_the_target_it_replaced() {
+        const FIRST_NS: i64 = 55_000_000_000;
+        const READ_NS: i64 = 54_000_000_000; // read after the first take, before its keyframe
+        const SECOND_NS: i64 = 50_000_000_000;
+        const LANDED_NS: i64 = 49_000_000_000;
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        rig.arm(FIRST_NS);
+        let (qv, qa) = rig.lanes();
+        assert_eq!(super::super::engine::take_seek(qv, qa), FIRST_NS);
+        push_aus(qa, READ_NS, A_STEP_NS, 16, 2);
+        crate::player::request_seek(SECOND_NS);
+        rig.now += 5_000; // past SEEK_STUCK_MS
+        rig.frame();
+        assert_eq!(rig.eng().seek_retries, 1, "the stuck watchdog retried");
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), SECOND_NS, "at the newer target");
+
+        rig.land_keyframe_aus(LANDED_NS, 80);
+        SHARED.first_audio_pts.store(LANDED_NS, Relaxed);
+        push_aus(qa, LANDED_NS, A_STEP_NS, 100, 2);
+        for _ in 0..5 {
+            rig.frame();
+        }
+        assert_eq!(ffi_host::seek_log_for_test(), vec![LANDED_NS / 1_000_000], "anchored where av_seek landed");
+        assert_eq!(rig.eng().audio_start_fp, Some(LANDED_NS), "the fresh audio is fed from the landing");
+        assert!(rig.eng().max_fed_audio_pts < READ_NS, "nothing read for the replaced target reached the sink");
     }
 
     #[test]

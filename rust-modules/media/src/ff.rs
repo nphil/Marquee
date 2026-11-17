@@ -9854,8 +9854,10 @@ pub fn demux(
                     // Direct-play seek (and the armed resume, which is just a seek published before
                     // the first read): the pump leaves a target ns in SHARED.seek_to_ns and THIS
                     // thread — the only one that ever touches `fmt` — av_seek_frame's between two
-                    // av_read_frame calls. A transcode leaves seek_to_ns=-1 (start.mkv is already
-                    // 0-based at &offset) and so skips this.
+                    // av_read_frame calls. The take (`engine::take_seek`) lifts the video lane's
+                    // fence and empties the audio lane, so nothing read before it is fed after the
+                    // seek. A transcode leaves seek_to_ns=-1 (start.mkv is already 0-based at
+                    // &offset) and so skips this.
                     //
                     // It used to be an INTERRUPT instead: the pump shutdown(2)'d the socket to break
                     // the read, and the outer loop reopened the URL and seeked the fresh context.
@@ -9867,7 +9869,7 @@ pub fn demux(
                     // direct-play seek ran out the stuck-watchdog on PRE-seek packets
                     // (`rebase: dropping stale kf` at the old position) and escalated to a full
                     // reload. Seeking here needs no interrupt at all, so nothing can race it.
-                    let seek_ns = SHARED.seek_to_ns.swap(-1, Ordering::Acquire);
+                    let seek_ns = crate::player::engine::take_seek(aq_p, aqa_p);
                     if seek_ns >= 0 {
                         // These are content from the old seek epoch until the first new packets land.
                         // Reset both the buffer facts and the transfer-window hysteresis together so

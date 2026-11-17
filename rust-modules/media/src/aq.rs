@@ -5,6 +5,7 @@
 //! layouts match glibc.
 use std::os::raw::{c_int, c_long, c_uchar, c_void};
 use std::ptr;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 #[repr(C)]
 pub struct AuNode {
@@ -27,6 +28,7 @@ pub struct AuQueue {
     pops: u64, // AUs the consumer has popped, ever: a producer's evidence that the lane is draining
     pushes: u64, // AUs the producer has appended, ever: the consumer's evidence that the source works
     parked: c_int, // the producer is waiting for room right now
+    fenced: c_int, // a seek is posted and the producer has not taken it: pushes are freed (`aq_fence`)
     eof: c_int,
     abort: c_int,
     m: libc::pthread_mutex_t,
@@ -297,7 +299,17 @@ fn aq_push_park(
                     drain();
                 }
                 let starved = aq_span_ns(g.other) < g.starved_below_ns;
+                let other_fenced = aq_fenced(g.other);
                 libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+                if other_fenced {
+                    // The other lane is fenced for a seek this producer has not taken yet, so this
+                    // AU was read at the old position. Waiting for room for it would keep the
+                    // producer from the take; the take empties this lane anyway.
+                    (*q).parked = 0;
+                    libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+                    libc::free(n as *mut c_void);
+                    return 0;
+                }
                 if (*q).queued_bytes <= (*q).max_bytes || (*q).abort != 0 {
                     continue;
                 }
@@ -352,6 +364,12 @@ fn aq_push_park(
             libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
             libc::free(n as *mut c_void);
             return -1;
+        }
+        if (*q).fenced != 0 {
+            // Read before the seek the producer has not taken yet (`aq_fence`).
+            libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+            libc::free(n as *mut c_void);
+            return 0;
         }
         if !(*q).tail.is_null() {
             (*(*q).tail).next = n;
@@ -421,6 +439,94 @@ pub fn aq_abort(q: *mut AuQueue) {
         (*q).abort = 1;
         libc::pthread_cond_broadcast(ptr::addr_of_mut!((*q).not_full));
         libc::pthread_cond_broadcast(ptr::addr_of_mut!((*q).not_empty));
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+    }
+}
+
+/// With `m` held: free everything queued. A producer parked on the cap is woken and a released cap
+/// settles, as pops would do; none of it counts as popped, since nothing reached the consumer.
+unsafe fn free_queued(q: *mut AuQueue) {
+    unsafe {
+        let mut n = (*q).head;
+        while !n.is_null() {
+            let next = (*n).next;
+            libc::free(n as *mut c_void);
+            n = next;
+        }
+        (*q).head = ptr::null_mut();
+        (*q).tail = ptr::null_mut();
+        (*q).queued_bytes = 0;
+        if (*q).releasing != 0 {
+            settle_released_cap(q);
+        }
+        libc::pthread_cond_signal(ptr::addr_of_mut!((*q).not_full));
+    }
+}
+
+/// **A seek's fence, consumer side.** Under the lane's lock: free everything queued, post `t` to
+/// the producer's `mailbox`, and fence the lane, which frees every AU pushed into it from then on
+/// until the producer takes `t` with [`aq_take_fence`].
+///
+/// A drain and a separate post leave two holes, and both fed old-position AUs to the consumer as
+/// the new position's: the AU a producer parked on the full lane already holds lands as soon as
+/// the drain makes room, and whatever is read between the drain and the take lands after it. The
+/// fence closes both. Posting under the lock binds the fence to its target: a take lifts only the
+/// fence of the target it took, and a re-post while the producer is still on an older one fences
+/// the lane again.
+pub fn aq_fence(q: *mut AuQueue, mailbox: &AtomicI64, t: i64) {
+    if q.is_null() {
+        mailbox.store(t, Ordering::Release);
+        return;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        free_queued(q);
+        (*q).fenced = 1;
+        mailbox.store(t, Ordering::Release);
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+    }
+}
+
+/// **A seek's fence, producer side.** Under the lane's lock: take the target posted to `mailbox`
+/// (-1 when none is). Taking one frees whatever the lane holds and lifts the fence, so from here on
+/// the lane holds the new position only.
+pub fn aq_take_fence(q: *mut AuQueue, mailbox: &AtomicI64) -> i64 {
+    if q.is_null() {
+        return mailbox.swap(-1, Ordering::Acquire);
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let t = mailbox.swap(-1, Ordering::Acquire);
+        if t >= 0 {
+            free_queued(q);
+            (*q).fenced = 0;
+        }
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+        t
+    }
+}
+
+/// Is the lane fenced for a seek its producer has not taken yet ([`aq_fence`])?
+pub fn aq_fenced(q: *mut AuQueue) -> bool {
+    if q.is_null() {
+        return false;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let fenced = (*q).fenced != 0;
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+        fenced
+    }
+}
+
+/// Producer: free everything queued.
+pub fn aq_clear(q: *mut AuQueue) {
+    if q.is_null() {
+        return;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        free_queued(q);
         libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
     }
 }
@@ -627,7 +733,7 @@ pub fn aq_bytes(q: *mut AuQueue) -> c_long {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Barrier};
 
     /// A full queue parks its producer; headroom granted on top of the base cap lets the same
@@ -1107,6 +1213,74 @@ mod tests {
         assert!(!waiting.is_finished());
         aq_abort(ap);
         assert_eq!(waiting.join().unwrap(), -1);
+        aq_destroy(ap);
+        aq_destroy(vp);
+    }
+
+    fn wait_parked(q: *mut AuQueue) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !aq_parked(q) {
+            assert!(std::time::Instant::now() < deadline, "the producer never parked");
+            std::thread::yield_now();
+        }
+    }
+
+    /// **A seek's fence.** The producer parked on the full lane holds an AU read before the seek:
+    /// the fence frees what was queued, lets that push through and frees it too, and does the same
+    /// with every push until the producer takes the target. After the take the lane queues again.
+    #[test]
+    fn a_fenced_lane_frees_every_push_until_the_take_including_the_parked_one() {
+        let mailbox = AtomicI64::new(-1);
+        let mut q = aq_new(100);
+        let qp = &mut *q as *mut AuQueue;
+        push_n(qp, 1, 120);
+        let addr = qp as usize;
+        let parked = std::thread::spawn(move || {
+            let au = [0u8; 10];
+            aq_push(addr as *mut AuQueue, au.as_ptr(), au.len() as c_int, 1, 1, 1)
+        });
+        wait_parked(qp);
+        aq_fence(qp, &mailbox, 7);
+        assert_eq!(parked.join().unwrap(), 0, "the parked push returns");
+        assert_eq!(mailbox.load(Ordering::Relaxed), 7, "the target is posted");
+        push_n(qp, 1, 10); // read before the take
+        assert_eq!(aq_bytes(qp), 0, "nothing read before the take is queued");
+        assert_eq!(aq_pushes(qp), 1, "nor counted as appended");
+        assert!(aq_pop(qp, ptr::null_mut()).is_null());
+
+        assert_eq!(aq_take_fence(qp, &mailbox), 7);
+        assert_eq!(mailbox.load(Ordering::Relaxed), -1, "taken");
+        assert!(!aq_fenced(qp));
+        push_n(qp, 1, 10);
+        assert_eq!(aq_bytes(qp), 10, "the lane queues again after the take");
+        assert_eq!(aq_take_fence(qp, &mailbox), -1, "nothing posted, nothing taken");
+        assert_eq!(aq_bytes(qp), 10, "and nothing freed");
+        aq_destroy(qp);
+    }
+
+    /// The audio lane's push parked at its ceiling gives its AU up once the video lane is fenced:
+    /// the AU was read at the old position, and the producer must get back to the take. The fenced
+    /// video lane is empty, i.e. starved, so without that the push failed at the ceiling instead.
+    #[test]
+    fn a_gated_push_parked_at_its_ceiling_drops_its_au_once_the_other_lane_is_fenced() {
+        let mailbox = AtomicI64::new(-1);
+        let mut audio = aq_new(10);
+        let mut video = aq_new(1_000_000);
+        let (ap, vp) = (&mut *audio as *mut AuQueue, &mut *video as *mut AuQueue);
+        let au = [0u8; 50];
+        assert_eq!(aq_push(vp, au.as_ptr(), 50, 0, 1, 1), 0);
+        assert_eq!(aq_push(vp, au.as_ptr(), 50, 5_000_000_000, 1, 1), 0);
+        assert_eq!(aq_push(ap, au.as_ptr(), 50, 0, 1, 2), 0);
+        let (addr, vaddr) = (ap as usize, vp as usize);
+        let waiting = std::thread::spawn(move || {
+            let au = [0u8; 50];
+            let gate = PushGate { other: vaddr as *mut AuQueue, starved_below_ns: 1_600_000_000, headroom: 0, fail_at_ceiling: true };
+            aq_push_gated(addr as *mut AuQueue, au.as_ptr(), 50, 1, 1, 2, gate, || false)
+        });
+        wait_parked(ap);
+        aq_fence(vp, &mailbox, 3);
+        assert_eq!(waiting.join().unwrap(), 0, "the push stops waiting, and does not fail");
+        assert_eq!(aq_bytes(ap), 50, "its AU is not queued");
         aq_destroy(ap);
         aq_destroy(vp);
     }

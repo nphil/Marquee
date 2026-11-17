@@ -654,6 +654,16 @@ something.
   survived a long time because the test suite's cases inherited a server-side `viewOffset`, so the
   seek under test usually had nowhere to go (fixed 2026-07-28; see the
   `docs/agent-reference.md` testing note).
+- **Nothing read before the demuxer takes a seek is fed after it.** `engine::publish_seek` posts
+  the target under the video lane's lock and fences that lane: every push to it is freed, the one a
+  demuxer parked on the full lane already held included, until `engine::take_seek` at the top of
+  the demux loop takes the target, lifts the fence and empties the audio lane. The audio lane holds
+  until the video lane anchors, so it needs no fence; `publish_seek` empties it before posting so a
+  demuxer parked on it gets back to the take, and a gated audio push gives its AU up once the video
+  lane is fenced. Old and new must not be told apart by timestamps: a short backward seek puts the
+  old read position inside the landing window, and old audio fed first sets the high-water the
+  backjump guard then holds against the fresh audio — the clock never primed and the demuxer parked
+  on a full video lane. The stuck retry re-posts through `publish_seek` too.
 - **Playback speed is done in the app, fixed per Load.** LG's `SetPlayRate` cannot work here (its rate
   seek is reset to 1x by the buffer-feed source's next SEGMENT, a mid-play call freezes the pipeline,
   and libpf mutes audio off 1x), so a speed session declares PCM audio, `ff::SpeedDecoder` decodes and
