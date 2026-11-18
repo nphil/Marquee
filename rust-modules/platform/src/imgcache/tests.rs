@@ -521,3 +521,153 @@ fn a_root_that_is_not_private_keeps_the_mode_it_has() {
     assert!(probe_dir(&dir.0, false));
     assert_eq!(fs::metadata(&dir.0).unwrap().mode() & 0o7777, 0o755);
 }
+
+#[test]
+fn the_directory_scan_can_run_ahead_of_the_first_read() {
+    let dir = TestDir::new();
+    let writer = dir.cache(10, MAX_BYTES);
+    for i in 0..3 {
+        assert!(writer.write_at(0, &poster(i), b"image"));
+    }
+    let cache = dir.cache(10, MAX_BYTES);
+    assert_eq!(cache.stats().entries, 0);
+    cache.warm();
+    assert_eq!(cache.stats().entries, 3);
+    assert!(cache.index.lock().unwrap().initialized);
+}
+
+// ---- avatar tiles -----------------------------------------------------------------------------
+
+fn tile_of(key: &str, fetched: u64, shade: u8) -> tiles::Tile {
+    tiles::Tile::new(tiles::identify(key).unwrap(), fetched, 2, 2, &[shade; 16]).unwrap()
+}
+
+#[test]
+fn a_tile_is_named_by_user_and_shape_and_versioned_by_the_stamp() {
+    let id = tiles::identify(AVATAR).unwrap();
+    assert_eq!(id.stamp, "1700000000");
+    assert_eq!(id.name.len(), 64);
+    // The version and the credential are not part of the name; the user and the size are.
+    for same in [AVATAR.replace("1700000000", "1800000000"), AVATAR.replace("tok", "another")] {
+        assert_eq!(tiles::identify(&same).unwrap().name, id.name, "{same}");
+    }
+    for other in [
+        AVATAR.replace("0123abcd", "4567ef01"),
+        AVATAR.replace("width=300", "width=301"),
+        AVATAR.replace("height=300", "height=200"),
+    ] {
+        assert_ne!(tiles::identify(&other).unwrap().name, id.name, "{other}");
+    }
+    assert_eq!(tiles::identify(&AVATAR.replace("%3Fc%3D1700000000", "")).unwrap().stamp, "");
+}
+
+#[test]
+fn only_profile_pictures_get_tiles() {
+    assert!(tiles::identify(POSTER).is_none());
+    let headshot = "/photo/:/transcode?width=300&height=300&url=https%3A%2F%2Fmetadata-static.plex.tv%2Fa%2Fpeople%2F0123.jpg&X-Plex-Token=t";
+    assert!(tiles::identify(headshot).is_none());
+    assert!(tiles::identify("/library/metadata/1/thumb?X-Plex-Token=t").is_none());
+    let long = AVATAR.replace("1700000000", &"9".repeat(65));
+    assert!(tiles::identify(&long).is_none(), "a stamp that long is not a stamp");
+}
+
+#[test]
+fn tiles_round_trip_through_one_file_that_each_save_replaces() {
+    let dir = TestDir::new();
+    let cache = dir.cache(10, MAX_BYTES);
+    let a = tile_of(AVATAR, 100, 7);
+    let b = tile_of(&AVATAR.replace("0123abcd", "4567ef01"), 200, 9);
+    assert!(cache.save_tiles(0, &[&a, &b]));
+    assert_eq!(cache.load_tiles(), vec![a, b.clone()]);
+    assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1, "one file, and no temporary left behind");
+    assert!(cache.save_tiles(0, &[&b]));
+    assert_eq!(cache.load_tiles(), vec![b]);
+    assert!(cache.save_tiles(0, &[]));
+    assert!(cache.load_tiles().is_empty());
+    assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 0, "an empty set removes the file");
+}
+
+#[test]
+fn a_damaged_file_loads_no_tiles() {
+    let dir = TestDir::new();
+    let cache = dir.cache(10, MAX_BYTES);
+    let a = tile_of(AVATAR, 100, 7);
+    assert!(cache.save_tiles(0, &[&a]));
+    let path = dir.0.join("tiles.img");
+    let good = fs::read(&path).unwrap();
+    // Offsets: a 16-byte header, then the entry's 64-byte name, fetched (8), width, height.
+    let patched = |at: usize, to: u8| {
+        let mut bytes = good.clone();
+        bytes[at] = to;
+        bytes
+    };
+    let cases = [
+        good[..good.len() - 1].to_vec(),
+        [&good[..], b"x"].concat(),
+        Vec::new(),
+        b"not a tile file at all".to_vec(),
+        patched(0, b'X'),
+        patched(8, 200),
+        patched(16 + 72, 0),
+        patched(16, b'G'),
+    ];
+    for (i, bytes) in cases.iter().enumerate() {
+        fs::write(&path, bytes).unwrap();
+        assert!(cache.load_tiles().is_empty(), "case {i}");
+    }
+    fs::write(&path, &good).unwrap();
+    assert_eq!(cache.load_tiles(), vec![a]);
+}
+
+#[test]
+fn tiles_are_bounded_and_must_be_well_formed() {
+    let dir = TestDir::new();
+    let cache = dir.cache(10, MAX_BYTES);
+    let many: Vec<tiles::Tile> = (0..=tiles::MAX_TILES)
+        .map(|i| tile_of(&AVATAR.replace("0123abcd", &format!("user{i}")), 1, 1))
+        .collect();
+    let all: Vec<&tiles::Tile> = many.iter().collect();
+    assert!(!cache.save_tiles(0, &all));
+    assert!(cache.save_tiles(0, &all[..tiles::MAX_TILES]));
+    assert_eq!(cache.load_tiles().len(), tiles::MAX_TILES);
+    let mut skewed = many[0].clone();
+    skewed.rgba = vec![0u8; 15].into();
+    assert!(!cache.save_tiles(0, &[&skewed]));
+    let id = tiles::identify(AVATAR).unwrap();
+    assert!(tiles::Tile::new(id.clone(), 1, 2, 2, &[0; 15]).is_none());
+    assert!(tiles::Tile::new(id, 1, 513, 1, &vec![0; 513 * 4]).is_none());
+}
+
+#[test]
+fn sign_out_removes_tiles_and_refuses_a_write_begun_before_it() {
+    let primary = TestDir::new();
+    let fallback = TestDir::new();
+    let cache = Cache::new(
+        vec![primary.0.clone(), fallback.0.clone()],
+        Limits {
+            entries: 10,
+            bytes: MAX_BYTES,
+        },
+    );
+    let a = tile_of(AVATAR, 100, 7);
+    assert!(cache.save_tiles(0, &[&a]));
+    fs::copy(primary.0.join("tiles.img"), fallback.0.join("tiles.img")).unwrap();
+    cache.clear();
+    assert!(!primary.0.join("tiles.img").exists());
+    assert!(!fallback.0.join("tiles.img").exists());
+    assert!(cache.load_tiles().is_empty());
+    assert!(!cache.save_tiles(0, &[&a]), "a profile picture must not come back after sign-out");
+    assert!(cache.load_tiles().is_empty());
+    assert!(cache.save_tiles(1, &[&a]));
+}
+
+#[test]
+fn a_tile_is_due_when_its_stamp_changes_or_a_day_passes() {
+    let t = tile_of(AVATAR, 1_000_000, 1);
+    let day = REFRESH_AFTER.as_secs();
+    assert!(!t.due("1700000000", 1_000_000 + day - 1));
+    assert!(t.due("1700000000", 1_000_000 + day));
+    assert!(t.due("1800000000", 1_000_000), "a newer stamp is due at once");
+    assert!(t.due("1700000000", 999_999), "a clock that reads before the fetch is unconfirmed");
+    assert!(tile_of(AVATAR, 0, 1).due("1700000000", 1), "never confirmed");
+}

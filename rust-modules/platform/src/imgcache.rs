@@ -2,9 +2,10 @@
 //! (a collection's fan, [`classify_baked`]). The poster workers own fetch/decode/bake;
 //! this module owns canonical identities, bounded disk storage, and sign-out generations.
 //!
-//! The index is scanned once, lazily on a worker's first access. Steady-state reads/writes use
-//! an in-memory ordered LRU, never a directory scan. Files contain only a versioned timestamp
-//! header and compressed image bytes; names hash the server, source, and transformation.
+//! The index is scanned once, lazily on a worker's first access or ahead of it by [`prewarm`].
+//! Steady-state reads/writes use an in-memory ordered LRU, never a directory scan. Files contain
+//! only a versioned timestamp header and compressed image bytes; names hash the server, source,
+//! and transformation.
 //! Fetch time drives refresh independently of recency, which is persisted at most hourly.
 //! Limits cover committed files; one atomic-write temporary can additionally occupy MAX_FILE.
 
@@ -48,31 +49,10 @@ pub struct Snapshot {
 /// Every transcode option participates, except the outer authentication token. Namespace is
 /// the stable Plex machine identifier (or server origin when discovery has no identifier).
 pub fn classify(server_namespace: &str, built_key: &str) -> Option<DiskKey> {
-    let (path, query) = built_key.split_once('?')?;
-    if path != "/photo/:/transcode" || server_namespace.is_empty() {
+    if server_namespace.is_empty() {
         return None;
     }
-    let mut params: Vec<(String, String)> = query
-        .split('&')
-        .filter(|s| !s.is_empty())
-        .map(|pair| {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            (percent_decode(k), percent_decode(v))
-        })
-        .filter(|(k, _)| !k.eq_ignore_ascii_case("X-Plex-Token"))
-        .collect();
-    let source_indices: Vec<usize> = params
-        .iter()
-        .enumerate()
-        .filter_map(|(i, (k, _))| (k == "url").then_some(i))
-        .collect();
-    if source_indices.len() != 1 {
-        return None;
-    }
-    let source_index = source_indices[0];
-    if params[source_index].1.is_empty() || is_preview_frame(&params[source_index].1) {
-        return None;
-    }
+    let (mut params, source_index) = transcode_request(built_key)?;
     let avatar = is_avatar(&params[source_index].1);
     if avatar {
         params[source_index].1 = without_avatar_stamp(&params[source_index].1);
@@ -119,6 +99,34 @@ pub fn classify(server_namespace: &str, built_key: &str) -> Option<DiskKey> {
         name: format!("image-{}.img", hex_digest(&identity)),
         legacy,
     })
+}
+
+/// The options of a photo-transcoder request with the outer authentication token dropped, and the
+/// position of its one `url` (the source picture): present, not empty, and not a scrub-preview
+/// frame. The front half of every identity derived from a built request.
+fn transcode_request(built_key: &str) -> Option<(Vec<(String, String)>, usize)> {
+    let (path, query) = built_key.split_once('?')?;
+    if path != "/photo/:/transcode" {
+        return None;
+    }
+    let params: Vec<(String, String)> = query
+        .split('&')
+        .filter(|s| !s.is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            (percent_decode(k), percent_decode(v))
+        })
+        .filter(|(k, _)| !k.eq_ignore_ascii_case("X-Plex-Token"))
+        .collect();
+    let mut sources = params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (k, _))| (k == "url").then_some(i));
+    let source = sources.next()?;
+    if sources.next().is_some() || params[source].1.is_empty() || is_preview_frame(&params[source].1) {
+        return None;
+    }
+    Some((params, source))
 }
 
 /// The durable key of an image the APP rendered (a collection fan), not one the server sent.
@@ -259,6 +267,8 @@ struct Cache {
     generation: AtomicU64,
     index: Mutex<Index>,
     counters: Counters,
+    /// Serialises avatar-tile writes with each other and with [`Cache::clear`] (see [`tiles`]).
+    tiles: Mutex<tiles::Gate>,
 }
 
 impl Cache {
@@ -269,6 +279,7 @@ impl Cache {
             generation: AtomicU64::new(0),
             index: Mutex::new(Index::default()),
             counters: Counters::default(),
+            tiles: Mutex::default(),
         }
     }
 
@@ -505,6 +516,10 @@ impl Cache {
 
     fn clear(&self) {
         let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());
+        // A tile write is one more thing that can be in flight: holding its gate across the bump
+        // and the sweep lets one that began under the old generation finish before the sweep, and
+        // refuses any that begins after it.
+        let mut tiles = self.tiles.lock().unwrap_or_else(|e| e.into_inner());
         self.generation.fetch_add(1, Ordering::AcqRel);
         // Sweep all candidates even when this process has never initialized the cache. A
         // previous install may have fallen back to a different writable location.
@@ -521,6 +536,7 @@ impl Cache {
             }
         }
         *index = Index::default();
+        *tiles = tiles::Gate::default();
         self.publish_size(&index);
     }
 
@@ -529,6 +545,13 @@ impl Cache {
             .entries
             .store(index.entries.len() as u64, Ordering::Relaxed);
         self.counters.bytes.store(index.bytes, Ordering::Relaxed);
+    }
+
+    /// The one-time directory scan, now. The lock is the same one every read and write takes, so
+    /// whoever arrives first does the scan and the rest wait for it, exactly as before.
+    fn warm(&self) {
+        let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());
+        self.initialize(&mut index);
     }
 
     fn stats(&self) -> Snapshot {
@@ -736,6 +759,12 @@ fn cache() -> &'static Cache {
 pub fn generation() -> u64 {
     cache().generation.load(Ordering::Acquire)
 }
+/// Runs the one-time directory scan (about a thousand files on the television) now, so the first
+/// poster read does not pay for it. Blocks until the scan is done: call it from a background
+/// thread, early in boot, never from the frame thread.
+pub fn prewarm() {
+    cache().warm();
+}
 pub fn read_at(generation: u64, key: &DiskKey) -> Option<CachedImage> {
     cache().read_at(generation, key)
 }
@@ -752,6 +781,8 @@ pub fn clear() {
 pub fn stats() -> Snapshot {
     cache().stats()
 }
+
+pub mod tiles;
 
 #[cfg(test)]
 mod tests;
