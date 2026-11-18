@@ -67,6 +67,7 @@
 - When the Plex server ends a stream (an admin stopping it from the dashboard), playback now stops at once, shows the server's own reason with Back as the only action, and clears the dashboard row, instead of carrying on playing a stream the server had already dropped.
 - Previous in the player always plays the previous episode: after the first five seconds it no longer restarts the current one, which also rewound the progress Plex had saved for it. An episode started from Continue Watching, or from a show, season or episode page, now has the episodes before it in its queue, so Previous is available there too.
 - On a Magic Remote, pressing Back over the player no longer brings the controls straight back: the small movement of the pointer as the button is pressed is ignored, so a second Back leaves instead of hiding the controls again. A real move of the pointer still shows them.
+- Home's backdrop (the colour wash, the hero picture and the shade over them) is drawn once while the hero stands still, instead of being re-shaded every frame, which saves graphics work. It is drawn live again whenever anything moves.
 
 ## 0.10.0
 

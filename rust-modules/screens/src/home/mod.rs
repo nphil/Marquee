@@ -390,11 +390,16 @@ impl Backdrop {
         self.bind(hero, outgoing, selected, snap);
         // decorative hero-art reveal dissolve (same reason as the wash below)
         plx_machine::idle::decorative(|| {
+            // A layer that has arrived is LANDED on 1.0 (`Spring::land`), as the wash below lands its
+            // own springs: `step` parks one ulp short, and the backdrop is named
+            // (`Backdrop::ground_key`) only once every resident layer stands at exactly 1.0.
             if self.tex.0 != 0 {
                 self.art.step(1.0, AmbientWash::K, dt);
+                self.art.land(1.0, dt);
             }
             if self.outgoing_tex.0 != 0 {
                 self.outgoing_art.step(1.0, AmbientWash::K, dt);
+                self.outgoing_art.land(1.0, dt);
             }
         });
         // The held art is let go once the picture over it is up — or once it is no longer
@@ -418,10 +423,83 @@ impl Backdrop {
         });
     }
 
-    fn draw(&self, p: Painter, env: &Env, slide: Option<(f32, f32)>) {
+    /// **Draw the page's backdrop: the ground (wash and photograph) and the shade over it.**
+    /// A slide or opaque art draws the shade separately over the art. `rests` is the page's own
+    /// statement that the snap dive is over (`HomeScreen::snap` has landed), the one input the
+    /// backdrop does not own.
+    ///
+    /// A backdrop that is not moving is ONE textured quad: [`Self::ground_key`] names the picture
+    /// while every spring that eases it has landed, and `Painter::cached_ground` paints it into the
+    /// region texture once per name and serves it from there. Home stands parked at the hero while a
+    /// Continue Watching card holds focus, so a focus move redraws the shelf over a backdrop that
+    /// did not change, and the ~2M-fragment ground was re-shaded under it on every frame (upstream
+    /// TV measure, `grid-pong`: 7.18M cached against 10.33M live GPU cycles per frame). While
+    /// anything moves the backdrop has no name and is drawn live, exactly as before.
+    fn draw(&self, p: Painter, env: &Env, slide: Option<(f32, f32)>, rests: bool) {
         if !self.pending_art.is_empty() && env.hero_a > 0.01 && env.sp < HERO_ART_CULL {
             plx_ui::placeholder::note(p, plx_ui::placeholder::Reason::HomeBackdrop, &self.pending_art);
         }
+        // Past the cull the page stands on one flat colour, which the renderer already draws as a
+        // clear: nothing to cache, and no ask, so the texture goes back (`gfx::region_frame_end`).
+        if env.sp >= HERO_ART_CULL {
+            self.paint(p, env, slide);
+            return;
+        }
+        p.cached_ground(
+            self.ground_key(env, slide, rests),
+            &[self.tex.0, self.outgoing_tex.0],
+            Rect::FULL,
+            |q| self.paint(q, env, slide),
+        );
+    }
+
+    /// **The name of the picture [`Self::paint`] draws**: every input of it that this screen owns, by
+    /// value, and `None` while the picture is not settled.
+    ///
+    /// The inputs are the wash (the exact bits of its twelve springs, [`AmbientWash::paint_bits`]),
+    /// both art layers (the texture each resolved to and its decoded size, which sets the cover crop;
+    /// a layer's reveal alpha is not an input, because a named layer is at exactly 1.0, below), the
+    /// dive (`env.sp`, from which the art's offset and fade follow), the hero's alpha (which sets the
+    /// ramp and the side shade) and the one-pass hero ground's switch. The shades are functions of
+    /// `hero_a` and theme constants, so they carry no bits of their own. There is no slide: a slide
+    /// has no name.
+    ///
+    /// The renderer's own state is not read here: a texture re-specified under the same name is
+    /// another picture, and the ground's paths depend on which programs linked; both are folded in
+    /// when the picture is looked up (`Painter::cached_ground` is handed the texture ids).
+    ///
+    /// **A picture that is moving has no name, rather than a new one every frame.** A key that
+    /// changed on every frame of the hero's reveal, a flip or the dive would fill the texture on
+    /// every one of them: the live shading plus a full-screen write, dearer than not caching. So the
+    /// picture is named only once every spring that eases it has landed on its target
+    /// (`AmbientWash::at_rest`) and the page says the dive is over (`HomeScreen::dive_rests`); any
+    /// frame short of that is drawn live and fills nothing. A layer with a texture has landed when
+    /// its reveal spring stands at exactly 1.0 with no velocity: a velocity of 0 alone is not enough,
+    /// because `bind` leaves a spring at velocity 0 where it `jump`s or where art that was not
+    /// resident arrives (parked at 0.0), a frame before `update` steps it. A layer with no texture
+    /// draws nothing, so its reveal spring says nothing.
+    fn ground_key(&self, env: &Env, slide: Option<(f32, f32)>, rests: bool) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let landed = |tex: (u32, f32, f32), art: &Spring| tex.0 == 0 || (art.pos == 1.0 && art.vel == 0.0);
+        if slide.is_some()
+            || !rests
+            || !self.wash.at_rest()
+            || !landed(self.tex, &self.art)
+            || !landed(self.outgoing_tex, &self.outgoing_art)
+        {
+            return None;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.wash.paint_bits().hash(&mut h);
+        for (id, w, h_px) in [self.tex, self.outgoing_tex] {
+            (id, w.to_bits(), h_px.to_bits()).hash(&mut h);
+        }
+        (env.sp.to_bits(), env.hero_a.to_bits(), plx_ui::widgets::hero_ground_armed()).hash(&mut h);
+        Some(h.finish())
+    }
+
+    /// The backdrop's primitives, as `draw` hands them to the painter or to the region texture.
+    fn paint(&self, p: Painter, env: &Env, slide: Option<(f32, f32)>) {
         let incoming_a = reveal(self.tex.0, &self.art);
         let outgoing_a = reveal(self.outgoing_tex.0, &self.outgoing_art);
         // THE GROUND: the wash, the one art layer dissolving over it (the snap dive, or the art
@@ -1554,6 +1632,13 @@ impl HomeScreen {
         self.hub(view, row)?.items.get(col).map(|m| &**m)
     }
 
+    /// Has the snap dive landed: the one input of the backdrop's picture that the backdrop does not
+    /// own (`Backdrop::draw`). Exactly 0 only once the spring has parked on its target: `update`
+    /// lands the dive (`Spring::land`) once it is within a hair of it, which a bare `step` never does.
+    fn dive_rests(&self) -> bool {
+        self.snap.vel == 0.0
+    }
+
     fn env(&self, dt: f32) -> Env {
         let mut env = Env::inert();
         env.dt = dt;
@@ -1753,8 +1838,12 @@ impl HomeScreen {
         } else {
             self.hero_auto = HERO_AUTO_S;
         }
-        self.snap
-            .step(pinned_snap(self.snap_target, self.rows.len()), K_SNAP, dt);
+        let snap_to = pinned_snap(self.snap_target, self.rows.len());
+        self.snap.step(snap_to, K_SNAP, dt);
+        // A dive that has arrived is LANDED on its target (`Spring::land`), as the art and the wash
+        // are: `step` parks it one ulp off with a velocity of ~1e-44 and keeps it there, and the
+        // backdrop is named (`Backdrop::ground_key`) only while the dive's velocity is exactly 0.
+        self.snap.land(snap_to, dt);
         // ONE answer for "is the dive still running", read by the present gate below. See
         // `SNAP_REST_POS`/`SNAP_REST_VEL` for why both terms are needed.
         let snap_moving = (self.snap.pos - self.snap_target).abs() > SNAP_REST_POS
@@ -2154,7 +2243,7 @@ impl HomeScreen {
             self.carousel.as_ref(),
             self.snap.pos,
         );
-        plx_ui::profile::phase("hm.backdrop", || self.backdrop.draw(p, &env, slide));
+        plx_ui::profile::phase("hm.backdrop", || self.backdrop.draw(p, &env, slide, self.dive_rests()));
         if env.hero_a > 0.01 {
             plx_ui::profile::phase("hm.hero", || {
                 self.draw_hero(
