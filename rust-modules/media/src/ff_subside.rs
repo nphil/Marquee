@@ -482,12 +482,14 @@ unsafe fn open_side(cfg: &ReadCfg, stop: &Arc<SideStop>) -> Result<(SideDemux, c
         return Err(RunEnd::Unusable);
     }
     if cfg.clock_only {
+        release_attachments(d.fmt);
         // The scan needs the video stream and nothing else. A film with a sidecar often has no
         // embedded subtitle at all, and the Part's ASS sources are not this run's to install.
         return Ok((d, vi, 0));
     }
+    let fonts = detach_fonts(d.fmt);
     let subs = SubTracks::open(d.fmt, streams);
-    let generation = begin_ass_sources(cfg.url, d.fmt, streams, subs.entries());
+    let generation = begin_ass_sources(cfg.url, streams, subs.entries(), fonts);
     let tracks = subs.entries().len();
     d.subs = Some(subs);
     plx_base::eventlog::log(&format!("subside: open tracks={tracks} ordinal={} kbps={}", cfg.ordinal, cfg.kbps));

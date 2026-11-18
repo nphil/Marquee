@@ -35,7 +35,7 @@ fn a_gbk_subrip_track_reads_as_chinese_not_replacement_characters() {
         assert!(!fmt.is_null());
         let mut subs = SubTracks::open(fmt, fmt.as_ref().expect("avformat_open_input succeeded").streams);
         assert_eq!(subs.entries().len(), 1, "the fixture has one subtitle track");
-        let generation = begin_ass_sources("fixture:gbk-subrip", fmt, fmt.as_ref().expect("avformat_open_input succeeded").streams, subs.entries());
+        let generation = begin_ass_sources("fixture:gbk-subrip", fmt.as_ref().expect("avformat_open_input succeeded").streams, subs.entries(), detach_fonts(fmt));
         let mut pushed = 0;
         while av_read_frame(fmt, pkt) >= 0 {
             if let Some(pos) = subs.position(pkt.as_ref().expect("av_packet_alloc").stream_index) {
@@ -90,7 +90,7 @@ fn a_packet_without_a_duration_is_clipped_by_the_cue_after_it() {
         assert!(avformat_open_input(&mut fmt, path.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) >= 0);
         let mut pkt = av_packet_alloc();
         let mut subs = SubTracks::open(fmt, fmt.as_ref().expect("avformat_open_input succeeded").streams);
-        let generation = begin_ass_sources("fixture:no-duration", fmt, fmt.as_ref().expect("avformat_open_input succeeded").streams, subs.entries());
+        let generation = begin_ass_sources("fixture:no-duration", fmt.as_ref().expect("avformat_open_input succeeded").streams, subs.entries(), detach_fonts(fmt));
         while av_read_frame(fmt, pkt) >= 0 {
             if let Some(pos) = subs.position(pkt.as_ref().expect("av_packet_alloc").stream_index) {
                 let streams = fmt.as_ref().expect("avformat_open_input succeeded").streams;

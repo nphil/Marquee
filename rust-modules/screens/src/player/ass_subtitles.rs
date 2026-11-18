@@ -41,6 +41,8 @@ pub struct AssSubtitles {
     /// Embedded track for the held source; None also covers sidecars and previews.
     embedded_track: Option<i32>,
     clock: ass_source::Clock,
+    /// The `now` of the previous `update`: the tick the renderer paces a moving cue by.
+    last_tick: Option<u32>,
     textures: Vec<CachedTexture>,
     uploaded: u64,
     viewport: Viewport,
@@ -136,6 +138,7 @@ impl AssSubtitles {
             self.frame = None;
             self.aligns = None;
         }
+        let tick_ms = self.last_tick.replace(now).map_or(16, |last| i64::from(now.wrapping_sub(last)));
         let clock = self.clock.sample(
             position_ns,
             now,
@@ -150,7 +153,7 @@ impl AssSubtitles {
         // A script with its own styling is drawn in the viewer's look when they asked for that.
         let mine = (!source.origin.is_text() && plx_media::route::subtitle_look().ass == AssMode::Mine)
             .then(text_style::TextStyle::current);
-        let accepted = self.follow(&source, clock, viewport, coded, mine);
+        let accepted = self.follow(&source, clock, viewport, coded, mine, plx_media::player::subtitle_pace(ps, tick_ms));
         ass::accept_word_timing(&source, accepted.then(|| self.frame.as_deref()).flatten(), clock,
             viewport.width, viewport.height, coded.0, coded.1, mine);
     }
@@ -177,7 +180,7 @@ impl AssSubtitles {
             self.frame = None;
             self.aligns = None;
         }
-        self.follow(&source, clock, viewport, (viewport.width, viewport.height), mine);
+        self.follow(&source, clock, viewport, (viewport.width, viewport.height), mine, ass::Pace::PAUSED);
     }
 
     fn follow(
@@ -187,13 +190,14 @@ impl AssSubtitles {
         viewport: Viewport,
         coded: (i32, i32),
         mine: Option<text_style::TextStyle>,
+        pace: ass::Pace,
     ) -> bool {
         if self.viewport != viewport {
             self.viewport = viewport;
             self.frame = None;
         }
         let origin = source.origin;
-        if let Some(frame) = ass::request_styled(source.clone(), clock, viewport.width, viewport.height, coded.0, coded.1, mine) {
+        if let Some(frame) = ass::request_styled(source.clone(), clock, viewport.width, viewport.height, coded.0, coded.1, mine, pace) {
             if ass::alignment_epoch_valid(frame.alignment_epoch) {
                 self.frame = Some(frame);
                 self.frame_origin = origin;
@@ -227,6 +231,7 @@ impl AssSubtitles {
             width: 0,
             height: 0,
             rects: Vec::new(),
+            scale: ass::RenderScale::Full,
             error: None,
         }));
     }
@@ -315,11 +320,14 @@ impl AssSubtitles {
             UNKNOWN_ALIGNS
         };
         self.spans.clear();
-        self.spans.extend(frame.rects.iter().map(|r| (r.y, r.height)));
+        self.spans.extend(frame.rects.iter().map(|r| output_span(&frame, r)));
         place_dys(origin, lift, band, &self.spans, aligns, placement, &mut self.dys);
         let level = if look.blend && styled { self.follower.level(self.now, self.scene) } else { 1.0 };
         let ink = paint::compose_ink(base_ink, look, styled, level);
         let k = if text_frame { self.viewport.width as f32 / SCR_W } else { 1.0 };
+        // The regions are in the canvas libass drew, which is the output at `frame.scale`.
+        let (render_w, render_h) = frame.render_size();
+        let (sx, sy) = (frame.width as f32 / render_w as f32, frame.height as f32 / render_h as f32);
         if styled && look.has_back() {
             if self.bands_serial != frame.serial {
                 self.bands = paint::line_bands(&frame.rects, ((4.0 * k).round() as i32).max(1));
@@ -329,8 +337,8 @@ impl AssSubtitles {
             let fill = [r, g, b, f32::from(look.back_opacity) / 100.0];
             for bx in paint::boxes(&self.bands, look, k) {
                 let dy = self.dys.get(bx.region).copied().unwrap_or(0.0);
-                let radius = bx.radius * map.s;
-                let painted = map.rect((self.viewport.x as f32) + bx.x, (self.viewport.y as f32) + bx.y + dy, bx.w, bx.h);
+                let radius = bx.radius * sy * map.s;
+                let painted = map.rect((self.viewport.x as f32) + bx.x * sx, (self.viewport.y as f32) + bx.y * sy + dy, bx.w * sx, bx.h * sy);
                 Painter::root().rrect(painted, radius, radius, fill);
                 if fill[3] > 0.0 {
                     plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
@@ -341,12 +349,8 @@ impl AssSubtitles {
             for tap in paint::soft_taps(look.edge_w, k) {
                 for (i, (texture, rect)) in self.textures.iter().zip(&frame.rects).enumerate() {
                     let dy = self.dys[i];
-                    let painted = map.rect(
-                        (self.viewport.x + rect.x) as f32 + tap.dx,
-                        (self.viewport.y + rect.y) as f32 + dy + tap.dy,
-                        rect.width as f32,
-                        rect.height as f32,
-                    );
+                    let at = region_rect(self.viewport, &frame, rect, dy + tap.dy);
+                    let painted = map.rect(at.x + tap.dx, at.y, at.w, at.h);
                     Painter::root().tex(texture.id, painted, 0.0, [0.0, 0.0, 0.0, tap.alpha]);
                     if texture.id != 0 && tap.alpha > 0.0 {
                         plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
@@ -356,13 +360,13 @@ impl AssSubtitles {
         }
         for (i, (texture, rect)) in self.textures.iter().zip(&frame.rects).enumerate() {
             let dy = self.dys[i];
-            let painted = map.rect(
-                (self.viewport.x + rect.x) as f32,
-                (self.viewport.y + rect.y) as f32 + dy,
-                rect.width as f32,
-                rect.height as f32,
-            );
-            Painter::root().tex(texture.id, painted, 0.0, ink);
+            let at = region_rect(self.viewport, &frame, rect, dy);
+            let painted = map.rect(at.x, at.y, at.w, at.h);
+            // The facade composes the regions premultiplied (`ass::Rect::rgba`), so they take the
+            // premultiplied draw: the same ink rung, no straight-alpha conversion on the CPU. The
+            // texture is sampled linearly (`upload_rgba`), so a region drawn smaller (`frame.scale`)
+            // is drawn up to the rectangle it covers on the output.
+            Painter::root().tex_premultiplied(texture.id, painted, ink);
             if texture.id != 0 && ink[3] > 0.0 {
                 plx_appkit::player_hud::union_subtitle_rect(&mut bounds, painted);
             }
@@ -399,6 +403,21 @@ impl AssSubtitles {
             bytes: self.textures.iter().map(|t| t.pixels.len()).sum(),
         }
     }
+}
+
+/// Where a region of `frame` is drawn on the screen: the rectangle it covers on the output canvas
+/// ([`ass::Frame::output_edges`], so a frame drawn smaller lands exactly where the full-size one does
+/// and regions that abut still abut), inside `viewport` and moved `dy` (output pixels).
+fn region_rect(viewport: Viewport, frame: &ass::Frame, rect: &ass::Rect, dy: f32) -> Rect {
+    let (left, top, right, bottom) = frame.output_edges(rect);
+    Rect::new(viewport.x as f32 + left, viewport.y as f32 + top + dy, right - left, bottom - top)
+}
+
+/// `(y, height)` of a region on the output canvas, in whole pixels: what the lift reasons about.
+fn output_span(frame: &ass::Frame, rect: &ass::Rect) -> (i32, i32) {
+    let (_, top, _, bottom) = frame.output_edges(rect);
+    let top = top.round() as i32;
+    (top, bottom.round() as i32 - top)
 }
 
 /// The viewport a frame is rendered into and the storage raster it is sized against. An authored
@@ -905,6 +924,66 @@ mod tests {
         // A tall block whose top is 60 px down moves only 60.
         assert_eq!(dys_of(text(style), true, &[(60, 900)], BOTTOM), [-60.0]);
         assert_eq!(dys_of(text(style), true, &[], BOTTOM), Vec::<f32>::new());
+    }
+
+    fn region(x: i32, y: i32, width: i32, height: i32) -> ass::Rect {
+        ass::Rect { x, y, width, height, rgba: Arc::from(vec![0u8; (width * height * 4) as usize]) }
+    }
+
+    fn frame_at(scale: ass::RenderScale, width: i32, height: i32, rects: Vec<ass::Rect>) -> ass::Frame {
+        ass::Frame { source_id: 1, alignment_epoch: None, serial: 1, width, height, rects, scale, error: None }
+    }
+
+    /// A moving stretch drawn at half or two thirds of the output covers the same rectangle of the
+    /// screen as the full-size frame: positions and sizes are mapped back by the frame's scale, inside
+    /// the viewport, with the HUD's lift applied on the output.
+    #[test]
+    fn a_region_drawn_smaller_lands_on_the_screen_rectangle_the_full_size_one_has() {
+        use ass::RenderScale::{Full, Half, TwoThirds};
+        let viewport = Viewport { x: 0, y: 140, width: 1920, height: 800 };
+        let full = frame_at(Full, 1920, 800, vec![region(480, 270, 680, 370)]);
+        let want = region_rect(viewport, &full, &full.rects[0], 0.0);
+        assert_eq!(want, Rect::new(480.0, 410.0, 680.0, 370.0), "full size is the region itself, in the viewport");
+        let half = frame_at(Half, 1920, 800, vec![region(240, 135, 340, 185)]);
+        assert_eq!(region_rect(viewport, &half, &half.rects[0], 0.0), want);
+        let two_thirds = frame_at(TwoThirds, 1920, 800, vec![region(320, 180, 453, 247)]);
+        let got = region_rect(viewport, &two_thirds, &two_thirds.rects[0], 0.0);
+        assert!((got.x - want.x).abs() <= 1.5 && (got.y - want.y).abs() <= 1.5, "{got:?} against {want:?}");
+        assert!((got.w - want.w).abs() <= 1.5 && (got.h - want.h).abs() <= 1.5, "{got:?} against {want:?}");
+        // the lift is in output pixels: the same at every scale
+        assert_eq!(
+            region_rect(viewport, &half, &half.rects[0], -200.0),
+            Rect::new(want.x, want.y - 200.0, want.w, want.h)
+        );
+    }
+
+    #[test]
+    fn regions_drawn_smaller_still_abut_on_the_screen() {
+        let viewport = Viewport { x: 0, y: 0, width: 1920, height: 800 };
+        let frame = frame_at(ass::RenderScale::TwoThirds, 1920, 800, vec![region(0, 100, 10, 17), region(0, 117, 10, 20)]);
+        let (above, below) = (region_rect(viewport, &frame, &frame.rects[0], 0.0), region_rect(viewport, &frame, &frame.rects[1], 0.0));
+        assert_eq!(above.y + above.h, below.y, "the bottom of one is the top of the next");
+    }
+
+    /// The lift reasons about where a region is on the screen, so its spans are in output pixels.
+    #[test]
+    fn the_lift_reads_a_regions_span_on_the_output_whatever_the_scale() {
+        use ass::RenderScale::{Full, Half};
+        let full = frame_at(Full, 1920, 1080, vec![region(480, 900, 680, 100)]);
+        assert_eq!(output_span(&full, &full.rects[0]), (900, 100));
+        let half = frame_at(Half, 1920, 1080, vec![region(240, 450, 340, 50)]);
+        assert_eq!(output_span(&half, &half.rects[0]), (900, 100));
+        // the lift moves a bottom cue the same whichever size it was drawn at
+        let style = TextStyle::default();
+        let (y, h) = line_at(style, 0);
+        let dys = |frame: &ass::Frame| {
+            let spans: Vec<_> = frame.rects.iter().map(|r| output_span(frame, r)).collect();
+            dys_of(text(style), true, &spans, BOTTOM)
+        };
+        let full = frame_at(Full, 1920, 1080, vec![region(480, y, 680, h)]);
+        let half = frame_at(Half, 1920, 1080, vec![region(240, y / 2, 340, h / 2)]);
+        assert_eq!(dys(&half), dys(&full));
+        assert_eq!(dys(&full), [-200.0]);
     }
 
     #[test]

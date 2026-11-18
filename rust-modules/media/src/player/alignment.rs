@@ -417,7 +417,7 @@ mod tests {
             let source = ass_source::try_selected(0).unwrap().unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                ass::request(source.clone(), 1500, 320, 180, 320, 180);
+                ass::request(source.clone(), 1500, 320, 180, 320, 180, ass::Pace::PAUSED);
                 if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready { break; }
                 assert!(Instant::now() < deadline);
                 std::thread::sleep(Duration::from_millis(10));

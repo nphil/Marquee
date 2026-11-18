@@ -1352,7 +1352,7 @@ mod tests {
         let source = ass_source(false).unwrap();
         let deadline = Instant::now() + WORKER_HUNG;
         loop {
-            ass::request(source.clone(), 1_500, 320, 180, 320, 180);
+            ass::request(source.clone(), 1_500, 320, 180, 320, 180, ass::Pace::PAUSED);
             if ass::source_revision_readiness(source.id, source.revision) == ass::SourceReadiness::Ready { return; }
             assert!(Instant::now() < deadline, "renderer did not publish the selected source");
             std::thread::sleep(Duration::from_millis(10));

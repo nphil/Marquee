@@ -586,6 +586,7 @@ fn kind_name(tag: u64) -> String {
         13 => "tex_stroked".into(),
         14 => "tex_carded".into(),
         15 => "hero_ground".into(),
+        26 => "tex_premultiplied".into(),
         16 => "ambient".into(),
         17 => "grad4".into(),
         18 => "field".into(),

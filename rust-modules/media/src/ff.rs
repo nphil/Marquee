@@ -1418,16 +1418,77 @@ impl Drop for Venc {
     }
 }
 
-/// Copy the embedded ASS sources before FFmpeg can release them. The codec parameter and
-/// dictionary layouts are already compile-asserted against our bundled FFmpeg headers; the
-/// attachment media-type constant is asserted beside them. No firmware layout is inferred.
+/// Take the font attachments out of the format `fmt`, right after `avformat_open_input` returns:
+/// each font is copied once into the shared buffer the source store, and through it every libass
+/// renderer, will hold, and the stream's `codecpar->extradata` it was read from is freed. An
+/// attachment that is not a font is freed without a copy. Nothing else reads an attachment's
+/// extradata, so the format keeps no copy of its own that the app owns (issue #1328: 17 fonts, 83 MB,
+/// read three times over by libavformat and again by the store).
+///
+/// libavformat still holds the Matroska demuxer's own parsed element of every attachment until the
+/// context closes; no API reaches it without the demuxer's private structures, so it stays. The
+/// stream's internal codec context also holds a copy: `avformat_find_stream_info` rebuilds that
+/// context from the now-empty parameters and the copy goes, while a reader that never calls it
+/// (the side reader) keeps it until close.
+///
+/// Every font attachment is taken, whole: which of them a renderer is handed is its choice, by the
+/// names a track uses, and no byte budget decides here what a file's own attachments may carry.
+///
+/// Safety: `fmt` must name a format context `avformat_open_input` has opened and nobody else is using.
+unsafe fn detach_fonts(fmt: *mut AVFormatContext) -> Vec<crate::player::ass::Font> {
+    let mut fonts = Vec::new();
+    let streams = (*fmt).streams;
+    for i in 0..(*fmt).nb_streams {
+        let st = *streams.add(i as usize);
+        let cp = stream_codecpar(st);
+        if (*cp).codec_type != AVMEDIA_TYPE_ATTACHMENT { continue; }
+        let len = (*cp).extradata_size.max(0) as usize;
+        if len >= 4 && !(*cp).extradata.is_null() {
+            let data = std::slice::from_raw_parts((*cp).extradata, len);
+            // Accept sfnt/OpenType/TrueType collection signatures, not arbitrary attachments.
+            if matches!(&data[..4], b"\x00\x01\x00\x00" | b"OTTO" | b"ttcf" | b"true") {
+                let dict = *((st as *const u8).add(OFF_STREAM_METADATA) as *const *const AVDictionary);
+                let entry = if dict.is_null() { std::ptr::null_mut() }
+                    else { av_dict_get(dict, c"filename".as_ptr(), std::ptr::null(), 0) };
+                let name = if !entry.is_null() && !(*entry).value.is_null() {
+                    std::ffi::CStr::from_ptr((*entry).value).to_string_lossy().into_owned()
+                } else { format!("attachment-{i}.ttf") };
+                fonts.push(crate::player::ass::Font { name, data: data.into() });
+            }
+        }
+        free_extradata(cp);
+    }
+    fonts
+}
+
+/// [`detach_fonts`] for a reader that has no use for the fonts: the attachments are freed, not
+/// copied. Safety: as [`detach_fonts`].
+unsafe fn release_attachments(fmt: *mut AVFormatContext) {
+    let streams = (*fmt).streams;
+    for i in 0..(*fmt).nb_streams {
+        let cp = stream_codecpar(*streams.add(i as usize));
+        if (*cp).codec_type == AVMEDIA_TYPE_ATTACHMENT { free_extradata(cp); }
+    }
+}
+
+/// Free a stream's `codecpar->extradata` and say so in the size, as `avcodec_parameters_free` leaves
+/// them. `av_freep` nulls the pointer.
+unsafe fn free_extradata(cp: *mut AVCodecParameters) {
+    av_freep(std::ptr::addr_of_mut!((*cp).extradata) as *mut c_void);
+    (*cp).extradata_size = 0;
+}
+
+/// Copy the embedded ASS headers before FFmpeg can release them, and hand over the `fonts`
+/// [`detach_fonts`] took out of the format when it was opened. The codec parameter and dictionary
+/// layouts are already compile-asserted against our bundled FFmpeg headers; the attachment
+/// media-type constant is asserted beside them. No firmware layout is inferred.
 unsafe fn begin_ass_sources(
     media_key: &str,
-    fmt: *mut AVFormatContext,
     streams: *mut *mut AVStream,
     subs: &[(c_int, SubKind, *mut AVCodecContext)],
+    fonts: Vec<crate::player::ass::Font>,
 ) -> u64 {
-    use crate::player::{ass::Font, ass_source};
+    use crate::player::ass_source;
     let mut headers = Vec::new();
     let mut text_tracks = 0;
     for (track, (si, kind, _)) in subs.iter().enumerate() {
@@ -1450,39 +1511,14 @@ unsafe fn begin_ass_sources(
         headers.push((track as i32, ass_source::TrackHeader::Authored(header.to_vec())));
     }
     let authored_tracks = headers.len() - text_tracks;
-    let mut fonts = Vec::new();
-    let mut font_budget = crate::player::ass::FontBudget::default();
-    let mut font_bytes = 0;
-    {
-        // External ASS may refer to these attachments even when the container carries no
-        // embedded ASS stream. Keep the per-media fonts independently of subtitle selection.
-        for i in 0..(*fmt).nb_streams {
-            let st = *streams.add(i as usize);
-            let cp = stream_codecpar(st);
-            let len = (*cp).extradata_size.max(0) as usize;
-            if (*cp).codec_type != AVMEDIA_TYPE_ATTACHMENT || len < 4
-                || (*cp).extradata.is_null() { continue; }
-            let data = std::slice::from_raw_parts((*cp).extradata, len);
-            // Accept sfnt/OpenType/TrueType collection signatures, not arbitrary attachments.
-            if !matches!(&data[..4], b"\x00\x01\x00\x00" | b"OTTO" | b"ttcf" | b"true") { continue; }
-            let dict = *((st as *const u8).add(OFF_STREAM_METADATA) as *const *const AVDictionary);
-            let entry = if dict.is_null() { std::ptr::null_mut() }
-                else { av_dict_get(dict, c"filename".as_ptr(), std::ptr::null(), 0) };
-            let name = if !entry.is_null() && !(*entry).value.is_null() {
-                std::ffi::CStr::from_ptr((*entry).value).to_string_lossy().into_owned()
-            } else { format!("attachment-{i}.ttf") };
-            // Over the budget: skipped before the copy; text naming it falls back to the
-            // default face. Charged after the magic check so non-fonts spend nothing.
-            if !font_budget.admit(len) { continue; }
-            font_bytes += len;
-            fonts.push(Font { name, data: data.into() });
-        }
-        if !headers.is_empty() || !fonts.is_empty() {
-            crate::player::log(&format!(
-                "ass: embedded tracks={authored_tracks} text_tracks={text_tracks} fonts={} font_bytes={font_bytes}",
-                fonts.len()
-            ));
-        }
+    // External ASS may refer to the attachments even when the container carries no embedded ASS
+    // stream, so the fonts are kept per media, independently of subtitle selection.
+    if !headers.is_empty() || !fonts.is_empty() {
+        crate::player::log(&format!(
+            "ass: embedded tracks={authored_tracks} text_tracks={text_tracks} fonts={} font_bytes={}",
+            fonts.len(),
+            fonts.iter().map(|font| font.data.len()).sum::<usize>()
+        ));
     }
     ass_source::begin(media_key, headers, fonts)
 }
@@ -9442,6 +9478,11 @@ pub fn demux(
                     free_avio(avio);
                     break;
                 }
+                // The attachments leave the format's stream table now, into the buffers the source
+                // store shares with every renderer (issue #1328): left in `codecpar->extradata` they
+                // would sit beside the demuxer's own copy for the whole playback. Nothing reads an
+                // attachment's extradata between here and the hand-over to `begin_ass_sources`.
+                let font_attachments = detach_fonts(fmt);
                 if avformat_find_stream_info(fmt, std::ptr::null_mut()) < 0 {
                     crate::player::log("ff: find_stream_info failed");
                     if !crate::aq::aq_is_aborted(aq_p) {
@@ -9787,9 +9828,11 @@ pub fn demux(
                 let side_owner = SHARED.side_subs_owner.load(Ordering::Acquire);
                 let mut sub_tracks = if side_owner { SubTracks::empty() } else { SubTracks::open(fmt, streams) };
                 let ass_generation = if side_owner {
+                    // The side reader has its own copy of the fonts; this one has no reader.
+                    drop(font_attachments);
                     0
                 } else {
-                    begin_ass_sources(&url, fmt, streams, sub_tracks.entries())
+                    begin_ass_sources(&url, streams, sub_tracks.entries(), font_attachments)
                 };
                 sub_tracks.log_tracks();
 
