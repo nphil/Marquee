@@ -247,8 +247,16 @@ pub trait Rig<H: Host> {
         super::screen::NavPresentation { page_alpha: self.page_alpha(), ..Default::default() }
     }
     /// Shared chrome draws after its page and before surfaces, using a captured vocabulary.
+    ///
+    /// `lifted` is **the bar member the opener lift owns this frame** ([`Screen::bar_opener`], the
+    /// profile chip while its menu is up), `None` otherwise. It is the lift's from the frame the menu
+    /// mounts to the frame it is removed, and the chrome pass LEAVES IT OUT, as a page leaves its lifted
+    /// element out of its own pass ([`DrawFrame::lifted`]): the lift ([`Self::lift_bar_member`]) is its
+    /// only copy, painted on every one of those frames at the morph's `opener_alpha`, so a consumed
+    /// chip is not under the dim, and the host snapshot the glass refracts never holds it.
     fn draw_chrome(&mut self, _arg: &H::Arg, _parts: &CxParts<H::Elem>,
-        _nav: super::screen::NavPresentation, _glass: Option<&mut super::frame::glass::GlassPlan>) {}
+        _nav: super::screen::NavPresentation, _glass: Option<&mut super::frame::glass::GlassPlan>,
+        _lifted: Option<H::Elem>) {}
     /// **Where the shared bar's member `elem` is DRAWN this frame**, under `presented` (the host page's
     /// tuck, [`chrome_presented`]): its resting rect through the tuck, the rect the lit copy of an
     /// opener is drawn at and a surface's morph starts and ends on. `None` for a rig with no such
@@ -256,8 +264,10 @@ pub trait Rig<H: Host> {
     fn bar_member_rect(&self, _elem: H::Elem, _presented: super::screen::NavPresentation) -> Option<super::Rect> { None }
     /// **Redraw the bar member `elem` lit above the dim AND the panel** (the Z::OPENER lift pass, for
     /// a surface whose [`Screen::bar_opener`] is that member — the profile chip), at the position and
-    /// alpha the chrome pass drew it with (`presented`), on `ground`, the stack's latched underlay
-    /// field (the frozen ground; no live glass over a page), and `material`, this frame's tab face.
+    /// alpha the chrome pass drew it with (`presented`), on `ground`, the stack's underlay field
+    /// (latched or not: the lift chooses its frozen ground when it paints, `widgets::lift_ground`; no
+    /// live glass over a page), and `material`, this frame's tab face. Asked on EVERY frame the
+    /// surface owns the member (the chrome pass leaves it out for all of them), so it must paint.
     fn lift_bar_member(&mut self, _elem: H::Elem, _presented: super::screen::NavPresentation,
         _material: Option<plx_gfx::gfx::GlassFace>, _ground: &super::underlay::UnderlayField) {}
     /// Coexistence adapter for a legacy overlay which freezes an owned host (phase 10 retirement).
@@ -382,6 +392,10 @@ pub struct FrameReport {
     pub back_at_root: bool,
 }
 
+/// What the opener lift stands on: the host page, the lifted element, whether it is a bar member, and the
+/// alpha it is painted at ([`Dispatcher::lift_target`]).
+type LiftTarget<E> = (EntryId, Option<FocusKey<E>>, bool, f32);
+
 /// The dispatcher: the queue that is never dropped, the parked structural ops, the timers, the
 /// present gate, the budget, the tree.
 pub struct Dispatcher<H: Host> {
@@ -429,8 +443,8 @@ pub struct Dispatcher<H: Host> {
     pending_back: bool,
     /// The tick of the last `frame_with`, for a `draw` the caller runs later in its own frame.
     last_tick: Tick,
-    /// The page element the surface pass lifted out of the dim on the previous drawn frame
-    /// ([`Self::lifted_opener`]); a change re-takes the host snapshot (`draw_with`).
+    /// The page element or bar member the surface pass lifted out of the dim on the previous drawn
+    /// frame ([`Self::lifted_opener`]); a change re-takes the host snapshot ([`Self::settle_lift`]).
     lifted_last: Option<FocusKey<H::Elem>>,
     /// This frame's prepare pass ran (a `draw` after a non-presenting frame runs it itself).
     prepared: bool,
@@ -727,19 +741,20 @@ where
     /// itself and the lift stands down. While the menu is open the engine's focus is on the menu's
     /// own rows, so the lift always paints then.
     pub fn lifted_opener(&self) -> Option<(EntryId, Option<FocusKey<H::Elem>>)> {
-        self.lift_target().map(|(entry, opener, _)| (entry, opener))
+        self.lift_target().map(|(entry, opener, _, _)| (entry, opener))
     }
 
     /// [`Self::lifted_opener`]'s decision with the kind of the opener: `true` when it is a member of the
     /// shared bar ([`Screen::bar_opener`], hosted by the page on top), `false` for a page element
-    /// ([`Screen::opener`]). One decision and one stand-down rule for both.
-    fn lift_target(&self) -> Option<(EntryId, Option<FocusKey<H::Elem>>, bool)> {
+    /// ([`Screen::opener`]), and the alpha the lift paints it at ([`Screen::opener_alpha`]: a morphing
+    /// menu consumes its opener). One decision and one stand-down rule for both.
+    fn lift_target(&self) -> Option<LiftTarget<H::Elem>> {
         use super::containers::modal::Phase;
-        let (surface, (entry, opener, bar)) = self.nav.modals.surfaces.iter().find_map(|s| {
+        let (surface, (entry, opener, bar, alpha)) = self.nav.modals.surfaces.iter().find_map(|s| {
             let screen = &s.entry.inst.as_ref()?.screen;
-            let found = screen.opener().map(|(entry, key)| (entry, key, false)).or_else(|| {
+            let found = screen.opener().map(|(entry, key)| (entry, key, false, screen.opener_alpha())).or_else(|| {
                 let host = self.nav.top_page()?.id;
-                Some((host, Some(FocusKey { entry: host, elem: screen.bar_opener()? }), true))
+                Some((host, Some(FocusKey { entry: host, elem: screen.bar_opener()? }), true, screen.opener_alpha()))
             })?;
             Some((s, found))
         })?;
@@ -752,7 +767,7 @@ where
                 .is_some_and(|i| i.screen.opener_departing(k)));
             if live.is_some() && live != opener && !departing() { return None; }
         }
-        Some((entry, opener, bar))
+        Some((entry, opener, bar, alpha))
     }
 
     /// **What the opener lift reads of the press: the dispatcher's own, live.** The lift is the
@@ -1503,6 +1518,32 @@ where
         self.draw_with(rig, tick, report, true, None, super::frame::backdrop::Z::ALL);
     }
 
+    /// **Settle who owns the lift before the page pass** — the application calls this at the head of
+    /// the frame, after the steps and the popover host's `begin_frame` and before anything that reads
+    /// the host snapshot (`backdrop_layers`, the page pass). What the opener lift owns ([`Self::lift_target`],
+    /// a page element or a bar member alike) is left out of the page's own pass and so out of the host
+    /// snapshot; when it changes the snapshot is thrown away and the card sections say again whether
+    /// they left a card out (a local `LiftReceipt`, accepted by Input from the draw). That has to happen BEFORE the page pass: the
+    /// pass serves the held snapshot or takes a new one, and a flip decided inside [`Self::draw_with`]
+    /// (after it) re-took the snapshot a frame late and showed the old one on the flip frame (a closing
+    /// menu's opener, once focus left it, was drawn by nobody for that frame). Source and discovery
+    /// walks and a recording painter (the text recorder's walk of a held surface) neither decide nor
+    /// re-take: they redraw the page the visible pass is about to show.
+    ///
+    /// The decision is a function of dispatcher state alone, and idempotent: `draw_with` calls it too,
+    /// for the callers with no pre-pass (a host test, the plain [`Self::draw`]), where it finds the
+    /// application's call already made and does nothing.
+    pub fn settle_lift(&mut self) {
+        if super::frame::backdrop::source_walk() || plx_gfx::gfx::blur_source_pass()
+            || Painter::root().is_recording() { return; }
+        let owned = self.lift_target().and_then(|t| t.1);
+        if owned != self.lifted_last {
+            self.lifted_last = owned;
+            super::popover::set_lift_owns(false);
+            super::popover::host::invalidate();
+        }
+    }
+
     fn draw_with(&mut self, rig: &mut dyn Rig<H>, tick: Tick, report: &mut FrameReport, pages: bool,
         mut glass: Option<&mut super::frame::glass::GlassPlan>, ceiling: super::frame::backdrop::Z) {
         use super::frame::backdrop::{self, Z};
@@ -1515,11 +1556,13 @@ where
         // they left a card out (`popover::set_lift_owns`). Source and discovery walks neither
         // decide nor re-take: they redraw the page the visible pass is about to show.
         let target = self.lift_target();
-        let page_lift = target.filter(|t| !t.2).map(|(entry, key, _)| (entry, key));
+        let page_lift = target.filter(|t| !t.2).map(|(entry, key, _, _)| (entry, key));
+        // How much of the lifted opener a morphing menu has left (1.0 for every other surface).
+        let opener_alpha = target.map_or(1.0, |t| t.3);
         // A bar member (the profile chip) is lifted by the same pass, drawn where the chrome pass
         // drew it: the host page's tuck is part of that, and the surface hanging from it is told
         // the rect (`Screen::opener_rect`) before it draws, so its morph rides the live opener.
-        let bar_lift = target.filter(|t| t.2).and_then(|(entry, key, _)| {
+        let bar_lift = target.filter(|t| t.2).and_then(|(entry, key, _, _)| {
             let elem = key?.elem;
             let host = self.nav.tabs.stack.top().filter(|e| e.id == entry)?.inst.as_ref()?;
             let presented = chrome_presented::<H>(navigation, &*host.screen)?;
@@ -1533,12 +1576,14 @@ where
             }
         }
         let lifted = page_lift.and_then(|(_, key)| key);
+        // What the lift owns is settled before the page pass (`settle_lift`: the application calls it
+        // at the head of the frame); a caller with no such call has it made here, late. A bar member
+        // is owned from the frame its menu mounts: the chrome pass leaves it out of the snapshot from
+        // that frame, and the lift paints it on every frame of the open and the close
+        // (`widgets::lift_profile_chip` stands on the field once that has latched and on the host
+        // snapshot before), so nothing about it changes while the menu is up.
+        self.settle_lift();
         let lift_parts = page_lift.map(|(entry, focus)| self.opener_parts(entry, focus));
-        if !backdrop::source_walk() && !plx_gfx::gfx::blur_source_pass() && lifted != self.lifted_last {
-            self.lifted_last = lifted;
-            super::popover::set_lift_owns(false);
-            super::popover::host::invalidate();
-        }
         let (_, host_render) = self.nav.modals.host_policy();
         // §9: armed for the LENGTH OF THE DRAW, and restored rather than cleared, exactly as the
         // page freeze is. Every framebuffer-sampling door is refused while it is up.
@@ -1737,7 +1782,8 @@ where
                         // (`chrome_presented`), and a skipped frame publishes no material, so the
                         // band's goes back to Flat rather than staying on the last drawn frame's face.
                         if let Some(navigation) = chrome_presented::<H>(navigation, &*inst.screen) {
-                            backdrop::draw_span("chrome", || rig.draw_chrome(&e.arg, &chrome_parts, navigation, glass.as_deref_mut()));
+                            let bar_lifted = bar_lift.map(|(elem, _, _)| elem);
+                            backdrop::draw_span("chrome", || rig.draw_chrome(&e.arg, &chrome_parts, navigation, glass.as_deref_mut(), bar_lifted));
                         } else if let Some(glass) = glass.as_deref_mut() {
                             glass.tab_band_mut().reset_material();
                         }
@@ -1841,23 +1887,26 @@ where
             }
         }
         // **The lift pass: ONE place, ONE layer, ONE order, on every plan** (`Z::OPENER`, after the
-        // last surface). The element a surface was opened from is lit above the dim AND the panels,
-        // so a morphing panel grows out from under it and a close shrinks back into it. Two kinds
-        // are drawn here, bottom to top:
+        // last surface). The element a surface was opened from is lit above the dim AND the panels:
+        // a morphing menu CONSUMES it (painted at the morph's `opener_alpha`: gone while the menu
+        // stands, back as the droplet drains into it), the item hold menu's lifted card stays whole.
+        // Two kinds are drawn here, bottom to top:
         // - the host PAGE's opener (`lifted_opener`: a header pill, an item hold menu's card) by
         //   the page that drew it (`Screen::redraw_focused`). Not gated on `pages`: the loop's
         //   surfaces-only second call (`bridge::PagePlan::LegacyThenSurfaces`) owes it too, and a
         //   replaced host owes none (`SurfacesOnly`). It stands down by `lifted_opener`'s rule once
         //   focus leaves the opener while the menu fades.
         // - the shared BAR's member the surface hangs from (`Screen::bar_opener`: the profile chip),
-        //   by the rig (`Rig::lift_bar_member`) on the stack's latched ground, at the position and
-        //   alpha the chrome pass drew it with. Chrome the page does not own, so not a
-        //   `redraw_focused`; the same pass, the same layer, the same stand-down rule.
+        //   by the rig (`Rig::lift_bar_member`) on the stack's field once it has latched, and before
+        //   that on the host snapshot drawn clear (`widgets::lift_ground`); it paints on every frame
+        //   the menu owns the chip at a non-zero `opener_alpha`, at the position and alpha the
+        //   chrome pass drew it with. Chrome the page does not own, so not a `redraw_focused`; the
+        //   same pass, the same layer, the same stand-down rule.
         if Z::OPENER < ceiling {
             let _lift_layer = backdrop::layer(Z::OPENER, false);
             let _scope = rig.surface_scope();
             backdrop::draw_span("lifts", || {
-                let owed = (host_render != HostRender::Replaced).then_some(page_lift.zip(lift_parts)).flatten();
+                let owed = (host_render != HostRender::Replaced && opener_alpha > 0.0).then_some(page_lift.zip(lift_parts)).flatten();
                 if let Some(((entry, focus), lift_parts)) = owed {
                     if let Some(screen) = nav.tabs.stack.top().filter(|e| e.id == entry).and_then(|e| e.inst.as_ref()).map(|i| &*i.screen) {
                         let Split { views, measure, .. } = rig.split();
@@ -1865,10 +1914,13 @@ where
                         // page pass, so a redraw reads the same views the page drew with
                         let lift_cx = lift_parts.page_cx::<H>(
                             views, measure, entry, lift_parts.focus.clone(), nav.tabs.stack.beneath_id(entry));
-                        screen.redraw_focused(&mut DrawFrame::with_navigation(&lift_cx, Painter::root(), navigation), focus);
+                        screen.redraw_focused(&mut DrawFrame::with_navigation(&lift_cx, Painter::root().alpha(opener_alpha), navigation), focus);
                     }
                 }
-                if let Some((elem, presented, _)) = bar_lift.filter(|_| pages) {
+                if let Some((elem, presented, _)) = bar_lift.filter(|_| pages && opener_alpha > 0.0) {
+                    // the member is lifted at the alpha the chrome pass drew it with, times what the
+                    // morphing menu has left of it
+                    let presented = super::screen::NavPresentation { chrome_alpha: presented.chrome_alpha * opener_alpha, ..presented };
                     rig.lift_bar_member(elem, presented, glass.as_deref().and_then(super::frame::glass::GlassPlan::tab_face), modals.lift_field());
                 }
             });

@@ -584,6 +584,9 @@ pub struct FixtureModal {
     /// last handed it ([`Screen::opener_rect`]).
     pub bar_opener: Option<u32>,
     pub opener_seen: Vec<super::Rect>,
+    /// How much of its opener this surface leaves ([`Screen::opener_alpha`]): a morphing menu's
+    /// `opener_alpha`, 1.0 (whole) by default.
+    pub opener_alpha: f32,
     /// The [`draw_order`] tick at which the container ASKED for that dim, and the one at which
     /// this surface's own `draw` ran. The two together are how a host test observes that the
     /// scrim landed inside the PAGE PASS rather than with the panel — see
@@ -603,6 +606,21 @@ pub struct FixtureModal {
     /// One entry per [`Screen::draw_held`] call: whether the painter it was handed was LIVE (not
     /// the text recorder a held surface's `draw` is walked through).
     pub held_faces: Vec<bool>,
+    /// The morphing [`Popover`](crate::popover::Popover) a glass menu owns, when
+    /// [`modal_owns_popover`] is on: opened on `Mount`, dismissed on `Closing` and stepped on every
+    /// `Tick`, exactly the three things the library and account menus do with theirs.
+    pub popover: Option<crate::popover::Popover>,
+}
+
+thread_local! {
+    static MODAL_POPOVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make every [`FixtureModal`] mounted on this thread own a morphing popover the way the glass
+/// menus do (`FixtureModal::popover`): the host-snapshot cost of a menu's own `Closing` handling
+/// is observable only with one standing there.
+pub fn modal_owns_popover(on: bool) {
+    MODAL_POPOVER.with(|p| p.set(on));
 }
 
 thread_local! {
@@ -640,12 +658,14 @@ impl FixtureModal {
             scrim_over_video: false,
             bar_opener: None,
             opener_seen: Vec::new(),
+            opener_alpha: 1.0,
             scrim_at: std::cell::Cell::new(0),
             draw_at: 0,
             render: RenderReport::NONE,
             opener: None,
             tick_dts: Vec::new(),
             held_faces: Vec::new(),
+            popover: None,
         }
     }
 
@@ -754,7 +774,18 @@ impl Machine<FixtureHost> for FixtureModal {
                 self.inner
                     .request(NavOp::Root(FixtureArg::Page(100)), ReturnState::default());
                 self.run_inner();
+                if MODAL_POPOVER.with(|p| p.get()) {
+                    let mut pop = crate::popover::Popover::new().morphing();
+                    pop.open();
+                    self.popover = Some(pop);
+                }
                 Handled::Yes
+            }
+            ScreenEvent::Closing => {
+                if let Some(pop) = self.popover.as_mut() {
+                    pop.dismiss();
+                }
+                Handled::No
             }
             ScreenEvent::Input(InputEvent {
                 kind: InputKind::Key { key: Key::Ok, .. },
@@ -790,6 +821,9 @@ impl Machine<FixtureHost> for FixtureModal {
             }
             ScreenEvent::Tick(t) => {
                 self.tick_dts.push(t.dt_us);
+                if let Some(pop) = self.popover.as_mut() {
+                    pop.update(t.dt());
+                }
                 // the surface's own foreground spring: reports motion while it settles
                 if self.pop < 1.0 {
                     self.pop = (self.pop + 0.25).min(1.0);
@@ -835,6 +869,9 @@ impl Screen<FixtureHost> for FixtureModal {
     }
     fn bar_opener(&self) -> Option<u32> {
         self.bar_opener
+    }
+    fn opener_alpha(&self) -> f32 {
+        self.opener_alpha
     }
     fn opener_rect(&mut self, drawn: super::Rect) {
         self.opener_seen.push(drawn);
@@ -1055,6 +1092,13 @@ pub struct FixtureRig {
     /// Every bar member the lift pass was asked to redraw (`Rig::lift_bar_member`), with the
     /// presentation it was asked under.
     pub bar_lifts: Vec<(u32, super::screen::NavPresentation)>,
+    /// What each of those asks would stand on, decided as the real lift decides it at paint time
+    /// (`widgets::lift_ground`, over the stack's field and the host snapshot): the chip's lift
+    /// paints on every ask, so an ask is a chip painted once.
+    pub bar_lift_grounds: Vec<super::widgets::LiftGround>,
+    /// The bar member the opener lift owned on each chrome pass (`Rig::draw_chrome`'s `lifted`):
+    /// the one the chrome pass left out.
+    pub chrome_lifted: Vec<Option<u32>>,
     us: u64,
 }
 
@@ -1079,6 +1123,8 @@ impl FixtureRig {
             opaque_route_calls: Vec::new(),
             clears: 0,
             bar_lifts: Vec::new(),
+            bar_lift_grounds: Vec::new(),
+            chrome_lifted: Vec::new(),
             us: 0,
         }
     }
@@ -1094,8 +1140,10 @@ impl Rig<FixtureHost> for FixtureRig {
         }
     }
     fn draw_chrome(&mut self, _arg: &FixtureArg, _parts: &CxParts<u32>,
-        nav: super::screen::NavPresentation, _glass: Option<&mut super::frame::glass::GlassPlan>) {
+        nav: super::screen::NavPresentation, _glass: Option<&mut super::frame::glass::GlassPlan>,
+        lifted: Option<u32>) {
         self.chrome_draws += 1;
+        self.chrome_lifted.push(lifted);
         if self.chrome_glass {
             let track = super::Rect::new(
                 600.0,
@@ -1120,8 +1168,9 @@ impl Rig<FixtureHost> for FixtureRig {
         Some(presented.chrome_rect(super::Rect::new(76.0, 40.0, 60.0, 60.0)))
     }
     fn lift_bar_member(&mut self, elem: u32, presented: super::screen::NavPresentation,
-        _material: Option<plx_gfx::gfx::GlassFace>, _ground: &super::underlay::UnderlayField) {
+        _material: Option<plx_gfx::gfx::GlassFace>, ground: &super::underlay::UnderlayField) {
         self.bar_lifts.push((elem, presented));
+        self.bar_lift_grounds.push(super::widgets::lift_ground(ground, crate::popover::host::page_tex()));
     }
     fn split(&mut self) -> Split<'_, FixtureHost> {
         Split {

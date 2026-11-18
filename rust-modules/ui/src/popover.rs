@@ -472,7 +472,7 @@ pub fn under_or_above(a: Rect, content_w: f32, content_h: f32) -> Rect {
     anchor_panel(a, (width, h), h, PANEL_GAP, Placement::UNDER_OR_ABOVE).rect
 }
 
-/// **Where a header menu's panel of width `w` starts across, hung under its opener `pill`** (the
+/// **Where a header menu's panel of width `w` starts across, hung from its opener `pill`** (the
 /// focused pill, outset included): the panel's NEAR edge is the opener's OUTER edge, the edge it
 /// morphs from, so the lit opener and the panel read as one object. The near edge is the one on
 /// the side of the screen the opener sits on: a control in the right half (the Library's and the
@@ -482,6 +482,25 @@ pub fn under_or_above(a: Rect, content_w: f32, content_h: f32) -> Rect {
 pub fn hang_x(pill: Rect, w: f32, keep: Rect) -> f32 {
     let x = if pill.cx() > keep.cx() { pill.x + pill.w - w } else { pill.x };
     x.clamp(keep.x, (keep.x + keep.w - w).max(keep.x))
+}
+
+/// **Where a MORPHING header menu's panel goes: OVER its opener, as on iOS** (owner decision,
+/// 2026-11-17). The panel's TOP edge is the opener's top edge and it hangs across by [`hang_x`]'s
+/// rule (the near edge is the opener's outer edge), so the settled panel covers the opener: the
+/// opener is consumed by the morph ([`crate::popover_morph`]) and the glass that replaces it is the
+/// panel itself, not a slab hung 16 px below an empty slot. `size` is the panel's own `(w, h)`; it
+/// is never narrower or shorter than the opener (a panel that did not cover it would leave the
+/// consumed opener's corner showing), and it stays inside `keep`: a panel taller than the room
+/// below the opener's top slides UP until its bottom edge is `keep`'s, rather than cutting rows
+/// off. An opener that itself sits above `keep` (a tucked bar) is not chased: the panel keeps the
+/// opener's top. ONE rule for every morphing menu (the Library's Sort & Filter and "+N" list, the
+/// Watchlist's Sort & Filter, the profile menu); the item hold menu does not morph and does not
+/// use it.
+pub fn cover_opener(pill: Rect, size: (f32, f32), keep: Rect) -> Rect {
+    let w = size.0.max(pill.w);
+    let h = size.1.max(pill.h);
+    let y = pill.y.min(keep.y + keep.h - h).max(keep.y.min(pill.y));
+    Rect::new(hang_x(pill, w, keep), y, w, h)
 }
 
 /// The [`Opener::redraw`] of a popover with nothing to lift — a named fn rather than a closure, so
@@ -527,6 +546,8 @@ pub(crate) struct MorphGround {
     pub(crate) radius: f32,
     pub(crate) alpha: f32,
     pub(crate) shadow: f32,
+    /// The glass's join and clarity while the morph runs (`GlassMorph::NONE` at rest).
+    pub(crate) morph: plx_gfx::gfx::GlassMorph,
 }
 
 pub struct Popover {
@@ -552,6 +573,9 @@ pub struct Popover {
     /// The opener's rect the morph grows from ([`open_from`](Self::open_from)); `None` = the
     /// fade+scale fallback.
     from: Option<Rect>,
+    /// The colour the opener's own focused face is drawn with, when it has a flat one
+    /// ([`opener_fill`](Self::opener_fill)); a close's re-forming blob whitens toward it.
+    opener_fill: Option<[f32; 4]>,
 }
 impl Popover {
     pub const fn new() -> Self {
@@ -559,6 +583,7 @@ impl Popover {
             style: OpenStyle::Appear,
             morph: crate::popover_morph::Morph::new(),
             from: None,
+            opener_fill: None,
             open: false,
             closing: false,
             appear: Spring::at(0.0),
@@ -587,6 +612,17 @@ impl Popover {
         self.style = OpenStyle::Morph;
         self
     }
+    /// **The flat colour this MORPHING popover's opener wears when it is focused**, so the close's
+    /// re-forming blob can whiten toward it ([`Frame::glass_morph`](crate::popover_morph::Frame::glass_morph),
+    /// [`Merge::tint`](crate::popover_morph::Merge::tint)) and the hand-back to the opener's real
+    /// face has no pop. The caller names it because it is the one that knows its opener: a header
+    /// pill passes [`page_header::OPENER_FILL`](crate::page_header::OPENER_FILL), the very constant
+    /// the lift paints the pill with. An opener with no flat fill of its own (the profile chip is a
+    /// glass capsule) passes nothing, and the blob stays glass.
+    pub const fn opener_fill(mut self, fill: [f32; 4]) -> Self {
+        self.opener_fill = Some(fill);
+        self
+    }
     /// This popover's open style.
     pub const fn open_style(&self) -> OpenStyle {
         self.style
@@ -602,6 +638,32 @@ impl Popover {
         rad: f32,
     ) -> Option<crate::popover_morph::Frame> {
         (self.style == OpenStyle::Morph).then(|| self.morph.frame(from, panel, rad))
+    }
+    /// **How much of the opener is left while this popover's morph runs** (1 = whole, 0 = consumed
+    /// by the glass), for the host's opener lift to paint it at: [`Frame::opener_alpha`](crate::popover_morph::Frame::opener_alpha).
+    /// 1 for a popover that is not [`morphing`](Self::morphing) and for the fallback (no opener
+    /// rect), which has nothing to consume.
+    pub fn opener_alpha(&self) -> f32 {
+        if self.style != OpenStyle::Morph || self.from.is_none() {
+            return 1.0;
+        }
+        self.morph.frame(self.from, Rect::FULL, 0.0).opener_alpha
+    }
+    /// **The modal dim a surface owning this popover asks its container for** (`Screen::scrim`), at
+    /// the role's peak `weight` (a `theme::underlay::DIM_*` row): the container's appear spring ramps
+    /// it for every popover but a [`morphing`](Self::morphing) one, whose dim FOLLOWS the morph
+    /// ([`Scrim::following`](crate::screen::Scrim::following), [`popover_morph::dim_at`](crate::popover_morph::dim_at)):
+    /// in as the glass grows (by ~150 ms) and out as the slab drains (gone with the slab on the
+    /// hand-back frame,
+    /// `the_dim_follows_the_morph_for_a_morphing_menu_and_is_the_containers_for_any_other`), not in
+    /// ~2 frames on the container's k 300 spring that is 73% at 150 ms and 14% at 200 ms on the way out.
+    pub fn dim(&self, weight: f32) -> crate::screen::Scrim {
+        let scrim = crate::screen::Scrim::dim(weight);
+        if self.style == OpenStyle::Morph {
+            scrim.following(self.morph.frame(None, Rect::FULL, 0.0).dim)
+        } else {
+            scrim
+        }
     }
     /// The opener's rect the morph grows from and lands back on: the one handed to
     /// [`open_from`](Self::open_from) / [`track_opener`](Self::track_opener), `None` before either.
@@ -667,13 +729,15 @@ impl Popover {
     }
     /// The bookkeeping half of a close: input modality ends NOW, whether the
     /// panel then vanishes or fades. The host freeze is NOT in here — see
-    /// [`release_host`](Self::release_host) for why it outlives a dismiss.
+    /// [`release_host`](Self::release_host) for why it outlives a dismiss. It drops only the GROUND stage
+    /// (a caching host's snapshot of the panel at full strength): the page's own snapshot stays, so a glass
+    /// menu's close does not retake the page on its first frame.
     fn release(&mut self) {
         if self.open {
             OPEN_COUNT.fetch_sub(1, Relaxed);
         }
         self.open = false;
-        host::invalidate();
+        host::ground_invalidate();
     }
     /// Register this popover's frozen-host user — once, however many times it is (re)opened, and
     /// not at all under a `Live` policy. A re-open DURING the fade-out finds the user still held
@@ -759,7 +823,7 @@ impl Popover {
         } else if self.closing {
             self.step_appear(0.0, dt);
             // the same visual-arrival tolerance as `appear_settled`, at the other end
-            if self.appear.pos <= 0.001 && (self.style != OpenStyle::Morph || self.morph.closed()) {
+            if self.appear.pos <= 0.001 && (self.style != OpenStyle::Morph || self.morph.closed_for(self.from.is_some())) {
                 self.closing = false;
                 self.appear = Spring::at(0.0);
                 self.morph.reset();
@@ -800,7 +864,7 @@ impl Popover {
         if self.style == OpenStyle::Morph {
             // The morph owns the panel's arrival, part by part: the ground (`panel`) and the rows
             // (`morph_rows`) each take their own alpha from the one morph clock (the header menus'
-            // openers are the host's lift, not part of the morph). Nothing slides; `rise` is the appear style's. The CONTAINER's
+            // openers are the host's lift, which the morph CONSUMES: painted at `opener_alpha`). Nothing slides; `rise` is the appear style's. The CONTAINER's
             // appear is not on this painter either: the surface begins and ends as the opener,
             // which is not faded in or out.
             return base.alpha(crate::nav::page_alpha());
@@ -922,17 +986,22 @@ impl Popover {
         ground: crate::widgets::Ground,
     ) {
         if let Some(g) = self.ground(r, rad) {
-            crate::widgets::panel_ground_shadowed(p.alpha(g.alpha), g.rect, g.radius, field, ground, g.shadow);
+            crate::widgets::panel_ground_shadowed(p.alpha(g.alpha), g.rect, g.radius, field, ground, g.shadow, g.morph);
         }
         self.ground_done();
     }
 
     /// Draw a MORPHING popover's rows through `draw`, in the shared choreography the board states:
     ///
-    /// - the rows are **clipped to the current surface rect** ([`ClipScope`](crate::screen::ClipScope),
-    ///   which nests with a table's own clip), so nothing draws outside it;
+    /// - the rows are **cut by the surface's round lens** ([`Frame::rect`](crate::popover_morph::Frame::rect)
+    ///   and [`Frame::radius`](crate::popover_morph::Frame::radius), the glass's own shape, through the
+    ///   shared [`ClipScope::open_rounded_in`](crate::screen::ClipScope::open_rounded_in)), so a label
+    ///   the arc crosses is cut by the arc, as on iOS 26, and not by a straight edge. The scope nests
+    ///   with a table's own rect clip: the table narrows the scissor and keeps the arc. Settled, no
+    ///   scope is open and the rows are not cut at all (they are laid out inside the panel's corners);
     /// - they are **scaled about the panel anchor** ([`popover_morph::rows_anchor`](crate::popover_morph::rows_anchor))
-    ///   by the row spring, 0.82 -> 1 (and back on close);
+    ///   by the rows' lens spring ([`popover_morph::K_LENS`](crate::popover_morph::K_LENS)), which
+    ///   overshoots to ~1.12 (the shrinking slab's height ratio on a close);
     /// - they are drawn at [`Frame::content_alpha`](crate::popover_morph::Frame::content_alpha), which
     ///   is 0 until the glass has replaced the opener's fill. A frame on which they are invisible
     ///   does not draw them, except through the text recorder (a held surface's walk), which is
@@ -950,7 +1019,9 @@ impl Popover {
             return;
         }
         let p = p.alpha(f.content_alpha);
-        let _clip = crate::screen::ClipScope::open_in(p, f.rect);
+        // opened on the UN-zoomed painter, in the glass's own screen px; the zoomed painter below maps
+        // its own vertices into the same px, so the lens stays where the glass is
+        let _clip = crate::screen::ClipScope::open_rounded_in(p, f.rect, f.radius);
         let zoom = crate::popover_morph::rows_zoom(self.from, panel, f.rows_scale);
         draw(p.clipped(f.rect).zoomed(zoom));
     }
@@ -958,20 +1029,25 @@ impl Popover {
     /// What [`panel`](Self::panel) draws as the ground this frame, or `None` for nothing yet.
     /// Appear style, and a settled morph: the caller's `r`/`rad`, at full strength. A morph with
     /// an opener: the morphing rect and radius, the glass AND its shadow on the fill's
-    /// share (one ramp, over the lit opener the host keeps). The fallback: the glass fades in on the fill's share, its shadow whole.
+    /// share (one ramp on an open, the opener the host lifts fading as the glass detaches; a close's
+    /// slab is whole glass until it has drained into the re-formed opener), joined to the opener's
+    /// shape and clear while the morph says so ([`MorphGround::morph`]). The
+    /// fallback: the glass fades in on the fill's share, its shadow whole.
     pub(crate) fn ground(&self, r: Rect, rad: f32) -> Option<MorphGround> {
         if self.style != OpenStyle::Morph || self.morph.settled() {
-            return Some(MorphGround { rect: r, radius: rad, alpha: 1.0, shadow: 1.0 });
+            return Some(MorphGround { rect: r, radius: rad, alpha: 1.0, shadow: 1.0, morph: plx_gfx::gfx::GlassMorph::NONE });
         }
         let f = self.morph.frame(self.from, r, rad);
         if f.ground_alpha <= 0.0 {
             return None;
         }
-        // ONE ramp for the glass and its shadow, the fill's share of the morph's progress: a rect
-        // that has left the opener is never at full strength, so the first and last glass frame
-        // are a soft edge under the lit opener rather than an opaque slab hanging below it.
+        // ONE ramp for the glass and its shadow, the fill's share of the morph's progress: an
+        // opening rect that has left the opener is never at full strength, so the first glass frame
+        // is a soft edge over the opener (which fades over the first 15% of the progress, the glass
+        // over the first 18%) rather than an opaque slab. A close's slab is the droplet's, whole
+        // glass until it is drained (`popover_morph`).
         let (alpha, shadow) = if self.from.is_some() { (f.ground_alpha, f.ground_alpha) } else { (f.ground_alpha, 1.0) };
-        Some(MorphGround { rect: f.rect, radius: f.radius, alpha, shadow })
+        Some(MorphGround { rect: f.rect, radius: f.radius, alpha, shadow, morph: f.glass_morph(self.opener_fill) })
     }
 
     /// The boundary between this popover's GROUND and its FOREGROUND, reported to [`host`].

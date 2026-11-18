@@ -413,8 +413,8 @@ fn clock_and_press(app: &mut App, fr: &mut Frame) {
         } else {
             0.016
         };
-        if d > 0.05 {
-            d = 0.05;
+        if d > plx_machine::motion::FRAME_DT_CLAMP {
+            d = plx_machine::motion::FRAME_DT_CLAMP;
         }
         d
     };
@@ -3261,6 +3261,11 @@ pub(crate) unsafe fn draw(app: &mut App, fr: &mut Frame) -> (i32, i32, i32, i32)
                         if !(app.player.video_plane_bound && plx_media::route::is_preview(&app.player.session)) {
                             plx_base::diag::spans::span("host", || plx_ui::popover::host::begin_frame(fr.underlay_moving));
                         }
+                        // Who owns the opener lift is settled HERE, before anything reads the host
+                        // snapshot: `backdrop_layers` and the page pass below serve or retake it,
+                        // and a flip decided inside the draw (after that pass) retook it a frame
+                        // late. See `Dispatcher::settle_lift`.
+                        app.pages.settle_lift();
                         use plx_ui::frame::backdrop::Z;
                         let layers = app.pages.backdrop_layers(plx_ui::nav::page_alpha());
                         app.glass.sources.borrow_mut().begin(layers);
