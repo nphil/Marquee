@@ -24,7 +24,8 @@ below 8 MiB of spare the disk tier is off: on webOS 3.4.3 the only writable pers
 directory is world-writable, so the cache directory inside it is created `0700` (an existing one we
 own is tightened to `0700`; a foreign-owned one or a symlink is refused); the other candidates keep
 the mode they are given. One temporary write can consume
-up to another image's size. A lazy startup scan builds a byte-accounted LRU index; normal reads
+up to another image's size. A startup scan, begun on a background thread at launch (otherwise by
+the first read), builds a byte-accounted LRU index; normal reads
 and writes use that index, avoiding repeated directory scans. Reads advance recency in memory;
 file modification times persist recency at most once an hour per accessed entry. The header's
 fetch timestamp never moves on a hit. Writes use a temporary file and rename, cache reads are
@@ -53,6 +54,33 @@ resumes. They reserve no additional pixel storage and cannot expand the slot or 
 Source-slot age advances on presenting frames, not idle loop turns. Pending decoded uploads
 are reordered by current drawn demand before each upload allowance, so a rapid scroll reversal
 does not leave visible posters behind an obsolete backdrop.
+
+## Profile pictures
+
+The who's-watching picker draws its avatars on the first frame instead of leaving them to the demand
+workers, whose disk read, JPEG decode and hand-off took a second or two on the TV with blank circles
+drawn meanwhile. `imgcache/tiles.rs` keeps them in one file, `tiles.img`, in the cache directory:
+each tile is the picture already decoded to RGBA at the picker's 300 px request, named by the
+avatar's plex.tv address and its transcode options (never by the `c=` version stamp, the server or
+a credential) and carrying that stamp and the time a server last confirmed the picture. At most 16
+tiles are kept, about 360 KB each. The file is rewritten whole through a temporary and a rename,
+so a reader sees the old set or the new one, and sign-out removes it with the rest of the cache.
+
+`poster/avatars.rs` reads the file on a thread of its own from the start of the launch (the same
+thread then builds the cache index, so the directory scan no longer waits for the first poster
+read), and boot waits for it for at most 100 ms. Before the picker's first draw, each profile's
+tile becomes a resident texture under the key the picker requests, so the draw is an ordinary hit
+and nothing is queued for a worker. The roster's names and order come from the stored session and
+do not wait on the network. A profile with no tile, or past the 16 kept, loads the ordinary way and
+is added to the file when its picture arrives; the first launch after an update therefore loads as
+before and fills the file, and later launches draw the pictures on the first frame.
+
+A tile is checked against the server when the roster's stamp differs from the stored one, when no
+server confirmed it for 24 hours, or when it was kept from a disk-cache hit rather than a fetch.
+The refresh worker fetches it. An unchanged picture only moves the confirmation; a changed one
+replaces the resident texture in place on a later frame, so the circle is never empty. A profile
+that leaves the roster loses its tile, except when an entry of the roster could not be named, in
+which case nothing is dropped.
 
 ## Reproducible television stress test
 

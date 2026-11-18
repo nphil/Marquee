@@ -2470,6 +2470,9 @@ pub(crate) unsafe fn construct(
     // **The HUD compiles here, at boot, outside any frame**, and the mounter is seeded with it (`run::boot_hud`;
     // a controlled run defers it to the first player frame).
     let hud = super::run::boot_hud(&mut bridge, controlled);
+    // The stored profile pictures were read on their own thread since launch; boot's work was
+    // their head start. A bounded wait, so the picker's first frame never lacks them on a slow disk.
+    if !controlled { super::adapters::poster::avatars::await_loaded(); }
     let mut app = App {
         last_input,
         loop_t,

@@ -604,6 +604,10 @@ fn enter_application(pms_host: *const c_char, pms_port: c_int) -> Result<App,c_i
     plx_appkit::more_menu::install_logging_reader(crate::app::diagnostics::logging_enabled);
     // Replay preflight and typed decoding precede identity mint, telemetry and bootstrap work.
     let telemetry_guard = (!preflight.controlled()).then(pre_boot_diagnostics);
+    // The stored profile pictures are read while the rest of boot runs, so the picker's first frame
+    // has them. After the identity preamble (the reader logs) and never for a controlled replay,
+    // which does no filesystem work of its own.
+    if !preflight.controlled() { adapters::poster::avatars::start(); }
     // Unlike the capability worker, these existing diagnostic latches are needed by controlled
     // replay too. Resolve their filesystem state outside `FrameScope` on every boot so a preview
     // or synthetic payload cannot perform its first `stat` from a render frame.

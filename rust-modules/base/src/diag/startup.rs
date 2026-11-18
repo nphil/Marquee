@@ -41,6 +41,8 @@ pub enum Stage {
     Home,
     /// The first poster or avatar texture reached the GPU (the picker's pictures, or Home's first card).
     Poster,
+    /// The stored profile pictures were read, on their own thread.
+    Avatars,
 }
 
 impl Stage {
@@ -60,6 +62,7 @@ impl Stage {
             Stage::Server => "server",
             Stage::Home => "home",
             Stage::Poster => "first-poster",
+            Stage::Avatars => "avatars",
         }
     }
 }

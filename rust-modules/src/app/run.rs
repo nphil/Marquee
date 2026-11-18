@@ -683,6 +683,8 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
         // `prepare` (`PanelMotion::prewarm_text`), and uploaded here: `fr.present` already carries the window-activity gate, so a frame that
         // does not present, or one while the window is backgrounded, uploads nothing.
         plx_ui::panel_motion::PanelMotion::drain_queued_text(plx_base::diag::heartbeat::now_us);
+        // The picker's stored pictures go resident here, ahead of the draw that asks for them.
+        super::adapters::poster::avatars::frame(&app.bridge.auth_read().0.users, matches!(app.route(), AppArg::Profiles));
         let mut ph = plx_machine::machine::PresentHandle::of(&mut app.present);
         super::adapters::poster::prepare(
             &mut app.pages.budget,

@@ -100,8 +100,12 @@ fn run() {
             let (mut w, mut h) = (0, 0);
             let px = plx_gfx::img::img_decode_rgba(bytes.as_ptr(), bytes.len() as i32, &mut w, &mut h);
             if !px.is_null() {
-                plx_gfx::img::img_free(px);
                 plx_platform::imgcache::write_at(job.epoch, &job.key, &bytes);
+                // SAFETY: `px` is what img_decode_rgba just returned for w x h; it is freed below.
+                if let Some((rgba, cw, ch)) = unsafe { super::avatars::view(px, w, h) } {
+                    super::avatars::refreshed(job.client.id(), job.epoch, &job.path, rgba, cw, ch);
+                }
+                plx_gfx::img::img_free(px);
             }
         }
     }

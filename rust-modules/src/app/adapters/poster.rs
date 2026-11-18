@@ -42,6 +42,7 @@
 //! ~140 bytes (an ordinary relative thumb) to ~177 (an absolute headshot — see [`built_key`])
 //! into a fixed [`PT_KEYLEN`]-byte array (see [`Pslot::key`]), and a `u16` compare is also the
 //! cheaper half of the per-frame identity scan, so it goes first.
+pub(crate) mod avatars;
 mod fan;
 mod refresh;
 mod trace;
@@ -1659,6 +1660,7 @@ pub(crate) fn drain_decoded() {
         // Rejection may synchronously notify unresident during accept. Preserve that verdict.
         if g.slots[idx].state == P_DECODED { g.slots[idx].state = P_READY; }
     }
+    avatars::drain_swaps();
 }
 
 /// The GL half behind the cache, on the main thread: `img::img_upload_rgba` (a synchronous
@@ -2053,6 +2055,7 @@ fn poster_worker() {
         let (mut w, mut h) = (0, 0);
         let mut px = std::ptr::null_mut();
         let mut stale = None;
+        let mut kept = None;
         let mut transient = false;
         // Revoked servers cannot use disk as a route around sign-out. Keep this client snapshot
         // for both identity and transport; a later registry repoint must not mix the two.
@@ -2078,6 +2081,10 @@ fn poster_worker() {
                 });
                 if let Some((p, dw, dh)) = loaded.art {
                     (px, w, h) = (p, dw, dh);
+                    // SAFETY: `p` is what img_decode_rgba just returned for dw x dh; it is handed
+                    // to the slot or freed below, after this borrow has ended.
+                    kept = unsafe { avatars::view(p, dw, dh) }
+                        .and_then(|(rgba, cw, ch)| avatars::capture(&key_s, rgba, cw, ch, !loaded.from_disk));
                 }
                 trace::disk(idx, gen, if loaded.from_disk { "hit" } else { "net" });
                 stale = loaded.stale.map(|k| (client, k));
@@ -2113,6 +2120,9 @@ fn poster_worker() {
         if accepted {
             if let Some((client, key)) = stale {
                 refresh::enqueue(client, key_s, key, cache_gen, token_gen);
+            }
+            if let Some(tile) = kept {
+                avatars::persist(cache_gen, tile);
             }
         }
     }
