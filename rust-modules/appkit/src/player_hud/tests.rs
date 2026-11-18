@@ -1503,7 +1503,7 @@ mod playbar_options {
     use crate::hud_format::compile::{ClockMode, KnobMode, MarkMode};
 
     fn bar(knob: Knob, mark: TransportMark) -> Playbar {
-        Playbar { pos_ns: 600_000_000_000, dur_ns: 1_200_000_000_000, knob, mark, now: 0, clock_grow: 0.0 }
+        Playbar { pos_ns: 600_000_000_000, dur_ns: 1_200_000_000_000, knob, mark, now: 0, clock_grow: 0.0, end_time: None }
     }
     fn census(b: Playbar, look: PlaybarLook) -> Vec<(u64, Rect)> {
         plx_ui::draw_census::capture(|| draw_playbar_look(Painter::recording(), b, look, &FM))
@@ -1554,6 +1554,24 @@ mod playbar_options {
         let late = Playbar { pos_ns: 1_199_000_000_000, ..b };
         assert!(runs(late, PlaybarLook::default()).iter().all(|r| r.align != 2), "classic hides it");
         assert!(runs(late, look).iter().any(|r| r.align == 2), "`ends` never meets it");
+    }
+
+    #[test]
+    fn the_finish_time_follows_the_remaining_clock_and_gives_way_when_it_does_not_fit() {
+        let _english = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+        let look = PlaybarLook::default();
+        let b = bar(Knob::Tick, TransportMark::None);
+        let with = Playbar { end_time: Some([22, 42]), ..b };
+        let drawn = runs(with, look);
+        let ends = drawn.iter().find(|r| r.text.starts_with("Ends at")).expect("the finish time is drawn");
+        assert!(ends.text.contains("10:42"), "in the viewer's clock: {}", ends.text);
+        let rem = drawn.iter().find(|r| r.text == "-10:00").expect("the remaining clock stays");
+        assert!(rem.at.x + rem.at.w < ends.at.x, "the time left first, then the finish: {:?} {:?}", rem.at, ends.at);
+        assert!((ends.at.x + ends.at.w - (look.track.x + look.track.w)).abs() < 1.0, "it ends where the bar does, {:?}", ends.at);
+        assert!(runs(b, look).iter().all(|r| !r.text.starts_with("Ends at")), "no estimate, nothing drawn");
+        // near the end of the item the elapsed clock leaves no room for the pair: it is dropped whole
+        let late = Playbar { pos_ns: 1_199_000_000_000, ..with };
+        assert!(runs(late, look).iter().all(|r| !r.text.starts_with("Ends at")), "no room, no finish time");
     }
 
     #[test]

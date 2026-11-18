@@ -17,5 +17,12 @@
     "args": {
       "seconds": "i64"
     }
+  },
+  "player.hud.ends_at": {
+    "value": "Ends at {time}",
+    "description": "Playbar text after the remaining time: when the movie or episode is expected to finish on the viewer's clock, for example Ends at 10:42 PM. Measured before layout; {time} is already formatted in the viewer's 12- or 24-hour style.",
+    "args": {
+      "time": "str"
+    }
   }
 }

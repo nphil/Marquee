@@ -2785,6 +2785,7 @@ fn a_movie_trailer_disc_plays_the_extra_from_the_start() {
         plx_data::metadata::NowPlaying {
             is_episode: true,
             is_real_episode: true,
+            is_movie: false,
             title: "Show".into(),
             ep_title: "Pilot".into(),
             season: 1,
@@ -2915,6 +2916,7 @@ fn a_trailer_disc_requires_both_rk_and_part() {
         plx_data::metadata::NowPlaying {
             is_episode: true,
             is_real_episode: true,
+            is_movie: false,
             title: "Show".into(),
             ep_title: "Pilot".into(),
             season: 1,

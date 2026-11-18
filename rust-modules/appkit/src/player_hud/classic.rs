@@ -24,9 +24,11 @@ use plx_machine::machine::{GroupId, Measure};
 use plx_ui::consts::{SCR_H, SCR_W};
 use plx_ui::hstack::{Align, HStack, Item};
 use plx_ui::theme;
-use plx_ui::widgets::{Spinner, StatusKind, StatusOverlay};
+use plx_ui::widgets::{DottedRun, Spinner, StatusKind, StatusOverlay};
 use plx_ui::{Env, Painter, Rect, View};
+use std::cell::RefCell;
 use std::ffi::CString;
+use std::rc::Rc;
 
 /// The HUD widgets draw purely from their own fields and ignore their Env.
 pub(super) fn hud_env() -> Env {
@@ -503,6 +505,9 @@ pub struct Playbar {
     /// ([`crate::scrub_preview::Motion::clock_grow`]). The two sizes are CROSSFADED on it
     /// ([`crate::scrub_preview::clock_faces`]); a size is never tweened.
     pub clock_grow: f32,
+    /// the projected local finish `[hour, minute]`, drawn after the remaining clock when it fits
+    /// ([`end_time_label`]); `None` shows the remaining clock alone
+    pub end_time: Option<[i32; 2]>,
 }
 
 impl Playbar {
@@ -540,6 +545,7 @@ impl Playbar {
             mark: transport_mark(paused, busy, scrub >= 0, dispos, livepos, since_play_ms),
             now,
             clock_grow: 0.0,
+            end_time: model.end_time,
         }
     }
 }
@@ -580,6 +586,30 @@ impl Default for PlaybarLook {
 /// player HUD and the detail page's full-trailer transport both draw it, so the two cannot drift.
 pub fn draw_playbar(p: Painter, bar: Playbar, measure: &dyn plx_machine::machine::Measure) {
     draw_playbar_look(p, bar, PlaybarLook::default(), measure);
+}
+
+/// "Ends at 10:42 PM" for `[hour, minute]` in the viewer's clock and language, with its digit-blind
+/// template (every digit '0') that the fit test measures. Rebuilt only when the minute or the
+/// language changes, so the frame in between allocates nothing; the language is the context's
+/// address, which a new one replaces.
+fn end_time_label(time: [i32; 2]) -> Option<(Rc<str>, Rc<str>)> {
+    thread_local! {
+        static LABEL: RefCell<Option<(([i32; 2], usize), Rc<str>, Rc<str>)>> = const { RefCell::new(None) };
+    }
+    let cx = plx_platform::i18n::current();
+    let key = (time, std::ptr::from_ref(cx) as usize);
+    LABEL.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((cached, label, template)) = cache.as_ref() {
+            if *cached == key {
+                return Some((Rc::clone(label), Rc::clone(template)));
+            }
+        }
+        let label: Rc<str> = plx_platform::i18n::msg::player_hud_ends_at(&cx.time_of_day(time)?).into();
+        let template: Rc<str> = label.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect::<String>().into();
+        *cache = Some((key, Rc::clone(&label), Rc::clone(&template)));
+        Some((label, template))
+    })
 }
 
 /// [`draw_playbar`] over a [`PlaybarLook`]: the compiled package's bar (`DrawOp::Playbar`).
@@ -674,7 +704,17 @@ pub fn draw_playbar_look(p: Painter, bar: Playbar, look: PlaybarLook, measure: &
     let rem_w = measure.width_str(&rem_tmpl, look.clock_size, true);
     let rem_l = sx + sw - rem_w;
     let rem_shown = el_r + 20.0 < rem_l;
-    if rem_shown {
+    // "<remaining> · Ends at 10:42 PM", right-aligned on the bar's end. Only when the pair clears
+    // the elapsed clock, by the same measured template as the remaining clock alone; otherwise the
+    // remaining clock keeps its place and the finish time is left out.
+    let paired = bar.end_time.and_then(end_time_label).and_then(|(ends, ends_tmpl)| {
+        let run = DottedRun::new(look.clock_size, dim, theme::space::SM).measured(measure);
+        let w = run.width(measure, &[rem_tmpl.as_str(), &*ends_tmpl]);
+        (el_r + 20.0 < sx + sw - w).then_some((run, ends, w))
+    });
+    if let Some((run, ends, w)) = paired {
+        run.draw(p, &[rem.as_str(), &*ends], sx + sw - w, ty);
+    } else if rem_shown {
         if let Ok(cs) = CString::new(rem.as_str()) {
             p.text(cs.as_ptr(), sx + sw, ty, look.clock_size, dim, 2, 0);
         }

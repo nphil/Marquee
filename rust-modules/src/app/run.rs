@@ -735,13 +735,41 @@ fn hud_model(
     meta: plx_data::metadata::MetadataView<'_>,
 ) -> plx_appkit::player_hud::model::HudModel {
     let playpos_ns = plx_media::player::playpos_ns();
+    let paused = plx_media::player::TX.paused.load(Relaxed);
+    let scrub_ns = plx_media::player::TX.scrub_ns.load(Relaxed);
+    let seek_display_ns = plx_media::player::seek_display_ns();
+    let duration_ns = plx_media::player::duration_ns();
+    let now_playing = meta.now_playing();
+    // The projected finish of a movie or episode that is playing on steadily. Not while paused,
+    // buffering, seeking or scrubbing (the position is not advancing), nor for a trailer.
+    let end_time = if now_playing.is_some_and(|n| n.is_real_episode || n.is_movie)
+        && !paused
+        && scrub_ns < 0
+        && seek_display_ns < 0
+        && !plx_media::route::is_preview(ps)
+        && plx_media::player::is_playing(ps)
+    {
+        clock::unix_ms()
+            .and_then(|now_ms| {
+                plx_appkit::player_hud::model::projected_end_unix_seconds(
+                    now_ms,
+                    playpos_ns,
+                    duration_ns,
+                    Some(plx_media::player::applied_rate_permille()),
+                )
+            })
+            .and_then(clock::local_end_time)
+    } else {
+        None
+    };
     plx_appkit::player_hud::model::HudModel {
-        paused: plx_media::player::TX.paused.load(Relaxed),
-        is_episode: meta.now_playing().is_some_and(|n| n.is_real_episode),
-        scrub_ns: plx_media::player::TX.scrub_ns.load(Relaxed),
+        paused,
+        is_episode: now_playing.is_some_and(|n| n.is_real_episode),
+        end_time,
+        scrub_ns,
         playpos_ns,
-        seek_display_ns: plx_media::player::seek_display_ns(),
-        duration_ns: plx_media::player::duration_ns(),
+        seek_display_ns,
+        duration_ns,
         loading: plx_media::player::loading(ps),
         sub_size: plx_media::route::subtitle_size(),
         sub_position: plx_media::route::subtitle_position(),
@@ -5279,6 +5307,7 @@ mod lifecycle_regression_tests {
         assert!(app.bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::SetNowPlaying(Some(plx_data::metadata::NowPlaying {
             is_episode: false,
             is_real_episode: false,
+            is_movie: false,
             title: String::new(),
             ep_title: String::new(),
             season: 0,
