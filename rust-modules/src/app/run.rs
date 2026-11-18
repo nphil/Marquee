@@ -3925,6 +3925,7 @@ mod lifecycle_regression_tests {
                 }),
             },
             repause_at: -1,
+            audio_beacon: plx_media::player::audio_beacon::Beacon::new(),
             decoder_parked: false,
             foreground_retry: None,
             ok_armed: Default::default(),
