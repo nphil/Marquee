@@ -153,6 +153,11 @@ fn a_show_without_a_runtime_reads_its_season_count_and_a_runtime_wins() {
     assert_eq!(listing_facts(&timed).1, Some(plx_ui::fmt::duration(45 * 60_000)));
     let movie = plx_data::pms::PmsMovie { kind: plx_data::pms::KIND_MOVIE, child_count: 2, ..show };
     assert_eq!(listing_facts(&movie).1, None, "a movie has no seasons");
+    // The Resume pill carries the time left, so the facts line keeps the whole runtime.
+    let resuming = plx_data::pms::PmsMovie { dur_ns: 90 * 60_000 * 1_000_000, resume_ms: 30 * 60_000, ..movie };
+    assert_eq!(listing_facts(&resuming).1, Some(plx_ui::fmt::duration(90 * 60_000)));
+    assert_eq!(time_left_text(60 * 60_000), plx_ui::fmt::time_left(60 * 60_000));
+    assert_eq!(time_left_text(38 * 60_000), "38 min left");
 }
 
 #[test]

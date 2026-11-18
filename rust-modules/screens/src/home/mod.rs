@@ -1988,6 +1988,10 @@ impl HomeScreen {
             plx_ui::rec::speculative(|| {
                 plx_ui::record_walk(|| {
                     hero_content(hero.item, display_source(hero.source), Painter::recording(), 0.0, cx.measure, true);
+                    // The pill's time-left label is a string no other hero shares.
+                    if let (label, Some(_)) = hero_action(hero.item) {
+                        Painter::recording().text(label.as_cstr().as_ptr(), 0.0, 0.0, theme::size::BODY, theme::TEXT_PRIMARY, 0, 1);
+                    }
                 })
             })
         });
@@ -2300,8 +2304,8 @@ impl HomeScreen {
             self.draw_hero_actions(hero.item, env, p, 0.0, true, page_alpha, focus, measure, press_scale);
         }
         if view.hero_count() > 1 {
-            let resumes = plx_data::metadata::resume_ns(hero.item.resume_ms, hero.item.dur_ns / 1_000_000) > 0;
-            let info = hero_rects(measure, hero.item, plx_appkit::hero_layout::play_label(resumes)).info;
+            let (label, progress) = hero_action(hero.item);
+            let info = hero_rects(measure, hero.item, label.as_cstr(), progress.is_some()).info;
             let dots = PageDots::new(view.hero_count()).active(self.carousel_index(view));
             let items = [Item::new(dots.width()), Item::glyph(Icon::Chevron, HERO_PAGER_D)];
             let row = plx_ui::hstack::HStack::new(&items, HERO_CTRL_GAP,
@@ -2327,9 +2331,8 @@ impl HomeScreen {
         measure: &dyn Measure,
         press_scale: f32,
     ) {
-        let resumes = plx_data::metadata::resume_ns(hero.resume_ms, hero.dur_ns / 1_000_000) > 0;
-        let label = plx_appkit::hero_layout::play_label(resumes);
-        let HeroRects { play: pill, disc, info } = hero_rects(measure, hero, label);
+        let (label, progress) = hero_action(hero);
+        let HeroRects { play: pill, disc, info } = hero_rects(measure, hero, label.as_cstr(), progress.is_some());
         if !on_axis(MARGIN_X + dx, info.x + info.w - MARGIN_X, SCR_W, 0.0) { return; }
         let may_read = live && dx.abs() < 0.5 && page_alpha >= 0.999;
         let palette = plx_gfx::gfx::sample_control_ground(
@@ -2342,12 +2345,15 @@ impl HomeScreen {
         // The fill rides the lift spring (`CtlPop::focus`) so the plate cross-fades (and the ink flips) with the pop;
         // a frame drawn off the live row (a transition's snapshot) has no spring and reads the focus.
         let fill = |i| if live { self.hero_pop.focus(i) } else { f32::from(focus == Some(Located::Hero(i))) };
-        Button::new(label.as_ptr(), theme::size::BODY, pill)
+        let mut button = Button::new(label.as_cstr().as_ptr(), theme::size::BODY, pill)
             .icon(Icon::Play)
             .focus_mix(fill(0))
             .palette(palette)
-            .scale(pop(0))
-            .draw(env, p);
+            .scale(pop(0));
+        if let Some(progress) = progress {
+            button = button.inline_progress(progress);
+        }
+        button.draw(env, p);
         if let Some((rect, hex)) = disc.zip(disc_hex(hero)) {
             // At either rest the plain face; only a flip in flight layers the fill.
             let (icon, mid) = plx_appkit::watchlist_disc::paint(self.disc.progress(hex));
@@ -3142,9 +3148,8 @@ impl HomeScreen {
             return status_overlay(view, &self.plaintext, &self.clock)?.action_frame_measured(measure);
         }
         let hero = self.selected_hero(view)?.item;
-        let resumes = plx_data::metadata::resume_ns(hero.resume_ms, hero.dur_ns / 1_000_000) > 0;
-        let label = plx_appkit::hero_layout::play_label(resumes);
-        let rects = hero_rects(measure, hero, label);
+        let (label, progress) = hero_action(hero);
+        let rects = hero_rects(measure, hero, label.as_cstr(), progress.is_some());
         match index {
             0 => Some(rects.play),
             1 => Some(rects.info),
@@ -3745,10 +3750,61 @@ struct HeroRects {
     info: Rect,
 }
 
-fn hero_rects(measure: &dyn Measure, item: &PmsMovie, label: &std::ffi::CStr) -> HeroRects {
+/// What the hero's first pill says. A started title shows its progress rail and the time left;
+/// anything else says Play.
+enum PillLabel {
+    Verb(&'static std::ffi::CStr),
+    Left(std::rc::Rc<std::ffi::CStr>),
+}
+
+impl PillLabel {
+    fn as_cstr(&self) -> &std::ffi::CStr {
+        match self {
+            Self::Verb(label) => label,
+            Self::Left(label) => label,
+        }
+    }
+}
+
+/// The pill's label and the fraction already played, when it carries a rail. The time-left text is
+/// built when the time left or the language changes, not per frame: the hero asks three times a frame.
+fn hero_action(hero: &PmsMovie) -> (PillLabel, Option<f32>) {
+    thread_local! {
+        static LEFT: std::cell::RefCell<Option<(i64, usize, std::rc::Rc<std::ffi::CStr>)>> = const { std::cell::RefCell::new(None) };
+    }
+    let resumes = plx_data::metadata::resume_ns(hero.resume_ms, hero.dur_ns / 1_000_000) > 0;
+    if resumes {
+        if let Some(resume) = tile_facts::resume_of(hero) {
+            let locale = std::ptr::from_ref(plx_platform::i18n::current()) as usize;
+            let label = LEFT.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                match &*cache {
+                    Some((left, l, label)) if *left == resume.left_ms && *l == locale => Some(label.clone()),
+                    _ => {
+                        let text = plx_appkit::hero_layout::time_left_text(resume.left_ms);
+                        let label: std::rc::Rc<std::ffi::CStr> = std::ffi::CString::new(text).ok()?.into();
+                        *cache = Some((resume.left_ms, locale, label.clone()));
+                        Some(label)
+                    }
+                }
+            });
+            if let Some(label) = label {
+                return (PillLabel::Left(label), Some(resume.frac));
+            }
+        }
+    }
+    (PillLabel::Verb(plx_appkit::hero_layout::play_label(resumes)), None)
+}
+
+fn hero_rects(measure: &dyn Measure, item: &PmsMovie, label: &std::ffi::CStr, inline_progress: bool) -> HeroRects {
     // One row: Play, the watchlist disc when the title has one (absent: no room, no gap), Info.
     let has_disc = disc_hex(item).is_some();
-    let widths = [plx_appkit::hero_layout::play_width(measure, label), HERO_CTRL_D, HERO_CTRL_D];
+    let play_w = if inline_progress {
+        Button::progress_pill_width(measure, label, theme::size::BODY).max(theme::hero::PLAY_MIN_W)
+    } else {
+        plx_appkit::hero_layout::play_width(measure, label)
+    };
+    let widths = [play_w, HERO_CTRL_D, HERO_CTRL_D];
     let row = &widths[..if has_disc { 3 } else { 2 }];
     let at = |i| plx_appkit::hero_layout::row_rect(row, i, HERO_ROW_Y);
     HeroRects {
@@ -3966,7 +4022,7 @@ fn hero_content(hero: &PmsMovie, source: &str, p: Painter, dx: f32, measure: &dy
     let (date, length) = plx_appkit::hero_layout::listing_facts(hero);
     let credit = plx_ui::fmt::shared_by(source).unwrap_or_default();
     plx_ui::widgets::hero_facts(p, Rect::new(MARGIN_X, stack.facts.y, HERO_COL_W, stack.facts.h),
-        &date, length.as_deref().unwrap_or(""), plx_data::metadata::resume_ns(hero.resume_ms, hero.dur_ns / 1_000_000) > 0, &credit, measure);
+        &date, length.as_deref().unwrap_or(""), false, &credit, measure);
 }
 
 #[cfg(test)]

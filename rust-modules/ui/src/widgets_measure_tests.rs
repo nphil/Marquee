@@ -611,3 +611,25 @@ fn still_line_label_baseline_is_where_it_always_stood() {
     assert_eq!(alone.len(), 1);
     assert_eq!(alone[0].at.y, sub.at.y);
 }
+
+/// An inline progress rail takes its own slot between the icon and the label: the pill grows by
+/// exactly the rail and one gap, and the label is painted that far further along.
+#[test]
+fn an_inline_progress_rail_pushes_the_label_along_by_the_rail_and_one_gap() {
+    let _g = plx_base::testlock::serial();
+    let sz = theme::size::BODY;
+    let plain_w = Button::pill_w(c"38 min left".as_ptr(), sz, true);
+    let rail_w = Button::progress_pill_width(&LegacyMeasure, c"38 min left", sz);
+    assert!((rail_w - plain_w - (BTN_RAIL_W + BTN_ICON_GAP)).abs() < 0.01, "{rail_w} vs {plain_w}");
+    let label_x = |w: f32, frac: Option<f32>| {
+        let mut button = Button::new(c"38 min left".as_ptr(), sz, Rect::new(100.0, 200.0, w, 60.0)).icon(crate::icons::Icon::Play);
+        if let Some(frac) = frac {
+            button = button.inline_progress(frac);
+        }
+        let runs = crate::draw_census::capture_runs(|| button.draw(&Env::inert(), Painter::recording()));
+        runs.iter().find(|r| r.text == "38 min left").expect("the label is painted").at.x
+    };
+    let plain = label_x(plain_w, None);
+    let railed = label_x(rail_w, Some(0.4));
+    assert!((railed - plain - (BTN_RAIL_W + BTN_ICON_GAP)).abs() < 0.5, "{railed} vs {plain}");
+}

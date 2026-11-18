@@ -6378,6 +6378,28 @@ fn the_hero_names_two_genres_and_a_show_with_no_runtime_its_seasons() {
 }
 
 #[test]
+fn a_started_title_reads_its_progress_and_time_left_in_the_pill_and_its_whole_runtime_in_the_facts() {
+    let _guard = plx_base::testlock::serial();
+    let _locale = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+    let ms = 60_000_i64;
+    let mut movie = PmsMovie { kind: plx_data::pms::KIND_MOVIE, title: "Heat".into(), dur_ns: 90 * ms * 1_000_000, ..Default::default() };
+    let (label, progress) = hero_action(&movie);
+    assert_eq!((label.as_cstr().to_str().unwrap(), progress), (plx_appkit::hero_layout::play_text(false), None));
+    movie.resume_ms = 30 * ms;
+    let (label, progress) = hero_action(&movie);
+    assert_eq!(label.as_cstr().to_str().unwrap(), plx_appkit::hero_layout::time_left_text(60 * ms));
+    assert!((progress.unwrap() - 1.0 / 3.0).abs() < 1e-4);
+    let runs = hero_runs(&movie);
+    assert!(runs.iter().any(|r| r.contains(&plx_ui::fmt::duration(90 * ms))), "the whole runtime: {runs:?}");
+    assert!(!runs.iter().any(|r| r.contains("left")), "the time left lives in the pill: {runs:?}");
+    // The pill is wider for its rail, and the Info control keeps its one gap after it.
+    static MEASURE: FixtureMeasure = FixtureMeasure;
+    let plain = hero_rects(&MEASURE, &movie, plx_appkit::hero_layout::play_label(true), false);
+    let railed = hero_rects(&MEASURE, &movie, label.as_cstr(), true);
+    assert!(railed.play.w > plain.play.w && railed.info.x > plain.info.x);
+}
+
+#[test]
 fn spoiler_protection_still_covers_an_unstarted_episodes_synopsis_on_the_hero() {
     let _guard = plx_base::testlock::serial();
     let _locale = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);

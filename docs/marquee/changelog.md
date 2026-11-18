@@ -69,6 +69,7 @@
 - On a Magic Remote, pressing Back over the player no longer brings the controls straight back: the small movement of the pointer as the button is pressed is ignored, so a second Back leaves instead of hiding the controls again. A real move of the pointer still shows them.
 - Home's backdrop (the colour wash, the hero picture and the shade over them) is drawn once while the hero stands still, instead of being re-shaded every frame, which saves graphics work. It is drawn live again whenever anything moves.
 - Home's hero names up to two genres, and a show whose server gives no runtime shows its number of seasons instead.
+- Home's Resume pill shows a rail for how far in the title is, and the time left, in place of the word Resume; the facts line beneath keeps the whole runtime.
 
 ## 0.10.0
 

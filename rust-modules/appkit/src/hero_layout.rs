@@ -188,19 +188,22 @@ pub fn time_facts(year: i64, aired: &str, episode: bool, dur_ms: i64, resume_ms:
         else if year > 0 { year.to_string() } else { String::new() };
     let resumes = plx_data::metadata::resume_ns(resume_ms, dur_ms) > 0;
     let length = (dur_ms >= 60_000).then(|| {
-        if resumes {
-            let left = dur_ms.saturating_sub(resume_ms);
-            if left < 3_600_000 { plx_platform::i18n::msg::browse_detail_minutes_left((left / 60_000).max(1)) }
-            else { plx_ui::fmt::time_left(left) }
-        } else { plx_ui::fmt::duration(dur_ms) }
+        if resumes { time_left_text(dur_ms.saturating_sub(resume_ms)) } else { plx_ui::fmt::duration(dur_ms) }
     });
     (date, length)
 }
 
-/// The date and length Home's hero shows for a listing row. A show with no runtime of its own
-/// falls back to its season count: a runtime says more, so it wins when the server sent one.
+/// How much of a title is left, in the one wording Detail's facts line and Home's Resume pill share.
+pub fn time_left_text(left_ms: i64) -> String {
+    if left_ms < 3_600_000 { plx_platform::i18n::msg::browse_detail_minutes_left((left_ms / 60_000).max(1)) }
+    else { plx_ui::fmt::time_left(left_ms) }
+}
+
+/// The date and length Home's hero shows for a listing row. The length is always the full runtime:
+/// a title being resumed says how much is left in its Resume pill. A show with no runtime of its
+/// own falls back to its season count: a runtime says more, so it wins when the server sent one.
 pub fn listing_facts(item: &plx_data::pms::PmsMovie) -> (String, Option<String>) {
-    let (date, length) = time_facts(i64::from(item.year), &item.aired, item.kind == 3, item.dur_ns / 1_000_000, item.resume_ms);
+    let (date, length) = time_facts(i64::from(item.year), &item.aired, item.kind == 3, item.dur_ns / 1_000_000, 0);
     let seasons = (item.kind == plx_data::pms::KIND_SHOW && item.child_count > 0)
         .then(|| plx_platform::i18n::msg::browse_detail_seasons(item.child_count));
     (date, length.or(seasons))
