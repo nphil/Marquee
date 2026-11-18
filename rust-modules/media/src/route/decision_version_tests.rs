@@ -314,6 +314,7 @@ fn a_page_whose_default_the_set_cannot_decode_gives_up_its_cached_copy() {
         ctx: String::new(),
         preview: false,
         version: None,
+        show_rk: String::new(),
     };
     ps.begin_attempt(std::sync::Arc::new(plx_platform::devcaps::Caps::assumed()));
     assert!(request_env(&ps, meta.view(), &request, None).cached_item.is_some(), "a 4K decoder plays the page's own default");
