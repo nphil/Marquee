@@ -272,3 +272,20 @@ fn the_look_ahead_waits_for_an_unpresented_frame_and_yields_to_a_slide() {
     assert!(!plx_gfx::text::background_prewarm_pending(), "a leaving surface drops it too");
     plx_gfx::text::reset_prewarm_for_test();
 }
+
+/// **Laying the next page out raises no damage.** Constructing a page invalidates, and the
+/// throwaway page is never drawn: the present it bought showed the unchanged page again.
+#[test]
+fn the_look_ahead_raises_no_damage() {
+    let _g = plx_base::testlock::serial();
+    let _sess = seated_scratch_session("settings-lookahead-quiet");
+    let mut s = root_focused_on(RootId::Playback);
+    // The root's own first frames, on which the look-ahead does not run.
+    frame(&mut s, true, 8);
+    frame(&mut s, false, 16);
+    let _ = plx_machine::idle::take_local_damage();
+    still_frames(&mut s);
+    assert!(plx_gfx::text::background_prewarm_pending(), "the look-ahead ran");
+    assert_eq!(plx_machine::idle::take_local_damage(), 0);
+    plx_gfx::text::reset_prewarm_for_test();
+}

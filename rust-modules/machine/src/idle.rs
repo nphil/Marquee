@@ -360,6 +360,27 @@ pub fn decorative<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+thread_local! {
+    /// Depth of open [`unseen`] passes on this thread.
+    static UNSEEN_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `f` — work on something no frame draws, a look-ahead's throwaway page — with the
+/// [`invalidate`]s it raises on this thread dropped. Constructing a page invalidates (twice per
+/// Settings page), so each look-ahead bought a present of the unchanged screen: one late frame
+/// 50–67 ms after a slide into a page whose focused row opens another (television, 2026-11-18).
+pub fn unseen<T>(f: impl FnOnce() -> T) -> T {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            UNSEEN_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+    UNSEEN_DEPTH.with(|d| d.set(d.get() + 1));
+    let _g = Guard;
+    f()
+}
+
 /// Whether a spring at `pos` heading for `target` with `vel` is visibly at rest — the exact test
 /// [`note_spring`] applies, exported so an animator can snap a settled spring onto its target
 /// (`Spring::jump`) and hand the compositor an exactly-resting final frame.
@@ -426,10 +447,11 @@ pub fn note_jump(changed: bool) {
 /// a page the user cannot reach is meant to pause, which is what the profile menu's frozen host has
 /// always done. Nothing genuine can be swallowed: the freeze is armed only for the length of the
 /// page draw, and every real landing (server data, a poster texture, input) reports from the update
-/// phase or from a worker, with the freeze off.
+/// phase or from a worker, with the freeze off. An [`unseen`] pass drops its own thread's reports
+/// the same way.
 #[inline]
 pub fn invalidate() {
-    if page_frozen() {
+    if page_frozen() || UNSEEN_DEPTH.with(|d| d.get()) > 0 {
         return;
     }
     DIRTY.store(true, Relaxed);

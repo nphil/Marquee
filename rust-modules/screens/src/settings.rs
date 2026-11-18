@@ -487,7 +487,9 @@ impl RouteSurface {
         plx_gfx::gfx::without_frame_clear(|| {
             plx_ui::rec::speculative(|| {
                 plx_ui::record_walk(|| {
-                    mount_page(entry, page, cx, &mut fx).draw(&mut DrawFrame::new(cx, Painter::recording()));
+                    plx_machine::idle::unseen(|| {
+                        mount_page(entry, page, cx, &mut fx).draw(&mut DrawFrame::new(cx, Painter::recording()));
+                    })
                 })
             })
         });
