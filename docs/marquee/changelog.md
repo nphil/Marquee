@@ -57,6 +57,7 @@
 - A film played directly from the server over a link too slow for it now pauses and shows Buffering until enough has arrived to carry on, instead of playing in slow motion and then dropping frames to catch up.
 - Pausing a film while the player is quietly testing a higher streaming quality no longer breaks playback: the test is dropped and the stream carries on.
 - Playback that moves to another quality, or restarts at a new spot, no longer leaves a ghost row on the Plex server's dashboard: the session it moved away from is told it stopped, at the spot where playback carried on.
+- When the Plex server ends a stream (an admin stopping it from the dashboard), playback now stops at once, shows the server's own reason with Back as the only action, and clears the dashboard row, instead of carrying on playing a stream the server had already dropped.
 
 ## 0.10.0
 

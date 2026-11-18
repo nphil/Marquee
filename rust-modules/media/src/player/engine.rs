@@ -486,7 +486,7 @@ pub fn reap_abandoned_load(pa: &mut super::adapter::PlayerAdapter) -> bool {
     true
 }
 
-/// **A real stop's native object, handed to an off-frame `Unload`.** `StarfishMediaAPIs::Unload`
+/// **A terminal playback's native object, handed to an off-frame `Unload`.** `StarfishMediaAPIs::Unload`
 /// blocks for 110-150 ms on the dev set (webOS 4.5, release build, measured 2026-10-15 with
 /// `teardown spans:`; the kernel sched trace of the same returns shows the main thread ~31-36 ms in
 /// D state inside a driver `ioctl` and then ~72-74 ms in a futex until the pipeline thread woke it),
@@ -1781,6 +1781,9 @@ pub fn start_cold_bufferfeed_tracked(ps: &mut crate::route::PlaybackSession, pa:
 }
 
 fn start_bufferfeed_tracked_with_recovery(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, cold_enhancement: bool) -> BufferfeedStartOutcome {
+    if super::accept_server_stop(ps) {
+        return BufferfeedStartOutcome::Failed;
+    }
     if plx_platform::tv::sandbox::blocks_native_video() {
         ps.jail_load_blocked = true;
         log("start_bufferfeed: refusing native video; affected chassis cannot read /dev/rtkmem");
@@ -1870,6 +1873,10 @@ fn start_bufferfeed_for(
     route_start: crate::route::RouteStartTransaction,
     cold_enhancement: bool,
 ) -> BufferfeedStartOutcome {
+    if super::accept_server_stop(ps) {
+        let _ = crate::route::abort_route_start(route_start, crate::route::RouteStartResult::StartFailed);
+        return BufferfeedStartOutcome::Failed;
+    }
     #[cfg(feature = "devtriggers")]
     if pa.uri_live() {
         // Reload/foreground starts reach this seam directly too. URI ownership never queues one.
@@ -2627,6 +2634,9 @@ fn note_transcode_resumed(resume_ns: i64) {
 /// rebuild at the saved position is a FLIGHT — planned here on the frame thread, the PMS half on a
 /// worker — and answers [`ResumeStart::Pending`]. The frame never reaches the server.
 pub fn begin_resume(ps: &mut crate::route::PlaybackSession, resume_ns: i64) -> ResumeStart {
+    if super::accept_server_stop(ps) {
+        return ResumeStart::Settled(ResumeOutcome::RebuildRejected);
+    }
     match resume_prelude(ps, resume_ns) {
         ResumePrelude::Settled(outcome) => ResumeStart::Settled(outcome),
         ResumePrelude::Rebuild => match crate::route::dispatch_resume_rebase(ps, resume_ns) {
@@ -2645,6 +2655,9 @@ pub fn begin_resume(ps: &mut crate::route::PlaybackSession, resume_ns: i64) -> R
 /// route is installed and `Prepared` (the caller starts the Load), or the rebuild was refused and
 /// the transaction is `Failed`.
 pub fn land_resume(ps: &mut crate::route::PlaybackSession) -> Option<ResumeOutcome> {
+    if super::accept_server_stop(ps) {
+        return None;
+    }
     crate::route::discard_stale_flight_landing();
     if !crate::route::resume_flight_outstanding() {
         return None;
@@ -2862,7 +2875,18 @@ pub fn reload_transcode_tracked(ps: &mut crate::route::PlaybackSession, pa: &mut
 /// [`poll_release`] (`PendingRelease`), so the object may still exist when this returns; anything
 /// that needs it gone is queued behind it in the release machine (`Deferred`), never waited for.
 pub fn stop_bufferfeed(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) {
+    super::accept_server_stop(ps);
     teardown(ps, pa, false);
+}
+
+/// A retry or queue handoff may replace the outgoing playback only while it owns that decision.
+pub fn stop_for_replacement(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) -> bool {
+    if super::accept_server_stop(ps) {
+        release_server_stopped_engine(ps, pa);
+        return false;
+    }
+    teardown(ps, pa, false);
+    true
 }
 
 /// Suspend for an app-switch: tear the pipeline down (webOS reclaims the video plane while we're
@@ -2922,6 +2946,16 @@ pub fn release_failed_engine(ps: &mut crate::route::PlaybackSession, pa: &mut su
     log("player: the failed Engine's pipeline is released under the failure read-out");
     teardown(ps, pa, true);
     true
+}
+
+/// A server stop can retire a replacement Engine before it ever presents a frame.
+pub(super) fn release_server_stopped_engine(
+    ps: &mut crate::route::PlaybackSession,
+    pa: &mut super::adapter::PlayerAdapter,
+) {
+    if pa.is_live() || SHARED.start_queued.load(Ordering::Relaxed) {
+        teardown(ps, pa, true);
+    }
 }
 
 /// Retire a failed foreground Engine only if it still owns the exact Load the foreground reducer
@@ -3001,7 +3035,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
             crate::route::scrobble_stop(ps, final_report, None);
             crate::route::begin_engine_teardown(false);
             crate::route::drop_original_recovery(ps);
-            crate::route::clear_url(ps);
+            crate::route::retire_stopped_playback(ps);
             SHARED.reset_session();
             TX.reset();
             super::claim_hold::clear();
@@ -3030,6 +3064,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     // mutation of the route the next Load is about to own.
     let mut sp = TeardownSpans::new();
     let mut unload_th = None;
+    let server_stopped = super::server_stop_applies(ps);
     crate::route::begin_engine_teardown(for_reload);
     SHARED.stop_hls_clock();
     let mut eng = pa.take().expect("main-thread live check and take are one transaction");
@@ -3046,12 +3081,13 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     // playback — so reporting an ending on any of them would turn the completion rate into a
     // measure of how often people scrub. Read before the teardown below zeroes both values, for
     // the same reason `final_report` is.
+    let pos = if crate::route::engine_failure(ps) == Some(super::RuntimeFailure::ServerStopped) {
+        crate::route::unpresented_resume_ns(ps)
+    } else {
+        stop_ns
+    };
     if !for_reload {
-        crate::player::report::ended(
-            ps,
-            stop_ns,
-            SHARED.duration_ns.load(Ordering::Relaxed),
-        );
+        crate::player::report::ended(ps, pos, SHARED.duration_ns.load(Ordering::Relaxed));
     }
     let final_report = if for_reload {
         None
@@ -3061,7 +3097,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         if !rk.is_empty() && dur > 0 {
             Some((
                 rk,
-                stop_ns / 1_000_000,
+                pos / 1_000_000,
                 dur / 1_000_000,
             ))
         } else {
@@ -3108,14 +3144,16 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         plx_base::task::join("demux", t);
     }
     sp.mark("join_demux");
-    // A Load the D.1.4 budget already gave up on, still inside `sf_load`: do NOT join it here.
+    // A Load still inside `sf_load` when its playback is terminated, or the D.1.4 budget expired:
+    // park it without joining on the frame thread.
     // This is the main thread, and on the set where the budget fires the call may never return —
     // BACK from the timeout read-out used to freeze the app on this line. The native object is
     // parked instead and released by `reap_abandoned_load` once the thread has returned; nothing
     // below may touch it before then (issue #74). Every other Load keeps the ordinary ordering:
     // one that has returned joins at once, and one that is merely slow is still joined.
     let abandoned_load = match eng.load_th.take() {
-        Some(t) if !t.is_finished() && SHARED.load_timed_out.load(Ordering::Acquire) => Some(t),
+        Some(t) if !t.is_finished()
+            && (SHARED.load_timed_out.load(Ordering::Acquire) || server_stopped) => Some(t),
         Some(t) => {
             plx_base::task::join("media", t);
             None
@@ -3173,7 +3211,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
             _opus_payload: eng.opus_payload_owner.clone(),
             abandoned_at: std::time::Instant::now(),
         });
-    } else if !for_reload {
+    } else if !for_reload || server_stopped {
         unload_th = release_off_frame(pa.mt(), eng.native_epoch, &mut sp);
     } else {
         release_native_object_timed(pa.mt(), eng.native_epoch, &mut sp);
@@ -3221,7 +3259,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         // encoder it was holding is still running on the server, which is why this RETIRES rather
         // than forgets — see `route::drop_original_recovery`.
         crate::route::drop_original_recovery(ps);
-        crate::route::clear_url(ps); // the transcode stop rode out with `scrobble_stop` above
+        crate::route::retire_stopped_playback(ps); // the transcode stop rode out with `scrobble_stop` above
     } else if let Some(t) = eng.report_th.take() {
         // A reload posts no `stopped`, so there is nothing to order against: detach. Its own
         // ReportStop is already set, so it exits after its current POST and cannot be revived by
@@ -6867,6 +6905,24 @@ mod off_frame_release_tests {
     }
 
     #[test]
+    fn server_stop_releases_a_loaded_engine_off_the_frame() {
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        let _serial = plx_base::testlock::serial();
+        let mut pa = arm(&ps);
+        let _cleanup = Cleanup;
+        playing_engine(&mut pa);
+        crate::route::note_engine_failure(&mut ps, super::super::RuntimeFailure::ServerStopped, 0);
+        crate::player::ffi_host::delay_unload_for_test(UNLOAD_MS);
+
+        release_server_stopped_engine(&mut ps, &mut pa);
+
+        assert!(!pa.is_live());
+        assert!(pa.has_pending_release(), "the Unload must run off the frame thread");
+        finish_release_for_test(&mut pa);
+        assert_eq!(crate::player::error_now(&ps).kind, crate::player::FailureKind::ServerStopped);
+    }
+
+    #[test]
     fn a_stop_returns_before_the_unload_and_the_next_start_is_deferred_until_its_tail_ran() {
         let mut ps = crate::route::PlaybackSession::IDLE;
         let _serial = plx_base::testlock::serial();
@@ -8035,6 +8091,54 @@ mod load_in_flight_tests {
         SHARED.demux_failed.store(true, Ordering::Release);
         crate::player::pump::pump(&mut ps, &mut pa, 1001);
         assert_eq!(crate::player::state(&ps), crate::player::PlaybackState::Error);
+    }
+
+    #[test]
+    fn server_stop_parks_a_native_load_that_has_not_returned() {
+        use std::time::Duration;
+
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        let _flight = crate::route::flight_rig::FlightRig::start(&mut ps, Duration::ZERO);
+        SHARED.reset_session();
+        crate::player::ffi_host::reset_native_lifecycle_for_test();
+        crate::player::ffi_host::force_clocksink_for_test(true);
+        let _cleanup = Cleanup;
+
+        let mut pa = crate::player::adapter::PlayerAdapter::new(unsafe { MainThread::assume() });
+        let epoch = SHARED.begin_native_session().expect("native session");
+        let mut eng = engine_loading(epoch);
+        crate::player::ffi_host::hold_load_for_test();
+        let payload_ptr = threads::SendPtr(eng.payload.as_ptr() as *mut c_char);
+        eng.load_th = Some(plx_base::task::spawn("test-server-stopped-load", move || {
+            threads::load_thread(payload_ptr, epoch, None, PcmLead::Off)
+        }).expect("spawn the held Load"));
+        pa.install(eng);
+        let (done, wait) = std::sync::mpsc::channel::<()>();
+        let (result, returned) = std::sync::mpsc::channel();
+        let watchdog = plx_base::task::spawn("test-server-stop-watchdog", move || {
+            let returned_in_time = wait.recv_timeout(Duration::from_secs(5)).is_ok();
+            crate::player::ffi_host::release_load_for_test();
+            let _ = result.send(returned_in_time);
+        }).expect("spawn the held Load watchdog");
+        wait_for_load_in_flight();
+
+        super::super::note_server_stop(crate::route::sess_str(&ps), "rig-1", "admin stop", 12_000);
+        crate::player::pump::pump(&mut ps, &mut pa, 1_000);
+        let parked = !pa.is_live() && pa.has_abandoned_load();
+        let _ = done.send(());
+        plx_base::task::join("test-server-stop-watchdog", watchdog);
+        let returned = returned.recv().unwrap();
+        if pa.is_live() {
+            stop_bufferfeed(&mut ps, &mut pa);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while pa.has_abandoned_load() && !reap_abandoned_load(&mut pa) {
+            assert!(std::time::Instant::now() < deadline, "the released Load was not reaped");
+            std::thread::yield_now();
+        }
+        assert!(returned, "server stop blocked on the held native Load");
+        assert!(parked, "the unfinished Load should be parked with its payload");
+        assert_eq!(crate::player::error_now(&ps).kind, crate::player::FailureKind::ServerStopped);
     }
 
     /// PR #105 review finding: the D.1.4 budget turns a `Load` that never returns into a

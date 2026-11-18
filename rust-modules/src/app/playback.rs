@@ -112,6 +112,9 @@ pub(crate) fn apply_more_action(ps: &mut plx_media::route::PlaybackSession, pa: 
         // running stream. Not deferred either: `route::set_quality` re-asks the routing question
         // for the playback on screen and reloads only when the answer changed.
         plx_appkit::more_menu::Action::SetQuality(q) => {
+            if plx_media::player::server_stop_applies(ps) {
+                return;
+            }
             // A terminal Engine never reaches pump's pending-retranscode arm, and a `/decision`
             // refusal has no Engine at all.  Persist the pick first, then make a fresh playback
             // request at the same user-visible position.  Selecting the already-active rung is
@@ -162,6 +165,9 @@ pub(crate) fn retry_failed_playback(
     // URL/dev-trigger playback has no Plex descriptor.  Check BEFORE teardown: extinguishing its
     // Error Engine and only then discovering it cannot be rebuilt would replace an actionable
     // read-out with an idle black frame.
+    if plx_media::player::server_stop_applies(ps) {
+        return false;
+    }
     if !plx_media::route::can_retry_current_play(ps) {
         log("playback retry: current source has no reusable Plex request");
         return false;
@@ -173,7 +179,9 @@ pub(crate) fn retry_failed_playback(
     let resume_ns = intended_pos(ps)
         .max(plx_media::route::unpresented_resume_ns(ps))
         .max(0);
-    plx_media::player::stop_bufferfeed(ps, pa);
+    if !plx_media::player::engine::stop_for_replacement(ps, pa) {
+        return false;
+    }
     if plx_media::route::retry_current_play(ps, meta, resume_ns, direct_play, origin) {
         plx_machine::idle::invalidate();
         true
@@ -200,6 +208,9 @@ pub(crate) fn play_automatically(
     meta: &mut plx_data::stores::metadata::MetadataStore,
 ) -> bool {
     use plx_plex::plex::session::{DirectPlayMode, DirectPlayModePref};
+    if plx_media::player::server_stop_applies(ps) {
+        return false;
+    }
     plx_media::route::choose::<DirectPlayModePref>(DirectPlayMode::Auto, plx_media::route::How::Optimistic(None));
     retry_failed_playback(ps, pa, meta, Some(DirectPlayMode::Auto), AttemptOrigin::UserRetry)
 }
@@ -900,6 +911,9 @@ pub(crate) fn finish_playback(
     {
         return true;
     }
+    if plx_media::player::server_stop_applies(&player.session) {
+        return false;
+    }
     exit_player(player, pa, repause_at, refresh_hubs, pages);
     // The ring goes back to the scrubber for the NEXT session, and the next session is a fresh
     // instance — so there is nothing to park here any more (`start_playback`'s note).
@@ -945,6 +959,9 @@ pub(crate) fn activate_ctrl_row(
                 if let Some(player) = super::bridge::player_mut(pages) {
                     player.up_next.cancel_kind(pr.kind);
                 }
+                return false;
+            }
+            if plx_media::player::server_stop_applies(&player.session) {
                 return false;
             }
             plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
@@ -996,6 +1013,9 @@ pub(crate) fn play_up_next(
     pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
     bridge: &mut super::bridge::Bridge,
 ) -> bool {
+    if plx_media::player::server_stop_applies(ps) {
+        return false;
+    }
     // clone off the `&'static` store BEFORE anything can replace it (see `Countdown::take`)
     let Some(u) = super::bridge::player_mut(pages).and_then(|player| player.up_next.take(ps)) else {
         return false;
@@ -1981,3 +2001,4 @@ mod play_start_caps_tests {
         assert!(plx_platform::devcaps::caps().audio_supports("dts", 6), "the boot value is untouched");
     }
 }
+
