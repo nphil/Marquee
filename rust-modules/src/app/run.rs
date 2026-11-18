@@ -3505,6 +3505,7 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
         // time it is here the presenting is already decided and done.
         for line in app.pages.take_cold_open_lines() {
             log(&line);
+            plx_base::diag::startup::note_screen(&line);
         }
         // frame-drop detector: attribute slow frames to pump(uploads)/draw/swap(GPU).
         // ONE tail for every route — this used to live only on the non-player path, which left

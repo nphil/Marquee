@@ -3768,6 +3768,7 @@ pub(crate) fn follow_auth_landing(pages: &mut Dispatcher<AppHost>, bridge: &mut 
         // Plex Home account it was already asked at the picker below and this is a no-op; on a
         // single-user account this is the earliest authorized moment there is.
         super::input::maybe_ask_consent(pages);
+        plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Server);
         bridge.refresh_browse_directory();
         if plx_data::stores::browse::onboard::asks(bridge.browse_directory(), &plx_plex::plex::session::peek()) {
             plx_base::eventlog::log("login: server installed — asking which sources feed Home");

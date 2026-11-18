@@ -1608,6 +1608,7 @@ pub(crate) unsafe fn construct(
         Some(initial) => initial.session.persisted.clone(),
         None => plx_plex::plex::session::load(),
     };
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Session);
     // The television is placed at 0,0 at exactly canvas size (unless a webOS 1-3 owner picked a smaller
     // Interface resolution, `requested_drawable`) and takes the panel. A desktop
     // window is centred (`SDL_WINDOWPOS_CENTERED`) at whatever fits — see `plan_desktop_window`.
@@ -1663,6 +1664,7 @@ pub(crate) unsafe fn construct(
     #[cfg(feature = "hostsim")]
     fit_window_to_density(win, desktop_ask);
     plx_base::surface::probe(win);
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Window);
     // vsync on → the frame rate locks to the panel refresh. `/tmp/plxnative-novsync` uncaps it so
     // `fps=` reports the true GPU render rate. WSLg's X11/GLX swap accepts interval 1 without
     // blocking, so the software budget in `run` follows the same switch.
@@ -1727,9 +1729,12 @@ pub(crate) unsafe fn construct(
     // that has nothing behind it. See `system.rs`'s section on it.
     plx_platform::tv::window::arm_opaque_region();
     plx_gfx::gfx::init_gl();
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Gl);
     plx_gfx::text::init_text();
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Text);
     plx_gfx::gfx::init_image();
     plx_gfx::gfx::init_blur();
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Image);
     // The transport takes the client's `User-Agent` as a value (it names no Plex layer): hand it
     // over before any request can be made, so the first one already carries it.
     if plx_net::net::set_user_agent(plx_plex::plex::identity::user_agent()).is_err() {
@@ -1739,6 +1744,7 @@ pub(crate) unsafe fn construct(
     // means this device has no libcurl we can bind, so plex.tv sign-in will not work — the app
     // still runs, and `net::global_init` has already said so in the event log.
     let _ = plx_net::net::global_init();
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Net);
     // Drain whatever the LAST session left behind, on a worker — and **after `global_init`,
     // which is the whole reason this line is here and not beside `telemetry::boot()` 170 lines
     // up.** It was there first, and the end-to-end run showed why that was wrong: the worker
@@ -1832,6 +1838,7 @@ pub(crate) unsafe fn construct(
         super::adapters::poster::init();
         crate::capture::init(); // dev live UI capture stream
     }
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Posters);
 
     // Any dev trigger under /tmp marks the boot as automated (the harness token override,
     // autoplay/detail captures, playback-path knobs): those runs need a deterministic Home,
@@ -2036,6 +2043,7 @@ pub(crate) unsafe fn construct(
     let boot_to = if controlled { BootTo::Home } else {
         activate_session(&mut bridge, &mut pages, &mut super::recorder::Recplay::Off)
     };
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Gate);
     if !controlled {
         plx_media::player::acb_init(&mt);
         plx_media::ff::boot(); // Live playback resource boot; controlled Home cannot invoke ABI probes.

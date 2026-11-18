@@ -4,5 +4,6 @@
 
 pub mod heartbeat; // the frame's own instruments: the eight phase stamps, FRAMEDROP, worstframe=/worstprep=
 pub mod spans; // named sub-spans of one frame (results, update, draw), printed on its FRAMEDROP line
+pub mod startup; // cold-start milestones: one `startup: <stage> +<ms>ms` line per stage, from process exec
 #[cfg(feature = "lab-diagnostics")]
 pub mod zlib;

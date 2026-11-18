@@ -1636,6 +1636,7 @@ pub(crate) struct GfxUploader;
 
 impl Uploader for GfxUploader {
     fn upload(&mut self, d: &Decoded) -> Tex {
+        plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Poster);
         let id = img::img_upload_rgba(d.rgba.as_ptr(), d.w as c_int, d.h as c_int);
         UP_CT.fetch_add(1, Ordering::Relaxed);
         #[cfg(feature = "devtriggers")]

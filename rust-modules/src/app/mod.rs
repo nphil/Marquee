@@ -573,6 +573,7 @@ pub fn synthetic_home_initial(seed: u32, port: u16, settings: Option<String>)
 }
 
 fn enter_application(pms_host: *const c_char, pms_port: c_int) -> Result<App,c_int> {
+    plx_base::diag::startup::mark(plx_base::diag::startup::Stage::Enter);
     // What `plx_plex` reports as `X-Plex-Version` is this build's `PLX_VERSION`, which a
     // `cargo:rustc-env` makes visible to this crate only; before anything can build a header.
     plx_plex::plex::identity::set_version(env!("PLX_VERSION"));
