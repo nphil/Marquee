@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Leaving a title page while its trailer preview is still opening (Down to the episodes, say) no longer holds that frame while the preview's network connection closes, about 40 ms on the TV: the connection is told to stop and is waited for on later frames.
 - The Subtitles menu lists every built-in track again when several share a language and kind (two releases of the English translation). A downloaded subtitle hides a built-in one only when that is the only built-in track of its language and kind, and tracks that would read alike are told apart by the name in their own title ("English (Commie)") or a count ("English 2").
 - Player menus over a film no longer add their black dimming layer to the colour-conversion work, so they open and close with less graphics work. Adapted from plx-native 233a94839.
 - A Library opens on the Recommended or Collections page it was last left on, kept per profile and library. Closing the page clears it. Adapted from plx-native 095f74ca9.

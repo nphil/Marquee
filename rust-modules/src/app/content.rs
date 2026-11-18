@@ -59,7 +59,7 @@ std::thread_local! {
 }
 
 /// Must a preview be halted this frame? `active` is a preview occupying the machine or installed
-/// in the session, `abandoning` is a halt already waiting for its Load to return, and `host_owns_input`
+/// in the session, `abandoning` is a halt already waiting for its Load or demux to return, and `host_owns_input`
 /// is whether the page that started it still owns input.
 pub(super) fn preview_must_halt(active: bool, abandoning: bool, host_owns_input: bool) -> bool {
     active && !abandoning && !host_owns_input
@@ -101,8 +101,8 @@ pub(super) fn halt_preview_now(
     plx_media::player::preview::halt(ps, pa);
 }
 
-/// Queue a play for [`drain_held_feature`] to perform once a still-abandoning preview's Load
-/// thread has actually released the engine. `halt_preview`/`halt_preview_now` only STARTS
+/// Queue a play for [`drain_held_feature`] to perform once a still-abandoning preview's Load and
+/// demux threads have actually released the engine. `halt_preview`/`halt_preview_now` only STARTS
 /// abandonment — the preview may still hold `pa.engine()` installed for a moment after, and
 /// starting a second Load against that installed engine hits the double-start conflict guard
 /// and refuses instead of queuing. Every caller that can reach a still-occupied preview

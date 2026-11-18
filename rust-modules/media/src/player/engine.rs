@@ -265,6 +265,9 @@ pub struct Engine {
     pub report_stop: Option<std::sync::Arc<threads::ReportStop>>, // ITS stop signal, not SHARED's
     /// Preview Load that must land unbound. The media join waits until the thread has returned.
     pub preview_abandon: bool,
+    /// When a preview's stop woke this demux ([`wake_stream`]). Its join waits for it off the frame
+    /// ([`preview_join_pending`]).
+    pub(super) stream_woken_at: Option<std::time::Instant>,
     /// The foreground lifecycle follows this Engine's Load attempt ([`foreground_follows_load`]).
     /// It then owns the Load call's own synchronous result (`route_start_status` `Failed`, the
     /// refusal #1018 retries), so the pump's failed-open ladder leaves that one alone
@@ -2504,6 +2507,7 @@ fn start_bufferfeed_inner(
         report_th,
         report_stop: Some(report_stop),
         preview_abandon: false,
+        stream_woken_at: None,
         foreground_follows_load: false,
         era_watch: super::era_callbacks::Watch::new(),
     };
@@ -2989,6 +2993,44 @@ pub fn foreground_follows_load(pa: &mut super::adapter::PlayerAdapter, attempt: 
     }
 }
 
+/// Unblock the demux without joining it: abort both lanes (it may be parked in `aq_push` on a full
+/// one), shut its plaintext socket and wake an https open. Repeating it is harmless.
+fn wake_stream(eng: &mut Engine) {
+    if !matches!(eng.source, Source::Stream { .. }) {
+        return;
+    }
+    for q in [eng.aq_video.as_mut(), eng.aq_audio.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        crate::aq::aq_abort(&mut **q);
+    }
+    let p = SHARED.hs_ptr.load(Ordering::Acquire);
+    if !p.is_null() {
+        // shutdown, not close: the demux thread may still be inside recv, and closing would free
+        // the fd number for another thread to claim while this one reads it. The real close
+        // happens after the join.
+        plx_net::stream::http_shutdown(p);
+    }
+    // …and the same interrupt for the OTHER transport. An https demux is parked in
+    // `curl_multi_wait`, where no `shutdown(2)` of ours can reach it — this writes a byte to
+    // the wake pipe it is polling. A no-op when the live source is a plaintext socket, or when
+    // there is none; exactly one of these two lines ever has anything to do. `curlio`'s module
+    // doc explains why the handle lives in a registry rather than being passed up to here.
+    crate::curlio::abort_active();
+}
+
+/// Is a stopping preview still waiting, off the frame, for one of its threads?
+/// ([`super::preview::defer_join`].)
+pub(super) fn preview_join_pending(eng: &Engine) -> bool {
+    super::preview::defer_join(
+        eng.stage == Stage::Loading,
+        eng.load_th.as_ref().is_none_or(|t| t.is_finished()),
+        eng.stream_th.as_ref().is_none_or(|t| t.is_finished()),
+        eng.stream_woken_at.map(|at| at.elapsed()),
+    )
+}
+
 /// The teardown body. `for_reload` = this is a direct-play seek reload (reload_at), NOT a real
 /// stop: preserve the playback session so start_bufferfeed can restart the SAME item — skip
 /// the "stopped" timeline scrobble, the server transcode stop, and the URL clear.
@@ -3046,14 +3088,23 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         }
         return;
     }
-    // A preview Load that has not returned yet must not be joined on this frame. Bind is skipped
-    // while the flag is set, so the picture never reaches the plane. The next halt joins once
-    // the thread has already finished.
+    // A preview's threads are not joined on this frame while they are still running: a Load that
+    // has not returned, and a demux still inside its open (an https open takes 26-40 ms to notice
+    // the abort, measured 2026-11-18, which was the whole of a 42 ms frame on DOWN). A real stop
+    // wakes the demux here and the join follows on a later frame, once it has returned
+    // (`preview::after_pump`) or, past `preview::DEMUX_JOIN_BOUND`, here as before. Waking it ahead of
+    // the ticket revocation below is safe for a preview only: it is direct play, so no HLS
+    // candidate or fallback is in flight, and the pump's preview failure arms wait while the
+    // machine is Abandoning, so the aborted open never reaches the breaker. Bind is skipped while
+    // the flag is set, so the picture never reaches the plane.
     if crate::route::is_preview(ps) {
         if let Some(eng) = pa.engine() {
-            let loading = eng.stage == Stage::Loading;
-            let finished = eng.load_th.as_ref().is_none_or(|t| t.is_finished());
-            if crate::player::preview::defer_media_join(loading, finished) {
+            let demux_running = eng.stream_th.as_ref().is_some_and(|t| !t.is_finished());
+            if !for_reload && demux_running && eng.stream_woken_at.is_none() {
+                wake_stream(eng);
+                eng.stream_woken_at = Some(std::time::Instant::now());
+            }
+            if preview_join_pending(eng) {
                 eng.preview_abandon = true;
                 return;
             }
@@ -3114,28 +3165,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     if let Some(st) = eng.report_stop.take() {
         st.stop(); // this reporter's own signal — unaffected by the reset_session below
     }
-    if stream {
-        // abort BOTH lanes: unblock the demux if it's parked in aq_push on a full lane
-        for q in [eng.aq_video.as_mut(), eng.aq_audio.as_mut()]
-            .into_iter()
-            .flatten()
-        {
-            crate::aq::aq_abort(&mut **q);
-        }
-        let p = SHARED.hs_ptr.load(Ordering::Acquire);
-        if !p.is_null() {
-            // shutdown, not close: the demux thread is still inside recv here and is joined
-            // below. Closing now would free the fd number for another thread to claim while
-            // this one is still reading it. The real close happens after the join.
-            plx_net::stream::http_shutdown(p);
-        }
-        // …and the same interrupt for the OTHER transport. An https demux is parked in
-        // `curl_multi_wait`, where no `shutdown(2)` of ours can reach it — this writes a byte to
-        // the wake pipe it is polling. A no-op when the live source is a plaintext socket, or when
-        // there is none; exactly one of these two lines ever has anything to do. `curlio`'s module
-        // doc explains why the handle lives in a registry rather than being passed up to here.
-        crate::curlio::abort_active();
-    }
+    wake_stream(&mut eng);
     sp.mark("unblock");
     // 2. JOIN every worker before freeing anything they hold raw ptrs into
     // Through `task::join` so a stall leaves a number behind: this is the main thread, and every
@@ -5753,6 +5783,7 @@ mod prime_livelock_tests {
             report_th: None,
             report_stop: None,
             preview_abandon: false,
+            stream_woken_at: None,
             foreground_follows_load: false,
             era_watch: crate::player::era_callbacks::Watch::new(),
         }
@@ -7500,6 +7531,67 @@ mod off_frame_release_tests {
         );
         finish_release_for_test(&mut pa);
         assert!(!crate::player::ffi_host::lifecycle_blocked_for_test());
+    }
+
+    /// **Stopping a preview does not join its demux on the frame.** On the TV, DOWN on a title
+    /// page while the trailer was opening held that frame for 42 ms (`teardown spans: stop
+    /// total=39.9 join_demux:39.5`): its https open needed that long to notice the abort. The
+    /// stub demux here sees the wake at once but returns only when the test lets it, so a halt
+    /// that joins it on the frame waits out the stub's 2 s instead.
+    #[test]
+    fn a_preview_halt_wakes_its_demux_and_joins_it_on_a_later_frame() {
+        use crate::player::preview;
+        use std::time::{Duration, Instant};
+        struct ResetPreview;
+        impl Drop for ResetPreview {
+            fn drop(&mut self) {
+                preview::reset_for_test();
+            }
+        }
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        let _serial = plx_base::testlock::serial();
+        let mut pa = arm(&ps);
+        let _cleanup = Cleanup;
+        let _preview = ResetPreview;
+        crate::route::mark_preview_for_test(&mut ps);
+        playing_engine(&mut pa);
+        let (woken_tx, woken_rx) = std::sync::mpsc::channel();
+        let (return_tx, return_rx) = std::sync::mpsc::channel::<()>();
+        let eng = pa.engine().expect("the engine was installed");
+        let lane = eng.aq_video.as_deref().map(|q| q as *const crate::aq::AuQueue as usize).expect("video lane");
+        let demux = std::thread::Builder::new()
+            .name("test-demux".into())
+            .spawn(move || {
+                while !unsafe { crate::aq::aq_is_aborted(lane as *const crate::aq::AuQueue) } {
+                    std::thread::yield_now();
+                }
+                let _ = woken_tx.send(());
+                let _ = return_rx.recv_timeout(Duration::from_secs(2));
+            })
+            .expect("spawn the stub demux");
+        eng.stream_th = Some(demux);
+        preview::set_phase_for_test(preview::Phase::Binding);
+
+        let started = Instant::now();
+        preview::halt(&mut ps, &mut pa);
+        let held = started.elapsed();
+        assert!(held < Duration::from_millis(200), "the halt joined the demux on the frame: {held:?}");
+        woken_rx.recv_timeout(Duration::from_secs(1)).expect("the halt must wake the demux");
+        assert!(pa.is_live(), "the engine stays installed until its demux has returned");
+        assert!(preview::abandoning(), "a Play must be held until the engine is gone");
+        preview::after_pump(&mut ps, &mut pa, 0);
+        assert!(pa.is_live(), "a frame before the demux returns must not join it");
+
+        return_tx.send(()).expect("the stub demux is waiting");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while pa.is_live() {
+            assert!(Instant::now() < deadline, "the returned demux was never joined");
+            std::thread::yield_now();
+            preview::after_pump(&mut ps, &mut pa, 0);
+        }
+        assert!(!preview::occupies(), "the machine must end Idle once the engine is gone");
+        assert!(!crate::route::is_preview(&ps));
+        finish_release_for_test(&mut pa);
     }
 }
 

@@ -444,10 +444,24 @@ pub fn accepts_direct_play(direct_play: bool, part_nonempty: bool, adaptive: boo
     direct_play && part_nonempty && !adaptive
 }
 
-/// Defer the media join while an in-flight Load has not returned. Joining it on the main thread
-/// is the stall Abandoning exists to avoid.
-pub fn defer_media_join(loading: bool, thread_finished: bool) -> bool {
-    loading && !thread_finished
+/// How long a stopped preview's woken demux may take to return before its join goes back on the
+/// frame, as it was before the wait existed. An https open noticed the abort in 26-40 ms on the
+/// television (2026-11-18); a demux this bound does not cover is stuck somewhere the abort does
+/// not reach, and holding a Play behind it for longer buys nothing.
+pub const DEMUX_JOIN_BOUND: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Must a stopping preview leave its threads to finish, rather than join them on the frame?
+/// A Load that has not returned is never joined there: that stall is what Abandoning exists to
+/// avoid. A demux the stop woke (`demux_woken`: how long ago) is waited for until
+/// [`DEMUX_JOIN_BOUND`]; one nobody woke (an app-switch suspend) is joined at once, as before.
+pub fn defer_join(
+    loading: bool,
+    load_finished: bool,
+    demux_finished: bool,
+    demux_woken: Option<std::time::Duration>,
+) -> bool {
+    (loading && !load_finished)
+        || (!demux_finished && demux_woken.is_some_and(|waited| waited < DEMUX_JOIN_BOUND))
 }
 
 plx_base::devtrig::latched_flag!(
@@ -762,12 +776,13 @@ pub fn after_pump(
         // resource an OS thread may still be executing against — a real memory-safety question
         // (does the leaked `SfSlot` pattern in `src/starfish.c` make that safe, or does it not)
         // that needs `player/CLAUDE.md`'s device verification + fw-compat review, not a desk fix.
-        let finished = pa
-            .engine()
-            .and_then(|e| e.load_th.as_ref())
-            .is_none_or(|t| t.is_finished());
+        // The demux a stop woke is waited for here too, up to `DEMUX_JOIN_BOUND`.
+        let finished = pa.engine().is_none_or(|e| {
+            e.load_th.as_ref().is_none_or(|t| t.is_finished())
+                && !super::engine::preview_join_pending(e)
+        });
         if finished {
-            retire(ps, pa, "abandoned Load returned");
+            retire(ps, pa, "abandoned preview threads returned");
         }
         return;
     }
@@ -1197,10 +1212,16 @@ mod tests {
     }
 
     #[test]
-    fn abandon_defers_the_join_until_the_load_thread_has_returned() {
-        assert!(defer_media_join(true, false));
-        assert!(!defer_media_join(true, true));
-        assert!(!defer_media_join(false, false));
+    fn a_stop_defers_the_join_until_the_load_and_the_woken_demux_have_returned() {
+        use std::time::Duration;
+        let woken = Some(Duration::from_millis(30));
+        assert!(defer_join(true, false, true, None), "a Load in flight");
+        assert!(!defer_join(true, true, true, None));
+        assert!(!defer_join(false, false, true, None), "a returned Load's thread is joined");
+        assert!(defer_join(false, true, false, woken), "a woken demux inside its open");
+        assert!(!defer_join(false, true, true, woken));
+        assert!(!defer_join(false, true, false, None), "nobody woke it: joined as before");
+        assert!(!defer_join(false, true, false, Some(DEMUX_JOIN_BOUND)), "past the bound: joined as before");
     }
 
     #[test]
