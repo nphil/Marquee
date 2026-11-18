@@ -61,6 +61,10 @@ const char *vp_window_id(void);
 /* Source frame -> on-screen picture, cropped together outside the player canvas. */
 int  vp_place(int src_w, int src_h, int dst_x, int dst_y, int dst_w, int dst_h);
 void vp_destroy_window(void);
+/* Forget the held windowId without destroying it. An export belongs to the compositor connection
+ * that made it; once that connection is gone the id names nothing (or, on the new connection,
+ * another export), so it must not be destroyed or placed. The next vp_create_window starts clean. */
+void vp_forget_window(void);
 
 /* ACB (App Common Binding) — VP_ACB only; every verb is a no-op in the other modes, so callers
  * need not branch. On webOS 5 this whole sequence has no replacement: it is deleted outright. */

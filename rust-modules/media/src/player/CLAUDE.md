@@ -86,6 +86,14 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   playhead (`engine::reload_at` in direct play, a transcode seek flight otherwise, both logged
   `stall:`) when player and source wait on each other for `STALL_PATIENCE_MS`, or a `Notice` the
   screen reads (`player::stall_notice`, `picture_frozen`) while the server is the hold-up.
+  After it `watch_export` hands the pure `export_watch::ExportWatch` the same kind of observation:
+  an exported window (webOS 5+) belongs to the compositor connection that made it, so the app calls
+  `player::display_reconnected` when it takes its window back (DID foreground), which bumps
+  `Shared::display_epoch` and makes the seam forget the cached id (`vp_forget_window`, no destroy: the
+  connection that owned it is gone). A playback bound to an older epoch, or whose export was never
+  made or was refused (`export_epoch`, `export_refused`), reopens quietly at the playhead the way a
+  stall restart does; a refusal is retried once per playback. No signal inside the app says "frames
+  shown but no video signal" (that is the TV's capture service), so the freeze watch does not guess.
 - `threads.rs` — the workers beside the demuxer: **`load_thread`** (construct Starfish + `Load()`,
   which owns its own GMainContext) and **`timeline_thread`** (the ~10 s `/:/timeline` progress
   reporter). The **demux thread body is `ff::demux`** (spawned by `engine::start_bufferfeed`): open

@@ -202,6 +202,11 @@ void vp_destroy_window(void) {
     g_window_id[0] = 0;
 }
 
+void vp_forget_window(void) {
+    if (g_window_id[0] && elogf) { fprintf(elogf, "vplane: forgot exported windowId=%s\n", g_window_id); fflush(elogf); }
+    g_window_id[0] = 0;
+}
+
 #define SINK_TYPE_MAIN      0
 #define APPSTATE_FOREGROUND 1
 #define PLAYSTATE_UNLOADED  0

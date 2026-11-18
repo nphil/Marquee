@@ -584,6 +584,8 @@ pub(super) fn force_object_ready_for_test(on: bool) {
 pub(super) fn reset_native_lifecycle_for_test() {
     // First, while the globals below still name the session the stale worker belongs to.
     drain_unload_workers_for_test();
+    EXPORTS_CREATED.store(0, Relaxed);
+    EXPORT_FORGOTTEN.store(false, Relaxed);
     ACTIVE_EPOCH.store(0, Relaxed);
     CALLBACK_INTERCEPTS.store(0, Relaxed);
     CALLBACK_GATE_RETIRED.store(false, Relaxed);
@@ -1089,8 +1091,22 @@ unsafe fn vp_mode() -> c_int {
         plx_platform::tv::sink::VP_NONE
     }
 }
+/// The fake compositor's export bookkeeping, for the reconnect tests: exports created since the
+/// last reset, and whether the held id was forgotten (its connection gone) and not yet replaced.
+#[cfg(test)]
+static EXPORTS_CREATED: AtomicU32 = AtomicU32::new(0);
+static EXPORT_FORGOTTEN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+pub(crate) fn exports_created_for_test() -> u32 {
+    EXPORTS_CREATED.load(Relaxed)
+}
+
 unsafe fn vp_create_window() -> *const c_char {
     if enabled() {
+        #[cfg(test)]
+        EXPORTS_CREATED.fetch_add(1, Relaxed);
+        EXPORT_FORGOTTEN.store(false, Relaxed);
         c"clocksink-window".as_ptr()
     } else {
         std::ptr::null()
@@ -1099,7 +1115,7 @@ unsafe fn vp_create_window() -> *const c_char {
 /// Never NUL — contracted to return a valid string even when no window exists, and `ui::stats`
 /// reads it unconditionally.
 unsafe fn vp_window_id() -> *const c_char {
-    if enabled() {
+    if enabled() && !EXPORT_FORGOTTEN.load(Relaxed) {
         c"clocksink-window".as_ptr()
     } else {
         c"".as_ptr()
@@ -1118,6 +1134,9 @@ unsafe fn vp_place(
     c_int::from(enabled())
 }
 unsafe fn vp_destroy_window() {}
+unsafe fn vp_forget_window() {
+    EXPORT_FORGOTTEN.store(true, Relaxed);
+}
 
 unsafe fn acb_create(_app_id: *const c_char, _player_type: c_int) -> c_long {
     #[cfg(any(test, feature = "test-support"))]
@@ -1262,6 +1281,9 @@ impl VideoSink for HostSink {
     }
     unsafe fn destroy_window(&self, _: &MainThread) {
         vp_destroy_window()
+    }
+    unsafe fn forget_window(&self, _: &MainThread) {
+        vp_forget_window()
     }
     unsafe fn plane_create(
         &self,

@@ -65,6 +65,7 @@ mod sys {
             dst_h: c_int,
         ) -> c_int;
         pub(super) fn vp_destroy_window();
+        pub(super) fn vp_forget_window();
         pub(super) fn vp_can_crop() -> c_int;
 
         pub(super) fn acb_create(app_id: *const c_char, player_type: c_int) -> c_long;
@@ -231,6 +232,10 @@ impl plx_platform::tv::sink::VideoSink for StarfishSink {
     #[inline]
     unsafe fn destroy_window(&self, _: &MainThread) {
         sys::vp_destroy_window()
+    }
+    #[inline]
+    unsafe fn forget_window(&self, _: &MainThread) {
+        sys::vp_forget_window()
     }
 
     #[inline]

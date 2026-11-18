@@ -583,6 +583,15 @@ pub struct Shared {
     /// The freeze safety net's notice for the screen, a [`super::stall_watch::Notice`] as `u8`.
     /// The pump writes it on every tick it runs; the session reset clears it.
     pub stall_notice: AtomicU8,
+    /// Which compositor connection the process is on, counted from 1 and never reset: the app bumps
+    /// it each time it takes its window back from the television (`player::display_reconnected`).
+    /// An exported window belongs to the connection that created it.
+    pub display_epoch: AtomicU32,
+    /// The [`display_epoch`](Self::display_epoch) the current exported window was created under;
+    /// 0 when the last Load had no export. Written by the Load's payload build, never reset.
+    pub export_epoch: AtomicU32,
+    /// The television refused to place the current export (`vplane: place` answered failure).
+    pub export_refused: AtomicBool,
     /// **The raw pts of the first audio AU the demuxer pushed since its last open or seek**.
     /// Written by `ff::demux` BEFORE that push, so the feed thread that pops the AU
     /// sees it. The audio lane uses it to tell the real start of a late audio track (an MKV
@@ -1117,6 +1126,9 @@ impl Shared {
             frames: AtomicI32::new(0),
             seen_frame: AtomicBool::new(false),
             stall_notice: AtomicU8::new(0),
+            display_epoch: AtomicU32::new(1),
+            export_epoch: AtomicU32::new(0),
+            export_refused: AtomicBool::new(false),
             first_audio_pts: AtomicI64::new(i64::MIN),
             audio_switch: AtomicU8::new(AudioSwitch::None as u8),
             audio_pick_ms: AtomicI64::new(0),

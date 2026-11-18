@@ -59,6 +59,8 @@ pub struct PlayerAdapter {
     /// The freeze safety net's memory (`stall_watch`), held beside the Engine slot because it must
     /// outlive the reloads it asks for.
     stall: super::stall_watch::StallWatch,
+    /// The exported window's watch, held here for the same reason: a rebuild must not forget it.
+    export: super::export_watch::ExportWatch,
     /// The URI-mode probe's session (issue #1064, dev trigger `plxnative-uriprobe`): the probe plays
     /// through `com.webos.media` instead of an [`Engine`], so it lives BESIDE the engine slot and
     /// never in it. [`is_live`](Self::is_live) stays Engine-only: the Engine paths (`pump`, the
@@ -105,6 +107,7 @@ impl PlayerAdapter {
             queued_watch: QueuedWatch::Unwatched,
             preview_admission: None,
             stall: super::stall_watch::StallWatch::default(),
+            export: super::export_watch::ExportWatch::default(),
             #[cfg(feature = "devtriggers")]
             uri: None,
         }
@@ -375,6 +378,11 @@ impl PlayerAdapter {
     /// The freeze safety net's memory, for the pump's last word on each tick.
     pub(super) fn stall_watch(&mut self) -> &mut super::stall_watch::StallWatch {
         &mut self.stall
+    }
+
+    /// The exported window's watch, for the pump's tick.
+    pub(super) fn export_watch(&mut self) -> &mut super::export_watch::ExportWatch {
+        &mut self.export
     }
 }
 

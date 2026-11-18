@@ -61,6 +61,7 @@ mod foreground_flight_tests;
 #[cfg(all(test, feature = "hostsim"))]
 mod resume_tests;
 mod shared;
+mod export_watch; // the exported window's watch: a window from a gone compositor connection is rebuilt (pure machine); `pump` drives it
 mod stall_watch; // the freeze safety net: a player waiting on a source that has stopped (pure machine); `pump` drives it
 pub mod sidecar;
 pub mod speechdock_settings;
@@ -2572,6 +2573,16 @@ fn vclock_ms() -> u32 {
     use std::time::Instant;
     static T0: OnceLock<Instant> = OnceLock::new();
     T0.get_or_init(Instant::now).elapsed().as_millis() as u32
+}
+
+/// The app has taken its window back from the television, which on a compositor restart is a new
+/// connection. The exported window made on the old one names nothing now: it is forgotten rather
+/// than destroyed, the next Load makes a fresh one, and a playback bound to the old one is rebuilt
+/// at its playhead by the pump (`export_watch`).
+pub fn display_reconnected(mt: &MainThread) {
+    let epoch = SHARED.display_epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    unsafe { raw_sink().forget_window(mt) };
+    log(&format!("vplane: display reconnected (connection {epoch}); the exported window is dropped"));
 }
 
 /// **The pipeline's `FRAMEREADY` cadence since the last call**: ticks received, and the worst gap

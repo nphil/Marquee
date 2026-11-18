@@ -1212,6 +1212,9 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
             app.reread.resume();
             // Reacquire only on DID foreground, before playback restoration and rendering.
             restore_window(app.win);
+            // The window came back from the television, which after a compositor restart means a
+            // new connection: the exported video window made on the old one is dead.
+            plx_media::player::display_reconnected(app.adapters.player.mt());
             plx_machine::idle::invalidate();
             // A decoder-release park is claimed by this edge like any other park.
             app.decoder_parked = false;

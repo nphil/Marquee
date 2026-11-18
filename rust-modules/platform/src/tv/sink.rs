@@ -103,6 +103,9 @@ pub trait VideoSink: Sync {
     unsafe fn place_window(&self, mt: &MainThread, src_w: c_int, src_h: c_int, dst_x: c_int,
         dst_y: c_int, dst_w: c_int, dst_h: c_int) -> c_int;
     unsafe fn destroy_window(&self, mt: &MainThread);
+    /// Drop the held windowId without destroying it: the compositor connection that owned the
+    /// export is gone, so the id names nothing and the next `create_window` starts clean.
+    unsafe fn forget_window(&self, mt: &MainThread);
     unsafe fn plane_create(&self, mt: &MainThread, app_id: *const c_char, player_type: c_int) -> c_long;
     #[cfg(feature = "devtriggers")]
     unsafe fn plane_probe_initialized(&self, mt: &MainThread) -> bool;
@@ -159,6 +162,7 @@ macro_rules! refuse_every_verb {
         unsafe fn place_window(&self, _mt: &MainThread, _src_w: c_int, _src_h: c_int, _dst_x: c_int,
             _dst_y: c_int, _dst_w: c_int, _dst_h: c_int) -> c_int { 0 }
         unsafe fn destroy_window(&self, _mt: &MainThread) {}
+        unsafe fn forget_window(&self, _mt: &MainThread) {}
         unsafe fn plane_create(&self, _mt: &MainThread, _app_id: *const c_char, _player_type: c_int) -> c_long { 0 }
         #[cfg(feature = "devtriggers")]
         unsafe fn plane_probe_initialized(&self, _mt: &MainThread) -> bool { false }

@@ -367,6 +367,11 @@ fn place_video(mt: &MainThread, eng: &mut super::engine::Engine) {
     eng.placed_src = src;
     eng.placed_dst = Some(dst);
     SHARED.dg_place_rv.store(rv, Relaxed);
+    if super::sink().window_mode() == super::VP_EXPORTED {
+        // A refusal is the export being unusable (`export_watch`); a rect with nothing on screen
+        // answers 0 as well, but the viewport is always on screen.
+        SHARED.export_refused.store(rv <= 0 && dst.width > 0 && dst.height > 0, Relaxed);
+    }
     SHARED.dg_placed_w.store(src.0, Relaxed);
     SHARED.dg_placed_h.store(src.1, Relaxed);
     super::log(&format!("vplane: place {}x{} -> {},{} {}x{} rv={rv}", src.0, src.1, dst.x, dst.y, dst.width, dst.height));
@@ -1592,6 +1597,7 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     pump_engine(ps, pa, now);
     // After the whole tick, its early returns included: a wait that never ends is often one.
     watch_stalls(ps, pa, now);
+    watch_export(ps, pa);
 }
 
 fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, now: u32) {
@@ -2627,6 +2633,65 @@ fn watch_stalls(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter:
             "stall: stuck again at {}s, where the last restart reopened; waiting instead",
             at_ns / 1_000_000_000
         )),
+    }
+}
+
+/// The exported window's watch (`export_watch`): a playback whose window belongs to a compositor
+/// connection that is gone, or that the television refused, reopens at the playhead on a fresh
+/// export, with the same audio and subtitle picks. The restart is the freeze safety net's own.
+fn watch_export(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) {
+    use super::export_watch::Action;
+    let obs = export_observation(ps, pa);
+    let Action::Rebind(why) = pa.export_watch().step(obs) else { return };
+    let at_ns = super::intended_pos_ns(ps);
+    let transcoding = crate::route::is_transcoding(ps);
+    super::log(&format!(
+        "vplane: the exported window is {} (made on connection {}, now {}); rebinding at {}s ({})",
+        match why {
+            super::export_watch::Why::Reconnected => "from a gone connection",
+            super::export_watch::Why::Unusable => "missing or refused",
+        },
+        obs.bound,
+        obs.current,
+        at_ns / 1_000_000_000,
+        if transcoding { "transcode" } else { "direct" },
+    ));
+    if transcoding {
+        start_transcode_seek_flight(ps, pa, at_ns, false);
+    } else {
+        settle_reload(super::engine::reload_at(ps, pa, at_ns), "exported window rebind");
+    }
+}
+
+fn export_observation(ps: &crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter) -> super::export_watch::Observation {
+    use super::shared::PlaybackState;
+    let playback = crate::route::playback_trace_generation();
+    let (Some(eng), _) = pa.split() else {
+        return super::export_watch::Observation { playback, ..Default::default() };
+    };
+    // Past the Load, so the export's placement is known; nothing mid-seek or mid-rebuild, each of
+    // which reopens the pipeline (and makes a fresh export) by itself.
+    let covered = super::sink().window_mode() == super::VP_EXPORTED
+        && matches!(eng.source, Source::Stream)
+        && eng.stage >= Stage::Playing
+        && !eng.eos_pushed
+        && !SHARED.ended.load(Relaxed)
+        && TX.seek_to_ns.load(Relaxed) < 0
+        && !eng.flushed
+        && matches!(
+            super::state(ps),
+            PlaybackState::Buffering | PlaybackState::Seeking | PlaybackState::Playing
+        )
+        && !crate::route::preview_request(ps)
+        && !crate::route::flight_outstanding()
+        && !crate::route::original_recovery_pending()
+        && !super::claim_hold::active();
+    super::export_watch::Observation {
+        playback,
+        covered,
+        current: SHARED.display_epoch.load(Acquire),
+        bound: SHARED.export_epoch.load(Acquire),
+        refused: SHARED.export_refused.load(Relaxed),
     }
 }
 
@@ -5565,6 +5630,35 @@ mod native_seek_pump_tests {
 
     fn reloads() -> Vec<i64> {
         super::super::engine::RELOAD_AT_LOG.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// **A reconnect makes the exported window stale and the pump reopens at the playhead on a
+    /// fresh one.** The fake compositor is the host sink: it counts exports and, once told the
+    /// connection is gone, answers no id until a new one is made.
+    #[test]
+    fn a_reconnect_drops_the_export_and_an_active_playback_rebinds_at_the_playhead() {
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let mt = unsafe { MainThread::assume() };
+        let _ = crate::player::engine::with_window_id_for_test(&mt);
+        assert_eq!(ffi_host::exports_created_for_test(), 1);
+        assert_eq!(crate::player::sink().window_id().to_bytes(), b"clocksink-window");
+        for _ in 0..3 {
+            rig.frame();
+        }
+        assert!(reloads().is_empty(), "an export on the current connection is left alone");
+
+        crate::player::display_reconnected(&mt);
+        assert_eq!(crate::player::sink().window_id().to_bytes(), b"", "the cached id is gone");
+        rig.frame();
+        assert_eq!(reloads(), vec![60_000_000_000], "one reopen, at the playhead");
+        rig.frame();
+        assert_eq!(reloads().len(), 1, "asked once for this connection");
+
+        let _ = crate::player::engine::with_window_id_for_test(&mt);
+        assert_eq!(ffi_host::exports_created_for_test(), 2, "the next Load makes a fresh export");
+        assert_eq!(crate::player::sink().window_id().to_bytes(), b"clocksink-window");
+        assert_eq!(SHARED.export_epoch.load(Relaxed), SHARED.display_epoch.load(Relaxed));
     }
 
     #[test]

@@ -1662,6 +1662,11 @@ fn with_window_id(mt: &MainThread, p: &str) -> String {
     if sink().window_mode() != super::VP_EXPORTED {
         return p.to_string();
     }
+    // The epoch is read before the create: a reconnect cannot land between the two (both run on
+    // the frame thread), and an export is only trusted for the connection it was made on.
+    SHARED.export_refused.store(false, Ordering::Relaxed);
+    SHARED.export_epoch.store(0, Ordering::Relaxed);
+    let epoch = SHARED.display_epoch.load(Ordering::Acquire);
     let id = unsafe { sink().create_window(mt) };
     window_step(WindowStage::ExportedWindowCreate);
     if id.is_null() {
@@ -1674,10 +1679,17 @@ fn with_window_id(mt: &MainThread, p: &str) -> String {
         log("windowId: payload has no appId anchor — NOT spliced; video will not bind");
         return p.to_string();
     }
+    SHARED.export_epoch.store(epoch, Ordering::Release);
     log(&format!(
         "vplane: exported windowId={id} spliced into the Load payload"
     ));
     p.replace(&anchor, &format!(r#"{anchor},"windowId":"{id}""#))
+}
+
+/// [`with_window_id`] for the pump's reconnect test, which needs the Load's export without a Load.
+#[cfg(all(test, feature = "hostsim"))]
+pub(super) fn with_window_id_for_test(mt: &MainThread) -> String {
+    with_window_id(mt, &format!("{{{}}}", app_id_key()))
 }
 
 /// Plex decimal fps → (value, scale) rational for the Load esInfo. Broadcast rates map to their
