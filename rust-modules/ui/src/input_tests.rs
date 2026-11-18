@@ -190,6 +190,20 @@ fn key_up(k: Key, at: Tick) -> InputEvent<u32> {
     )
 }
 
+/// **A key-up a screen handles asks for a frame; one it refuses does not.** Ingest raises no
+/// damage for an arrow's release, so a screen that acts on one (the player's scrub commit)
+/// repaints through the dispatcher, and a page at rest presents nothing for it.
+#[test]
+fn a_handled_key_up_damages_and_a_refused_one_does_not() {
+    for (arg, handled) in [(FixtureArg::Page(800), true), (FixtureArg::Page(801), false)] {
+        let (mut d, mut rig) = boot(arg.clone());
+        d.frame(&mut rig, tick(16), vec![], vec![], &mut NoTap);
+        assert!(!d.frame(&mut rig, tick(32), vec![], vec![], &mut NoTap).presented, "premise: {arg:?} is at rest");
+        let r = d.frame(&mut rig, tick(48), vec![key_up(Key::Right, tick(48))], vec![], &mut NoTap);
+        assert_eq!(r.presented, handled, "{arg:?}");
+    }
+}
+
 #[test]
 fn fifo_same_frame_card_tap_commits_once_and_never_becomes_a_hold() {
     let (mut d, mut rig) = boot(FixtureArg::Page(700));

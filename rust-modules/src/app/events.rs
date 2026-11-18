@@ -406,6 +406,16 @@ pub(crate) fn is_input_event(et: u32) -> bool {
     )
 }
 
+/// Is this SDL event the release of an arrow (a direction key, transport spellings included)?
+pub(crate) fn arrow_release(et: u32, ev: &[u8]) -> bool {
+    use plx_ui::consts::{classify, Key};
+    if et != SDL_KEYUP {
+        return false;
+    }
+    let (_, wcode, sym) = decode_key(ev);
+    matches!(classify(sym, wcode), Key::Up | Key::Down | Key::Left { .. } | Key::Right { .. })
+}
+
 #[cfg(test)]
 mod input_event_tests {
     use super::*;

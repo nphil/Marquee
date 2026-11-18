@@ -409,7 +409,8 @@ pub fn note_jump(changed: bool) {
 /// keypress, a route change.
 ///
 /// Call sites today — keep this list current, it is the module's correctness argument:
-/// - any SDL event dequeued, and any remote-FIFO token drained (`app.rs`)
+/// - any SDL event dequeued except an arrow's release, and any remote-FIFO token drained
+///   (`app::run`); a key-up a screen handles is damaged by the dispatcher instead
 /// - `metadata::pump_detail` landing (`app.rs`)
 /// - **any** play plan landing (`route::apply_plan`) — including one that carries the server's
 ///   REFUSAL, which `app.rs` cannot see: `pump_play` returns false for a plan with no URL, so the

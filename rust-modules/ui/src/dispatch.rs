@@ -2271,6 +2271,13 @@ where
                 let mut fx = Effects::new(out, to, present);
                 let handled = plx_base::diag::spans::span("dstep", || inst.screen.step(&ev, &cx, &mut fx));
                 drop(fx);
+                // Ingest raises no damage for an arrow's release (`app::run`), so a screen that
+                // acts on a release (the player's scrub commit) asks for its frame here.
+                if handled == Handled::Yes && matches!(&ev, ScreenEvent::Input(InputEvent {
+                    kind: InputKind::Key { edge: Edge::Up, .. }, .. }))
+                {
+                    present.note(plx_machine::present::PresentEvent::Damage(plx_machine::present::Provenance::Input));
+                }
                 drop(cx);
                 present.set_scope(plx_machine::present::Scope::Page);
                 // §7.3 step 1: the owner had first refusal; an unhandled BACK is the container's.

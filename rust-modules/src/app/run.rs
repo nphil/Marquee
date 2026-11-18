@@ -1141,8 +1141,13 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
     // ANY event is a reason to repaint (`plx_machine::idle`): a key changes focus or a label,
     // a lifecycle event changes the whole screen. Marked here — once, for every event
     // kind — rather than in each of the ~30 arms below, where the next one added would
-    // silently draw nothing.
-    plx_machine::idle::invalidate();
+    // silently draw nothing. The one exception is an arrow's RELEASE: the move happened on the
+    // press, and at the end of a row the release redrew an unchanged screen (one present 80 ms
+    // after the press's, read as a late frame). A screen that acts on a release still repaints:
+    // the dispatcher damages a handled key-up.
+    if !arrow_release(et, &app.ev) {
+        plx_machine::idle::invalidate();
+    }
     // Key, preedit and text event bytes can contain credentials and are never logged.
     if (0x103..=0x106).contains(&et) {
         app.rec.input(super::recorder::enc_lifecycle(et));
@@ -4755,6 +4760,28 @@ mod lifecycle_regression_tests {
             plx_machine::machine::Tick { ms: now, dt_us: 16_000 },
             std::mem::take(&mut app.inputs),
         );
+    }
+
+    /// **An arrow's release raises no damage; its press does.** Against the end of a row a press
+    /// moves nothing, and the release presented the unchanged screen again after the remote's
+    /// 80 ms hold: the 76-92 ms intervals of the 2026-11-18 television tour. OK's release still
+    /// repaints, since it ends a press dip.
+    #[test]
+    fn an_arrow_release_raises_no_damage_and_its_press_does() {
+        fn damage(app: &mut App, fr: &mut Frame, sym: u32, down: bool) -> u32 {
+            app.ev = encode_key(sym, 0, down);
+            plx_machine::idle::take_local_damage();
+            event(app, fr, if down { SDL_KEYDOWN } else { SDL_KEYUP });
+            plx_machine::idle::take_local_damage()
+        }
+        use plx_ui::consts::{SDLK_DOWN, SDLK_LEFT, SDLK_RETURN, SDLK_RIGHT, SDLK_UP};
+        let mut app = app();
+        let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
+        for sym in [SDLK_LEFT, SDLK_RIGHT, SDLK_UP, SDLK_DOWN] {
+            assert!(damage(&mut app, &mut fr, sym, true) > 0, "the press asks for its frame ({sym})");
+            assert_eq!(damage(&mut app, &mut fr, sym, false), 0, "the release asks for none ({sym})");
+        }
+        assert!(damage(&mut app, &mut fr, SDLK_RETURN, false) > 0, "OK's release ends a press dip");
     }
 
     fn transport_dismissed(app: &App) -> bool {
