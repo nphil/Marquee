@@ -21,6 +21,9 @@ pub(super) fn badge_word(badge: Badge) -> &'static str {
     }
 }
 
+/// A chip's side padding (2 x 12) in `widgets::badge_w`, which the label's room leaves out.
+const BADGE_CHROME: f32 = 24.0;
+
 pub struct RowCards<'a> {
     pub(super) row: &'a Row,
     /// The server whose photo proxy fetches the posters; none while no server is reachable.
@@ -72,7 +75,27 @@ impl<H: ContentLike> CardSource<H> for RowCards<'_> {
     }
     fn overlay(&self, p: Painter, i: usize, tile: &Tile, measure: &dyn Measure) {
         if let Some(badge) = self.row.cards.get(i).and_then(|c| c.badge) {
-            plx_ui::widgets::poster_label(p, tile.rect, tile.radius, badge_word(badge), measure);
+            let inset = plx_ui::theme::space::SM;
+            let room = (tile.rect.w - 2.0 * inset - BADGE_CHROME).max(0.0);
+            let fit = measure.fit_line(badge_word(badge), room, plx_ui::theme::size::CAPTION, true);
+            let word = fit.to_str().unwrap_or_default();
+            let cy = tile.rect.y + inset + plx_ui::widgets::BADGE_H * 0.5;
+            plx_ui::widgets::badge(p, tile.rect.x + inset, cy, word, None, plx_ui::widgets::BadgeStyle::OverArt, measure);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plx_ui::fixture::FixtureMeasure;
+
+    #[test]
+    fn every_status_chip_fits_a_poster_corner() {
+        for badge in [Badge::Requested, Badge::Approved, Badge::Downloading, Badge::PartlyAvailable,
+            Badge::Available, Badge::Blocked, Badge::Declined, Badge::Failed] {
+            let w = plx_ui::widgets::badge_w(badge_word(badge), None, &FixtureMeasure);
+            assert!(w <= plx_ui::consts::CARD_W - 2.0 * plx_ui::theme::space::SM, "{badge:?} is {w} wide");
         }
     }
 }
