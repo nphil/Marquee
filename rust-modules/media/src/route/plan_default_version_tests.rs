@@ -158,3 +158,69 @@ fn a_profile_8_listed_first_plays_its_base_layer_on_a_set_without_dolby_vision()
     let versions = [uhd_with(19, profile_8()), uhd_with(20, Dovi::NONE)];
     assert_eq!(picked_with_dolby_vision(&versions, &Caps::assumed(), DolbyVisionMode::Auto, DvCapability::Unsupported), None);
 }
+
+#[test]
+fn played_video_uses_the_chosen_versions_hdr_and_resolution_together() {
+    let d = plx_data::metadata::Detail {
+        part: "/primary".into(), video_resolution: "4k".into(), vcodec: "hevc".into(),
+        dovi: profile_5(),
+        versions: vec![uhd_with(17, profile_5()), MediaVersion { hdr: true, ..full_hd() }],
+        ..Default::default()
+    };
+    let facts = |mode, capability| played_video(&d, mode, &Caps::assumed(), DolbyVisionMode::Auto, capability).unwrap();
+    let dolby_vision = |f: &PlayedVideo| f.dv.presentation.declared().is_some();
+    let alternate = facts(DirectPlayMode::Auto, DvCapability::Unsupported);
+    assert_eq!(
+        (alternate.version.unwrap().id, alternate.resolution, alternate.hdr, dolby_vision(&alternate)),
+        (MediaId(2), "1080", true, false),
+    );
+    let primary = facts(DirectPlayMode::Auto, DvCapability::Supported);
+    assert!(primary.version.is_none());
+    assert_eq!((primary.resolution, dolby_vision(&primary)), ("4k", true));
+    let forced = facts(DirectPlayMode::Forced, DvCapability::Unsupported);
+    assert!(forced.version.is_none());
+    assert_eq!((forced.resolution, forced.hdr, dolby_vision(&forced)), ("4k", false, false));
+}
+
+#[test]
+fn played_video_reports_the_on_deck_episodes_base_layer_when_dv_is_unavailable() {
+    use plx_data::metadata::{Detail, Episode, EpisodeStreams};
+    let caps = Caps::assumed();
+    let mut d = Detail { hdr: true, dovi: profile_8(), ..Default::default() };
+    assert!(played_video(&d, DirectPlayMode::Auto, &caps, DolbyVisionMode::Auto, DvCapability::Supported).is_none());
+    d.on_deck = Some(Episode { rk: "episode".into(), resume_ms: 5000, part: "/episode".into(), vcodec: "hevc".into(), acodec: "aac".into(), ..Default::default() });
+    assert!(played_video(&d, DirectPlayMode::Auto, &caps, DolbyVisionMode::Auto, DvCapability::Supported).is_none(),
+            "an on-deck episode does not make an unsuccessful backfill available");
+    d.episode_streams = EpisodeStreams::Loaded("episode".into());
+    for (mode, capability, dolby_vision) in [
+        (DolbyVisionMode::Auto, DvCapability::Supported, true),
+        (DolbyVisionMode::Off, DvCapability::Supported, false),
+        (DolbyVisionMode::Auto, DvCapability::Unsupported, false),
+    ] {
+        let file = played_video(&d, DirectPlayMode::Auto, &caps, mode, capability).unwrap();
+        assert_eq!((file.primary_part, file.vcodec, file.acodec), ("/episode", "hevc", "aac"));
+        assert!(file.hdr, "the base layer is HDR10 whichever way Dolby Vision goes");
+        assert_eq!(file.dv.presentation.declared().is_some(), dolby_vision);
+    }
+}
+
+#[test]
+fn played_video_follows_the_first_episode_of_an_unstarted_show() {
+    use plx_data::metadata::{Detail, Episode, EpisodeStreams};
+    let first = Episode { rk: "first".into(), part: "/first".into(), vcodec: "h264".into(), ..Default::default() };
+    let mut d = Detail {
+        is_show: true, episodes: vec![first].into(), episode_streams: EpisodeStreams::Loaded("first".into()),
+        video_resolution: "720".into(), ..Default::default()
+    };
+    fn facts(d: &Detail) -> Option<PlayedVideo<'_>> {
+        played_video(d, DirectPlayMode::Auto, &Caps::assumed(), DolbyVisionMode::Auto, DvCapability::Unknown)
+    }
+    assert_eq!(facts(&d).unwrap().resolution, "720");
+    d.episode_streams = EpisodeStreams::LegacyOnDeck;
+    assert!(facts(&d).is_none(), "a legacy recording cannot identify its season's stream owner");
+    d.episode_streams = EpisodeStreams::Loaded("first".into());
+    d.on_deck = Some(Episode { rk: "other".into(), part: "/other".into(), ..Default::default() });
+    assert_eq!(facts(&d).unwrap().primary_part, "/first");
+    d.on_deck.as_mut().unwrap().resume_ms = 5000;
+    assert!(facts(&d).is_none(), "the backfill belongs to a different episode");
+}

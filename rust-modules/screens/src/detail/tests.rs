@@ -5357,6 +5357,7 @@ fn identity_detail(parts_empty: bool) -> Detail {
     use plx_data::metadata::Stream;
     let mut d = Detail {
         kind: if parts_empty { "episode".into() } else { "movie".into() },
+        part: "/library/parts/1/1/video.mkv".into(),
         video_resolution: "1080".into(),
         subs: vec![Stream { sdh: true, ..Default::default() }],
         ..Default::default()
@@ -5403,6 +5404,35 @@ fn an_empty_identity_run_leaves_no_gap_before_the_first_chip() {
     let runs = plx_ui::draw_census::capture_runs(|| screen.draw_identity_line(plx_ui::Painter::recording(), &d, 300.0, m));
     let res = keyline_left(painted_x(&runs, "1080p").expect("resolution chip"), "1080p", m);
     assert!((res.0 - plx_ui::consts::MARGIN_X).abs() < 0.5, "no run, no gap: chip at {}", res.0);
+}
+
+/// **The resolution badge names the version Play starts**, not the first one the server lists.
+#[test]
+fn the_resolution_badge_names_the_version_play_starts() {
+    let _guard = plx_base::testlock::serial();
+    let screen = bare_held(ServerId::UNSET, "rk");
+    let version = |id: i64, resolution: &str, width: i64, height: i64, vcodec: &str| plx_data::pms::MediaVersion {
+        id: plx_plex::plex::MediaId(id),
+        resolution: resolution.into(),
+        width,
+        height,
+        vcodec: vcodec.into(),
+        ..Default::default()
+    };
+    let d = Detail {
+        kind: "movie".into(),
+        part: "/library/parts/1/1/uhd.mkv".into(),
+        vcodec: "vp9".into(),
+        video_resolution: "4k".into(),
+        width: 3840,
+        height: 2160,
+        versions: vec![version(1, "4k", 3840, 2160, "vp9"), version(2, "1080", 1920, 1080, "h264")],
+        ..Default::default()
+    };
+    let m = &plx_base::fontcov::advances::ShippedMeasure;
+    let runs = plx_ui::draw_census::capture_runs(|| screen.draw_identity_line(plx_ui::Painter::recording(), &d, 300.0, m));
+    assert!(painted_x(&runs, "1080p").is_some(), "the badge names the version Play starts: {runs:?}");
+    assert!(painted_x(&runs, "4K").is_none(), "not the first version: {runs:?}");
 }
 
 /// **The held episode still is drawn ONCE while its hold menu is up.** The page pass (a frame

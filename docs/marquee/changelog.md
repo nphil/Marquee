@@ -53,6 +53,7 @@
 - A seek on a server that uses HTTP/2 no longer waits behind video already on its way: for the next two minutes the new request opens its own connection to that server instead of reusing the one still carrying the part the seek threw away.
 - A seek on a webOS 4 TV whose picture never follows the new position (the clock keeps reporting the old one) now reloads once at the target after four seconds instead of staying on the old picture. Plex is not told the stale position meanwhile, and a TV that sends no frame counter lands the seek on its clock alone.
 - Play starts a version the TV can decode when the first one listed is one it cannot (a 4K copy in a codec the TV lacks, or a Dolby Vision Profile 5 copy with Dolby Vision off), instead of asking the server to convert it. The quality limit is judged on the video bitrate of the version that plays, and a retry that moves to another file no longer carries the first file's audio and subtitle choice.
+- The detail page's resolution badge, facts row and HDR warning describe the version Play starts (its own picture, Dolby Vision and bitrate), not always the first one listed. On a show page they describe the episode Play starts: the one being resumed, else the first one shown.
 
 ## 0.10.0
 
