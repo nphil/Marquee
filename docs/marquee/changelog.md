@@ -49,6 +49,7 @@
 - The playback-repair help note fits in every language again (shorter troubleshooting link), and the Russian privacy title and French consent row fit their columns.
 - Delete in the item menu is offered only on a server the account owns that has "Allow media deletion" on, says plainly why a delete was refused or failed, and counts an item the server no longer has as deleted. A deleted item leaves Home, Continue Watching, the Library, search, collections, people and the show and season pages at once and stays gone when the lists are read again; an episode counts out of its season and show, and a show takes its episodes with it. The on-deck episode menu on a detail page, whose Delete did nothing, now deletes.
 - A short first-run tour (six pages: arrows and OK, Back, hold OK for the item menu, the player's controls, seeking, and where Settings and profiles live) is shown once per profile after the Favorite libraries screen, in all eleven languages. Back skips it; Settings → About → "Show the tour again" reopens it.
+- Auto quality no longer starts at 720 kbps when the server remuxes the file (rewraps it without re-encoding): its answer to the speed check, the whole file from the start, is now used for the measurement instead of thrown away.
 
 ## 0.10.0
 
