@@ -108,7 +108,7 @@
   },
   "widgets.menu.previous_episode": {
     "value": "Previous Episode",
-    "description": "Row in the player overflow menu, shown when the playing episode has an earlier one: starts the previous episode. Same noun as widgets.next.episode, in the same capitalisation."
+    "description": "Row in the player overflow menu, shown when the playing episode has an earlier one and is near its start: starts the previous episode. Past the start the row reads widgets.info.from_beginning instead. Same noun as widgets.next.episode, in the same capitalisation."
   },
   "widgets.badge.forced": {
     "value": "FORCED",

@@ -126,8 +126,8 @@ pub enum HudCommand {
     TogglePlay,
     /// A relative jump.
     Seek(SeekBy),
-    /// The previous episode of the queue. Never a restart of this one: that is
-    /// [`HudCommand::FromBeginning`].
+    /// The previous episode, or a restart of this one while the playhead is past the start
+    /// (`plx_media::route::previous_press`); the Previous disc's glyph says which.
     Previous,
     /// The next episode.
     Next,
@@ -152,7 +152,7 @@ impl HudCommand {
         match self {
             // a jump needs a known duration to clamp against (`commit_jump` returns without one)
             HudCommand::Seek(_) => model.duration_ns > 0,
-            // the playing row has a predecessor in the queue (`Controls::for_item`)
+            // every episode with a pair has one: with nothing before it, or past the start, it restarts
             HudCommand::Previous => model.controls.previous,
             HudCommand::Next => model.controls.next,
             HudCommand::ToggleSection(Section::Chapters) => model.chapters,
@@ -274,7 +274,7 @@ mod tests {
     /// performer used to spell as a `match` on `Action`.
     #[test]
     fn each_classic_control_is_the_command_of_the_action_it_always_performed() {
-        let episode = Controls::for_item(true, true, true);
+        let episode = Controls::for_item(true, true, true, false);
         let want = [
             (BTN_PREVIOUS, Action::Previous, HudCommand::Previous),
             (BTN_NEXT, Action::Next, HudCommand::Next),
@@ -300,13 +300,15 @@ mod tests {
     fn command_and_action_agree_for_every_row_the_discs_can_hold() {
         for previous in [false, true] {
             for next in [false, true] {
-                let controls = Controls { previous, next };
-                for i in -1..=BTN_N {
-                    assert_eq!(
-                        controls.command(i),
-                        controls.action(i).map(HudCommand::from),
-                        "{controls:?} control {i}"
-                    );
+                for restart in [false, true] {
+                    let controls = Controls { previous, next, restart };
+                    for i in -1..=BTN_N {
+                        assert_eq!(
+                            controls.command(i),
+                            controls.action(i).map(HudCommand::from),
+                            "{controls:?} control {i}"
+                        );
+                    }
                 }
             }
         }
@@ -338,15 +340,15 @@ mod tests {
             assert!(HudCommand::Seek(by).enabled(&model(|m| m.duration_ns = 1)), "{by:?} with one");
         }
 
-        // Previous is enabled by `previous` (a predecessor in the queue, and nothing else), Next by `next`
-        let controls = |previous, next| model(|m| m.controls = Controls::for_item(true, previous, next));
+        // Previous is live whenever the pair is (it restarts when no episode precedes), Next by `next`
+        let controls = |previous, next, restart| model(|m| m.controls = Controls::for_item(true, previous, next, restart));
         assert!(!HudCommand::Previous.enabled(&idle) && !HudCommand::Next.enabled(&idle), "not an episode");
-        assert!(!HudCommand::Previous.enabled(&controls(false, true)), "first episode: there is no episode before it");
-        assert!(HudCommand::Previous.enabled(&controls(true, false)));
-        assert!(HudCommand::Previous.enabled(&controls(true, true)));
-        assert!(!HudCommand::Next.enabled(&controls(true, false)), "the last episode has no Next");
-        assert!(HudCommand::Next.enabled(&controls(false, true)));
-        assert!(!HudCommand::Next.enabled(&controls(false, false)), "neither neighbour: no pair");
+        assert!(HudCommand::Previous.enabled(&controls(false, true, false)), "first episode: a second press restarts again");
+        assert!(HudCommand::Previous.enabled(&controls(false, true, true)));
+        assert!(HudCommand::Previous.enabled(&controls(true, false, false)));
+        assert!(!HudCommand::Next.enabled(&controls(true, false, true)), "the last episode has no Next");
+        assert!(HudCommand::Next.enabled(&controls(false, true, false)));
+        assert!(!HudCommand::Next.enabled(&controls(false, false, true)), "neither neighbour: no pair");
 
         // sections and the detail page need what they open
         assert!(!HudCommand::ToggleSection(Section::Chapters).enabled(&idle));
@@ -361,14 +363,16 @@ mod tests {
     fn a_discs_command_is_enabled_exactly_when_its_disc_has_a_stop() {
         for previous in [false, true] {
             for next in [false, true] {
-                let controls = Controls::for_item(true, previous, next);
-                let m = model(|m| m.controls = controls);
-                for i in 0..BTN_N {
-                    assert_eq!(
-                        CLASSIC_COMMANDS[i as usize].enabled(&m),
-                        controls.enabled(i),
-                        "{controls:?} control {i}"
-                    );
+                for restart in [false, true] {
+                    let controls = Controls::for_item(true, previous, next, restart);
+                    let m = model(|m| m.controls = controls);
+                    for i in 0..BTN_N {
+                        assert_eq!(
+                            CLASSIC_COMMANDS[i as usize].enabled(&m),
+                            controls.enabled(i),
+                            "{controls:?} control {i}"
+                        );
+                    }
                 }
             }
         }

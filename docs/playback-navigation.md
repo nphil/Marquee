@@ -23,11 +23,13 @@ ends the burst; a same-item seek reload preserves it. A dismissed immediate seek
 through the first new picture; ordinary rebuffering and failures retain their diagnostic read-out.
 
 The default control row is **Previous, Next**, a wider gap, then **Subtitles, Audio, More**.
-Previous always plays the preceding queue item, whatever the playhead: it is the previous episode
-and nothing else, and it never seeks. The episode it leaves is stopped at the position it really
-reached, so its resume point is kept. It is dimmed on the first episode of the queue. Starting the
-current episode over is **From beginning** on the Info tab (and a `…` menu row in a HUD package
-that folds it), not a second meaning of Previous.
+Previous works as in a music app (`route::previous_press`, threshold `PREVIOUS_RESTART_AFTER_NS`,
+3 s). Past the threshold it starts the playing episode over; within it, with an episode before this
+one, it plays that episode, stopping the one it leaves at the position it really reached so its
+resume point is kept. The first episode of the queue has no earlier one, so Previous always restarts
+it and is never dimmed. The disc wears the restart glyph and a folded More row reads *From
+Beginning* while the next press restarts, and the previous-episode glyph and *Previous Episode*
+otherwise. One performer (`perform_hud_command`) serves the disc, the More row and any key bound to it.
 Unavailable buttons are dimmed, have no pointer stop and are
 skipped by keyboard focus. Entering the row focuses Next when enabled, otherwise its first
 enabled button. Marker offers and Up Next retain their precedence over this row: while one
@@ -85,7 +87,7 @@ python3 tests/playback_navigation_sim.py --sim rust-modules/target-sim/debug/plx
   --media /tmp/navigation-media --out /tmp/navigation-evidence
 ```
 
-This exercises queue continuity, Previous disabled (and never a restart) on the first episode, an immediate hidden-HUD FF tap,
+This exercises queue continuity, Previous restarting on the first episode, an immediate hidden-HUD FF tap,
 and visible-HUD D-pad confirmation. Add `--instant-dpad` to exercise the optional D-pad path.
 For a repeated-keyframe regression, make a copy with 12-second keyframes (24 fps):
 

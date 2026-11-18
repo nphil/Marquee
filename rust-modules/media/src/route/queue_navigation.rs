@@ -117,6 +117,32 @@ pub enum QueueStep {
     Next,
 }
 
+/// Past this far into an episode, Previous starts it over; before it, Previous steps to the episode
+/// before. A second press soon after a restart therefore goes back an episode, as in a music player.
+/// Three seconds is long enough for a double press to land inside it and short enough that a
+/// deliberate step back never needs a seek first.
+pub const PREVIOUS_RESTART_AFTER_NS: i64 = 3_000_000_000;
+
+/// What the next press of Previous does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviousPress {
+    /// Seek the playing episode to its start. It keeps playing.
+    Restart,
+    /// Play the episode before it in the queue.
+    PreviousEpisode,
+}
+
+/// The one rule behind the Previous disc's glyph, its More-menu label and the press itself. An
+/// episode with nothing before it restarts however near its start the playhead is, so the second
+/// press on a first episode restarts again.
+pub fn previous_press(position_ns: i64, has_predecessor: bool) -> PreviousPress {
+    if has_predecessor && position_ns < PREVIOUS_RESTART_AFTER_NS {
+        PreviousPress::PreviousEpisode
+    } else {
+        PreviousPress::Restart
+    }
+}
+
 /// The row now playing among `rows`, by the queue's identity rule (item id, rating key as the
 /// fallback).
 fn current_index(ps: &PlaybackSession, rows: &[QueueRow]) -> Option<usize> {
@@ -154,6 +180,36 @@ mod tests {
     fn neighbor_of<'a>(rows: &'a [QueueRow], item_id: i64, sid: ServerId, rk: &str, step: QueueStep)
         -> Option<&'a QueueRow> {
         neighbor(rows, queue_index_of(rows, item_id, sid, rk)?, step)
+    }
+
+    /// A press just after a restart (the playhead near zero) goes back an episode; once the
+    /// playhead is past the threshold the same press restarts. The first episode always restarts.
+    #[test]
+    fn previous_restarts_past_the_threshold_and_steps_back_before_it() {
+        let just_before = PREVIOUS_RESTART_AFTER_NS - 1;
+        for (position, predecessor, want) in [
+            (0, true, PreviousPress::PreviousEpisode),
+            (just_before, true, PreviousPress::PreviousEpisode),
+            (PREVIOUS_RESTART_AFTER_NS, true, PreviousPress::Restart),
+            (90_000_000_000, true, PreviousPress::Restart),
+            (0, false, PreviousPress::Restart),
+            (90_000_000_000, false, PreviousPress::Restart),
+        ] {
+            assert_eq!(previous_press(position, predecessor), want, "at {position} ns, predecessor {predecessor}");
+        }
+    }
+
+    /// Two presses in a row from mid-episode: the first restarts (the playhead lands on zero), the
+    /// second, with the playhead still inside the threshold, steps back. On a first episode both restart.
+    #[test]
+    fn a_second_previous_press_after_a_restart_steps_back_only_with_an_episode_before() {
+        for (predecessor, second) in [(true, PreviousPress::PreviousEpisode), (false, PreviousPress::Restart)] {
+            let mut position = 600_000_000_000;
+            assert_eq!(previous_press(position, predecessor), PreviousPress::Restart);
+            position = 0; // the restart's seek landed
+            position += 2_000_000_000; // the second press, two seconds later
+            assert_eq!(previous_press(position, predecessor), second, "predecessor {predecessor}");
+        }
     }
 
     #[test]

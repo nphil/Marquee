@@ -130,7 +130,8 @@ pub struct FoldedRow {
 /// **The folded rows to list for the content playing**, from the compiled package's folds
 /// ([`crate::hud_format::compile::Compiled::folds`], R2) in the order the compiler reports. A row is listed
 /// only when the app's own predicate for its command holds for this frame's content
-/// ([`HudCommand::enabled`]): a movie gets no Previous or Next row rather than a dead one. `open_tracks`
+/// ([`HudCommand::enabled`]): a movie gets no Previous or Next row rather than a dead one. Previous
+/// reads *Previous Episode*, or *From Beginning* when its next press restarts the episode. `open_tracks`
 /// folds as one row, which opens the track menu on its Subtitles tab (the menu holds both tabs).
 pub fn folded_rows(
     folds: &[crate::hud_format::Fold],
@@ -143,6 +144,8 @@ pub fn folded_rows(
         .iter()
         .filter_map(|fold| {
             let (command, label) = match (fold.command, fold.section) {
+                // the row reads what the press will do, as the disc's glyph does
+                ("previous", _) if model.controls.restart => (HudCommand::Previous, crate::info_panel::actions(meta)[0]),
                 ("previous", _) => (HudCommand::Previous, msg::widgets_menu_previous_episode()),
                 ("next", _) => (HudCommand::Next, msg::widgets_next_episode()),
                 ("open_tracks", _) => (HudCommand::OpenTracks(TrackTab::Subtitles), msg::settings_audio_title()),
@@ -1913,7 +1916,7 @@ mod focus_tests {
                 fold("go_to_detail", None),
             ];
             let full = crate::player_hud::model::HudModel {
-                controls: crate::player_hud::Controls::for_item(true, true, true),
+                controls: crate::player_hud::Controls::for_item(true, true, true, false),
                 chapters: true,
                 detail: true,
                 ..Default::default()
@@ -2149,7 +2152,7 @@ mod folded_tests {
 
     /// A frame's model for an episode with both neighbours (or a movie with none), chapters and a detail page.
     fn model(episode: bool) -> HudModel {
-        HudModel { controls: Controls::for_item(episode, true, true), chapters: true, detail: true, ..HudModel::default() }
+        HudModel { controls: Controls::for_item(episode, true, true, false), chapters: true, detail: true, ..HudModel::default() }
     }
 
     fn rows_of(package: &Arc<crate::hud_format::compile::Compiled>, model: &HudModel) -> Vec<FoldedRow> {
@@ -2202,9 +2205,25 @@ mod folded_tests {
         assert!(!movie.contains(&HudCommand::Previous) && !movie.contains(&HudCommand::Next), "{movie:?}");
         assert!(movie.contains(&HudCommand::OpenTracks(TrackTab::Subtitles)), "the rest still folds: {movie:?}");
         // an episode with only a previous neighbour has no Next row either
-        let only_previous = HudModel { controls: Controls::for_item(true, true, false), ..model(true) };
+        let only_previous = HudModel { controls: Controls::for_item(true, true, false, false), ..model(true) };
         let rows = commands(&rows_of(&minimal, &only_previous));
         assert!(rows.contains(&HudCommand::Previous) && !rows.contains(&HudCommand::Next), "{rows:?}");
+    }
+
+    /// **The Previous row reads what its next press does**: Previous Episode while it steps back, From
+    /// Beginning when it restarts (past the start, or with nothing before the episode).
+    #[test]
+    fn the_previous_row_reads_what_the_next_press_does() {
+        let minimal = compiled(MINIMAL);
+        let label = |controls| {
+            let model = HudModel { controls, ..model(true) };
+            rows_of(&minimal, &model).iter().find(|r| r.command == HudCommand::Previous).map(|r| r.label).unwrap()
+        };
+        let meta = plx_data::stores::metadata::MetadataStore::default();
+        let from_beginning = crate::info_panel::actions(meta.view())[0];
+        assert_eq!(label(Controls::for_item(true, true, true, false)), plx_platform::i18n::msg::widgets_menu_previous_episode());
+        assert_eq!(label(Controls::for_item(true, true, true, true)), from_beginning);
+        assert_eq!(label(Controls::for_item(true, false, true, false)), from_beginning);
     }
 
     /// **The reference folds `from_beginning` and `go_to_detail`**, labelled with the Info card's own button

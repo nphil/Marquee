@@ -1260,6 +1260,9 @@ pub(crate) fn perform_hud_command(
                 commit_seek(target);
             }
         }
+        // Near the start of an episode with one before it, a queue step that replaces the page's
+        // state itself; otherwise a restart, which keeps the transport up like any other command.
+        HudCommand::Previous if queue_transport::previous_restarts(&player.session) => from_beginning(pa),
         HudCommand::Previous => {
             queue_transport::step(&mut player.session, pa, QueueStep::Previous, pages, bridge);
             return;

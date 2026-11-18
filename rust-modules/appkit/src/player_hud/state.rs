@@ -37,29 +37,32 @@ pub const BTN_MORE: i32 = BTN_N - 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action { Previous, Next, Subtitles, Audio, More }
 
-/// A frame's episode-button eligibility and availability, sampled once. **Previous is the previous
-/// episode of the queue and nothing else**: it is enabled exactly when the playing row has a
-/// predecessor (`queue_neighbors`), so on the first episode of a queue it is disabled. Restarting
-/// the current episode is `HudCommand::FromBeginning` (the Info tab's action, and a More-menu row
-/// in a package that folds it), never a second meaning of this button.
+/// A frame's episode-button eligibility, availability and restart glyph, sampled once. **Previous
+/// is a music player's**: it is live on every episode that has a pair, and what the next press does
+/// is `restart` (`plx_media::route::previous_press`): start this episode over, or, when the
+/// playhead is near the start and an episode precedes it, play that one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Controls {
     pub previous: bool,
     pub next: bool,
+    pub restart: bool,
 }
 impl Controls {
-    pub const NONE: Self = Self { previous: false, next: false };
+    pub const NONE: Self = Self { previous: false, next: false, restart: false };
     pub fn now(ps: &plx_media::route::PlaybackSession) -> Self {
         if plx_media::route::cur_kind(ps) != "episode" { return Self::NONE; }
         let (previous, next) = plx_media::route::queue_neighbors(ps);
-        Self::for_item(true, previous, next)
+        if !(previous || next) { return Self::NONE; }
+        let press = plx_media::route::previous_press(plx_media::player::intended_pos_ns(ps), previous);
+        Self::for_item(true, previous, next, press == plx_media::route::PreviousPress::Restart)
     }
-    pub fn for_item(episode: bool, previous: bool, next: bool) -> Self {
+    /// `previous`: an episode precedes this one; `restart`: the playhead is past the restart point.
+    /// With nothing before the episode the disc can only restart it.
+    pub fn for_item(episode: bool, previous: bool, next: bool, restart: bool) -> Self {
         if !episode || !(previous || next) { return Self::NONE; }
-        Self { previous, next }
+        Self { previous: true, next, restart: restart || !previous }
     }
-    /// Whether the Previous/Next pair is on the row at all: [`Self::for_item`] only ever builds a
-    /// pair with at least one of its two buttons live.
+    /// Whether the Previous/Next pair is on the row at all.
     pub fn pair(self) -> bool {
         self.previous || self.next
     }
@@ -85,7 +88,7 @@ impl Controls {
     }
     pub fn icon(self, i: i32) -> plx_ui::icons::Icon {
         use plx_ui::icons::Icon;
-        match i { BTN_PREVIOUS => Icon::Previous,
+        match i { BTN_PREVIOUS if self.restart => Icon::Restart, BTN_PREVIOUS => Icon::Previous,
             BTN_NEXT => Icon::Next, BTN_AUDIO => Icon::Audio, BTN_MORE => Icon::More, _ => Icon::Cc }
     }
 }

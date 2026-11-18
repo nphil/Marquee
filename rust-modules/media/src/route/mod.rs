@@ -11,7 +11,7 @@
 
 mod decision;
 mod queue_navigation;
-pub use queue_navigation::{QueueContinuation, QueueStep, queue_neighbor, queue_neighbors};
+pub use queue_navigation::{PREVIOUS_RESTART_AFTER_NS, PreviousPress, QueueContinuation, QueueStep, previous_press, queue_neighbor, queue_neighbors};
 mod flight;
 mod plan;
 mod prefs;

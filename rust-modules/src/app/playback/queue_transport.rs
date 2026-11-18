@@ -1,13 +1,20 @@
 //! Explicit queue navigation and Up Next share one stop → resolve → start ritual.
 use super::*;
-use plx_media::route::{queue_neighbor, QueueStep};
+use plx_media::route::{previous_press, queue_neighbor, PreviousPress, QueueStep};
 use plx_plex::plex::QueueRow;
 
+/// Whether the next Previous press starts the playing episode over rather than stepping back
+/// (`plx_media::route::previous_press`): the playhead is past the restart point, or no episode
+/// precedes this one. The disc's glyph and the More-menu row read the same rule.
+pub(super) fn previous_restarts(ps: &plx_media::route::PlaybackSession) -> bool {
+    let (has_predecessor, _) = plx_media::route::queue_neighbors(ps);
+    previous_press(plx_media::player::intended_pos_ns(ps), has_predecessor) == PreviousPress::Restart
+}
+
 /// Previous and Next both ask for the neighbouring queue row and play it through [`play`]; neither
-/// is ever a seek. The outgoing episode is stopped by the replacement itself
-/// (`stop_for_replacement` → `final_report`), which reports the playhead it really reached, so its
-/// resume point survives the step. Restarting the current episode is `from_beginning` (the Info
-/// tab's action, and a More-menu row in a package that folds it), not a Previous.
+/// is a seek. The outgoing episode is stopped by the replacement itself (`stop_for_replacement` →
+/// `final_report`), which reports the playhead it really reached, so its resume point survives the
+/// step. A Previous that restarts instead never reaches here (`perform_hud_command`).
 pub(super) fn step(
     ps: &mut plx_media::route::PlaybackSession,
     pa: &mut plx_media::player::adapter::PlayerAdapter,

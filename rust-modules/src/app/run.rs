@@ -5003,7 +5003,7 @@ mod lifecycle_regression_tests {
         use plx_data::metadata::{Marker, MarkerKind};
         let _serial = plx_base::testlock::serial();
         let credits = Marker { kind: MarkerKind::Credits, start_ms: 0, end_ms: 60_000, final_seg: true };
-        let discs = ControlSlot::Discs(Controls::for_item(true, true, true));
+        let discs = ControlSlot::Discs(Controls::for_item(true, true, true, false));
         assert!(discs.enabled(plx_appkit::player_hud::BTN_PREVIOUS), "the fixture: the first disc is live");
         let (focus, engine, reqs) = depart_and_press_ok(ControlSlot::UpNext(credits), discs);
         assert_eq!(focus, GROUP_SCRUB, "nav");
@@ -5014,8 +5014,9 @@ mod lifecycle_regression_tests {
     /// **The one performer, one row per command.** Every classic control's command goes through
     /// `perform_hud_command` and lands where its press always did: Subtitles on the Tracks panel's
     /// second tab, Audio on its first, More on the More root, and `open_more` on the Speed page on
-    /// the Speed page. Previous and Next hand the queue to the transport and leave the HUD exactly
-    /// as it was; every other command keeps the transport up and extends its linger.
+    /// the Speed page. Next hands the queue to the transport and leaves the HUD exactly as it was;
+    /// so does a Previous that steps back, but with no queue Previous restarts, which keeps the
+    /// transport up like every other command.
     #[test]
     fn the_one_performer_sends_each_classic_command_where_its_press_always_went() {
         use plx_appkit::more_menu::MorePage as Page;
@@ -5052,15 +5053,15 @@ mod lifecycle_regression_tests {
             let player = super::super::bridge::player(&app.pages).expect("the player page is mounted");
             assert!(player.hud.until >= 100 + HUD_LINGER_MS, "{command:?} keeps the transport up");
         }
-        for command in [HudCommand::Previous, HudCommand::Next] {
+        {
             let mut app = app();
             super::super::bridge::nav_push(&mut app.pages, AppArg::Player);
             frame(&mut app, 16);
             let before = super::super::bridge::player(&app.pages).expect("mounted").hud.until;
-            perform(&mut app, command, 100);
+            perform(&mut app, HudCommand::Next, 100);
             let player = super::super::bridge::player(&app.pages).expect("mounted");
-            assert_eq!(player.hud.until, before, "{command:?} leaves the HUD as it was");
-            assert_eq!(super::super::bridge::player_overlay_kind(&app.pages), None, "{command:?} opens no panel");
+            assert_eq!(player.hud.until, before, "Next leaves the HUD as it was");
+            assert_eq!(super::super::bridge::player_overlay_kind(&app.pages), None, "Next opens no panel");
         }
     }
 
@@ -5202,12 +5203,10 @@ mod lifecycle_regression_tests {
         );
     }
 
-    /// **Previous and Next are queue steps and never seeks.** With the playhead well into the item
-    /// (it used to be past Previous's five-second restart threshold, where `queue_transport::step`
-    /// seeked to 0 and rewrote the episode's resume point), neither step, with no queue behind or
-    /// after the item, asks for a seek: an item with no neighbour has nothing to step to.
+    /// **With no queue around the item, Next goes nowhere and Previous only restarts.** The playhead
+    /// is well past Previous's restart point, so Previous seeks to the start; Next has no row to ask for.
     #[test]
-    fn previous_and_next_with_no_neighbour_seek_nowhere() {
+    fn with_no_neighbour_next_seeks_nowhere_and_previous_restarts() {
         use plx_appkit::player_hud::command::HudCommand;
         let _serial = plx_base::testlock::serial();
         let mut app = app();
@@ -5217,7 +5216,7 @@ mod lifecycle_regression_tests {
         perform_on_a_mounted_player(&mut app, HudCommand::Next, 100);
         assert_eq!(globals.seek_to(), -1, "Next, with nothing queued after it, seeks nowhere");
         perform_on_a_mounted_player(&mut app, HudCommand::Previous, 200);
-        assert_eq!(globals.seek_to(), -1, "Previous, with nothing queued before it, seeks nowhere: it is not a restart");
+        assert_eq!(globals.seek_to(), 0, "Previous, with nothing queued before it, starts the item over");
     }
 
     /// **A section no control opens is reached through More, and focus ends on a drawn control.** The package places
@@ -9624,13 +9623,12 @@ mod lifecycle_regression_tests {
         );
     }
 
-    // ---- Previous and Next walk the queue, and never rewrite the episode they leave -------------
+    // ---- Previous restarts past the start and steps back near it; Next steps forward -------------
     //
-    // The Previous disc used to be a RESTART from five seconds in (a seek to 0 that rewrote the
-    // playhead and the viewOffset of the episode the viewer meant to leave), and was disabled again
-    // before it: a play started fresh had a queue that began at the playing episode, so there was
-    // no episode before it to go to. These play an episode of a three-episode season fresh, the way
-    // a Continue Watching tile or the detail page's Play does, and press the controls.
+    // A play started fresh has the whole season in its queue, so there is an episode before the
+    // playing one to go to. These play an episode of a three-episode season fresh, the way a
+    // Continue Watching tile or the detail page's Play does, and press the controls with the
+    // playhead set to where the viewer is (the clock these tests have).
 
     /// One episode `n` of the season fixture as a PlayQueue row (ratingKey `n`, queue item `10 + n`).
     fn season_row(n: usize) -> String {
@@ -9723,60 +9721,81 @@ mod lifecycle_regression_tests {
             .collect()
     }
 
-    /// **Previous goes to the episode before, and the episode it leaves reports where it was.** E2
-    /// of the season is played fresh and the viewer is 30 s into it. The queue the fresh play built
-    /// holds E1, so the Previous disc is enabled (the old disc was a Restart that seeked to 0); a
-    /// press stops E2 at the playhead it really reached (`time=30000`, never a rewound 0 and no
-    /// seek at all) and asks for E1.
+    /// **Near the start, Previous goes to the episode before, and the episode it leaves reports where
+    /// it was.** E2 of the season is played fresh and the viewer is 2 s into it (a second press soon
+    /// after a restart). The queue the fresh play built holds E1, so the press stops E2 at the
+    /// playhead it really reached (`time=2000`, no seek) and asks for E1.
     #[test]
-    fn previous_plays_the_episode_before_and_the_one_it_leaves_reports_its_real_position() {
+    fn previous_near_the_start_plays_the_episode_before_and_the_one_it_leaves_reports_its_real_position() {
         use plx_appkit::player_hud::command::HudCommand;
         let _serial = plx_base::testlock::serial();
         let Some(mut rig) = Rig::serving_with(|request: &str| season_body(request)) else {
-            eprintln!("SKIPPED previous_plays_the_episode_before_and_the_one_it_leaves_reports_its_real_position: \
+            eprintln!("SKIPPED previous_near_the_start_plays_the_episode_before_and_the_one_it_leaves_reports_its_real_position: \
                 lifecycle fixture worker thread could not be spawned");
             return;
         };
         playing_season_episode(&mut rig, "2");
+        let globals = SeekGlobals::set(2_000_000_000, 60_000_000_000);
         let controls = plx_appkit::player_hud::Controls::now(&rig.app.player.session);
-        assert!(controls.previous, "a FRESH play of E2 has E1 before it: {:?}", rig.requests.lock().unwrap());
+        assert!(controls.previous && !controls.restart, "E1 is before E2, so the disc steps back: {:?}", rig.requests.lock().unwrap());
         assert!(controls.next, "and E3 after it");
-        let globals = SeekGlobals::set(30_000_000_000, 60_000_000_000);
 
         perform_on_a_mounted_player(&mut rig.app, HudCommand::Previous, 100);
 
         assert!(plx_media::route::play_pending(), "Previous asked for the episode before");
-        assert_eq!(globals.seek_to(), -1, "Previous is a queue step: it seeks nowhere");
+        assert_eq!(globals.seek_to(), -1, "stepping back seeks nowhere");
         let stops = stop_reports(&rig, "2");
         assert_eq!(stops.len(), 1, "the outgoing episode was stopped once: {:?}", rig.requests.lock().unwrap());
-        assert!(stops[0].contains("time=30000&"), "it reports the playhead it reached, not 0: {}", stops[0]);
+        assert!(stops[0].contains("time=2000&"), "it reports the playhead it reached, not 0: {}", stops[0]);
     }
 
-    /// **The first episode of the queue has no Previous.** E1 of the season, played fresh, is the
-    /// first row: the disc is disabled, and a Previous press (the Previous key reaches the same
-    /// performer) changes nothing: no stop report, no request, no seek.
+    /// **Partway through, Previous restarts the episode and leaves the queue alone**: E2 at 30 s,
+    /// press: a seek to 0, no stop report and no request; the disc already wears the restart glyph.
     #[test]
-    fn previous_on_the_first_episode_of_the_queue_is_disabled_and_does_nothing() {
+    fn previous_partway_through_restarts_the_episode_and_nothing_else() {
         use plx_appkit::player_hud::command::HudCommand;
         let _serial = plx_base::testlock::serial();
         let Some(mut rig) = Rig::serving_with(|request: &str| season_body(request)) else {
-            eprintln!("SKIPPED previous_on_the_first_episode_of_the_queue_is_disabled_and_does_nothing: \
+            eprintln!("SKIPPED previous_partway_through_restarts_the_episode_and_nothing_else: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        playing_season_episode(&mut rig, "2");
+        let globals = SeekGlobals::set(30_000_000_000, 60_000_000_000);
+        let controls = plx_appkit::player_hud::Controls::now(&rig.app.player.session);
+        assert!(controls.restart && controls.previous, "past the start the disc restarts");
+
+        perform_on_a_mounted_player(&mut rig.app, HudCommand::Previous, 100);
+
+        assert_eq!(globals.seek_to(), 0, "the episode starts over");
+        assert!(!plx_media::route::play_pending(), "no other episode was asked for");
+        assert!(stop_reports(&rig, "2").is_empty(), "E2 plays on: {:?}", rig.requests.lock().unwrap());
+    }
+
+    /// **The first episode of the queue restarts however near the start the playhead is.** E1 has no
+    /// episode before it, so Previous stays live and a second press just restarts again.
+    #[test]
+    fn previous_on_the_first_episode_always_restarts() {
+        use plx_appkit::player_hud::command::HudCommand;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::serving_with(|request: &str| season_body(request)) else {
+            eprintln!("SKIPPED previous_on_the_first_episode_always_restarts: \
                 lifecycle fixture worker thread could not be spawned");
             return;
         };
         playing_season_episode(&mut rig, "1");
-        let controls = plx_appkit::player_hud::Controls::now(&rig.app.player.session);
-        assert!(!controls.previous, "nothing before the first episode: {:?}", rig.requests.lock().unwrap());
-        assert!(controls.next, "E2 follows");
-        assert!(!controls.enabled(plx_appkit::player_hud::BTN_PREVIOUS), "the disc has no focus stop");
-        assert_eq!(controls.command(plx_appkit::player_hud::BTN_PREVIOUS), None, "and nothing to press");
-        let globals = SeekGlobals::set(30_000_000_000, 60_000_000_000);
+        for playhead_ns in [30_000_000_000, 2_000_000_000] {
+            let globals = SeekGlobals::set(playhead_ns, 60_000_000_000);
+            let controls = plx_appkit::player_hud::Controls::now(&rig.app.player.session);
+            assert!(controls.previous && controls.restart, "nothing before E1, so the disc restarts at {playhead_ns}");
+            assert!(controls.next, "E2 follows");
 
-        perform_on_a_mounted_player(&mut rig.app, HudCommand::Previous, 100);
+            perform_on_a_mounted_player(&mut rig.app, HudCommand::Previous, 100);
 
-        assert!(!plx_media::route::play_pending(), "no episode before E1 to request");
-        assert_eq!(globals.seek_to(), -1, "and it is not a restart either");
-        assert!(stop_reports(&rig, "1").is_empty(), "E1 plays on: {:?}", rig.requests.lock().unwrap());
+            assert_eq!(globals.seek_to(), 0, "restart at {playhead_ns}");
+            assert!(!plx_media::route::play_pending(), "no episode before E1 to request");
+            assert!(stop_reports(&rig, "1").is_empty(), "E1 plays on: {:?}", rig.requests.lock().unwrap());
+        }
     }
 
     /// **Next still steps forward, and the episode it leaves reports where it was.** The same E2 at
