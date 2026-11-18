@@ -544,9 +544,17 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     app.pages.budget.begin_frame(plx_base::diag::heartbeat::now_us());
     // Retry deadlines and decoded handoff run even on idle frames. Residency age
     // advances only in the presenting-side prepare below.
+    let in_flight = app.pages.nav.tabs.stack.transition.in_flight();
+    let pending = app.pages.nav.tabs.stack.pending_dest();
     super::adapters::poster::hold_return(matches!(app.route(), AppArg::Player)
-        || matches!(app.pages.nav.tabs.stack.pending_dest(), Some(AppArg::Player)),
-        app.pages.nav.tabs.stack.transition.in_flight());
+        || matches!(pending, Some(AppArg::Player)), in_flight);
+    let library = |arg: &AppArg| matches!(arg, AppArg::Library | AppArg::LibraryCollections { .. } | AppArg::LibraryRecommended { .. });
+    let away = !library(&app.route()) || pending.is_some_and(|dest| !library(dest));
+    if !away && pending.is_none() && !in_flight && app.pages.held_page_image().is_none() {
+        // the Library drawn live and settled on the frame just past: that is the screen it reopens on
+        plx_ui::tex::mark_away_viewport();
+    }
+    super::adapters::poster::hold_away(away, in_flight);
     super::adapters::poster::begin_frame();
     super::adapters::poster::drain_decoded();
 

@@ -225,7 +225,8 @@ struct Pslot {
     /// cooldown is armed ([`PosterSource::unresident`]) or the slot's eviction history is
     /// otherwise cleared (recovery, recycle) — a new deadline is something to wake for again.
     evict_wake_sent: bool,
-    return_pin: bool,
+    /// The render cache's viewport holds on this slot's texture (`tex::Pins`).
+    pins: tex::Pins,
 }
 impl Pslot {
     const ZERO: Pslot = Pslot {
@@ -250,7 +251,7 @@ impl Pslot {
         evict_attempts: 0,
         evict_cooldown_until: None,
         evict_wake_sent: false,
-        return_pin: false,
+        pins: 0,
     };
 }
 
@@ -1001,7 +1002,7 @@ fn is_settled_victim(s: &Pslot, frame: c_uint) -> bool {
 /// (a queued request is live, a picture is kept) or not (both are recyclable). Speculation
 /// (`visible` unset: a warm, a lookahead entry nobody has drawn) never qualifies.
 fn drawn_recently(s: &Pslot, frame: c_uint) -> bool {
-    s.return_pin || (s.visible && frame.wrapping_sub(s.frame) < WANT_STALE_FRAMES)
+    s.pins != 0 || (s.visible && frame.wrapping_sub(s.frame) < WANT_STALE_FRAMES)
 }
 
 /// A request a worker has not picked up whose card has not been drawn for [`WANT_STALE_FRAMES`].
@@ -1117,7 +1118,7 @@ fn claim(s: &mut Pslot, c: Claim<'_>) -> c_uint {
     s.state = c.state;
     s.visible = c.visible;
     s.ahead = c.ahead;
-    s.return_pin = false;
+    s.pins = 0;
     s.use_ = c.use_;
     s.frame = c.frame;
     s.pw = 0;
@@ -1587,12 +1588,28 @@ pub(crate) fn hold_return(player: bool, transitioning: bool) {
     if !player && transitioning { return; }
     let mut g = store();
     let frame = g.frame;
-    tex::hold_return(player, |key, keep| {
-        if let Some(slot) = g.slots.get_mut(key.0 as usize) {
-            if slot.return_pin && !keep { slot.frame = frame; }
-            slot.return_pin = keep;
-        }
-    });
+    tex::hold_return(player, |key, pins| mirror_pins(&mut g.slots, key, pins, frame));
+}
+
+/// **The Library's viewport stays resident while other pages are browsed.** Requests, Home and a
+/// title page draw more art than the 64 slots hold besides the Library's, so after a few minutes
+/// away LRU had recycled every Library slot and reopening it drew empty tiles for 270 ms or more
+/// while its posters were decoded again (TV, 2026-11-18). `away` is held from the frame the
+/// Library is left until it is back, settled; memory pressure (`rest_warms`) lets it go.
+pub(crate) fn hold_away(away: bool, transitioning: bool) {
+    // The way back may still show a cached transition image.
+    if !away && transitioning { return; }
+    let mut g = store();
+    let (frame, away) = (g.frame, away && !g.warms_resting);
+    tex::hold_away(away, |key, pins| mirror_pins(&mut g.slots, key, pins, frame));
+}
+
+fn mirror_pins(slots: &mut [Pslot], key: PosterKey, pins: tex::Pins, frame: c_uint) {
+    if let Some(slot) = slots.get_mut(key.0 as usize) {
+        // a released hold leaves the art as recently drawn, not as the LRU's oldest
+        if slot.pins & !pins != 0 { slot.frame = frame; }
+        slot.pins = pins;
+    }
 }
 
 fn upload_priority(slot: &Pslot, frame: u32) -> (bool, u32, u32) {
@@ -2782,8 +2799,8 @@ mod tests {
             tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || n * 16_000);
         }
         hold_return(true, false);
-        { let g = store(); assert!(g.slots[0].return_pin && g.slots[1].return_pin); }
-        assert!(!store().slots[2].return_pin, "not all cached art is a return viewport");
+        { let g = store(); assert!(g.slots[0].pins != 0 && g.slots[1].pins != 0); }
+        assert_eq!(store().slots[2].pins, 0, "not all cached art is a return viewport");
         // Two hours of logical playback, with a changing HUD picture every minute.
         for minute in 1..=120u64 {
             let key = 2 + (minute as u32 % 62);
@@ -2798,9 +2815,9 @@ mod tests {
             assert!(tex::resident_bytes() <= 48);
         }
         hold_return(false, true);
-        assert!(store().slots[0].return_pin, "the return dip has not drawn the page yet");
+        assert_ne!(store().slots[0].pins, 0, "the return dip has not drawn the page yet");
         hold_return(false, false);
-        { let g = store(); assert!(!g.slots[0].return_pin && !g.slots[1].return_pin); }
+        { let g = store(); assert!(g.slots[0].pins == 0 && g.slots[1].pins == 0); }
         for path in paths { assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0, "return is a resident hit, not a re-decode"); }
         let g = store();
         assert!(is_settled_victim(&g.slots[0], g.frame + WANT_STALE_FRAMES), "normal source eviction resumes after return");
@@ -2814,6 +2831,86 @@ mod tests {
         budget.begin_frame(7_202_000_000);
         tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || 7_202_000_000);
         assert_eq!(store().slots[0].state, P_EVICTED, "ordinary texture pressure resumes after release");
+        tex::shutdown(&mut up);
+        tex::reset_for_test(tex::TEX_RESIDENT_BYTES_MAX);
+    }
+
+    #[test]
+    fn the_library_viewport_stays_resident_while_other_pages_are_browsed() {
+        struct Up;
+        impl Uploader for Up {
+            fn upload(&mut self, d: &Decoded) -> Tex { Tex { id: 1, w: d.w, h: d.h } }
+            fn warm(&mut self, _: Tex) {}
+            fn free(&mut self, _: Tex) {}
+        }
+        let (_fresh, sid, _) = one_server();
+        tex::install(&SOURCE);
+        // The Library's screenful plus two more posters, and room for four of another page's.
+        let library = tex::AWAY_PIN_MAX + 2;
+        tex::reset_for_test((library + 4) * 16);
+        let paths: Vec<String> = (0..library).map(|i| format!("/library/metadata/away-{i}/thumb")).collect();
+        {
+            let client = plx_plex::plex::client_for(sid).unwrap();
+            let mut g = store();
+            g.slots = [Pslot::ZERO; PT_CAP];
+            g.frame = 1;
+            for (i, path) in paths.iter().enumerate() {
+                let slot = &mut g.slots[i];
+                slot.srv = sid;
+                slot.cache_gen = plx_platform::imgcache::generation();
+                slot.token_gen = client.token_gen();
+                slot.grant_epoch = client.grant_epoch();
+                slot.state = P_READY;
+                set_key(slot, &key_for(sid, path, 2, 2, 0));
+            }
+        }
+        let decoded = |key| tex::PosterReady {
+            key: PosterKey(key), result: Ok(Decoded { w: 2, h: 2, rgba: vec![0; 16].into_boxed_slice() })
+        };
+        let mut budget = plx_ui::frame::Budget::new();
+        let mut present = plx_machine::present::Present::new();
+        let mut up = Up;
+        let mut prepare = |now: u64, budget: &mut plx_ui::frame::Budget, up: &mut Up| {
+            budget.begin_frame(now);
+            tex::prepare(budget, up, &mut plx_machine::machine::PresentHandle::of(&mut present), || now);
+        };
+        for key in 0..library as u32 {
+            tex::accept(decoded(key));
+            prepare(u64::from(key) * 16_000, &mut budget, &mut up);
+        }
+        // The Library at rest: its screen drawn top row first, then left.
+        for path in &paths { assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0); }
+        tex::mark_away_viewport();
+        hold_away(true, true);
+        {
+            let g = store();
+            assert!(g.slots[..tex::AWAY_PIN_MAX].iter().all(|s| s.pins == tex::PIN_AWAY), "the screenful is kept");
+            assert!(g.slots[tex::AWAY_PIN_MAX..library].iter().all(|s| s.pins == 0), "at most AWAY_PIN_MAX of it");
+        }
+        // Five minutes on other pages, a new poster each second: count and byte pressure both.
+        for second in 1..=300u32 {
+            store().frame = second * 60;
+            tex::accept(decoded(library as u32 + second % (PT_CAP - library) as u32));
+            prepare(1_000_000 + u64::from(second) * 1_000_000, &mut budget, &mut up);
+            let g = store();
+            assert!(g.slots[..tex::AWAY_PIN_MAX].iter().all(|s| s.state == P_READY && !is_settled_victim(s, g.frame)));
+        }
+        hold_away(false, true);
+        assert_eq!(store().slots[0].pins, tex::PIN_AWAY, "the way back has not drawn the Library yet");
+        hold_away(false, false);
+        assert!(store().slots.iter().all(|s| s.pins == 0));
+        for path in &paths[..tex::AWAY_PIN_MAX] {
+            assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0, "reopening is a resident hit, not a re-decode");
+        }
+        // Short memory lets the hold go.
+        tex::mark_away_viewport();
+        hold_away(true, false);
+        assert_eq!(store().slots[0].pins, tex::PIN_AWAY);
+        store().warms_resting = true;
+        hold_away(true, false);
+        assert_eq!(store().slots[0].pins, 0, "memory pressure releases the kept viewport");
+        store().warms_resting = false;
+        hold_away(false, false);
         tex::shutdown(&mut up);
         tex::reset_for_test(tex::TEX_RESIDENT_BYTES_MAX);
     }

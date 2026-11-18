@@ -3,6 +3,7 @@
 ## Unreleased
 
 - A page's on-screen posters start loading when it is opened, while its transition plays. They were first asked for once the page was already showing, so on Requests they all landed on its first frames, a run of 16–34 ms frames on the TV.
+- The Library keeps the posters of the screen it was left on (up to 24) loaded while other pages are browsed, so it reopens with them. After a few minutes on Requests or Home every one of them had been unloaded to make room, and the tiles stayed empty for 270 ms or more while they were read back from disk. Short memory still releases them.
 - Releasing an arrow key no longer redraws the screen. At the end of a row the press moves nothing, and the release drew the same screen again a remote's hold later, which the TV's frame log counted as a 76–92 ms late frame. A screen that acts on a release (the player's scrub) still redraws for it.
 - Opening a page (the Library, a title) no longer ends its transition with one slow frame. Once the page settled, a last off-screen copy of it was drawn and shown, which cost 25–34 ms on the TV and delayed the frame after it; that frame now draws the page directly.
 - Leaving a title page while its trailer preview is still opening (Down to the episodes, say) no longer holds that frame while the preview's network connection closes, about 40 ms on the TV: the connection is told to stop and is waited for on later frames.

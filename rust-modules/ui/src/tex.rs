@@ -387,10 +387,35 @@ pub fn prime(key: PosterKey, d: Decoded, up: &mut dyn Uploader) -> bool {
     landed
 }
 
-/// Mirror viewport residency protection into the source before it can recycle an image key.
-pub fn hold_return(held: bool, pin: impl FnMut(PosterKey, bool)) {
+/// Mirror viewport residency protection into the source before it can recycle an image key: `pin`
+/// hears every resident key with its [`Pins`] after the change.
+pub fn hold_return(held: bool, pin: impl FnMut(PosterKey, Pins)) {
     CACHE.with(|cache| cache.borrow_mut().hold_return(held, pin));
 }
+
+/// The art drawn on the last frame resolved so far is the viewport [`hold_away`] keeps. Called
+/// on each frame the page to come back to is on screen, drawn live and settled.
+pub fn mark_away_viewport() {
+    CACHE.with(|cache| cache.borrow_mut().mark_away_viewport());
+}
+
+/// Keep the first [`AWAY_PIN_MAX`] textures of the [`mark_away_viewport`] viewport while `held`,
+/// mirrored into the source as [`hold_return`] is.
+pub fn hold_away(held: bool, pin: impl FnMut(PosterKey, Pins)) {
+    CACHE.with(|cache| cache.borrow_mut().hold_away(held, pin));
+}
+
+/// Which viewport holds keep a texture resident: a bit per hold, `0` for none.
+pub type Pins = u8;
+/// The page under the player, kept for its return ([`hold_return`]).
+pub const PIN_RETURN: Pins = 1;
+/// The page kept while others are browsed ([`hold_away`]).
+pub const PIN_AWAY: Pins = 2;
+
+/// The most textures [`hold_away`] keeps: four rows of the Library's six-column grid, the
+/// screenful it reopens on. With the source's 64 slots that leaves 40 for the pages browsed
+/// meanwhile, more than [`ON_SCREEN_ART_MAX`].
+pub const AWAY_PIN_MAX: usize = 24;
 
 pub fn prioritize_pending<R: Ord>(rank: impl FnMut(PosterKey) -> R) {
     CACHE.with(|cache| cache.borrow_mut().prioritize_pending(rank));
@@ -490,7 +515,7 @@ struct Entry {
     /// which always runs (and so reaches at least `1`) before the first `resolve` that could
     /// possibly touch a freshly-inserted entry — see [`TexCache::prepare`]'s doc.
     drawn_frame: u64,
-    return_pin: bool,
+    pins: Pins,
 }
 
 pub struct TexCache<K> {
@@ -527,7 +552,9 @@ pub struct TexCache<K> {
     frame: u64,
     /// Cached route images can present for many frames without resolving their artwork.
     last_draw_frame: u64,
-    return_held: bool,
+    /// The frame [`TexCache::hold_away`] keeps the art of ([`mark_away_viewport`]).
+    away_frame: u64,
+    held: Pins,
 }
 
 impl<K: Copy + Eq + Hash> TexCache<K> {
@@ -549,20 +576,42 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
             bytes: 0,
             frame: 0,
             last_draw_frame: 0,
-            return_held: false,
+            away_frame: 0,
+            held: 0,
         }
     }
 
     /// Keep only the last drawn viewport while another route temporarily owns the screen.
     /// Pins share the ordinary byte/count ceilings; they never allocate another texture.
-    pub fn hold_return(&mut self, held: bool, mut pin: impl FnMut(K, bool)) {
-        if self.return_held == held { return; }
-        self.return_held = held;
+    pub fn hold_return(&mut self, held: bool, pin: impl FnMut(K, Pins)) {
+        self.hold(PIN_RETURN, held, self.last_draw_frame, usize::MAX, pin);
+    }
+
+    pub fn mark_away_viewport(&mut self) {
+        self.away_frame = self.last_draw_frame;
+    }
+
+    /// [`hold_return`](Self::hold_return) for the [`mark_away_viewport`](Self::mark_away_viewport)
+    /// viewport, at most [`AWAY_PIN_MAX`] of it, earliest drawn first: the grid draws its rows top
+    /// down, so the cut drops the rows furthest down.
+    pub fn hold_away(&mut self, held: bool, pin: impl FnMut(K, Pins)) {
+        self.hold(PIN_AWAY, held, self.away_frame, AWAY_PIN_MAX, pin);
+    }
+
+    fn hold(&mut self, bit: Pins, held: bool, viewport: u64, cap: usize, mut pin: impl FnMut(K, Pins)) {
+        if (self.held & bit != 0) == held { return; }
+        self.held ^= bit;
+        let mut keep: Vec<(u64, K)> = if held && viewport != 0 {
+            self.resident.iter().filter(|(_, e)| e.drawn_frame == viewport).map(|(&k, e)| (e.last_used, k)).collect()
+        } else {
+            Vec::new()
+        };
+        keep.sort_unstable_by_key(|&(used, _)| used);
+        keep.truncate(cap);
         for (&key, entry) in &mut self.resident {
-            let keep = held && entry.drawn_frame != 0 && entry.drawn_frame == self.last_draw_frame;
-            if entry.return_pin && !held { entry.drawn_frame = self.frame; }
-            entry.return_pin = keep;
-            pin(key, keep);
+            if entry.pins & bit != 0 && !held { entry.drawn_frame = self.frame; }
+            if keep.iter().any(|&(_, k)| k == key) { entry.pins |= bit } else { entry.pins &= !bit }
+            pin(key, entry.pins);
         }
     }
 
@@ -690,7 +739,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
                 old.last_used = self.clock;
             }
             None => {
-                self.resident.insert(key, Entry { tex, last_used: self.clock, bytes, drawn_frame: 0, return_pin: false });
+                self.resident.insert(key, Entry { tex, last_used: self.clock, bytes, drawn_frame: 0, pins: 0 });
             }
         }
         true
@@ -722,8 +771,9 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         self.pending.clear();
         self.unresident.clear();
         self.bytes = 0;
-        self.return_held = false;
+        self.held = 0;
         self.last_draw_frame = 0;
+        self.away_frame = 0;
     }
 
     /// The only place victim eligibility is decided: `k` (currently `e`) may be evicted unless it
@@ -731,7 +781,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
     /// last completed [`TexCache::frame`] (`drawn_frame == 0`, "never drawn since upload", is
     /// deliberately NOT protected — an entry nothing has ever resolved is not what is on screen).
     fn victim_ok(&self, k: K, e: &Entry, protect: Option<K>) -> bool {
-        Some(k) != protect && !e.return_pin && !(e.drawn_frame != 0 && e.drawn_frame + 1 >= self.frame)
+        Some(k) != protect && e.pins == 0 && !(e.drawn_frame != 0 && e.drawn_frame + 1 >= self.frame)
     }
 
     /// The [`TexCache::victim_ok`] entries in the order pressure frees them: heavy (a
@@ -812,7 +862,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
 
     /// Hold residency under `bytes_max` from now on, and release now what is over it and may go,
     /// in [`TexCache::victims`] order: what was on screen a moment ago stays, and so does a
-    /// pinned return viewport. Released keys join [`TexCache::unresident`] like any eviction.
+    /// pinned viewport ([`Pins`]). Released keys join [`TexCache::unresident`] like any eviction.
     pub fn hold_under(&mut self, bytes_max: usize, up: &mut dyn Uploader) {
         self.bytes_max = bytes_max;
         if self.bytes <= bytes_max {
