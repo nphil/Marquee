@@ -6806,6 +6806,10 @@ mod replay_after_stop_tests {
 pub(super) fn streaming_engine_for_test(native_epoch: u32) -> Engine {
     let mut eng = prime_livelock_tests::engine_after_reload();
     eng.native_epoch = native_epoch;
+    // A streamed Engine has been through a Load, which records the connection its export was made
+    // on. At the process's first test the field is still 0, and the export watch reads that as a
+    // missing export and rebinds the playback on its first frame.
+    SHARED.export_epoch.store(SHARED.display_epoch.load(Ordering::Acquire), Ordering::Release);
     eng
 }
 
