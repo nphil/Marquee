@@ -4,6 +4,7 @@
 
 - A Library opens on the Recommended or Collections page it was last left on, kept per profile and library. Closing the page clears it. Adapted from plx-native 095f74ca9.
 - Library grid cards ease down from their lift when focus leaves them, and Back to the top raises the first-row card and closes its caption band over frames instead of snapping. Adapted from plx-native 612fc8cf0, 583722c8c and 0aaf63f2e.
+- Turning on an image subtitle track (the picture kind on discs) while a film plays shows the lines already read ahead at once, instead of nothing for the next ten seconds or so. Adapted from plx-native 5570be823.
 - In a full-screen trailer, Up shows or hides the controls, also while the trailer is paused, and hidden controls stop asking for frames. Adapted from plx-native 17aa83ea0.
 - Settings pages slide in without a stall in their first frame: the page the focused row opens is laid out, and its text drawn, while the menu stands still. Animations step on a microsecond clock, so at 120 Hz they no longer alternate 8 ms and 9 ms steps.
 - Marquee tells the LumaTV format badge which sound is playing (Dolby Atmos, DTS-HD, 5.1 and so on, as it leaves the app: a track Marquee mixes down to stereo or the server converts is reported as that), so it shows beside the picture marks. Nothing is sent when LumaTV is not running.

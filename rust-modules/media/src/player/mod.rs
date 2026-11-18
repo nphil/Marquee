@@ -2384,11 +2384,24 @@ fn subtitle_floor_ns() -> i64 {
 }
 
 fn subtitle_floor_for(position_ns: i64, seeking: bool, target_ns: i64) -> i64 {
-    // The demuxer can already be at a backward seek's target while the native clock still
-    // reports the old picture. Keep those newly read cues through the rebase. min also makes
-    // independently sampled atomics conservative if a new request races this read.
-    let anchor = if seeking && target_ns >= 0 { position_ns.min(target_ns) } else { position_ns };
-    anchor.saturating_sub((SUBTITLE_OFFSET_LATEST_MS + 2_000) * 1_000_000)
+    anchor_for(position_ns, seeking, target_ns).saturating_sub((SUBTITLE_OFFSET_LATEST_MS + 2_000) * 1_000_000)
+}
+
+/// Where cues are read relative to: the playhead, or an in-flight seek's target if that is earlier.
+/// The demuxer can already be at a backward seek's target while the native clock still reports the
+/// old picture. Keep those newly read cues through the rebase. min also makes independently sampled
+/// atomics conservative if a new request races this read.
+fn anchor_for(position_ns: i64, seeking: bool, target_ns: i64) -> i64 {
+    if seeking && target_ns >= 0 { position_ns.min(target_ns) } else { position_ns }
+}
+
+/// The playhead the demuxer retires image-subtitle packets against (`ff_subs::ImageBacklog`).
+pub(crate) fn caption_anchor_ns() -> i64 {
+    anchor_for(
+        SHARED.playpos_ns.load(Relaxed),
+        SHARED.seeking.load(Relaxed),
+        SHARED.seek_display_ns.load(Relaxed),
+    )
 }
 
 /// The latest the offset goes, for every kind of track: a DELAY is served from cues already in the

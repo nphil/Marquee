@@ -337,6 +337,153 @@ impl SubCue<'_> {
     }
 }
 
+/// `AV_INPUT_BUFFER_PADDING_SIZE` of the bundled FFmpeg: the zeroed tail a decoder may read past a
+/// packet's `size`. `ci/ffabi-assert.c` pins it, so a bump of the bundled FFmpeg that moves it
+/// fails the build until this follows.
+const INPUT_PADDING: usize = 64;
+
+/// The segment type that opens a PGS display set (`pgssubdec.c`'s `PRESENTATION_SEGMENT`); the
+/// others are the window (0x17), palette (0x14) and object (0x15) segments and the closing END (0x80).
+const PGS_PRESENTATION_SEGMENT: u8 = 0x16;
+
+/// How a track's packets group into the display sets a decoder needs whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SetFraming {
+    /// One packet is one display set (Matroska, and VobSub / DVB wherever they are muxed): the packet
+    /// on screen at the playhead supersedes every one before it.
+    PerPacket,
+    /// PGS. A set is one packet in Matroska, but the MPEG-TS demuxer emits one packet per PES and a
+    /// Blu-ray stream carries one segment per PES (PCS, WDS, PDS, ODS, END): the set on screen begins
+    /// at the newest packet that opens with a presentation segment, which can be several packets
+    /// behind the one at the playhead.
+    PgsSegments,
+}
+
+impl SetFraming {
+    /// The framing of a track by the codec name `avcodec_get_name` gives it.
+    fn of_codec(codec_name: &str) -> Self {
+        if codec_name == "hdmv_pgs_subtitle" { Self::PgsSegments } else { Self::PerPacket }
+    }
+}
+
+/// One image-subtitle packet the demuxer read while no subtitle was on, kept until one is. It owns
+/// its bytes (the demuxer's packet is unreferenced as soon as the loop moves on) with the zero
+/// padding libavcodec's decoders may read past `size`.
+pub(super) struct HeldPacket {
+    /// The packet's place in the demuxer's read order across every track, stamped by
+    /// [`ImageBacklog::hold`]; what [`ImageBacklog::take`] merges the tracks back by.
+    seq: u64,
+    /// The packet's clock for retention (`pts_ns_opt`).
+    time_ns: Option<i64>,
+    pts: i64,
+    dts: i64,
+    duration: i64,
+    flags: c_int,
+    size: usize,
+    bytes: Vec<u8>,
+    /// Its stream, for the decode's time base. Lives as long as the format context, like `SubTracks`.
+    st: *mut AVStream,
+}
+
+impl HeldPacket {
+    fn new(time_ns: Option<i64>, pts: i64, dts: i64, duration: i64, flags: c_int, payload: &[u8], st: *mut AVStream) -> Self {
+        let mut bytes = Vec::with_capacity(payload.len() + INPUT_PADDING);
+        bytes.extend_from_slice(payload);
+        bytes.resize(payload.len() + INPUT_PADDING, 0);
+        Self { seq: 0, time_ns, pts, dts, duration, flags, size: payload.len(), bytes, st }
+    }
+
+    /// Whether the payload opens with a PGS presentation segment: the start of a display set.
+    fn opens_pgs_display_set(&self) -> bool {
+        self.size > 0 && self.bytes[0] == PGS_PRESENTATION_SEGMENT
+    }
+}
+
+/// What the demuxer read of each image track while subtitles were Off. Text cues are kept for every
+/// track whatever the selection, so a text track chosen mid-play shows at once; an image packet had
+/// no such afterlife, and the window it covers (the demuxer runs ahead of the playhead) was thrown
+/// away, leaving a gap as long as the read-ahead (about 10 s) after an image track was chosen. This
+/// keeps the packets instead, and the choice decodes them in the order they were read (every track
+/// interleaved as the file has them) through the decoder a live packet takes.
+///
+/// Retention is the read-ahead window, with no cap of its own: per track, a display set is kept from
+/// the one on screen at the playhead onward, because that one supersedes everything behind it for
+/// the one thing a selection made now can show (the line on screen at the playhead, and what
+/// follows). Where a set is a packet, that is the last packet at or before the playhead; where a
+/// set is a run of segment packets ([`SetFraming::PgsSegments`]), it is the run from the PCS at or
+/// before it. A seek discards all of it.
+///
+/// Adapted from plx-native 5570be823.
+pub(super) struct ImageBacklog {
+    tracks: Vec<std::collections::VecDeque<HeldPacket>>,
+    framing: Vec<SetFraming>,
+    held: usize,
+    /// The read sequence number the next held packet takes. Never reset: it only has to grow.
+    next_seq: u64,
+}
+
+impl ImageBacklog {
+    /// One track per entry of `framing`, in file order.
+    fn new(framing: Vec<SetFraming>) -> Self {
+        Self { tracks: framing.iter().map(|_| Default::default()).collect(), framing, held: 0, next_seq: 0 }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.held == 0
+    }
+
+    /// Keep `packet` as the newest of track `pos`, then retire what the playhead (`anchor_ns`) leaves
+    /// superseded.
+    fn hold(&mut self, pos: usize, mut packet: HeldPacket, anchor_ns: Option<i64>) {
+        let Some(track) = self.tracks.get_mut(pos) else { return };
+        packet.seq = self.next_seq;
+        self.next_seq += 1;
+        track.push_back(packet);
+        self.held += 1;
+        let Some(anchor_ns) = anchor_ns else { return };
+        let Some(newest_behind) = track.iter().rposition(|held| held.time_ns.is_some_and(|t| t <= anchor_ns)) else {
+            return;
+        };
+        let keep_from = match self.framing.get(pos) {
+            Some(SetFraming::PgsSegments) => {
+                // The newest packet at or before the playhead can be the END of the set on screen:
+                // that set began at its PCS. With no PCS behind the playhead what is held there is
+                // the tail of a set whose start was never held (a seek landed inside it), and there
+                // is no start to cut at until the next set's PCS arrives.
+                match track.iter().take(newest_behind + 1).rposition(HeldPacket::opens_pgs_display_set) {
+                    Some(set_start) => set_start,
+                    None => return,
+                }
+            }
+            _ => newest_behind,
+        };
+        track.drain(..keep_from);
+        self.held -= keep_from;
+    }
+
+    fn clear(&mut self) {
+        for track in &mut self.tracks {
+            track.clear();
+        }
+        self.held = 0;
+    }
+
+    /// Everything held, in the order the demuxer read it across all tracks, leaving the backlog
+    /// empty. The sequence number [`hold`](Self::hold) stamped is demux order itself (a packet may
+    /// lack a timestamp), and each track's queue is already in it, so this is a stable merge. The
+    /// bitmap store the cues are published to is in demux order and evicts by it: a track-grouped
+    /// batch would break that.
+    fn take(&mut self) -> Vec<(usize, HeldPacket)> {
+        self.held = 0;
+        let mut out = Vec::new();
+        for (pos, track) in self.tracks.iter_mut().enumerate() {
+            out.extend(track.drain(..).map(|packet| (pos, packet)));
+        }
+        out.sort_by_key(|(_, packet)| packet.seq);
+        out
+    }
+}
+
 /// The subtitle streams of one `AVFormatContext`, in FILE order, with the decoder of each image
 /// stream. A track's 0-based position here is its `desired_sub_idx` / store key.
 pub(super) struct SubTracks {
@@ -346,6 +493,8 @@ pub(super) struct SubTracks {
     /// Per track (same order as `streams`): the language-derived text charset, fixed by the first
     /// non-UTF-8 packet (`player::sub_charset`).
     charsets: Vec<crate::player::sub_charset::TrackCharset>,
+    /// Image packets read while subtitles were Off, until a track is chosen ([`ImageBacklog`]).
+    held: ImageBacklog,
 }
 
 impl SubTracks {
@@ -356,6 +505,7 @@ impl SubTracks {
         }
         let mut out: Vec<(c_int, SubKind, *mut AVCodecContext)> = Vec::new();
         let mut charsets = Vec::new();
+        let mut framing = Vec::new();
         for i in 0..(*fmt).nb_streams {
             let cp = stream_codecpar(*streams.add(i as usize));
             if (*cp).codec_type == AVMEDIA_TYPE_SUBTITLE {
@@ -366,17 +516,18 @@ impl SubTracks {
                     std::ptr::null_mut()
                 };
                 out.push((i as c_int, k, dec));
+                framing.push(SetFraming::of_codec(&std::ffi::CStr::from_ptr(avcodec_get_name((*cp).codec_id)).to_string_lossy()));
                 charsets.push(crate::player::sub_charset::TrackCharset::new(
                     stream_language(*streams.add(i as usize)).as_deref(),
                 ));
             }
         }
-        SubTracks { streams: out, charsets }
+        SubTracks { streams: out, charsets, held: ImageBacklog::new(framing) }
     }
 
     /// No tracks: what the main demuxer holds while a side reader owns the subtitles.
     pub(super) fn empty() -> Self {
-        SubTracks { streams: Vec::new(), charsets: Vec::new() }
+        SubTracks { streams: Vec::new(), charsets: Vec::new(), held: ImageBacklog::new(Vec::new()) }
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -472,11 +623,72 @@ impl SubTracks {
 
     /// Free every image decoder (they are reopened fresh by the next [`Self::open`]).
     pub(super) unsafe fn close(&mut self) {
+        self.held.clear();
         for (_, _, dec) in self.streams.iter_mut() {
             if !dec.is_null() {
                 avcodec_free_context(dec); // frees + nulls
             }
         }
+    }
+
+    /// One subtitle packet of track `pos`, as [`Self::decode`] takes it, except that an image packet
+    /// read while subtitles are Off is held ([`ImageBacklog`]) instead of dropped, and yields no cue
+    /// until [`Self::release_if_selected`]. `anchor_ns` reads the playhead only when a packet is held.
+    pub(super) unsafe fn on_packet<'p>(
+        &mut self,
+        pos: usize,
+        pkt: *mut AVPacket,
+        st: *mut AVStream,
+        anchor_ns: impl FnOnce() -> i64,
+    ) -> Option<SubCue<'p>> {
+        let (_, kind, dec) = self.streams[pos];
+        if kind == SubKind::Bitmap && !dec.is_null() && crate::player::desired_sub_idx() < 0 {
+            if !(*pkt).data.is_null() && (*pkt).size > 0 {
+                let payload = std::slice::from_raw_parts((*pkt).data, (*pkt).size as usize);
+                let packet = HeldPacket::new(pts_ns_opt(pkt, st), (*pkt).pts, (*pkt).dts, (*pkt).duration, (*pkt).flags, payload, st);
+                self.held.hold(pos, packet, Some(anchor_ns()));
+            }
+            return None;
+        }
+        self.decode(pos, pkt, st)
+    }
+
+    /// Decode and publish what was held, once subtitles are on: the window the read-ahead already
+    /// covers is shown at once instead of after the demuxer has read past it again.
+    pub(super) unsafe fn release_if_selected(&mut self, ass_generation: u64) {
+        if self.held.is_empty() || crate::player::desired_sub_idx() < 0 {
+            return;
+        }
+        let mut scratch = av_packet_alloc();
+        if scratch.is_null() {
+            self.held.clear();
+            return;
+        }
+        for (pos, held) in self.held.take() {
+            let dec = self.streams[pos].2;
+            if dec.is_null() {
+                continue;
+            }
+            // The packet borrows the held bytes for the decode only; it owns no buffer, so it is
+            // freed empty below.
+            (*scratch).data = held.bytes.as_ptr().cast_mut();
+            (*scratch).size = held.size as c_int;
+            (*scratch).pts = held.pts;
+            (*scratch).dts = held.dts;
+            (*scratch).duration = held.duration;
+            (*scratch).flags = held.flags;
+            if let Some(cue) = decode_bitmap(dec, scratch, pos as c_int, held.st) {
+                cue.push(ass_generation);
+            }
+        }
+        (*scratch).data = std::ptr::null_mut();
+        (*scratch).size = 0;
+        av_packet_free(&mut scratch);
+    }
+
+    /// Drop what was held: a seek moves the playhead out of the window it covers.
+    pub(super) fn discard_held(&mut self) {
+        self.held.clear();
     }
 }
 
@@ -604,5 +816,100 @@ mod tests {
             SubCue::BitmapClear { pts, .. } => assert_eq!(pts, i64::MAX),
             _ => unreachable!(),
         }
+    }
+
+    /// A held packet at `t_s` seconds (`None` = no timestamp) whose payload opens with `lead`.
+    fn held_at(t_s: Option<i64>, lead: u8) -> HeldPacket {
+        HeldPacket::new(t_s.map(|s| s * 1_000_000_000), 0, 0, 0, 0, &[lead, 1, 2], std::ptr::null_mut())
+    }
+
+    fn times(backlog: &mut ImageBacklog) -> Vec<(usize, Option<i64>)> {
+        backlog.take().into_iter().map(|(pos, p)| (pos, p.time_ns.map(|t| t / 1_000_000_000))).collect()
+    }
+
+    /// The read-ahead window is kept from the set on screen at the playhead: with one packet per set,
+    /// everything older than the newest packet at or before the playhead is superseded.
+    #[test]
+    fn a_packet_per_set_track_keeps_the_set_on_screen_and_what_follows() {
+        let mut backlog = ImageBacklog::new(vec![SetFraming::PerPacket]);
+        for t in [1, 5, 9, 14, 18] {
+            backlog.hold(0, held_at(Some(t), 0), Some(10_000_000_000));
+        }
+        assert_eq!(times(&mut backlog), [(0, Some(9)), (0, Some(14)), (0, Some(18))]);
+    }
+
+    /// A segment-per-packet PGS track is cut at the PCS that opens the set on screen, not at the
+    /// newest packet behind the playhead (that can be the set's END).
+    #[test]
+    fn a_pgs_set_is_kept_whole_from_its_presentation_segment() {
+        let mut backlog = ImageBacklog::new(vec![SetFraming::PgsSegments]);
+        let packets = [(2, 0x16), (2, 0x17), (2, 0x80), (8, 0x16), (8, 0x14), (8, 0x15), (8, 0x80), (12, 0x16)];
+        for (t, lead) in packets {
+            backlog.hold(0, held_at(Some(t), lead), Some(10_000_000_000));
+        }
+        assert_eq!(
+            times(&mut backlog),
+            [(0, Some(8)), (0, Some(8)), (0, Some(8)), (0, Some(8)), (0, Some(12))],
+            "the set from its PCS at 8 s is kept, the finished one at 2 s is not"
+        );
+    }
+
+    /// With no PCS at or behind the playhead (a seek landed inside a set) nothing is cut yet.
+    #[test]
+    fn a_pgs_track_with_no_set_start_behind_the_playhead_keeps_everything() {
+        let mut backlog = ImageBacklog::new(vec![SetFraming::PgsSegments]);
+        for (t, lead) in [(2, 0x15), (3, 0x80), (12, 0x16)] {
+            backlog.hold(0, held_at(Some(t), lead), Some(10_000_000_000));
+        }
+        assert_eq!(times(&mut backlog).len(), 3);
+    }
+
+    /// Nothing is retired before the playhead is known, and a packet without a timestamp is never the
+    /// one that cuts.
+    #[test]
+    fn retention_waits_for_a_playhead_and_a_timestamp() {
+        let mut backlog = ImageBacklog::new(vec![SetFraming::PerPacket]);
+        backlog.hold(0, held_at(Some(1), 0), None);
+        backlog.hold(0, held_at(Some(5), 0), None);
+        assert_eq!(backlog.held, 2, "no playhead, nothing retired");
+        backlog.hold(0, held_at(None, 0), Some(10_000_000_000));
+        assert_eq!(times(&mut backlog), [(0, Some(5)), (0, None)], "the untimed packet is kept and never the cut");
+    }
+
+    /// Tracks retire independently, and the release is in the order the demuxer read them.
+    #[test]
+    fn tracks_retire_independently_and_release_in_read_order() {
+        let mut backlog = ImageBacklog::new(vec![SetFraming::PerPacket, SetFraming::PerPacket]);
+        let read = [(0, 3), (1, 4), (0, 7), (1, 9), (0, 12), (1, 15)];
+        for (pos, t) in read {
+            backlog.hold(pos, held_at(Some(t), 0), Some(10_000_000_000));
+        }
+        assert_eq!(times(&mut backlog), [(0, Some(7)), (1, Some(9)), (0, Some(12)), (1, Some(15))]);
+        assert!(backlog.is_empty(), "take leaves it empty");
+    }
+
+    /// A seek throws the window away.
+    #[test]
+    fn clear_empties_the_backlog() {
+        let mut backlog = ImageBacklog::new(vec![SetFraming::PerPacket]);
+        backlog.hold(0, held_at(Some(1), 0), None);
+        backlog.clear();
+        assert!(backlog.is_empty() && backlog.take().is_empty());
+    }
+
+    /// The held bytes carry the decoder's zero padding past `size`.
+    #[test]
+    fn a_held_packet_is_padded_for_the_decoder() {
+        let packet = held_at(Some(1), 0x16);
+        assert_eq!((packet.size, packet.bytes.len()), (3, 3 + INPUT_PADDING));
+        assert!(packet.bytes[3..].iter().all(|b| *b == 0));
+        assert!(packet.opens_pgs_display_set());
+    }
+
+    #[test]
+    fn only_pgs_is_framed_in_segments() {
+        assert_eq!(SetFraming::of_codec("hdmv_pgs_subtitle"), SetFraming::PgsSegments);
+        assert_eq!(SetFraming::of_codec("dvd_subtitle"), SetFraming::PerPacket);
+        assert_eq!(SetFraming::of_codec("dvb_subtitle"), SetFraming::PerPacket);
     }
 }

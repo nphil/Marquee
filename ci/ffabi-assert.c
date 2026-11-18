@@ -134,6 +134,8 @@ SAME(sizeof(((AVChannelLayout *)0)->u.mask), 8, "the channel mask is 64 bits");
 /* `av_opt_set`'s search flag, passed by ff_pcm.rs to reach the DTS decoder's private `core_only` option; a moved
    value would make that call fail silently and a DTS-HD stream decode its extensions. */
 SAME(AV_OPT_SEARCH_CHILDREN, 1, "ff_pcm::AV_OPT_SEARCH_CHILDREN");
+/* A held image-subtitle packet is padded to ff_subs::INPUT_PADDING; the library may need less, never more. */
+_Static_assert(AV_INPUT_BUFFER_PADDING_SIZE <= 64, "ff_subs::INPUT_PADDING is smaller than the bundled FFmpeg pads");
 SAME(AV_SAMPLE_FMT_U8, 0, "speed_audio::SampleFormat::from_av U8");
 SAME(AV_SAMPLE_FMT_S16, 1, "speed_audio::SampleFormat::from_av S16");
 SAME(AV_SAMPLE_FMT_S32, 2, "speed_audio::SampleFormat::from_av S32");

@@ -9927,6 +9927,7 @@ pub fn demux(
                         let ts = av_rescale_q(seek_ns.saturating_add(origin_ns), NS_TB, stream_time_base(vst));
                         // Fence completed renders from the old position before new packets arrive.
                         crate::player::ass_source::seek(ass_generation);
+                        sub_tracks.discard_held();
                         crate::player::log(&format!("ff: seek begin {}s", seek_ns / 1_000_000_000));
                         let seek_began = std::time::Instant::now();
                         let sr = av_seek_frame(fmt, vi, ts, AVSEEK_FLAG_BACKWARD);
@@ -9958,6 +9959,7 @@ pub fn demux(
                         }
                         break;
                     }
+                    sub_tracks.release_if_selected(ass_generation);
                     let si = (*pkt).stream_index;
                     // The array is read LIVE, with its bound: a transport stream can grow new streams
                     // while it is read (`AVFMTCTX_NOHEADER`), which reallocates `streams`, so the
@@ -10242,7 +10244,14 @@ pub fn demux(
                         // Subtitle packet: `SubTracks::decode` yields a cue for EVERY text track
                         // (not just the selected one) and decodes every image track while subtitles
                         // are on; see ff_subs.rs. Subtitles carry no ES -> never fed to the pipeline.
-                        if let Some(cue) = sub_tracks.decode(sub_pos, pkt, *streams.add(si as usize)) {
+                        // An image packet read while subtitles are Off is held, not dropped, and
+                        // decoded here once a track is chosen (`ImageBacklog`).
+                        if let Some(cue) = sub_tracks.on_packet(
+                            sub_pos,
+                            pkt,
+                            *streams.add(si as usize),
+                            crate::player::caption_anchor_ns,
+                        ) {
                             cue.push(ass_generation);
                         }
                         av_packet_unref(pkt);
