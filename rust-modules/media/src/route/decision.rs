@@ -65,17 +65,28 @@ struct PlaybackRequest {
     version: Option<plx_plex::plex::MediaId>,
 }
 
+/// The audio and subtitle a retry holds, with the Part they were chosen on. Stream ids belong to
+/// one Part: a retry that plays another version of the item (the first was refused, and Auto plays
+/// the 1080p copy) does not apply them there ([`ResolveEnv::with_selection_for_part`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HeldSelection {
+    /// `0` when the Part is not known.
+    part_id: i64,
+    audio_sid: i64,
+    sub_sid: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RetryContext {
     resume_ns: i64,
-    /// `(audio_sid, sub_sid)` the session HELD when this retry was built, `Some` only when that
+    /// The audio and subtitle the session HELD when this retry was built, `Some` only when that
     /// selection was KNOWN ([`PlaybackSession::selection_known`]): a playable plan landed, or the
     /// viewer picked a track. `0` is both "subtitles Off" and "nothing landed yet", so the pair
     /// cannot be told apart from the cleared defaults by value; `None` says that nothing landed
     /// (a quality change or contract bump while loading, a retry of a refused plan) and leaves the
     /// fresh defaults (the account / show / server rules) in charge instead of forcing the
     /// subtitle Off. Applied by [`apply_retry`].
-    selection: Option<(i64, i64)>,
+    selection: Option<HeldSelection>,
     sub_offset_ms: i64,
     direct_play_mode: DirectPlayMode,
     /// Issue #266: resolve this retry WITHOUT the audio enhancement. Set only by a start-failure
@@ -234,8 +245,9 @@ pub struct PlaybackSession {
     /// that decision is made from the same numbers `build_stream` used rather than from a guess.
     cur_src: (i64, i64, i64),
     /// Whole Part transport bitrate, including audio. Auto's progressive watchdog compares the
-    /// live socket against this rather than `cur_src.0` (video only), because the wire has to carry
-    /// both lanes. `0` means PMS did not provide one and disables the watchdog fail-safely.
+    /// live socket against this rather than `cur_src.0` (the video stream's rate where PMS gave
+    /// one, else the whole file's), because the wire has to carry both lanes. `0` means PMS did
+    /// not provide one and disables the watchdog fail-safely.
     cur_transport_kbps: i64,
     /// **Can this television decode the SOURCE video stream as it stands** — `video_direct_plays`
     /// evaluated by [`build_stream`], carried rather than re-derived.
@@ -349,14 +361,14 @@ pub struct PlaybackSession {
     /// [`commit_subtitle_selection`]); cleared with the selection by [`clear_track_selection`].
     /// [`RetryContext::selection`] is `Some` exactly when this held at capture time.
     selection_known: bool,
-    /// The `(audio_sid, sub_sid)` a RETRY carried into the request now loading, kept while no
+    /// The selection a RETRY carried into the request now loading, kept while no
     /// playable plan has landed: the request clears the live selection ([`Self::selection_known`]
     /// goes false), so a second retry built before this one lands (a contract bump in flight, or
     /// *Switch to Auto and play* after a refusal) would otherwise find nothing to carry and lose
     /// the viewer's choice, an explicit subtitles Off included. Set by [`begin_track_selection`],
     /// kept across a refused landing, dropped by a playable one ([`apply_plan`]).
     /// [`current_retry_context`] reads it only while the selection is unknown.
-    carried_selection: Option<(i64, i64)>,
+    carried_selection: Option<HeldSelection>,
     /// Is [`Self::cur_sub_sid`] an external sidecar (`metadata::Stream::sidecar_renderable`) rather
     /// than an embedded (in-container) track? Meaningless when `cur_sub_sid == 0`. Issue #266 I6:
     /// this is what tells `route::decision::facts`'s [`super::plan::SubtitleEffect::Sidecar`]
@@ -8470,6 +8482,7 @@ impl ResolveEnv {
             memory: recalled_track_memory(sid),
             // Set in exactly one place, `request_env`: nothing else may default it on.
             fresh_play: false,
+            selection_before_retry: None,
             #[cfg(any(test, feature = "test-support"))]
             account_subtitles: None,
         }
@@ -8842,7 +8855,27 @@ fn request_env(
     if let Some(retry) = retry {
         apply_retry(&mut env, retry);
     }
+    leave_a_cached_default_the_set_cannot_decode(&mut env, meta, request.sid, &request.rk);
     env
+}
+
+/// The loaded detail's streams (`env.cached_item`) are those of the FIRST version. When this set
+/// cannot decode that one and the worker plays another ([`automatic_version`]), they describe the
+/// wrong file: the cache is given up so the playing item is built from the version that plays. A
+/// picked version gave it up already, in [`request_env`].
+fn leave_a_cached_default_the_set_cannot_decode(
+    env: &mut ResolveEnv, meta: plx_data::metadata::MetadataView<'_>, sid: ServerId, rk: &str,
+) {
+    if env.version.is_some() || env.cached_item.is_none() {
+        return;
+    }
+    let replaced = meta
+        .current()
+        .filter(|d| plx_plex::plex::same_item((d.sid, &d.rk), (sid, rk)))
+        .is_some_and(|d| automatic_version(&d.versions, env).is_some());
+    if replaced {
+        env.cached_item = None;
+    }
 }
 
 /// Common async request transaction. A retry waits for the real stop's PMS work on THIS worker
@@ -9111,7 +9144,7 @@ fn current_retry_context(ps: &PlaybackSession, resume_ns: i64) -> RetryContext {
     RetryContext {
         resume_ns: resume_ns.max(0),
         selection: if ps.selection_known {
-            Some((cur_audio_sid(ps), cur_sub_sid(ps)))
+            Some(HeldSelection { part_id: cur_part_id(ps), audio_sid: cur_audio_sid(ps), sub_sid: cur_sub_sid(ps) })
         } else {
             ps.carried_selection
         },
@@ -9142,14 +9175,23 @@ fn apply_retry(env: &mut ResolveEnv, retry: RetryContext) {
     // that reset so a rescue does not silently turn subtitles/audio back to server default.
     // Only a KNOWN selection is carried: with nothing landed the captured pair is the cleared `0`
     // sentinel, and applying it would force subtitles Off over the account's own rule.
-    if let Some((audio_sid, sub_sid)) = retry.selection {
-        env.audio_sid = audio_sid;
-        env.sub_sid = sub_sid;
-        env.subtitle_override = Some(sub_sid);
+    if let Some(held) = retry.selection {
+        // What the fresh play chose, kept for a resolve that lands on another Part than `held` was
+        // chosen on (`ResolveEnv::with_selection_for_part`).
+        env.selection_before_retry = Some(SelectionBeforeRetry {
+            retry_part_id: held.part_id,
+            audio_sid: env.audio_sid,
+            sub_sid: env.sub_sid,
+            subtitle_override: env.subtitle_override,
+            sub_mode: env.sub_mode,
+            // That selection is the viewer's own pick of THIS playback and outranks anything the
+            // profile remembered for the show, so the memory goes with it.
+            memory: std::mem::take(&mut env.memory),
+        });
+        env.audio_sid = held.audio_sid;
+        env.sub_sid = held.sub_sid;
+        env.subtitle_override = Some(held.sub_sid);
         env.sub_mode = retry.sub_mode;
-        // That selection is the viewer's own pick of THIS playback and outranks anything the
-        // profile remembered for the show.
-        env.memory.clear();
     }
 }
 

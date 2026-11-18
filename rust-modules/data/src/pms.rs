@@ -248,6 +248,10 @@ pub struct MediaVersion {
     pub id: plx_plex::plex::MediaId,
     /// Whole-file bitrate, kbps.
     pub kbps: i64,
+    /// The video stream's own bitrate, kbps; 0 when PMS did not send one. A quality ceiling bounds
+    /// the video lane alone, so it is judged on this, as `Media[0]` is on `Detail::video`.
+    #[serde(default, skip_serializing_if = "crate::metadata::is_zero")]
+    pub video_kbps: i64,
     /// PMS's resolution class (`4k`, `1080`), with the frame size as its fallback.
     pub resolution: String,
     pub width: i64,
@@ -261,7 +265,14 @@ pub struct MediaVersion {
     /// A video stream is HDR or Dolby Vision. Only a response that carries streams can say so (a
     /// listing usually does not), so `false` is "not known to be".
     pub hdr: bool,
+    /// The Dolby Vision record of the version's own video stream (all zero when it has none): the
+    /// direct-play gate refuses a Profile 5 on a set that does not show Dolby Vision and takes the
+    /// HDR10 copy of the same film, so the choice between versions needs each one's own.
+    #[serde(default, skip_serializing_if = "no_dolby_vision")]
+    pub dovi: crate::metadata::Dovi,
 }
+
+fn no_dolby_vision(dovi: &crate::metadata::Dovi) -> bool { !dovi.present }
 
 /// The versions worth a picker: every `Media[]` entry with an id when there are at least two,
 /// else none.
@@ -276,6 +287,7 @@ pub fn versions_of(it: &plx_plex::plex::Metadata) -> Vec<MediaVersion> {
             MediaVersion {
                 id: m.id,
                 kbps: m.bitrate,
+                video_kbps: part.and_then(|p| p.stream.iter().find(|s| s.stream_type == 1)).map_or(0, |s| s.bitrate),
                 resolution: clean(&m.video_resolution),
                 width: m.width,
                 height: m.height,
@@ -285,6 +297,9 @@ pub fn versions_of(it: &plx_plex::plex::Metadata) -> Vec<MediaVersion> {
                 container: clean(part.map_or(&m.container, |p| if p.container.is_empty() { &m.container } else { &p.container })),
                 size: part.map_or(0, |p| p.size),
                 hdr: part.is_some_and(|p| p.stream.iter().any(|s| s.stream_type == 1 && s.is_hdr())),
+                dovi: part
+                    .and_then(|p| p.stream.iter().filter(|s| s.stream_type == 1).filter_map(crate::metadata::Dovi::of_stream).last())
+                    .unwrap_or_default(),
             }
         })
         .collect()

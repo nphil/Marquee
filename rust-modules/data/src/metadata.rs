@@ -463,6 +463,21 @@ impl Dovi {
         rpu_present: false,
     };
 
+    /// The record of a stream that carries Dolby Vision, `None` for one that does not: the one
+    /// parser, shared by a part's streams ([`convert_streams`]) and a version's listing row.
+    pub fn of_stream(s: &plx_plex::plex::Stream) -> Option<Dovi> {
+        (s.dovi_present != 0).then(|| Dovi {
+            present: true,
+            profile: s.dovi_profile,
+            bl_compat: s.dovi_bl_compat_id,
+            el_present: s.dovi_el_present != 0,
+            level: s.dovi_level,
+            version: Dovi::parse_version(&s.dovi_version),
+            bl_present: s.dovi_bl_present != 0,
+            rpu_present: s.dovi_rpu_present != 0,
+        })
+    }
+
     /// [`Self::version`] back as the dotted string the server sent (`"1.0"`), or `None` when it
     /// sent none. `None` and `Some("0.0")` are different answers and the panel draws only the
     /// former's absence — a server that really reported version 0 would still get a row.
@@ -880,7 +895,7 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-fn is_zero(n: &i64) -> bool {
+pub(crate) fn is_zero(n: &i64) -> bool {
     *n == 0
 }
 
@@ -2749,17 +2764,8 @@ fn convert_streams(streams: &[plx_plex::plex::Stream]) -> Streams {
                 // so this costs nothing and is not a change to any measured behaviour — it is the
                 // one assignment here whose failure is silent and wrong rather than silent and
                 // cosmetic.
-                if s.dovi_present != 0 {
-                    dovi = Dovi {
-                        present: true,
-                        profile: s.dovi_profile,
-                        bl_compat: s.dovi_bl_compat_id,
-                        el_present: s.dovi_el_present != 0,
-                        level: s.dovi_level,
-                        version: Dovi::parse_version(&s.dovi_version),
-                        bl_present: s.dovi_bl_present != 0,
-                        rpu_present: s.dovi_rpu_present != 0,
-                    };
+                if let Some(record) = Dovi::of_stream(s) {
+                    dovi = record;
                 }
                 // The video track ITSELF, kept rather than reduced to `fps`/`hdr`/`dovi`. It is the
                 // only place the stream's own bitrate, profile, bit depth and chroma survive, and
@@ -2892,10 +2898,14 @@ pub struct PlayingItem {
     /// `/decision` (issue #22's over-claim class — docs/plex-pass-audit.md, closing section).
     pub width: i64,
     pub height: i64,
-    /// Whole-file bitrate in kbps (`Media[0].bitrate`). Auto uses this—not merely the video
-    /// stream's rate—when deciding whether a remote connection has enough headroom to carry the
-    /// original file, because the transport also has to carry audio and container overhead.
+    /// Whole-file bitrate in kbps of the version that plays (`Media[0]`'s unless another version
+    /// was fetched). Auto uses this—not merely the video stream's rate—when deciding whether a
+    /// remote connection has enough headroom to carry the original file, because the transport
+    /// also has to carry audio and container overhead.
     pub bitrate: i64,
+    /// The video stream's own bitrate in kbps, 0 when PMS sent none. A quality rung's ceiling
+    /// bounds the video lane alone, so it is judged on this, not on [`Self::bitrate`].
+    pub video_kbps: i64,
     /// The played leaf's Dolby Vision layering — the direct-play gate's other refusal, beside the
     /// frame size above and for the same reason: the local fallback never asks PMS, so a file
     /// whose base layer we cannot display correctly (Profile 5, or a dual layer the feed path does
@@ -2930,6 +2940,7 @@ impl PlayingItem {
             width: 0,
             height: 0,
             bitrate: 0,
+            video_kbps: 0,
             dovi: Default::default(),
             markers: Vec::new(),
             markers_known: false,
@@ -2981,6 +2992,7 @@ fn cached_playing(state: &MetadataState, sid: plx_plex::plex::ServerId, rk: &str
             width: d.width,
             height: d.height,
             bitrate: d.bitrate,
+            video_kbps: d.video.as_ref().map_or(0, |v| v.bitrate),
             dovi: d.dovi,
             markers: d.markers.clone(),
             markers_known: false,
@@ -3005,10 +3017,23 @@ pub fn fetch_playing_item(
     rk: &str,
     want: Option<plx_plex::plex::MediaId>,
 ) -> Option<(PlayingItem, Option<PlayedVersion>)> {
+    fetch_playing_item_choosing(client, sid, rk, |_| want)
+}
+
+/// [`fetch_playing_item`] where the version is chosen from the answer itself: `choose` reads the
+/// item's `Media[]` and names the version to play (`None`: the default), so the choice and the
+/// store built from it come from ONE response.
+pub fn fetch_playing_item_choosing(
+    client: &'static plx_plex::plex::Client,
+    sid: plx_plex::plex::ServerId,
+    rk: &str,
+    choose: impl FnOnce(&plx_plex::plex::Metadata) -> Option<plx_plex::plex::MediaId>,
+) -> Option<(PlayingItem, Option<PlayedVersion>)> {
     if rk.is_empty() {
         return None;
     }
     let it = client.metadata(rk);
+    let want = it.as_ref().and_then(choose);
     Some(playing_fetched_version_from(sid, rk, it.as_ref(), want))
 }
 
@@ -3083,6 +3108,7 @@ fn playing_item_of(
     let st = media
         .and_then(|m| m.part.first().map(|p| convert_streams(&p.stream)))
         .unwrap_or_default();
+    let video_kbps = st.video.as_ref().map_or(0, |v| v.bitrate);
     let (audio, subs, video_fps, dovi, hdr) = (st.audio, st.subs, st.fps, st.dovi, st.hdr);
     let show_rk = it
         .as_ref()
@@ -3105,6 +3131,7 @@ fn playing_item_of(
         width,
         height,
         bitrate,
+        video_kbps,
         dovi,
         markers,
         markers_known: false,
