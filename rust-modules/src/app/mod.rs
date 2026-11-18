@@ -320,7 +320,8 @@ pub(crate) struct App {
     /// A title another app asked to open (`deeplink`), until Home is up to hand it to
     /// `menu_play_await`.
     pub(crate) deeplink: deeplink::DeepLink,
-    pub(crate) prev: u32,
+    /// The frame clock at the previous iteration, in microseconds (`run::clock_and_press`).
+    pub(crate) prev_us: u64,
     /// A playback exit is owed a re-read of Home's hubs and every library's shelves. Armed by
     /// `exit_player`; spent by `playback_tick` once the stop's `stopped` POST has landed
     /// (`route::timeline_stop_landed`) and the player is off the route (never by a timer: a read

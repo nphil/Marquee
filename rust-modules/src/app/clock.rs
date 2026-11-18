@@ -52,6 +52,16 @@ pub(crate) fn now() -> u32 {
     unsafe { SDL_GetTicks() }
 }
 
+/// The frame clock in microseconds, which the loop's `dt` is taken from: at 120 Hz [`now`]'s whole
+/// milliseconds alternate 8 and 9, and every spring stepped on them moved unevenly. Under a replay
+/// or a frame dump, the overriding tick in microseconds.
+pub(crate) fn now_us() -> u64 {
+    if let Some(ms) = REPLAY.with(|c| c.get()) {
+        return u64::from(ms) * 1000;
+    }
+    plx_base::diag::heartbeat::now_us()
+}
+
 /// The replay driver sets the frame's time before the frame reads it, and with it the date
 /// ([`REPLAY_DATE`]).
 pub(crate) fn set_replay(ms: u32) {

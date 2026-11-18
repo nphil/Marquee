@@ -24,7 +24,7 @@
 //! **The clock.** `clock::set_replay(ORIGIN_MS + T(v))`, `T(v) = round(v * 1000 / 60)`, where `v` is
 //! the virtual frame in flight. The origin is a constant far above any tick the boot stamped, so a
 //! "how long since" sum reads a long time ago on every run instead of whatever the boot took.
-//! `app.t0` and `app.prev` are set to it, so the first iteration's `dt` is 0 like every held one.
+//! `app.t0` and `app.prev_us` are set to it, so the first iteration's `dt` is 0 like every held one.
 //!
 //! **One iteration**, in the order `landgate` and `plx_gfx::dump` require: the landing takes (the
 //! loop's own, which never sleep in dump mode: see "Landings"), then [`pre_draw`] (the FULL text
@@ -640,7 +640,7 @@ impl Dump {
         // timeout is the bound on how long (the module doc's "Landings").
         app.bridge.landgate().arm_dump_paced(cfg.land_lag);
         app.t0 = ORIGIN_MS;
-        app.prev = ORIGIN_MS;
+        app.prev_us = u64::from(ORIGIN_MS) * 1000;
         ACTIVE.store(true, Ordering::Relaxed);
         plx_base::eventlog::log(&format!(
             "framedump: armed, {} frames after {} preroll, out={:?}, no_hold={}, allow_absent={}, land_lag={} frames",

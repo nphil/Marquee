@@ -129,7 +129,7 @@ pub(crate) unsafe fn run(app: &mut App) {
         // the restructure moves this loop onto (spec §3.3/§8.4); on THIS loop navcommit
         // precedes tick_drain, and the FRAMEDROP line prints them in the algorithm's order.
         let mut fr = begin_frame(app);
-        let first_controlled_frame = app.boot_initial.is_some() && app.prev == 0;
+        let first_controlled_frame = app.boot_initial.is_some() && app.prev_us == 0;
         let fr = &mut fr;
         app.instr.mark(plx_base::diag::heartbeat::Phase::Top); // also starts the visit's hang interval
         // The frame index the LANDING SCHEDULE stamps against (§3.3 step 3, `plx_machine::landgate`),
@@ -397,12 +397,19 @@ fn clock_and_press(app: &mut App, fr: &mut Frame) {
             plx_machine::machine::Delivery::Screen(plx_ui::screen::ScreenEvent::App(
                 plx_screens::registry::AppMsg::PlaybackTrace(status)))));
     }
-    if app.boot_initial.is_some() && app.prev == 0 {
+    if app.boot_initial.is_some() && app.prev_us == 0 {
         plx_base::eventlog::log(&format!("bootstrap: first-loop tree={:016x} now={}", app.pages.state_hash(), fr.now));
     }
+    // Microseconds: at 120 Hz whole milliseconds alternate 8 and 9, and every spring stepped on
+    // them moved unevenly. A recording and its replay step on the milliseconds a replay reproduces.
+    let now_us = if matches!(app.rec, super::recorder::Recplay::Off) {
+        clock::now_us()
+    } else {
+        u64::from(fr.now) * 1000
+    };
     fr.dt = {
-        let mut d = if app.prev != 0 {
-            fr.now.wrapping_sub(app.prev) as f32 / 1000.0
+        let mut d = if app.prev_us != 0 {
+            now_us.wrapping_sub(app.prev_us) as f32 / 1_000_000.0
         } else {
             0.016
         };
@@ -411,7 +418,7 @@ fn clock_and_press(app: &mut App, fr: &mut Frame) {
         }
         d
     };
-    app.prev = fr.now;
+    app.prev_us = now_us;
     app.rec.tick(fr.now, fr.dt);
     // Whole-frame present gate (`plx_machine::idle`): forget last frame's motion BEFORE the update
     // phase below re-steps every spring, so the flag it leaves describes THIS frame, and
@@ -3936,7 +3943,7 @@ mod lifecycle_regression_tests {
             ptr: Pointer::IDLE,
             menu_play_await: Default::default(),
             deeplink: Default::default(),
-            prev: Default::default(),
+            prev_us: Default::default(),
             refresh_hubs: Default::default(),
             return_hold: Default::default(),
             plaintext_upgrade: Default::default(),

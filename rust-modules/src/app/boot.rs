@@ -2451,7 +2451,7 @@ pub(crate) unsafe fn construct(
     // accepts them; a busy native transition cannot silently consume the test operation.
     let pause_script: Option<(u32, Option<u32>, Option<u32>)> = None;
     let pause_resume_at: Option<u32> = None;
-    let prev = 0u32;
+    let prev_us = 0u64;
     // Home data refresh, armed on every player exit (Stop/BACK/EOS): the hubs are refetched once
     // the stop report has settled (`route::timeline_stop_landed`), so the `stopped` timeline POST
     // lands first — Continue Watching then shows the new resume point / next episode instead of
@@ -2501,7 +2501,7 @@ pub(crate) unsafe fn construct(
         ptr,
         menu_play_await: None,
         deeplink: Default::default(),
-        prev,
+        prev_us,
         refresh_hubs,
         return_hold: Default::default(),
         plaintext_upgrade: Default::default(),
