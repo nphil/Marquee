@@ -6355,3 +6355,47 @@ fn the_backdrop_has_its_name_back_after_a_trip_to_the_grid() {
     assert_eq!((s.snap.pos, s.snap.vel), (0.0, 0.0), "the dive has parked on the hero, position and velocity");
     assert_eq!(name(&s), Some(parked), "back at the hero the backdrop is the picture it was, with its name");
 }
+
+fn hero_runs(item: &PmsMovie) -> Vec<String> {
+    static MEASURE: FixtureMeasure = FixtureMeasure;
+    plx_gfx::text::capture_text_runs_for_test(|| {
+        plx_ui::record_walk(|| hero_content(item, "", Painter::recording(), 0.0, &MEASURE, false));
+    })
+}
+
+#[test]
+fn the_hero_names_two_genres_and_a_show_with_no_runtime_its_seasons() {
+    let _guard = plx_base::testlock::serial();
+    let _locale = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+    let movie = PmsMovie {
+        kind: plx_data::pms::KIND_MOVIE, title: "Heat".into(), year: 1995,
+        genre: Some("Crime".into()), secondary_genre: Some("Thriller".into()), ..Default::default()
+    };
+    let runs = hero_runs(&movie);
+    assert!(runs.iter().any(|r| r.contains("Crime")) && runs.iter().any(|r| r.contains("Thriller")), "{runs:?}");
+    let show = PmsMovie { kind: plx_data::pms::KIND_SHOW, title: "Dark".into(), year: 2017, child_count: 3, ..Default::default() };
+    assert!(hero_runs(&show).iter().any(|r| r.contains("3 seasons")));
+}
+
+#[test]
+fn spoiler_protection_still_covers_an_unstarted_episodes_synopsis_on_the_hero() {
+    let _guard = plx_base::testlock::serial();
+    let _locale = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+    let episode = PmsMovie {
+        kind: 3, show_title: "Dark".into(), title: "Secrets".into(), season_index: 1, ep_index: 2,
+        summary: "The butler did it.".into(), ..Default::default()
+    };
+    let drawn = |on| {
+        plx_media::route::restore_spoiler_protection(if on {
+            plx_plex::plex::session::SpoilerProtection::On
+        } else {
+            plx_plex::plex::session::SpoilerProtection::Off
+        });
+        hero_runs(&episode)
+    };
+    let covered = drawn(true);
+    let open = drawn(false);
+    plx_media::route::restore_spoiler_protection(plx_plex::plex::session::SpoilerProtection::Off);
+    assert!(!covered.iter().any(|r| r.contains("butler")), "{covered:?}");
+    assert!(open.iter().any(|r| r.contains("butler")), "{open:?}");
+}

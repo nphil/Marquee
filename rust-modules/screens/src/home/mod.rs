@@ -3949,7 +3949,13 @@ fn hero_content(hero: &PmsMovie, source: &str, p: Painter, dx: f32, measure: &dy
         .draw(p, Rect::new(MARGIN_X, stack.title.y, HERO_COL_W, title_h), measure);
     let kind = if episode || hero.kind == 1 { plx_platform::i18n::msg::browse_kind_tv_show() }
         else { plx_platform::i18n::msg::browse_kind_movie() };
-    let parts = [hero.edition.as_str(), kind, hero.genre.as_deref().unwrap_or(""), hero.rating.as_str()];
+    let parts = [
+        hero.edition.as_str(),
+        kind,
+        hero.genre.as_deref().unwrap_or(""),
+        hero.secondary_genre.as_deref().unwrap_or(""),
+        hero.rating.as_str(),
+    ];
     let parts: Vec<&str> = parts.into_iter().filter(|s| !s.is_empty()).collect();
     let resolution = plx_ui::fmt::resolution(hero.video_resolution.as_deref().unwrap_or(""), 0, 0);
     plx_ui::widgets::hero_identity(p, Rect::new(MARGIN_X, stack.meta.y, HERO_COL_W, stack.meta.h),

@@ -145,6 +145,17 @@ fn pdf_proposal_episode_facts_use_a_named_month_and_validate_resume() {
 }
 
 #[test]
+fn a_show_without_a_runtime_reads_its_season_count_and_a_runtime_wins() {
+    let _locale = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+    let show = plx_data::pms::PmsMovie { kind: plx_data::pms::KIND_SHOW, year: 2025, child_count: 2, ..Default::default() };
+    assert_eq!(listing_facts(&show), ("2025".into(), Some("2 seasons".into())));
+    let timed = plx_data::pms::PmsMovie { dur_ns: 45 * 60_000 * 1_000_000, ..show.clone() };
+    assert_eq!(listing_facts(&timed).1, Some(plx_ui::fmt::duration(45 * 60_000)));
+    let movie = plx_data::pms::PmsMovie { kind: plx_data::pms::KIND_MOVIE, child_count: 2, ..show };
+    assert_eq!(listing_facts(&movie).1, None, "a movie has no seasons");
+}
+
+#[test]
 fn focused_hero_capsules_keep_twenty_pixels_clear_on_both_sides() {
     let widths = [224.0, CD, CD, 456.0, CD];
     for focused in [0, 3] {

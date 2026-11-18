@@ -197,8 +197,13 @@ pub fn time_facts(year: i64, aired: &str, episode: bool, dur_ms: i64, resume_ms:
     (date, length)
 }
 
+/// The date and length Home's hero shows for a listing row. A show with no runtime of its own
+/// falls back to its season count: a runtime says more, so it wins when the server sent one.
 pub fn listing_facts(item: &plx_data::pms::PmsMovie) -> (String, Option<String>) {
-    time_facts(i64::from(item.year), &item.aired, item.kind == 3, item.dur_ns / 1_000_000, item.resume_ms)
+    let (date, length) = time_facts(i64::from(item.year), &item.aired, item.kind == 3, item.dur_ns / 1_000_000, item.resume_ms);
+    let seasons = (item.kind == plx_data::pms::KIND_SHOW && item.child_count > 0)
+        .then(|| plx_platform::i18n::msg::browse_detail_seasons(item.child_count));
+    (date, length.or(seasons))
 }
 
 /// An on-deck episode supplies its own date and runtime; an unstarted show keeps its extent.
