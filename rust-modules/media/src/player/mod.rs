@@ -20,6 +20,7 @@
 #![allow(non_upper_case_globals)]
 pub mod adapter;
 pub(crate) mod alignment; // bounded SpeechDock alignment worker
+pub mod audio_beacon; // the delivered audio format, told to the LumaTV shell's helper so its format badge can show the sound
 pub mod claim_hold;
 pub mod ass; // pinned libass worker and immutable rendered frames
 pub mod ass_perf; // per-second libass cost line (`assperf:`)
@@ -2600,6 +2601,12 @@ pub fn vplane_take() -> (u32, u32) {
         SHARED.dg_vpres_ct.swap(0, Relaxed),
         SHARED.dg_vpres_gap.swap(0, Relaxed),
     )
+}
+
+/// The pipeline's context string (`_L3SB1p9Zxvl5rm`) the Load's source info named, the one ACB is bound
+/// with and the shell's video output reports; `None` until the Load has named it.
+pub fn media_context() -> Option<String> {
+    SHARED.media_id.lock().unwrap().as_ref().and_then(|c| c.to_str().ok()).map(str::to_owned)
 }
 
 /// pipeline event on the LIBRARY thread. type 0 = `PF_EVENT_TYPE_FRAMEREADY` (num = fed pts).

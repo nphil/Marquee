@@ -2123,6 +2123,15 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         // failure there is. It observes the value the HUD renders and reports only transitions,
         // so the steady-state cost is one atomic load.
         plx_media::player::report::tick(&mut app.player.session);
+        // the sound leaving the app, for the shell's format badge: a request only when it changes
+        // (and a keep-alive), on a worker; asked of the item's tracks a few times a second
+        {
+            let (session, meta) = (&app.player.session, app.bridge.metadata_view());
+            app.audio_beacon.tick(clock::now(), || {
+                let audio = meta.playing().map_or(&[][..], |p| p.audio.as_slice());
+                plx_media::player::audio_beacon::want(session, audio)
+            });
+        }
         // end-of-stream: the pipeline drained at the credits → hand off to Up Next when the
         // show has another episode queued and the Next episode preference is not Off, else leave
         // the player (back to the detail page or home, whichever is behind), instead of freezing

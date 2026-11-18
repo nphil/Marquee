@@ -293,6 +293,8 @@ pub(crate) struct App {
     /// `player::engine::ENGINE` together with the main-thread token that confines it.
     pub(crate) adapters: Adapters,
     repause_at: i64,
+    /// Tells the LumaTV shell's helper what sound is leaving the app (`plx_media::player::audio_beacon`).
+    audio_beacon: plx_media::player::audio_beacon::Beacon,
     /// The playing session is parked because the pipeline took its video decoder back, not
     /// because the app left the screen; the next press restores it (`run::park_on_decoder_release`).
     decoder_parked: bool,
@@ -541,6 +543,7 @@ unsafe fn run_and_shutdown(app: &mut App) -> ! {
         || app.bridge.controlled_failure().is_some();
     app.glass.sources.borrow_mut().clear();
     let code = i32::from(failed);
+    app.audio_beacon.clear_for_exit();
     run::shutdown(&mut app.player.session, &mut app.adapters.player);
     // The crash-channel guard is the one `Drop` that persists something (it closes the capture
     // backend and removes its database), so it runs here explicitly: nothing drops the `App`.

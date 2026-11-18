@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Marquee tells the LumaTV format badge which sound is playing (Dolby Atmos, DTS-HD, 5.1 and so on, as it leaves the app: a track Marquee mixes down to stereo or the server converts is reported as that), so it shows beside the picture marks. Nothing is sent when LumaTV is not running.
 - Requests opens at once: the last rows are saved on the TV and shown on the first frame, prepared with the first posters shortly after the app starts (never while a video starts) and refreshed in place without moving the selection. A poster no longer offers Request for a title just requested. "Search to request" is replaced by a "Search" pill in the page header; OK on it opens the keyboard.
 - The top bar is two glass pills: the middle one keeps Home, Movies, TV Shows and Requests, and a new one at the top right holds Watchlist and Search, which Right reaches from the last middle item. Settings > Libraries > Top bar switches each of those items on or off, per profile; hiding both items of the right pill removes the pill, and Home and Settings (on the profile chip) always stay.
 - Scrubbing a film at 1080p or below (H.264 or HEVC) whose server keeps no preview thumbnails now shows previews the TV makes itself: a spread over the whole film first, then stills around the scrub position, made only while playback has buffer to spare and dropped when memory runs short. 4K films still use only the server's thumbnails, and the package grows by about 0.27 MB.

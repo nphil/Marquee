@@ -2482,6 +2482,7 @@ pub(crate) unsafe fn construct(
         player,
         adapters,
         repause_at,
+        audio_beacon: plx_media::player::audio_beacon::Beacon::new(),
         decoder_parked: false,
         foreground_retry: None,
         ok_armed,

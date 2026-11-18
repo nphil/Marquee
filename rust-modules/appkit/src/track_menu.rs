@@ -1020,12 +1020,7 @@ impl TrackMenuState {
     /// The Audio tab's half of [`Self::derive_active`].
     fn derive_active_audio(ps: &plx_media::route::PlaybackSession, meta: metadata::MetadataView<'_>) -> c_int {
         let Some(t) = tracks(meta) else { return 0 };
-        let asid = plx_media::route::cur_audio_sid(ps);
-        (asid > 0)
-            .then(|| t.audio.iter().position(|s| s.id == asid))
-            .flatten()
-            .or_else(|| t.audio.iter().position(|s| s.default))
-            .unwrap_or(0) as c_int
+        plx_media::route::playing_audio(ps, &t.audio).unwrap_or(0) as c_int
     }
 
     /// The Subtitles tab's half of [`Self::derive_active`] — what the live poll scans alone, the
@@ -2995,9 +2990,7 @@ fn format_offset(ms: i64) -> String {
 /// would otherwise promise a layout the downmix does not keep; the server mark outranks it. Always ONE line: the
 /// longest label is graded against the panel by `converted_audio_sub_lines_fit_the_panel_in_every_language`.
 fn audio_sub_line(ps: &plx_media::route::PlaybackSession, sub: String, s: &metadata::Stream) -> String {
-    let converted = plx_media::route::audio_converted_by_server(ps, &s.codec, s.channels, s.sampling_rate);
-    let in_app = plx_platform::devcaps::app_decode_mixes_down(s.channels)
-        && plx_media::route::audio_decoded_in_app(ps, &s.codec, s.channels, s.sampling_rate);
+    let (converted, in_app) = plx_media::route::audio_conversion(ps, s);
     audio_sub_line_for(sub, converted, in_app)
 }
 

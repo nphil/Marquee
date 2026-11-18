@@ -7557,6 +7557,27 @@ pub fn audio_decoded_in_app(ps: &PlaybackSession, codec: &str, channels: i64, sa
     ps.attempt_caps().app_decodes_lossy_track(codec, channels, sample_rate, forced_direct_play(ps))
 }
 
+/// What the route does to `s` on this playback, as the two facts the track menu's marks and the
+/// audio beacon both name: whether the server converts it, and whether the app decodes it to a
+/// stereo mix. One place, so neither can disagree about which tracks are changed.
+pub fn audio_conversion(ps: &PlaybackSession, s: &plx_data::metadata::Stream) -> (bool, bool) {
+    let converted = audio_converted_by_server(ps, &s.codec, s.channels, s.sampling_rate);
+    let in_app = plx_platform::devcaps::app_decode_mixes_down(s.channels)
+        && audio_decoded_in_app(ps, &s.codec, s.channels, s.sampling_rate);
+    (converted, in_app)
+}
+
+/// The playing audio track, an index into `audio`: the one the route carries ([`cur_audio_sid`]),
+/// else the file's flagged default, else the first; `None` with no track.
+pub fn playing_audio(ps: &PlaybackSession, audio: &[plx_data::metadata::Stream]) -> Option<usize> {
+    let asid = cur_audio_sid(ps);
+    (asid > 0)
+        .then(|| audio.iter().position(|s| s.id == asid))
+        .flatten()
+        .or_else(|| audio.iter().position(|s| s.default))
+        .or((!audio.is_empty()).then_some(0))
+}
+
 /// Select a rung. MAIN THREAD (it writes the session).
 ///
 /// It binds every FUTURE resolve, and it also re-decides the playback already on screen — because
