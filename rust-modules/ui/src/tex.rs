@@ -371,6 +371,22 @@ pub fn prepare(b: &mut Budget, up: &mut dyn Uploader, present: &mut PresentHandl
     n
 }
 
+/// Make one image resident NOW, outside the frame upload step and its quota: for art known before
+/// the first draw (the persisted profile pictures), so that draw finds a texture and not a
+/// placeholder. The evictions it causes are reported to the source like any other, so the caller
+/// must not hold the source's own lock. `false` when the residency ceilings refused it (nothing
+/// changed). GL thread.
+pub fn prime(key: PosterKey, d: Decoded, up: &mut dyn Uploader) -> bool {
+    let (landed, unresident) = mutate_cache(|c| {
+        let landed = c.prime(key, d, up);
+        (landed, c.take_unresident().collect::<Vec<_>>())
+    });
+    for (key, refused) in unresident {
+        with_source(|s| s.unresident(key, refused), ());
+    }
+    landed
+}
+
 /// Mirror viewport residency protection into the source before it can recycle an image key.
 pub fn hold_return(held: bool, pin: impl FnMut(PosterKey, bool)) {
     CACHE.with(|cache| cache.borrow_mut().hold_return(held, pin));
@@ -623,43 +639,17 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
                 break;
             }
             let (_, d) = self.pending.pop_front().expect("front() was Some");
-            let bytes = d.rgba.len();
-            // a key already resident is replaced in place and needs no ROOM, but its new pixels
-            // still count against the byte budget — `protect` keeps the key being replaced out of
-            // its own eviction, so making room for a bigger re-upload never evicts itself.
             let is_new = !self.resident.contains_key(&key);
-            let protect = if is_new { None } else { Some(key) };
-            if !self.evict_for(if is_new { 1 } else { 0 }, bytes, protect, up) {
-                // Arrivals lose: on-screen art was in the way and nothing else was enough. Drop
-                // the decoded pixels (no GL texture is ever created, so `bytes`/`clock` are
-                // untouched either way). A brand-new key never held a texture, so it joins
-                // `unresident` as a REFUSAL, tagged apart from a genuine loss; an in-place
-                // replacement's old texture is already resident and correct, so nothing is
-                // queued — queuing here would desync the source's belief about the key from what
-                // the cache still has.
+            if !self.land(key, d, up) {
+                // Arrivals lose: on-screen art was in the way and nothing else was enough. A
+                // brand-new key never held a texture, so it joins `unresident` as a REFUSAL, tagged
+                // apart from a genuine loss; an in-place replacement's old texture is already
+                // resident and correct, so nothing is queued — queuing here would desync the
+                // source's belief about the key from what the cache still has.
                 if is_new {
                     self.unresident.push_back((key, true));
                 }
                 continue;
-            }
-            let tex = up.upload(&d);
-            up.warm(tex);
-            self.clock += 1;
-            self.bytes += bytes;
-            match self.resident.get_mut(&key) {
-                // An in-place replacement updates the existing entry rather than building a new
-                // one, so `drawn_frame` (and any on-screen protection it carries) is kept
-                // automatically — there is no separate "carry it forward" step to get right.
-                Some(old) => {
-                    self.bytes = self.bytes.saturating_sub(old.bytes);
-                    up.free(old.tex);
-                    old.tex = tex;
-                    old.bytes = bytes;
-                    old.last_used = self.clock;
-                }
-                None => {
-                    self.resident.insert(key, Entry { tex, last_used: self.clock, bytes, drawn_frame: 0, return_pin: false });
-                }
             }
             n += 1;
         }
@@ -667,6 +657,51 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
             present.note(PresentEvent::Damage(Provenance::Resource(ResourceKind::Texture)));
         }
         n
+    }
+
+    /// The upload step for ONE image, shared by [`TexCache::prepare`] (which admits pending images
+    /// through the frame budget) and [`TexCache::prime`].
+    ///
+    /// A key already resident is replaced in place and needs no ROOM, but its new pixels still
+    /// count against the byte budget — `protect` keeps the key being replaced out of its own
+    /// eviction, so making room for a bigger re-upload never evicts itself. `false` means
+    /// [`TexCache::evict_for`] refused: the decoded pixels are dropped, no GL texture was created
+    /// and `bytes`/`clock` are untouched, so nothing changed.
+    fn land(&mut self, key: K, d: Decoded, up: &mut dyn Uploader) -> bool {
+        let bytes = d.rgba.len();
+        let is_new = !self.resident.contains_key(&key);
+        let protect = if is_new { None } else { Some(key) };
+        if !self.evict_for(if is_new { 1 } else { 0 }, bytes, protect, up) {
+            return false;
+        }
+        let tex = up.upload(&d);
+        up.warm(tex);
+        self.clock += 1;
+        self.bytes += bytes;
+        match self.resident.get_mut(&key) {
+            // An in-place replacement updates the existing entry rather than building a new
+            // one, so `drawn_frame` (and any on-screen protection it carries) is kept
+            // automatically — there is no separate "carry it forward" step to get right.
+            Some(old) => {
+                self.bytes = self.bytes.saturating_sub(old.bytes);
+                up.free(old.tex);
+                old.tex = tex;
+                old.bytes = bytes;
+                old.last_used = self.clock;
+            }
+            None => {
+                self.resident.insert(key, Entry { tex, last_used: self.clock, bytes, drawn_frame: 0, return_pin: false });
+            }
+        }
+        true
+    }
+
+    /// Make `d` resident under `key` NOW, outside the frame upload step: no quota, no queue, no
+    /// present note. The ceilings and the eviction rules are [`TexCache::prepare`]'s own; `false`
+    /// means refused and nothing changed. As after any call that can evict, the caller reports
+    /// [`TexCache::take_unresident`] to the source.
+    pub fn prime(&mut self, key: K, d: Decoded, up: &mut dyn Uploader) -> bool {
+        self.land(key, d, up)
     }
 
     /// Drop one key's residency and any pending pixels for it (the source recycled its slot).
@@ -945,6 +980,49 @@ mod tests {
         assert_eq!(up.warmed, vec![1, 2, 3]);
         assert!(present.take(16), "a resident texture is one damage");
         assert!(c.resolve(3).is_some() && c.resolve(1).is_none());
+    }
+
+    /// A primed picture is resident at once, with no frame quota and nothing queued; a later
+    /// arrival for the same key replaces it in place, reporting no loss; and on-screen art is never
+    /// evicted to make room for one (the same "arrivals lose" rule as `prepare`).
+    #[test]
+    fn prime_lands_at_once_and_a_later_arrival_replaces_it_in_place() {
+        let mut c: TexCache<u32> = TexCache::new(2);
+        let mut up = StubUp { next: 0, freed: vec![], warmed: vec![] };
+        let one = 2 * 2 * 4; // `ready`'s 2x2 RGBA
+        for k in 1..=2 {
+            let Ok(d) = ready(k).result else { unreachable!() };
+            assert!(c.prime(k, d, &mut up), "key {k}");
+        }
+        assert_eq!(up.warmed, vec![1, 2], "primed art is warmed like any upload");
+        assert_eq!(c.resident_bytes(), 2 * one);
+        assert!(c.resolve(1).is_some() && c.resolve(2).is_some());
+        assert!(!c.has_pending(), "nothing is queued behind a prime");
+
+        c.accept(ready(1));
+        let mut b = Budget::new();
+        b.begin_frame(0);
+        let mut present = Present::new();
+        let mut ph = PresentHandle(&mut present);
+        assert_eq!(c.prepare(&mut b, &mut up, &mut ph, || 0), 1);
+        assert_eq!(up.freed, vec![1], "the replaced texture is freed");
+        assert_eq!(c.take_unresident().count(), 0, "an in-place replacement is not a loss");
+        assert_eq!(c.resident_bytes(), 2 * one);
+
+        // One slot, held by art that was just drawn: the newcomer is refused and nothing moves.
+        let mut c: TexCache<u32> = TexCache::new(1);
+        let Ok(first) = ready(1).result else { unreachable!() };
+        assert!(c.prime(1, first, &mut up));
+        b.begin_frame(0);
+        let mut ph = PresentHandle(&mut present);
+        c.prepare(&mut b, &mut up, &mut ph, || 0);
+        assert!(c.resolve(1).is_some(), "drawn in the current frame");
+        let uploads = up.next;
+        let Ok(second) = ready(2).result else { unreachable!() };
+        assert!(!c.prime(2, second, &mut up));
+        assert_eq!(up.next, uploads, "a refused prime uploads nothing");
+        assert!(c.resolve(1).is_some() && c.resolve(2).is_none());
+        assert_eq!(c.take_unresident().count(), 0);
     }
 
     /// A mark taken before a frame's draws measures exactly the bytes that frame used: not the
