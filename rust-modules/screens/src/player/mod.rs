@@ -195,9 +195,6 @@ pub struct PlayerScreen {
     pub row: HudMotion,
     /// The Up Next auto-advance countdown (`up_next`'s `DEADLINE`/`CANCELLED`).
     pub up_next: Countdown,
-    /// What is playing, in plain words, shown briefly at the first picture and on a change
-    /// (`plx_appkit::playback_chips`).
-    chips: plx_appkit::playback_chips::PlaybackChips,
     pub marker_notice_shown: bool,
     /// This frame's control-row occupant, sampled by the loop and pushed here (`slot()`'s own
     /// doc: `playpos_ns` is written by LG's media thread and `player::pump` runs between the input
@@ -254,7 +251,6 @@ impl PlayerScreen {
             repeat: RepeatGate::IDLE,
             row: HudMotion::new(),
             up_next: Countdown::default(),
-            chips: Default::default(),
             marker_notice_shown: false,
             slot: ControlSlot::Discs(player_hud::Controls::NONE),
             busy: plx_appkit::player_hud::Busy::None,
@@ -352,7 +348,6 @@ impl PlayerScreen {
             self.hud.sections = Sections::NONE;
             self.row.cut_sections();
             self.up_next.reset();
-            self.chips.reset();
             self.marker_notice_shown = false;
         }
         self.publish();
@@ -599,7 +594,6 @@ impl PlayerScreen {
     ///   is not repeated here.)
     /// * `busy` — the read-out appearing and vanishing, including the `Playing -> Error` edge with
     ///   the HUD auto-hidden, where nothing else in the frame moves at all.
-    /// * `chips` — the playback chips fading in and out, which run over a picture nothing else moves.
     pub fn clock_fingerprint(&self, ps: &plx_media::route::PlaybackSession, now: u32) -> u64 {
         use std::sync::atomic::Ordering::Relaxed;
         let pos = plx_media::player::playpos_ns();
@@ -658,7 +652,6 @@ impl PlayerScreen {
                 4 ^ ((k as u64) << 32) ^ (c.as_ptr() as u64)
             }
         });
-        mix(self.chips.fingerprint(now));
         h
     }
 
@@ -947,14 +940,6 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 let authoritative = meta.playing_markers_known() && meta.active_marker(head).is_some_and(|m|
                     self.slot.offer() == Some((m.kind, m.start_ms)));
                 self.up_next.tick(self.slot, tick.ms, authoritative);
-                // …and the playback chips, which read the facts the same Tick's pipeline published
-                if let Some(item) = meta.playing() {
-                    let ps = H::session(cx);
-                    let facts = plx_appkit::playback_chips::Facts::read(ps, item, plx_media::player::video_raster());
-                    self.chips.observe(facts, plx_media::player::is_playing(ps), plx_media::player::loading(ps), tick.ms, |f| {
-                        plx_appkit::playback_chips::words(f, &item.audio, &item.subs)
-                    });
-                }
                 // The scrub gesture's whole per-frame half — `app/run.rs`'s old
                 // per-loop-iteration block, now on this screen's own Tick: the continuous
                 // accelerating advance with its lost-keyup net. Neither it nor anything else on
@@ -2691,11 +2676,6 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Screen<H> for PlayerScreen {
         }
         if over_section {
             self.draw_captions(ps, f.cx.measure, subs_lift, band);
-        }
-        // The playback chips: over the captions, which they keep clear of, and under the read-out, which
-        // owns a frame it draws on.
-        if !player_hud::readout_owns_frame(self.busy) {
-            self.chips.draw(plx_ui::Painter::root(), now, self.render.subtitle_bounds, f.measure);
         }
         // The read-out is NOT transport chrome — it is drawn whether or not the HUD is up, so a
         // terminal `Error` (which is not `is_busy()`, so it does not pin the HUD) keeps its message

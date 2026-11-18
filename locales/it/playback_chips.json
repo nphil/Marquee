@@ -1,7 +1,0 @@
-{
-  "widgets.chips.hdr": "HDR",
-  "widgets.chips.dolby_vision": "Dolby Vision",
-  "widgets.chips.dolby_atmos": "Dolby Atmos",
-  "widgets.chips.surround": "Audio surround {layout}",
-  "widgets.chips.subtitles": "Sottotitoli: {language}"
-}
