@@ -55,6 +55,7 @@
 - Play starts a version the TV can decode when the first one listed is one it cannot (a 4K copy in a codec the TV lacks, or a Dolby Vision Profile 5 copy with Dolby Vision off), instead of asking the server to convert it. The quality limit is judged on the video bitrate of the version that plays, and a retry that moves to another file no longer carries the first file's audio and subtitle choice.
 - The detail page's resolution badge, facts row and HDR warning describe the version Play starts (its own picture, Dolby Vision and bitrate), not always the first one listed. On a show page they describe the episode Play starts: the one being resumed, else the first one shown.
 - A film played directly from the server over a link too slow for it now pauses and shows Buffering until enough has arrived to carry on, instead of playing in slow motion and then dropping frames to catch up.
+- Pausing a film while the player is quietly testing a higher streaming quality no longer breaks playback: the test is dropped and the stream carries on.
 
 ## 0.10.0
 

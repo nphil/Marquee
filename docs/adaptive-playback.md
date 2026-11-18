@@ -271,7 +271,9 @@ The candidate-media ownership protocol has these externally meaningful phases:
   publishes its runway. If an internal hold is active, releasing the structural gate first starts
   a fresh new-route recovery epoch.
 - `Discarded`: no candidate AU crossed into playback, so the old cursor, timeline, route and
-  recovery epoch do not move. There is nothing to realign.
+  recovery epoch do not move. There is nothing to realign. A lease the viewer took before that
+  point (a Pause, or any other change of the clock's owner, while the candidate was being
+  prepared) discards the candidate the same way and never ends the stream that is playing.
 - `Terminal`: abort, a concurrent route replacement, or an impossible commit precondition after
   media publication leaves the gate latched until teardown clears it with the queues.
 

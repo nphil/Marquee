@@ -2067,6 +2067,19 @@ impl Shared {
         self.hls_clock.lock().unwrap_or_else(|e| e.into_inner()).user_held
     }
 
+    /// The viewer's Pause on a running clock, accepted through the production edges, so a test can
+    /// take the clock away from a live automatic lease.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn accept_user_pause_for_test(&self) {
+        let Some(HlsUserPause::Issue(token)) = self.prepare_hls_user_pause() else {
+            panic!("a running clock issues the viewer's Pause");
+        };
+        assert_eq!(
+            self.complete_hls_user_pause(token, true),
+            HlsPauseCompletion::Accepted,
+        );
+    }
+
     #[cfg(all(any(test, feature = "test-support"), feature = "hostsim"))]
     pub fn ensure_initial_clock_hold_for_test(&self) {
         let mut clock = self.hls_clock.lock().unwrap_or_else(|e| e.into_inner());

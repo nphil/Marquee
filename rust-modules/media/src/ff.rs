@@ -6325,29 +6325,19 @@ struct HlsCandidateTransition {
 }
 
 impl HlsCandidateTransition {
-    fn arm(automatic_token: u64) -> Result<Self, HlsExit> {
+    fn arm(automatic_token: u64) -> Result<Self, crate::player::HlsClockFenceError> {
         Self::arm_for(Some(automatic_token))
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn arm_unowned_for_test() -> Result<Self, HlsExit> {
+    fn arm_unowned_for_test() -> Result<Self, crate::player::HlsClockFenceError> {
         Self::arm_for(None)
     }
 
-    fn arm_for(automatic_token: Option<u64>) -> Result<Self, HlsExit> {
-        match SHARED.begin_hls_candidate_transition(automatic_token) {
-            Ok(generation) => Ok(Self { generation }),
-            Err(crate::player::HlsClockFenceError::Stopping) => Err(HlsExit::Aborted),
-            Err(crate::player::HlsClockFenceError::Overlap) => {
-                Err(HlsExit::Failed("overlapping HLS candidate publication"))
-            }
-            Err(crate::player::HlsClockFenceError::Exhausted) => {
-                Err(HlsExit::Failed("HLS candidate generation exhausted"))
-            }
-            Err(crate::player::HlsClockFenceError::Superseded) => Err(HlsExit::Failed(
-                "HLS candidate automatic lease was superseded",
-            )),
-        }
+    fn arm_for(automatic_token: Option<u64>) -> Result<Self, crate::player::HlsClockFenceError> {
+        SHARED
+            .begin_hls_candidate_transition(automatic_token)
+            .map(|generation| Self { generation })
     }
 
     fn settle(self) {
@@ -6362,6 +6352,21 @@ impl HlsCandidateTransition {
 fn settle_candidate_transition(transition: &mut Option<HlsCandidateTransition>) {
     if let Some(transition) = transition.take() {
         transition.settle();
+    }
+}
+
+/// What a refused publication fence means for the stream that is already playing: `None` drops
+/// only the candidate, `Some` ends the worker. The lease is lost when the viewer pauses, or the
+/// clock otherwise changes hands, while the private candidate is being prepared. That is an
+/// expected cancellation, and no candidate AU has reached a playback queue yet, so the stream
+/// plays on. Every other refusal is a teardown or a fault.
+fn candidate_fence_exit(refusal: crate::player::HlsClockFenceError) -> Option<HlsExit> {
+    use crate::player::HlsClockFenceError as Refusal;
+    match refusal {
+        Refusal::Superseded => None,
+        Refusal::Stopping => Some(HlsExit::Aborted),
+        Refusal::Overlap => Some(HlsExit::Failed("overlapping HLS candidate publication")),
+        Refusal::Exhausted => Some(HlsExit::Failed("HLS candidate generation exhausted")),
     }
 }
 
@@ -8465,10 +8470,21 @@ fn hls_demux(
                 .expect("every HLS candidate transaction owns one automatic actuator lease");
             candidate_transition = match HlsCandidateTransition::arm(automatic_token) {
                 Ok(transition) => Some(transition),
-                Err(error) => {
+                Err(refusal) => {
                     control.abandon(&primed.encoder_session);
+                    let Some(exit) = candidate_fence_exit(refusal) else {
+                        reject_hls_abr_after_transaction(
+                            controller,
+                            proposal,
+                            crate::abr::RejectCause::Circumstance,
+                            &mut tx,
+                            now_ms(),
+                        );
+                        tx.finish("candidate_superseded");
+                        continue;
+                    };
                     tx.finish("publication_overlap");
-                    return Err(error);
+                    return Err(exit);
                 }
             };
         }

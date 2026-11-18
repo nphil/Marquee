@@ -181,6 +181,42 @@ fn a_user_pause_fills_the_active_queues_without_starting_a_private_trial() {
     ));
 }
 
+/// A Pause that lands while a private upgrade is being prepared takes the clock from the upgrade's
+/// lease, so the publication fence refuses it. That is an expected cancellation of the candidate;
+/// the stream that is already playing must not be ended for it.
+#[test]
+fn a_pause_during_an_upgrade_does_not_fail_the_stream() {
+    let _guard = plx_base::testlock::serial();
+    SHARED.reset_hls_clock_for_test();
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SHARED.reset_hls_clock_for_test();
+        }
+    }
+    let _reset = Reset;
+    let trial = HlsTrialReserve::arm(1_000, SHARED.hls_user_sequence())
+        .expect("running playback grants the upshift trial");
+    SHARED.accept_user_pause_for_test();
+
+    let refusal = HlsCandidateTransition::arm(trial.token())
+        .err()
+        .expect("a lease the viewer took cannot publish");
+    assert_eq!(refusal, crate::player::HlsClockFenceError::Superseded);
+    assert!(
+        candidate_fence_exit(refusal).is_none(),
+        "the cancelled candidate is dropped and the stream plays on",
+    );
+}
+
+#[test]
+fn every_other_refused_fence_still_ends_the_worker() {
+    use crate::player::HlsClockFenceError as Refusal;
+    assert!(matches!(candidate_fence_exit(Refusal::Stopping), Some(HlsExit::Aborted)));
+    assert!(matches!(candidate_fence_exit(Refusal::Overlap), Some(HlsExit::Failed(_))));
+    assert!(matches!(candidate_fence_exit(Refusal::Exhausted), Some(HlsExit::Failed(_))));
+}
+
 #[test]
 fn a_latched_original_switch_preempts_an_unstarted_hls_prime() {
     let proposal = crate::abr::Proposal {
