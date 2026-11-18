@@ -82,7 +82,7 @@ impl Entry {
     fn release_after(&self, from: usize) -> usize {
         let floor = self.floor_after(from);
         floor + self.frames[floor..].iter()
-            .position(|f| matches!(f.paint, PagePaint::ReplacementCapture | PagePaint::Live))
+            .position(|f| f.paint.draws_live())
             .expect("the image was released")
     }
 
@@ -204,7 +204,7 @@ fn warm_return(name: &str, draw: bool) -> (World, Entry, usize, f32) {
 /// ends.** The page's shelves go dormant under the dip's image and (on a shelf alone) ease to rest;
 /// the push froze that ease mid-way (the page is covered, it does not tick), BACK resumed it under
 /// the BACK dip's image, and the layout animation it set moving (the heading, the caption band) held
-/// the image ~25 frames past the dissolve until the replacement capture snapped from mid-ease to
+/// the image ~25 frames past the dissolve until the hand-over snapped from mid-ease to
 /// rest. Nothing steps under an image that hides it (`transition::page_image_held`): a dormant
 /// shelf under one is at rest on its first tick, and the shelf that returns with the seat is already
 /// where it goes.

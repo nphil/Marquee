@@ -96,7 +96,7 @@ fn a_warm_library_push_captures_the_pressed_library_with_its_tiles() {
         let rows = push_trace(case);
         let at = rows.iter().position(|r| r.captured && r.top == "library").expect("the Library was captured at the floor");
         let (page, grid, loading, section, tiles) = rows[at].content.unwrap();
-        // Every frame the floor image is what is on screen: up to the settled replacement.
+        // Every frame the floor image is what is on screen: up to the hand-over.
         let shown = 1 + rows[at + 1..].iter().take_while(|r| !r.captured && r.image.is_some()).count();
         let (.., then_section, then_tiles) = rows[at + shown].content.unwrap();
         if loading || tiles == 0 || page * grid < 0.99 || section != 1 {

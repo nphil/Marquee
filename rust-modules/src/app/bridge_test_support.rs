@@ -312,9 +312,8 @@ impl DipImage {
         let paint = self.image.plan(entry, flight, alpha, ms, self.valid, quiescent);
         match paint {
             PagePaint::Capture => { self.image.captured(entry); self.valid = true; }
-            PagePaint::ReplacementCapture => { self.image.replacement_captured(entry); self.valid = true; }
             PagePaint::Live => { self.image = PageImage::default(); self.valid = false; }
-            PagePaint::Held(_) => {}
+            PagePaint::Held(_) | PagePaint::Handover => {}
         }
         plx_ui::containers::transition::set_page_image_held(!matches!(paint, PagePaint::Live));
         Some(paint)

@@ -2175,7 +2175,8 @@ fn frozen_dispatch_holds_past_the_dip_while_page_motion_and_resource_work_remain
     let _guard = plx_base::testlock::serial();
     let (mut d, mut rig) = frozen_fixture();
     let begins = std::rc::Rc::new(std::cell::Cell::new(0));
-    d.page_snapshot = Box::new(CountingSnapshot { valid: false, begins: begins.clone(), ..Default::default() });
+    let image_drawn = std::rc::Rc::new(std::cell::Cell::new(0));
+    d.page_snapshot = Box::new(CountingSnapshot { valid: false, begins: begins.clone(), drawn_at: image_drawn.clone(), ..Default::default() });
     d.request(MachineId::Nav, NavOp::Push(FixtureArg::Page(QUIESCENCE_PAGE)));
     d.frame_with(&mut rig, tick(0), vec![], vec![], &mut NoTap, false);
     d.draw(&mut rig, true); // outgoing capture
@@ -2199,28 +2200,34 @@ fn frozen_dispatch_holds_past_the_dip_while_page_motion_and_resource_work_remain
     assert!(!d.nav.tabs.stack.transition.in_flight(), "the 140 ms dip itself has ended");
     let held = floor_capture_draw.expect("destination captured at the floor");
 
+    // The hand-over draws the settled page live, over no image, and captures nothing: on the
+    // television a capture here cost the frame its GPU budget and held the next present on its
+    // fence (34 ms opening the Library).
     plx_machine::idle::frame_begin(1.0 / 60.0);
     d.budget.note_queued(false);
     d.frame_with(&mut rig, tick(480), vec![], vec![], &mut NoTap, false);
-    d.draw(&mut rig, true); // the one off-screen settled replacement capture
-    assert!(page_draw_order(&d) > held);
-    assert_eq!(begins.get(), 3, "outgoing, incoming floor, and exactly one settled replacement");
+    d.draw(&mut rig, true);
+    let handover = page_draw_order(&d);
+    assert!(handover > held, "the settled page is drawn live");
+    assert!(image_drawn.get() < handover, "no image is drawn over the live page");
+    assert_eq!(d.held_page_image(), None);
+    assert_eq!(begins.get(), 2, "outgoing and incoming floor only: the hand-over captures nothing");
 
-    let replacement = page_draw_order(&d);
     plx_machine::idle::frame_begin(1.0 / 60.0);
     d.frame_with(&mut rig, tick(496), vec![], vec![], &mut NoTap, false);
     d.draw(&mut rig, true);
-    assert!(page_draw_order(&d) > replacement, "live begins only after the matching image frame");
-    assert_eq!(begins.get(), 3, "the handoff never captures a second replacement");
+    assert!(page_draw_order(&d) > handover, "the page stays live");
+    assert!(image_drawn.get() < handover, "and the image is gone");
+    assert_eq!(begins.get(), 2);
 }
 
-/// **A page's text is resident before its replacement capture draws it.** Content that lands
-/// after the dip's floor — a detail page's metadata — is drawn by nothing while the image stands in
-/// for the page, so the one settled capture used to rasterise every new string in a single frame
-/// (84 ms on the television, 48 ms of it text). The held page is walked through the text recorder
-/// instead, and the capture waits for that queue to drain.
+/// **A page's text is resident before the hand-over draws it.** Content that lands after the dip's
+/// floor — a detail page's metadata — is drawn by nothing while the image stands in for the page,
+/// so the first frame to draw the settled page used to rasterise every new string at once (84 ms
+/// on the television, 48 ms of it text). The held page is walked through the text recorder
+/// instead, and the hand-over waits for that queue to drain.
 #[test]
-fn a_held_page_has_its_text_resident_before_its_replacement_capture() {
+fn a_held_page_has_its_text_resident_before_its_handover() {
     let _guard = plx_base::testlock::serial();
     let (mut d, mut rig) = frozen_fixture();
     let begins = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -2276,17 +2283,17 @@ fn a_held_page_has_its_text_resident_before_its_replacement_capture() {
         d.frame_with(&mut rig, tick(ms), vec![], vec![], &mut NoTap, false);
         plx_gfx::text::queue_prewarm(c"late string".as_ptr(), 24, 0);
         d.draw(&mut rig, true);
-        assert_eq!(begins.get(), floor_begins, "a pending prewarm defers the replacement capture");
+        assert_eq!(screen(&d).0, floor_draw, "a pending prewarm defers the hand-over");
     }
     let settled_at = ms;
-    while begins.get() == floor_begins {
+    while screen(&d).0 == floor_draw {
         ms += 16;
-        assert!(ms < settled_at + 200, "the drained page is captured promptly");
+        assert!(ms < settled_at + 200, "the drained page is handed over promptly");
         plx_machine::idle::frame_begin(1.0 / 60.0);
         d.frame_with(&mut rig, tick(ms), vec![], vec![], &mut NoTap, false);
         d.draw(&mut rig, true);
     }
-    assert!(screen(&d).0 > floor_draw, "the replacement capture draws the page");
+    assert_eq!(begins.get(), floor_begins, "the hand-over draws the page live, capturing nothing");
 }
 
 /// **The tab bar's glass samples the page the frame shows, on EVERY frame of a route dip.**

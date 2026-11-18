@@ -45,8 +45,8 @@
 //!
 //! **A held page image.** During a `PageDip` route push the destination is drawn live ONCE into a
 //! snapshot and then painted as that image — nothing walks the page — on every frame until it is
-//! quiescent (up to `PAGE_QUIESCENCE_HOLD_MAX_MS` after the dip), when one replacement capture draws
-//! it live again. The dispatcher records what the capture drew ([`mark`], [`since`] → [`Debt`]) and
+//! quiescent (up to `PAGE_QUIESCENCE_HOLD_MAX_MS` after the dip), when the hand-over draws it live
+//! again. The dispatcher records what the capture drew ([`mark`], [`since`] → [`Debt`]) and
 //! re-notes it ([`renote`]) on every frame the image stands in for the page, so a spinner, a
 //! "Loading" title or a skeleton captured into the image keeps the count above zero for as long as
 //! it is on screen. `Dispatcher::held_page_image` says whether the page shown is an image and at

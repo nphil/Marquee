@@ -98,7 +98,7 @@ impl Rig {
     /// The first frame of that dip on which the image is replaced by the live page.
     fn release(&self, from: usize) -> usize {
         let floor = self.floor(from);
-        self.first(floor, |f| matches!(f.paint, PagePaint::ReplacementCapture | PagePaint::Live))
+        self.first(floor, |f| f.paint.draws_live())
     }
 }
 

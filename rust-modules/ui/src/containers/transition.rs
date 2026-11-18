@@ -23,10 +23,11 @@
 //!   Home's wash dissolve, hero art reveal and hero focus pop still wake the present gate but do
 //!   not hold the snapshot. That layout-motion hold is the product's: in a frame dump no image is ever held
 //!   (`PageImage::step_filmed`: the dip RE-CAPTURES the page every frame and the page is live the
-//!   frame it ends), so the destination's own springs are filmed live under the dip. At visual quiescence the dispatcher takes one
-//!   full-alpha replacement capture off-screen, presents that
-//!   image, then switches to identical live output on the following frame. No VISIBLE frame draws a live
-//!   page under a full-screen image. [`PAGE_QUIESCENCE_HOLD_MAX_MS`] bounds a page that never
+//!   frame it ends), so the destination's own springs are filmed live under the dip. At visual
+//!   quiescence the dispatcher hands over: that frame draws the settled page live and captures
+//!   nothing (a capture there cost the television a 34 ms frame and held the next present on its
+//!   fence). No VISIBLE frame draws a live page under
+//!   a full-screen image. [`PAGE_QUIESCENCE_HOLD_MAX_MS`] bounds a page that never
 //!   settles. Screen/input/lifecycle state continues ticking behind the held image.
 //! - [`RoutePush`] — the Settings family's push: commit is immediate, BOTH levels are drawn, and a
 //!   k=200 spring carries the incoming level in from −0.35 and the outgoing one out to +0.22 (in
@@ -400,7 +401,7 @@ impl Transition for RoutePush {
 pub struct PageImage {
     entry: Option<plx_machine::machine::EntryId>,
     settle_since: Option<u32>,
-    replacement_ready: bool,
+    handed_over: bool,
     /// The paint the last [`PageImage::plan`] step returned: what a frame dump's held repeat of
     /// the same virtual frame gets back instead of a further step. Only in the builds that can
     /// have a held repeat (the dev instruments and tests); a shipping struct does not carry it.
@@ -432,14 +433,16 @@ pub enum PagePaint {
     Live,
     Capture,
     Held(f32),
-    ReplacementCapture,
+    /// The frame a held image ends on: the page is drawn live and the image unused, but screens
+    /// still read it as held ([`page_image_held`]) and it presents as the image's frames did.
+    Handover,
 }
 impl PagePaint {
     pub fn draws_live(self) -> bool {
-        matches!(self, Self::Live)
+        matches!(self, Self::Live | Self::Handover)
     }
     pub fn captures_page(self) -> bool {
-        matches!(self, Self::Capture | Self::ReplacementCapture)
+        matches!(self, Self::Capture)
     }
 }
 
@@ -447,19 +450,14 @@ impl PageImage {
     pub fn captured(&mut self, entry: plx_machine::machine::EntryId) {
         self.entry = Some(entry);
         self.settle_since = None;
-        self.replacement_ready = false;
-    }
-    pub fn replacement_captured(&mut self, entry: plx_machine::machine::EntryId) {
-        self.entry = Some(entry);
-        self.replacement_ready = true;
+        self.handed_over = false;
     }
     /// One planning step per FRAME. In a frame dump ([`plx_gfx::dump::held_repeat`]) an iteration
     /// that repeats the same virtual frame returns the paint the first iteration returned instead
     /// of stepping: a capture frame with debt re-captures on every repeat until it is clean (and
-    /// is written as a capture frame), and (in the product) a replacement capture is not left for `Live` by a hold.
-    /// Without that the state advanced once per ITERATION, so the number of holds decided which of
-    /// two near-identical frames (the replacement capture differs from the live draw by 1/255 on
-    /// a few pixels) a written frame showed. Outside the simulator `held_repeat()` is a constant
+    /// is written as a capture frame), and (in the product) a hand-over is not left for `Live` by a
+    /// hold. Without that the state advanced once per ITERATION, so the number of holds decided
+    /// which state a written frame showed. Outside the simulator `held_repeat()` is a constant
     /// `false` and this is the state machine alone.
     pub fn plan(
         &mut self,
@@ -501,7 +499,7 @@ impl PageImage {
     fn step_filmed(&mut self, active: bool) -> PagePaint {
         if active {
             self.settle_since = None;
-            self.replacement_ready = false;
+            self.handed_over = false;
             PagePaint::Capture
         } else {
             *self = Self::default();
@@ -519,19 +517,19 @@ impl PageImage {
         quiescent: bool,
     ) -> PagePaint {
         if active {
-            // Retarget after a replacement capture: capture the new destination again.
-            if self.replacement_ready {
+            // Retarget after a hand-over: capture the new destination again.
+            if self.handed_over {
                 self.entry = None;
             }
             self.settle_since = None;
-            self.replacement_ready = false;
+            self.handed_over = false;
             if !valid || self.entry != Some(entry) {
                 return PagePaint::Capture;
             }
             return PagePaint::Held(alpha);
         }
         if valid && self.entry == Some(entry) {
-            if self.replacement_ready {
+            if self.handed_over {
                 *self = Self::default();
                 return PagePaint::Live;
             }
@@ -539,7 +537,8 @@ impl PageImage {
             if !quiescent && ms.wrapping_sub(start) < PAGE_QUIESCENCE_HOLD_MAX_MS {
                 return PagePaint::Held(1.0);
             }
-            return PagePaint::ReplacementCapture;
+            self.handed_over = true;
+            return PagePaint::Handover;
         }
         *self = Self::default();
         PagePaint::Live
@@ -560,7 +559,6 @@ impl PagePaint {
     pub fn frozen_alpha(self) -> Option<f32> {
         match self {
             Self::Held(a) => Some(a),
-            Self::ReplacementCapture => Some(1.0),
             _ => None,
         }
     }
@@ -887,9 +885,8 @@ mod page_image_tests {
         image.captured(EntryId(2));
         assert_eq!(
             image.plan(EntryId(2), false, 1.0, 250, true, true),
-            PagePaint::ReplacementCapture
+            PagePaint::Handover
         );
-        image.replacement_captured(EntryId(2));
         assert_eq!(
             image.plan(EntryId(2), true, 0.8, 266, true, false),
             PagePaint::Capture
@@ -916,13 +913,11 @@ mod page_image_tests {
         }
         // frame 2: not a repeat, so the state machine steps to the held image
         assert_eq!(image.plan(entry, true, 0.5, 117, true, false), PagePaint::Held(0.5));
-        // the replacement capture: repeats re-capture, the next frame goes live
-        assert_eq!(image.plan(entry, false, 1.0, 900, true, true), PagePaint::ReplacementCapture);
-        image.replacement_captured(entry);
+        // the hand-over: repeats hand over again, the next frame goes live
+        assert_eq!(image.plan(entry, false, 1.0, 900, true, true), PagePaint::Handover);
         {
             let _repeat = plx_gfx::dump::HeldRepeat::new();
-            assert_eq!(image.plan(entry, false, 1.0, 900, true, true), PagePaint::ReplacementCapture);
-            image.replacement_captured(entry);
+            assert_eq!(image.plan(entry, false, 1.0, 900, true, true), PagePaint::Handover);
         }
         assert_eq!(image.plan(entry, false, 1.0, 917, true, true), PagePaint::Live);
     }
@@ -930,7 +925,7 @@ mod page_image_tests {
     /// The dump's rule on its pure twin (no switch armed): while the dip is in flight the page is
     /// re-captured EVERY frame, however long the image has already been valid for this entry, and
     /// the frame the dip ends it is live with the image forgotten. There is no `Held` and no
-    /// replacement capture to hand over to.
+    /// hand-over.
     #[test]
     fn a_filmed_page_is_recaptured_every_frame_of_the_dip_and_live_after_it() {
         let entry = EntryId(3);
@@ -947,7 +942,7 @@ mod page_image_tests {
 
     /// The same through `plan` with the switch armed: a whole push, Out, floor and In, plays as
     /// captures (never a frozen image), then live; the product's `plan` holds the floor's image
-    /// through the In half and hands over by a replacement capture.
+    /// through the In half and then hands over.
     #[test]
     fn armed_a_whole_push_is_filmed_live_and_the_product_holds_its_image() {
         let _g = plx_base::testlock::serial();
@@ -965,10 +960,8 @@ mod page_image_tests {
                     entry = EntryId(2);
                 }
                 let paint = image.plan(entry, dip.in_flight(), dip.page_alpha(), i * 16, true, true);
-                match paint {
-                    PagePaint::Capture => image.captured(entry),
-                    PagePaint::ReplacementCapture => image.replacement_captured(entry),
-                    _ => {}
+                if paint == PagePaint::Capture {
+                    image.captured(entry);
                 }
                 paints.push(paint);
             }
@@ -982,7 +975,7 @@ mod page_image_tests {
         assert!(live_from >= 10, "the dip played its Out, floor and In halves first: {live_from}");
         let product = run(false);
         assert!(product.iter().any(|p| matches!(p, PagePaint::Held(_))), "{product:?}");
-        assert!(product.contains(&PagePaint::ReplacementCapture), "{product:?}");
+        assert!(product.contains(&PagePaint::Handover), "{product:?}");
     }
 
     #[test]
@@ -1009,7 +1002,7 @@ mod page_image_tests {
     }
 
     #[test]
-    fn frozen_settle_handoff_never_draws_live_under_the_image_and_captures_once() {
+    fn frozen_settle_handoff_never_draws_live_under_the_image_and_captures_nothing() {
         let mut image = PageImage::default();
         let entry = EntryId(2);
         image.captured(entry);
@@ -1019,11 +1012,10 @@ mod page_image_tests {
         );
         let held = image.plan(entry, false, 1.0, 335, true, false);
         assert!(!held.draws_live(), "a full-screen image may never cover a live page draw");
-        assert_eq!(
-            image.plan(entry, false, 1.0, 350, true, true),
-            PagePaint::ReplacementCapture
-        );
-        image.replacement_captured(entry);
+        let handover = image.plan(entry, false, 1.0, 350, true, true);
+        assert_eq!(handover, PagePaint::Handover);
+        assert!(handover.draws_live() && !handover.captures_page() && handover.frozen_alpha().is_none(),
+            "the hand-over is a live frame with no image over it");
         assert_eq!(image.plan(entry, false, 1.0, 366, true, true), PagePaint::Live);
         assert_eq!(image.plan(entry, false, 1.0, 400, true, true), PagePaint::Live);
     }

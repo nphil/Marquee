@@ -100,7 +100,7 @@
 //!   the dip, never as a held image.** Every frame the dip is in flight re-captures the top page
 //!   (`PageImage::step_filmed`: a live draw at full alpha into the snapshot, composed at the
 //!   dip's alpha, exactly what the product's two capture frames do), and the frame the dip ends
-//!   the page is live; there is no `Held` frame and no replacement capture. The product freezes
+//!   the page is live; there is no `Held` frame and no hand-over. The product freezes
 //!   the image captured at the floor through the whole In half and on past it while the
 //!   destination's layout moves (`PAGE_QUIESCENCE_HOLD_MAX_MS`), so a page that starts springs
 //!   at its mount (a card shelf's label band, the focus pop, the caption, an `Xfade` fade-in)

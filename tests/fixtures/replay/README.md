@@ -103,7 +103,7 @@ A key missing from that table refuses the replay, with one exception: the text-p
 Their answers are recorded like any other. A key an older recording lacks inside such a walk
 answers 0.0, and state, presents, effects and Focus/Hit are still graded on every frame. The
 held-page walk measures Flow 12's focused cast caption, which that anchor never drew, because the
-Person page is pushed before Detail's replacement capture.
+Person page is pushed before Detail's hand-over.
 
 **Current migration:** Home, Settings, and Flow 12 Filmography anchors are accepted
 controlled-replay coverage. Flow 12 has typed initial state, exact synchronous admissions,
