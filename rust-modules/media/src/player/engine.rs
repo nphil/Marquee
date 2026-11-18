@@ -198,6 +198,10 @@ pub struct Engine {
     pub rebase_drops: i32,
     pub seek_armed_at: u32, // SDL-ticks when the current in-place seek was armed (stuck watchdog)
     pub seek_retries: i32,  // cheap reopen-retries attempted before escalating to a full reload
+    /// A Segment seek that Play accepted and the sink has not yet shown (see
+    /// [`super::segment_landing`]). Set when the in-place seek is applied; dropped when it lands, is
+    /// overtaken by a newer tap or is reloaded.
+    pub(super) segment_landing: Option<super::segment_landing::Landing>,
     pub flushed: bool,      // Kodi m_flushed: set on an in-place seek flush; the first
     // post-flush keyframe triggers setTimeToDecode + sendSegmentEvent (the fresh GStreamer
     // segment a bare flush() omits), then clears this.
@@ -2460,6 +2464,7 @@ fn start_bufferfeed_inner(
         rebase_drops: 0,
         seek_armed_at: 0,
         seek_retries: 0,
+        segment_landing: None,
         flushed: false,
         presentation_rearm_pending: false,
         max_fed_video_pts: 0,
@@ -3027,6 +3032,9 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     eng.opus_start_cancelled.store(true, Ordering::Release);
     let stream = matches!(eng.source, Source::Stream { .. });
 
+    // A Segment seek the sink has not confirmed leaves the clock on the timeline the seek left, so
+    // the position the viewer stopped at is the seek's target.
+    let stop_ns = super::unconfirmed_segment_seek_ns().unwrap_or_else(|| SHARED.playpos_ns.load(Ordering::Relaxed));
     // capture the final-position report BEFORE teardown zeroes playpos/duration (a reload is
     // not a stop — don't scrobble "stopped", it would falsely pause/mark-watched the item)
     // **The one place a playback really ENDS.** `for_reload` covers a direct-play seek reload, an
@@ -3037,7 +3045,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
     if !for_reload {
         crate::player::report::ended(
             ps,
-            SHARED.playpos_ns.load(Ordering::Relaxed),
+            stop_ns,
             SHARED.duration_ns.load(Ordering::Relaxed),
         );
     }
@@ -3049,7 +3057,7 @@ fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         if !rk.is_empty() && dur > 0 {
             Some((
                 rk,
-                SHARED.playpos_ns.load(Ordering::Relaxed) / 1_000_000,
+                stop_ns / 1_000_000,
                 dur / 1_000_000,
             ))
         } else {
@@ -4045,6 +4053,10 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
         if TX.seek_preroll_active() {
             super::mute_for_preroll(mt);
         }
+        // Read before the call: a position callback Play delivers on the spot counts for a Segment
+        // seek, one queued behind the flush and the segment speaks for the retired timeline.
+        let before_play =
+            (SHARED.frames.load(Ordering::Relaxed), SHARED.sink_displayed_sequence.load(Ordering::Acquire));
         let played = unsafe { sink().play(mt) };
         match SHARED.complete_hls_prime_play(play_token, played != 0) {
             HlsPlayCompletion::Accepted { resume_acb } => {
@@ -4052,7 +4064,12 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
                     super::acb_mirror_playstate_at(mt, eng.stage, true);
                 }
                 eng.prime_play = false;
-                SHARED.seeking.store(false, Ordering::Relaxed); // playback resumed at the new position → HUD spinner off
+                match eng.segment_landing.as_mut() {
+                    // Play does not land a Segment seek: the spinner and the frozen playhead stay
+                    // until the sink shows it (the pump settles that).
+                    Some(landing) => landing.played(before_play.0, before_play.1),
+                    None => SHARED.seeking.store(false, Ordering::Relaxed), // playback resumed at the new position → HUD spinner off
+                }
                 if prime_kind == HlsPrimeKind::Rebuffer {
                     log(&format!(
                         "primed: v={}ms a={}ms recovery_n={} debt={}ms runway={}ms -> Play",
@@ -5548,6 +5565,7 @@ mod prime_livelock_tests {
             rebase_drops: 0,
             seek_armed_at: 0,
             seek_retries: 0,
+            segment_landing: None,
                 flushed: false,
             presentation_rearm_pending: false,
             max_fed_video_pts: 0,

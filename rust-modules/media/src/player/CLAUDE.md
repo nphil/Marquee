@@ -833,7 +833,10 @@ something.
   `native|segment|reload` wins): the demuxer is `av_seek_frame`d to the target, then on the first
   post-seek keyframe `feed_stream` re-anchors the pipeline — no reload/decoder re-init.
   `Segment` (webOS 4.x) is Kodi-style: pump `flush()`, then `setTimeToDecode` + `sendSegmentEvent`
-  through decompile-derived private offsets. `NativeSeek` (`VP_EXPORTED`, webOS 5+, issue #568; and a
+  through decompile-derived private offsets. Play's acceptance does not land it: the clock has to
+  move on the new AUs (and, once the session has sent a displayed-frame counter, count a fresh
+  frame), else one reload at the target after 4 s (`segment_landing.rs`); `seeking` and Plex
+  progress hold until then. `NativeSeek` (`VP_EXPORTED`, webOS 5+, issue #568; and a
   known webOS 3 release on the ACB plane, `engine::old_abi_seek_tested`) is
   LG's PUBLIC `StarfishMediaAPIs::Seek(millis)` (`sink().seek`, `sf_seek_ms`): it flushes itself, so
   the pump does NOT `flush()` and nothing may flush after it (a `flush()` is a seek to 0 and re-creates

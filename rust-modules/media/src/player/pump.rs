@@ -1447,6 +1447,7 @@ fn settle_paused_seek(pa: &mut super::adapter::PlayerAdapter, now: u32) {
     let Some(eng) = pa.engine() else { return };
     let landed = !eng.flushed
         && !eng.rebase_pending
+        && eng.segment_landing.is_none() // a Segment seek is landed by the sink's own evidence
         && TX.seek_to_ns.load(Relaxed) < 0
         && !crate::route::flight_outstanding()
         && SHARED.frames.load(Relaxed) >= 1
@@ -1454,6 +1455,44 @@ fn settle_paused_seek(pa: &mut super::adapter::PlayerAdapter, now: u32) {
         && SHARED.playpos_ns.load(Relaxed) + 15 * 1_000_000_000 >= target;
     if landed {
         super::finish_paused_seek(pa);
+    }
+}
+
+/// A Segment seek that Play accepted is landed by the sink's own evidence
+/// ([`super::segment_landing`]), not by Play: the clock has to move on the new AUs and, on a session
+/// that sends a displayed-frame counter, the counter has to count a fresh frame. Returns the target
+/// to reload at, once, when the sink has had its budget and never showed it: a fresh Load installs
+/// its segment by construction.
+fn segment_landing_overdue(eng: &mut Engine, now: u32) -> Option<i64> {
+    use super::segment_landing::{Probe, Step};
+    let landing = eng.segment_landing.as_mut()?;
+    // Abandoned, so nothing is left to land, or overtaken by a newer tap, whose own apply starts
+    // a landing of its own.
+    if !SHARED.seeking.load(Relaxed) || TX.seek_to_ns.load(Relaxed) >= 0 {
+        eng.segment_landing = None;
+        return None;
+    }
+    let step = landing.step(&Probe {
+        now,
+        clock_ticks: SHARED.frames.load(Relaxed),
+        position: SHARED.pres_fed.load(Relaxed),
+        runway: eng.seek_base_pts..=eng.max_fed_video_pts,
+        displayed: SHARED.sink_displayed_sequence.load(Acquire),
+        counter_seen: SHARED.sink_counter_seen.load(Relaxed),
+        running: TX.feed_allowed() && !crate::route::flight_outstanding(),
+    });
+    match step {
+        Step::Waiting => None,
+        Step::Landed => {
+            eng.segment_landing = None;
+            SHARED.seeking.store(false, Relaxed); // the picture is up: HUD spinner off
+            None
+        }
+        Step::Overdue(line) => {
+            eng.segment_landing = None;
+            super::log(&line);
+            Some(SHARED.seek_target_ns.load(Relaxed).max(0))
+        }
     }
 }
 
@@ -2073,6 +2112,15 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         }
     }
 
+    // ---------- a Segment seek Play accepted lands when the sink shows it, else one reload ----------
+    if let Some(target) = segment_landing_overdue(eng, now) {
+        settle_reload(
+            super::engine::reload_at(ps, pa, target),
+            "segment seek never reached the sink",
+        ); // REPLACES the engine — eng dangles, return
+        return;
+    }
+
     // ---------- an in-place seek is still resolving (flushed, not yet re-anchored): COALESCE.
     // Firing another now would race the demux reopen (rapid tap-seeks) and the rebase guard would
     // then eat everything → stuck. Hold the latest requested target (it stays in TX.seek_to_ns) and
@@ -2279,6 +2327,8 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         own_seek_under_pause(t);
         eng.seek_armed_at = now; // stuck-watchdog start (see the coalesce/escape above)
         eng.seek_retries = 0;
+        // A Segment seek is not landed by Play alone: see `segment_landing_overdue`.
+        eng.segment_landing = (seek_mode() == SeekMode::Segment).then(super::segment_landing::Landing::new);
         eng.max_fed_video_pts = 0;
         eng.max_fed_audio_pts = 0;
         eng.audio_start_fp = None;
@@ -3671,6 +3721,27 @@ mod flight_tests {
         assert_ne!(crate::player::state(&rig.ps), crate::player::PlaybackState::Error, "leaving clears the standing error");
         assert!(crate::route::url(&rig.ps).is_empty(), "and the playback");
         crate::player::stop_bufferfeed(&mut rig.ps, &mut rig.pa);
+    }
+
+    /// Stopping while a Segment seek is unconfirmed: the clock still reads the timeline the seek
+    /// left, so the server is told the seek's target as the resume point, not that position.
+    #[test]
+    fn stopping_during_an_unconfirmed_segment_seek_reports_the_target() {
+        let mut rig = Rig::direct(0);
+        rig.frame();
+        let mode = crate::player::seek_mode();
+        crate::player::set_seek_mode(SeekMode::Segment);
+        SHARED.playpos_ns.store(9_000_000_000, Relaxed);
+        SHARED.seeking.store(true, Relaxed);
+        SHARED.seek_display_ns.store(SEEK_TARGET_NS, Relaxed);
+        crate::player::stop_bufferfeed(&mut rig.ps, &mut rig.pa);
+        crate::route::drain_scrobble();
+        crate::player::set_seek_mode(mode);
+        let requests = rig.flight.requests();
+        let stops: Vec<&String> =
+            requests.iter().filter(|r| r.contains("/:/timeline?") && r.contains("state=stopped")).collect();
+        assert_eq!(stops.len(), 1, "one stop report: {requests:?}");
+        assert!(stops[0].contains("time=120000&"), "the resume point is the seek target: {}", stops[0]);
     }
 
     /// Taps that arrive during a seek's flight coalesce to the LAST one: the first landing is
@@ -5632,6 +5703,145 @@ mod native_seek_pump_tests {
         super::super::engine::RELOAD_AT_LOG.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    /// The window the Load would have exported: without it the pump rebinds, and reloads, on its own.
+    fn export_the_window() {
+        let mt = unsafe { MainThread::assume() };
+        let _ = crate::player::engine::with_window_id_for_test(&mt);
+    }
+
+    /// A Segment seek driven to the Play it accepts: returns the native epoch the sink's callbacks
+    /// address. `before_play` runs once the seek is armed and before the keyframe lands, so a
+    /// callback it delivers is one the landing's baseline, taken at Play, excludes.
+    fn segment_seek_through_play(rig: &mut Rig, target: i64, keyframe: i64, before_play: impl FnOnce(u32)) -> u32 {
+        export_the_window();
+        crate::player::set_seek_mode(SeekMode::Segment);
+        SHARED.playpos_ns.store(2_220_000_000_000, Relaxed);
+        rig.arm(target);
+        let epoch = rig.eng().native_epoch;
+        before_play(epoch);
+        rig.land_keyframe_aus(keyframe, 80);
+        for _ in 0..20 {
+            rig.frame();
+            if !rig.eng().prime_play {
+                break;
+            }
+        }
+        assert!(!rig.eng().prime_play, "the in-place seek reached Play");
+        assert!(ffi_host::segment_calls_for_test() > 0, "the new segment was sent");
+        epoch
+    }
+
+    /// A displayed-frame count callback, as the sink's 200 ms counter sends it.
+    fn displayed_count(epoch: u32, count: i64) {
+        let ty = crate::player::displayed_counter_type(plx_platform::tv::device::info().major);
+        crate::player::sf_on_event(epoch, ty, count, std::ptr::null());
+    }
+
+    /// A clock callback: the position the pipeline reports, in fed time.
+    fn clock_at(epoch: u32, ns: i64) {
+        crate::player::sf_on_event(epoch, 0, ns, std::ptr::null());
+    }
+
+    /// The event-log lines the Segment presentation deadline wrote while `run` drove the rig.
+    fn deadline_lines(run: impl FnOnce()) -> Vec<String> {
+        plx_base::eventlog::with_private_log(|| {
+            run();
+            std::fs::read_to_string(plx_base::eventlog::events_log())
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| l.contains("Segment presentation deadline"))
+                .map(str::to_owned)
+                .collect()
+        })
+    }
+
+    /// A Segment seek can reopen and be accepted by Play while the sink stays on the retired
+    /// timeline: a displayed count and a clock reading from before the seek are all it reports. The
+    /// seek stays unresolved, Plex is not given that clock, and one reload at the target recovers it.
+    #[test]
+    fn a_primed_segment_seek_with_only_stale_clock_samples_reloads_once() {
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let target = 2_118_000_000_000;
+        let epoch = segment_seek_through_play(&mut rig, target, 2_112_110_000_000, |_| {});
+        displayed_count(epoch, 9);
+        clock_at(epoch, 9_000_000_000);
+        rig.frame();
+        assert_eq!(SHARED.playpos_ns.load(Relaxed), 9_000_000_000, "the stale position reached the pump");
+        assert!(SHARED.seeking.load(Relaxed), "the segment is still awaiting presentation");
+        assert_eq!(crate::player::unconfirmed_segment_seek_ns(), Some(target), "Plex must not save the stale clock");
+        assert!(reloads().is_empty(), "presentation gets time to land");
+        let lines = deadline_lines(|| {
+            rig.now += 10_000;
+            for _ in 0..5 {
+                rig.frame();
+            }
+        });
+        assert_eq!(reloads(), vec![target], "reopen succeeded, but the seek needs one fresh Load");
+        assert_eq!(lines.len(), 1, "one line for one stuck seek: {lines:?}");
+        assert!(lines[0].contains("missing=runway "), "the stale position is off the accepted video: {lines:?}");
+    }
+
+    /// The deadline belongs to the seek that was applied: a newer tap after it is due is not
+    /// reloaded at the old target, and it gets a landing of its own.
+    #[test]
+    fn an_old_segment_deadline_does_not_reload_a_newer_seek() {
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        segment_seek_through_play(&mut rig, TARGET_NS, TARGET_NS, |_| {});
+        rig.frame();
+        rig.now += 10_000;
+        rig.arm(NEXT_NS);
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), NEXT_NS, "the demux thread is told to av_seek the newer target");
+        assert!(reloads().is_empty(), "the newer seek got its own demux and presentation budgets");
+    }
+
+    /// A set that never sends the displayed-frame counter (an OLED C8 on webOS 4.4.3 sends none of
+    /// callbacks 46 to 49) proves a Segment seek by the clock and the runway alone. Waiting for a
+    /// count that never comes reloaded every seek that was already playing.
+    #[test]
+    fn a_segment_seek_with_no_displayed_counter_in_the_session_lands_on_the_clock_alone() {
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let keyframe = 2_112_110_000_000;
+        let epoch = segment_seek_through_play(&mut rig, keyframe, keyframe, |_| {});
+        assert!(!SHARED.sink_counter_seen.load(Relaxed), "PRECONDITION: the session sent no counter");
+        let lines = deadline_lines(|| {
+            clock_at(epoch, keyframe);
+            rig.frame();
+            assert!(!SHARED.seeking.load(Relaxed), "the seek landed on the clock and the runway");
+            rig.now += 10_000;
+            for _ in 0..5 {
+                rig.frame();
+            }
+        });
+        assert!(reloads().is_empty(), "a landed seek is not reloaded at the deadline: {:?}", reloads());
+        assert!(lines.is_empty(), "no deadline fired: {lines:?}");
+    }
+
+    /// A session that has sent the counter keeps requiring a fresh positive count after Play: the
+    /// count taken before Play is the retired timeline's, and the clock alone does not land it.
+    #[test]
+    fn a_segment_seek_whose_session_sends_the_counter_still_needs_a_fresh_count() {
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let keyframe = 2_112_110_000_000;
+        let epoch = segment_seek_through_play(&mut rig, keyframe, keyframe, |epoch| displayed_count(epoch, 3));
+        assert!(SHARED.sink_counter_seen.load(Relaxed), "PRECONDITION: the counter spoke before Play");
+        clock_at(epoch, keyframe);
+        rig.frame();
+        assert!(SHARED.seeking.load(Relaxed), "the clock alone does not land a seek on a counting set");
+        assert!(reloads().is_empty(), "the presentation gets its time");
+        displayed_count(epoch, 4);
+        rig.frame();
+        assert!(!SHARED.seeking.load(Relaxed), "a fresh positive count lands it");
+        rig.now += 10_000;
+        for _ in 0..5 {
+            rig.frame();
+        }
+        assert!(reloads().is_empty(), "a landed seek is not reloaded at the deadline: {:?}", reloads());
+    }
+
     /// **A reconnect makes the exported window stale and the pump reopens at the playhead on a
     /// fresh one.** The fake compositor is the host sink: it counts exports and, once told the
     /// connection is gone, answers no id until a new one is made.
@@ -5833,19 +6043,27 @@ mod native_seek_pump_tests {
         let _serial = plx_base::testlock::serial();
         let mut rig = Rig::new(None);
         crate::player::set_seek_mode(mode);
+        export_the_window();
         rig.viewer_pause();
         rig.arm(TARGET_NS); // a bare request_seek, as the dev autoseek trigger does
         assert!(TX.seek_preroll_active(), "the pump opened the paused-seek preroll itself");
-        rig.land_keyframe(TARGET_NS);
-        for _ in 0..5 {
+        rig.land_keyframe_aus(TARGET_NS, 80); // enough video for the preroll's Play
+        for _ in 0..20 {
             rig.frame();
         }
         assert!(!rig.eng().flushed && !rig.eng().rebase_pending, "the keyframe reached feed_stream's rebase");
+        assert!(!rig.eng().prime_play, "the preroll clock started");
         match mode {
             SeekMode::NativeSeek => {
                 assert_eq!(ffi_host::seek_log_for_test(), vec![TARGET_NS / 1_000_000], "one Seek, at the keyframe");
             }
             _ => assert!(ffi_host::segment_calls_for_test() > 0, "the segment was anchored on the keyframe"),
+        }
+        if mode == SeekMode::Segment {
+            // A Segment seek lands on the sink's own report: its counter and its clock at the keyframe.
+            let epoch = rig.eng().native_epoch;
+            displayed_count(epoch, 1);
+            clock_at(epoch, TARGET_NS);
         }
         rig.now += 5_000; // well past SEEK_STUCK_MS
         for _ in 0..3 {
@@ -5869,6 +6087,35 @@ mod native_seek_pump_tests {
     #[test]
     fn a_bare_segment_seek_while_viewer_paused_lands_in_place_and_ends_paused() {
         viewer_paused_seek_lands_in_place(SeekMode::Segment);
+    }
+
+    /// A paused Segment seek plays its preroll until the sink confirms the new timeline. A clock
+    /// tick on a session that counts frames is not that confirmation, so the preroll stays open.
+    #[test]
+    fn a_paused_segment_seek_keeps_its_preroll_open_until_the_sink_confirms_it() {
+        let _serial = plx_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        export_the_window();
+        crate::player::set_seek_mode(SeekMode::Segment);
+        rig.viewer_pause();
+        rig.arm(TARGET_NS);
+        let epoch = rig.eng().native_epoch;
+        displayed_count(epoch, 3); // the session counts frames: only a fresh count confirms
+        rig.land_keyframe_aus(TARGET_NS, 80);
+        for _ in 0..20 {
+            rig.frame();
+        }
+        assert!(!rig.eng().prime_play, "the preroll clock started");
+        clock_at(epoch, TARGET_NS);
+        rig.frame();
+        rig.frame();
+        assert!(TX.seek_preroll_active(), "a clock tick alone does not close the preroll");
+        displayed_count(epoch, 4);
+        rig.frame();
+        rig.frame();
+        assert!(!TX.seek_preroll_active(), "the sink confirmed the seek: the preroll closed");
+        assert!(TX.paused.load(Acquire), "the viewer is still paused");
+        assert!(reloads().is_empty());
     }
 
     #[test]

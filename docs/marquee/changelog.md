@@ -51,6 +51,7 @@
 - A short first-run tour (six pages: arrows and OK, Back, hold OK for the item menu, the player's controls, seeking, and where Settings and profiles live) is shown once per profile after the Favorite libraries screen, in all eleven languages. Back skips it; Settings → About → "Show the tour again" reopens it.
 - Auto quality no longer starts at 720 kbps when the server remuxes the file (rewraps it without re-encoding): its answer to the speed check, the whole file from the start, is now used for the measurement instead of thrown away.
 - A seek on a server that uses HTTP/2 no longer waits behind video already on its way: for the next two minutes the new request opens its own connection to that server instead of reusing the one still carrying the part the seek threw away.
+- A seek on a webOS 4 TV whose picture never follows the new position (the clock keeps reporting the old one) now reloads once at the target after four seconds instead of staying on the old picture. Plex is not told the stale position meanwhile, and a TV that sends no frame counter lands the seek on its clock alone.
 
 ## 0.10.0
 

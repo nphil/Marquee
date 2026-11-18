@@ -55,6 +55,7 @@ pub mod ffi;
 pub mod ffi_host;
 mod era_callbacks; // the one diagnostic line for an era-chosen sink counter that never arrives (pure state)
 mod native_stall; // the surround native-audio stall watchdog (pure state) and the AU size evidence line
+mod segment_landing; // when an accepted Segment seek has reached the picture, else one reload (pure state)
 mod pump;
 pub mod report;
 #[cfg(all(test, feature = "hostsim"))]
@@ -1844,6 +1845,13 @@ pub fn intended_pos_ns(ps: &crate::route::PlaybackSession) -> i64 {
         playpos_ns()
     }
 }
+/// The target of a Segment seek whose picture the sink has not confirmed yet. Until it does, the
+/// clock still reads the retired timeline (or nothing), so Plex progress holds and a Back press
+/// saves the target instead of that stale position. `None` for every other playback.
+pub(crate) fn unconfirmed_segment_seek_ns() -> Option<i64> {
+    let target = seek_display_ns();
+    (SHARED.seeking.load(Relaxed) && seek_mode() == SeekMode::Segment && target >= 0).then_some(target)
+}
 /// request an audio-track switch (Plex audioStreamID); the pump forces a fresh
 /// transcode with that source audio at the current position next tick.
 pub fn request_audio_switch(ps: &crate::route::PlaybackSession, _sid: i64) {
@@ -2722,6 +2730,7 @@ fn sf_on_event_inner(ty: c_int, num: i64, s: *const c_char, scope: shared::Event
         match sink_counter_kind(ty, plx_platform::tv::device::info().major) {
             Some(SinkCounter::Displayed) => {
                 SHARED.dg_sink_displayed_cb.fetch_add(1, Relaxed);
+                SHARED.note_displayed_frames(num);
                 log(&format!("sink: displayed={num} (type={ty})"));
             }
             Some(SinkCounter::Dropped) => log(&format!("sink: dropped={num} (type={ty})")),

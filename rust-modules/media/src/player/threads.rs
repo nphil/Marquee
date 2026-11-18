@@ -173,6 +173,17 @@ impl ReportStop {
     }
 }
 
+/// The position and duration the reporter posts this tick, in milliseconds. `None` while there is
+/// nothing true to say: no duration yet, or a Segment seek the sink has not confirmed, whose clock
+/// still reads the timeline the seek left (a post would move the saved resume point back to it).
+fn progress_sample() -> Option<(i64, i64)> {
+    let dur = SHARED.duration_ns.load(Ordering::Relaxed);
+    if dur <= 0 || super::unconfirmed_segment_seek_ns().is_some() {
+        return None;
+    }
+    Some((SHARED.playpos_ns.load(Ordering::Relaxed) / 1_000_000, dur / 1_000_000))
+}
+
 /// The ~10 s `/:/timeline` progress reporter.
 ///
 /// The lease names one exact Engine. Route identity, server, PlayQueue and track projection are
@@ -186,12 +197,9 @@ pub fn timeline_thread(
         if stop.wait_or_stop(REPORT_INTERVAL_S) {
             return;
         }
-        let dur = SHARED.duration_ns.load(Ordering::Relaxed);
-        if dur <= 0 {
+        let Some((t, d)) = progress_sample() else {
             continue;
-        }
-        let t = SHARED.playpos_ns.load(Ordering::Relaxed) / 1_000_000;
-        let d = dur / 1_000_000;
+        };
         let state = if super::TX.paused.load(Ordering::Relaxed) {
             TimelineState::Paused
         } else {
@@ -257,5 +265,35 @@ mod load_timing_tests {
             budget_clock >= READ,
             "NATIVE_LOAD_BUDGET's clock ({budget_clock:?}) must still count the read it waited behind"
         );
+    }
+}
+
+#[cfg(test)]
+mod progress_sample_tests {
+    use super::*;
+    use crate::player::SeekMode;
+
+    /// A Segment seek the sink has not confirmed leaves the clock on the timeline the seek left, so
+    /// the reporter holds its post until the seek lands. No other playback is held.
+    #[test]
+    fn progress_is_held_while_a_segment_seek_is_unconfirmed() {
+        let _serial = plx_base::testlock::serial();
+        let mode = crate::player::seek_mode();
+        SHARED.reset_session();
+        SHARED.duration_ns.store(7_200_000_000_000, Ordering::Relaxed);
+        SHARED.playpos_ns.store(9_000_000_000, Ordering::Relaxed);
+        SHARED.seek_display_ns.store(2_118_000_000_000, Ordering::Relaxed);
+        SHARED.seeking.store(true, Ordering::Relaxed);
+
+        crate::player::set_seek_mode(SeekMode::Segment);
+        assert_eq!(progress_sample(), None, "the clock is still the retired timeline's");
+        crate::player::set_seek_mode(SeekMode::NativeSeek);
+        assert_eq!(progress_sample(), Some((9_000, 7_200_000)), "a native seek's clock is the playhead");
+        crate::player::set_seek_mode(SeekMode::Segment);
+        SHARED.seeking.store(false, Ordering::Relaxed);
+        assert_eq!(progress_sample(), Some((9_000, 7_200_000)), "the seek landed");
+
+        crate::player::set_seek_mode(mode);
+        SHARED.reset_session();
     }
 }

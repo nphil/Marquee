@@ -580,6 +580,16 @@ pub struct Shared {
     /// see `appkit::player_hud::busy_surface`. Monotone within a session (false→true only), which is
     /// what lets two readers in one frame sample it independently without disagreeing.
     pub seen_frame: AtomicBool,
+    /// Displayed-frame callbacks (the ones `sink_counter_kind` names) that reported a positive count,
+    /// counted for the life of the process. A Segment seek keeps the value it saw when Play was
+    /// accepted, so a count that was queued behind the flush does not confirm the new picture.
+    /// Unlike the `dg_*` census, the seek's landing branches on it.
+    pub sink_displayed_sequence: AtomicU32,
+    /// This session has received a displayed-frame callback, whatever its count. A set that never
+    /// sends one (an OLED C8 on webOS 4.4.3 sends none of callbacks 46 to 49) can only be judged by
+    /// its clock, so a Segment seek asks for a fresh count only where the session sends them.
+    /// Cleared with the session.
+    pub sink_counter_seen: AtomicBool,
     /// The freeze safety net's notice for the screen, a [`super::stall_watch::Notice`] as `u8`.
     /// The pump writes it on every tick it runs; the session reset clears it.
     pub stall_notice: AtomicU8,
@@ -1125,6 +1135,8 @@ impl Shared {
             pres_fed: AtomicI64::new(0),
             frames: AtomicI32::new(0),
             seen_frame: AtomicBool::new(false),
+            sink_displayed_sequence: AtomicU32::new(0),
+            sink_counter_seen: AtomicBool::new(false),
             stall_notice: AtomicU8::new(0),
             display_epoch: AtomicU32::new(1),
             export_epoch: AtomicU32::new(0),
@@ -1273,6 +1285,15 @@ impl Shared {
             Ordering::Relaxed,
             Ordering::Relaxed,
         );
+    }
+
+    /// A displayed-frame callback arrived with `num` frames shown: the session now has a counter,
+    /// and a positive count is a fresh sample of the sink's picture.
+    pub fn note_displayed_frames(&self, num: i64) {
+        self.sink_counter_seen.store(true, Ordering::Relaxed);
+        if num > 0 {
+            self.sink_displayed_sequence.fetch_add(1, Ordering::Release);
+        }
     }
 
     /// The refusal path recorded for this session, [`RefusalPath::None`] when there is none.
@@ -1857,6 +1878,7 @@ impl Shared {
         // places (declaration, `new`, here): a reload that forgot the bit would silently suppress
         // the centred read-out for the rest of the app's life.
         self.seen_frame.store(false, Ordering::Relaxed);
+        self.sink_counter_seen.store(false, Ordering::Relaxed);
         self.stall_notice.store(0, Ordering::Relaxed);
         self.first_audio_pts.store(i64::MIN, Ordering::Relaxed);
         // an audio pick's rebuild has begun (a reload keeps the pick's meaning for this session);
