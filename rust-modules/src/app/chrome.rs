@@ -76,7 +76,7 @@ fn pill_index(pill: Pill, keys: &[u32]) -> Option<usize> {
 }
 
 /// Whether the Requests pill is on the strip: Seerr is turned on and has an address.
-fn requests_on() -> bool {
+pub(crate) fn requests_on() -> bool {
     plx_plex::plex::session::peek().seerr().is_ready()
 }
 

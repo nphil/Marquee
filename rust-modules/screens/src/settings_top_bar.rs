@@ -91,15 +91,11 @@ pub(super) struct TopBarPage {
     state: TopBarState,
     /// What the store last published, so a change replaces the page's own edit.
     seen: BarHidden,
-    requests_ready: bool,
-    session_watch: plx_plex::plex::session::VisibleSessionWatch,
 }
 
 impl TopBarPage {
     pub(super) fn new(entry: EntryId, views: DirectoryView<'_>) -> Self {
-        let mut session_watch = plx_plex::plex::session::VisibleSessionWatch::default();
-        session_watch.changed();
-        let requests_ready = Self::requests_ready();
+        let requests_ready = views.requests_on();
         let mut page = Self {
             entry,
             form: FormTable::new(super::super::registry::BAND),
@@ -109,16 +105,10 @@ impl TopBarPage {
                 hidden: views.bar_hidden(),
             },
             seen: views.bar_hidden(),
-            requests_ready,
-            session_watch,
         };
         page.state.sel = page.state.offered.first().map_or(RowKey(0), |item| TbId(*item).key());
         page.rebuild();
         page
-    }
-
-    fn requests_ready() -> bool {
-        plx_plex::plex::session::peek_settled().is_some_and(|sess| sess.seerr().is_ready())
     }
 
     fn rebuild(&mut self) {
@@ -135,13 +125,10 @@ impl TopBarPage {
         ).keyed(&self.form)
     }
 
-    /// Follow what the store and the session publish: a changed record replaces the page's own
-    /// edit; a library or the Requests plugin appearing or going adds or drops its row.
+    /// Follow what the store publishes: a changed record replaces the page's own edit; a library
+    /// or the Requests plugin appearing or going adds or drops its row.
     fn follow(&mut self, views: DirectoryView<'_>) -> bool {
-        if self.session_watch.changed() {
-            self.requests_ready = Self::requests_ready();
-        }
-        let offered = offered_items(views, self.requests_ready);
+        let offered = offered_items(views, views.requests_on());
         let published = views.bar_hidden();
         if offered == self.state.offered && published == self.seen {
             return false;

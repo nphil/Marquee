@@ -477,6 +477,8 @@ pub struct DirectorySnapshot {
     /// The rows Home offers to arrange, attached by the stores beside the Browse capture
     /// ([`Self::offer_home_rows`]): Settings > Home lists them against [`DirectoryView::home_layout`].
     offered: Arc<[crate::pms::HomeRowOffer]>,
+    /// Whether the Requests plugin is on, attached by the app ([`Self::offer_requests`]).
+    requests: bool,
 }
 
 impl Default for DirectorySnapshot {
@@ -493,6 +495,7 @@ impl Default for DirectorySnapshot {
             sections_gen: 0,
             tabs_gen: 0,
             offered: Arc::from(Vec::new()),
+            requests: false,
         }
     }
 }
@@ -558,12 +561,18 @@ impl DirectorySnapshot {
             sections_gen: 0,
             tabs_gen: 0,
             offered: Arc::from(Vec::new()),
+            requests: false,
         }
     }
 
     /// Attaches the rows Home offers to arrange (`stores::hubs::HubsStore::home_rows`).
     pub fn offer_home_rows(&mut self, rows: Arc<[crate::pms::HomeRowOffer]>) {
         self.offered = rows;
+    }
+
+    /// Attaches whether the Requests plugin is on; the app reads it, as no machine may.
+    pub fn offer_requests(&mut self, on: bool) {
+        self.requests = on;
     }
 
     /// This directory with `items` as the current library's listing (what [`DirectoryView::sample`] reads).
@@ -590,6 +599,7 @@ impl DirectorySnapshot {
             && self.preferred == other.preferred
             && self.kind_fetch == other.kind_fetch
             && Arc::ptr_eq(&self.offered, &other.offered)
+            && self.requests == other.requests
     }
     /// The single builder behind both `fixture` and the selector matrix suite: a section table
     /// AND the source table `library_label` reads a handle from. `fixture` used to hardcode
@@ -628,6 +638,7 @@ impl DirectorySnapshot {
             sections_gen: 0,
             tabs_gen: 0,
             offered: Arc::from(Vec::new()),
+            requests: false,
         }
     }
 
@@ -681,6 +692,10 @@ impl<'a> DirectoryView<'a> {
     /// The top-bar items the profile hides (`plex::top_bar`).
     pub fn bar_hidden(self) -> plx_plex::plex::top_bar::BarHidden {
         self.0.data.bar_hidden
+    }
+    /// Whether the Requests plugin is on (`DirectorySnapshot::offer_requests`): the top bar offers its item.
+    pub fn requests_on(self) -> bool {
+        self.0.requests
     }
     /// The rows Home offers to arrange, hidden ones included, as Home last merged them.
     pub fn home_rows(self) -> &'a [crate::pms::HomeRowOffer] {

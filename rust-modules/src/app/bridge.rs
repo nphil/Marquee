@@ -1215,6 +1215,7 @@ impl Bridge {
         // One owner borrow, in the load-bearing order: directory capture resolves profile pins
         // and may repoint the current section, so listing and shelves are captured only after it.
         let owned = self.stores.capture_browse(&mut self.directory);
+        self.directory.offer_requests(super::chrome::requests_on());
         if self.home_io.is_none() { self.section_hubs = owned.section_hubs; }
         let listing = if self.home_io.is_some() { self.listing.clone() } else { owned.listing };
         let listing_changed = !self.listing.view().same_items(listing.view())

@@ -108,6 +108,11 @@ fn the_page_follows_the_store_and_the_libraries() {
     run(&mut page, &grown, search, tick());
     assert_eq!(page.state.offered, [BarItem::Movies, BarItem::Shows, BarItem::Watchlist, BarItem::Search]);
     assert_eq!(page.form.selected_id().copied(), Some(TbId(BarItem::Movies)));
+
+    let mut with_requests = directory(&[SecKind::Movie, SecKind::Show], hidden_of(&["watchlist"]));
+    with_requests.offer_requests(true);
+    run(&mut page, &with_requests, search, tick());
+    assert_eq!(page.state.offered, BarItem::ALL, "the Requests row appears while the plugin is on");
 }
 
 #[test]
