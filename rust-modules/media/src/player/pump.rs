@@ -1,8 +1,10 @@
 //! player::pump — the main-thread pump (was bufferfeed_pump). Runs each frame from
 //! plex_run: the pending-seek handler, the ACB-bind state machine (Stage), and the
 //! feed dispatch. All ACB/Starfish control calls happen here on the main thread.
+use super::clock_debt::{DebtParams, DebtSample};
 use super::engine::{
-    arm_live_clock_prime, feed_both_lanes, feed_sample, publish_seek, Engine, Source,
+    arm_live_clock_prime, feed_both_lanes, feed_sample, progressive_reserve_ns, publish_seek, Engine, LaneTail,
+    Source,
 };
 use super::shared::{HlsPauseCompletion, HlsPrimeKind, HlsSeekPause, Stage};
 use super::{seek_mode, SeekMode, ACB_OK, SHARED, TX};
@@ -172,9 +174,9 @@ const NATIVE_CLOCK_STOPPED_MS: u32 = NATIVE_POSITION_PERIOD_MS * NATIVE_CLOCK_SI
 /// When the silence observation was last restarted, in [`super::vclock_ms`] milliseconds.
 ///
 /// Every state that legitimately stops the native clock — user Pause, an internal rebuffer hold,
-/// a stage below `Playing`, a route that is not segmented HLS — restarts it, because otherwise a
-/// viewer who paused for a minute would resume straight into an internal hold. Main-thread only;
-/// an atomic merely to avoid a `static mut`.
+/// a stage below `Playing`, a seek in flight, a route that takes no hold — restarts it, because
+/// otherwise a viewer who paused for a minute would resume straight into an internal hold.
+/// Main-thread only; an atomic merely to avoid a `static mut`.
 static CLOCK_WATCH_SINCE_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Everything that stops the clock on purpose restarts the silence observation with it.
@@ -190,12 +192,21 @@ fn restart_native_clock_watch() {
 /// The [`CLOCK_WATCH_SINCE_MS`] floor does the same for the deliberate holds, which do not clear
 /// the stamp.
 fn native_clock_silence_ms() -> Option<u32> {
-    let last_tick = SHARED.dg_vpres_at.load(Relaxed);
-    if last_tick == 0 {
+    silence_between(SHARED.dg_vpres_at.load(Relaxed), CLOCK_WATCH_SINCE_MS.load(Relaxed), super::vclock_ms())
+}
+
+/// [`native_clock_silence_ms`] over explicit stamps, all [`super::vclock_ms`] milliseconds, so
+/// every comparison wraps (a stamp made just before the 32-bit clock wraps is still older than one
+/// made just after). The observation starts at the later of the last callback and the last restart
+/// of the watch: a clock that has not reported since the restart is silent from the restart, not
+/// from a callback the deliberate hold swallowed. `None` while the epoch has seen no callback
+/// (`last_tick_ms == 0`). A stamp ahead of `now_ms` reads as no silence at all.
+fn silence_between(last_tick_ms: u32, watch_since_ms: u32, now_ms: u32) -> Option<u32> {
+    if last_tick_ms == 0 {
         return None;
     }
-    let since = last_tick.max(CLOCK_WATCH_SINCE_MS.load(Relaxed));
-    Some(super::vclock_ms().saturating_sub(since))
+    let since = if (last_tick_ms.wrapping_sub(watch_since_ms) as i32) >= 0 { last_tick_ms } else { watch_since_ms };
+    Some((now_ms.wrapping_sub(since) as i32).max(0) as u32)
 }
 
 /// **The terminal reserve boundary as a PHYSICAL fact rather than an arithmetic one.**
@@ -219,7 +230,7 @@ fn native_clock_silence_ms() -> Option<u32> {
 /// boundary, so a stream holding 5.6 s whose callback is 1.2 s late keeps playing and only a
 /// reserve the stopped clock has already outlasted counts. An unknowable reserve (`None`, the
 /// audio lane silent after an open or a seek) holds nothing, exactly as it arms no `StallGuard`.
-/// User Pause never reaches here — [`maybe_begin_hls_rebuffer`] returns before this on
+/// User Pause never reaches here — [`maybe_begin_rebuffer`] returns before this on
 /// `TX.paused` and restarts the observation — and an internal hold cannot re-arm, because the
 /// hold sets `prime_play`, which returns at the same place.
 fn native_clock_stopped(silence_ms: Option<u32>, buffered_ms: Option<i64>) -> bool {
@@ -263,21 +274,64 @@ fn rebuffer_request_is_current(
     requested && (requested_tail_ns < 0 || current_tail_ns <= requested_tail_ns)
 }
 
-/// Stop the INTERNAL A/V clock at a physical reserve boundary while leaving demux and feeding
-/// alive. This is intentionally not `TX.paused`: the viewer did not pause, and the whole point is
-/// to keep acquiring until `try_prime` sees enough measured runway to resume smoothly.
-fn maybe_begin_hls_rebuffer(ps: &crate::route::PlaybackSession, mt: &MainThread, eng: &mut Engine) {
-    if !crate::route::is_segmented_hls(ps)
-        || eng.stage < Stage::Playing
-        || eng.prime_play
-        || TX.paused.load(Relaxed)
+/// Which hold a route takes when its clock runs out of media, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RebufferRule {
+    /// Segmented HLS: the demuxer's published tails and the worker's requests decide.
+    SegmentedHls,
+    /// A stream read as one progressive file at Quality=Original (direct play, or a remux): the
+    /// native clock's own debt, or its silence over a spent reserve, decides. Without this hold a
+    /// link slower than the file starves the sink, which plays on in slow motion with no sign of
+    /// why and then catches up by dropping frames.
+    Progressive,
+}
+
+/// The hold `ps` takes, or `None` for a route that takes none. `source_is_stream` is whether the
+/// Engine feeds from the demuxer's queues rather than a sample file, which has no read-ahead to
+/// starve. A trailer preview is left alone, as it is by the freeze watch.
+fn rebuffer_rule(ps: &crate::route::PlaybackSession, source_is_stream: bool) -> Option<RebufferRule> {
+    if crate::route::is_segmented_hls(ps) {
+        Some(RebufferRule::SegmentedHls)
+    } else if source_is_stream
+        && !crate::route::preview_request(ps)
+        && crate::route::is_progressive_original(ps)
     {
+        Some(RebufferRule::Progressive)
+    } else {
+        None
+    }
+}
+
+/// Begin the hold this route takes when its clock has run out of media.
+///
+/// **The hold decides "Buffering"; the freeze watch (`watch_stalls`) reports and escapes.** A hold
+/// pauses the native clock and raises `hls_rebuffering`, which the state ladder reads as
+/// Buffering. The watch never pauses, and it restarts a source only when that source is parked on
+/// a full lane, a state a progressive hold never begins in ([`ProgressiveStall::queue_parked`]),
+/// so the two cannot both act on one stall. During a hold the watch still counts the wait
+/// (`holding`): its network notice at 2 s and its lower-quality offer at 10 s are the way out of a
+/// link that never recovers.
+fn maybe_begin_rebuffer(ps: &crate::route::PlaybackSession, mt: &MainThread, eng: &mut Engine) {
+    let rule = rebuffer_rule(ps, matches!(eng.source, Source::Stream));
+    let stopped_on_purpose = eng.stage < Stage::Playing || eng.prime_play || TX.paused.load(Relaxed);
+    let (Some(rule), false) = (rule, stopped_on_purpose) else {
         // Each of these legitimately stops the native clock, so none of them may be read later as
         // a stalled one: a viewer paused for a minute must resume into playback, not into an
         // instant internal hold, and the tick after this hold releases must start counting again.
         restart_native_clock_watch();
+        eng.progressive_hold.reset();
         return;
+    };
+    match rule {
+        RebufferRule::SegmentedHls => begin_hls_rebuffer(mt, eng),
+        RebufferRule::Progressive => begin_progressive_rebuffer(mt, eng),
     }
+}
+
+/// Stop the INTERNAL A/V clock at a physical reserve boundary while leaving demux and feeding
+/// alive. This is intentionally not `TX.paused`: the viewer did not pause, and the whole point is
+/// to keep acquiring until `try_prime` sees enough measured runway to resume smoothly.
+fn begin_hls_rebuffer(mt: &MainThread, eng: &mut Engine) {
     // Consume atomically: a worker request racing this tick must either be the value returned here
     // or remain set for the next tick, never be erased by a later unconditional store.
     let requested = SHARED.hls_rebuffer_requested.swap(false, Acquire);
@@ -356,6 +410,138 @@ fn maybe_begin_hls_rebuffer(ps: &crate::route::PlaybackSession, mt: &MainThread,
         runtime_runway_ms,
         silence_ms.map_or(-1, i64::from),
     ));
+}
+
+/// What the pump knows about the stream that decides whether the progressive hold may judge the
+/// native clock at all. The viewer's pause and an armed prime are the dispatcher's own
+/// ([`maybe_begin_rebuffer`]), shared with the HLS hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProgressiveStall {
+    /// A seek is armed, being applied or landing: the playhead moves for its own reasons.
+    seek_in_flight: bool,
+    /// The pipeline has reported a position this session. Before that the stream is opening, and
+    /// the open's own watchdogs time it.
+    first_picture_seen: bool,
+    /// The demuxer reached the end of the file: nothing more will arrive, so a clock that runs out
+    /// of media is the film ending, not a starved link.
+    producer_done: bool,
+    /// A lane queue is at its byte cap with the demuxer parked on it. The stream is not starved
+    /// (that queue is the reserve it plays with when healthy), a hold would release at once, and
+    /// this is the one state in which the freeze watch restarts a source.
+    queue_parked: bool,
+}
+
+impl ProgressiveStall {
+    /// Nothing but the link could explain a clock that is slow or still.
+    fn clock_may_be_judged(self) -> bool {
+        !self.seek_in_flight && self.first_picture_seen && !self.producer_done && !self.queue_parked
+    }
+}
+
+fn progressive_stall_facts(
+    eng: &Engine,
+    video: *mut crate::aq::AuQueue,
+    audio: *mut crate::aq::AuQueue,
+) -> ProgressiveStall {
+    ProgressiveStall {
+        seek_in_flight: TX.seek_to_ns.load(Relaxed) >= 0
+            || eng.rebase_pending
+            || eng.presentation_rearm_pending
+            || SHARED.seeking.load(Relaxed),
+        first_picture_seen: SHARED.seen_frame.load(Relaxed),
+        producer_done: crate::aq::aq_producer_done(video),
+        queue_parked: crate::aq::aq_would_park(video) || crate::aq::aq_would_park(audio),
+    }
+}
+
+/// Either arm begins the hold: the clock-debt detector (slow motion, the native clock still
+/// reporting) or a clock gone silent over a spent reserve (a link that died).
+fn should_begin_progressive_rebuffer(debt_fired: bool, native_clock_stopped: bool) -> bool {
+    debt_fired || native_clock_stopped
+}
+
+/// Hold a direct-play stream whose link has stopped keeping up: pause the native clock and show
+/// Buffering, instead of letting it play on in slow motion and then drop frames to catch up. Demux
+/// and feeding stay alive; `try_prime` releases the hold on a full queue or the end of the stream.
+fn begin_progressive_rebuffer(mt: &MainThread, eng: &mut Engine) {
+    let video_q = crate::aq::queue_ptr(&mut eng.aq_video);
+    let audio_q = crate::aq::queue_ptr(&mut eng.aq_audio);
+    if !progressive_stall_facts(eng, video_q, audio_q).clock_may_be_judged() {
+        restart_native_clock_watch();
+        eng.progressive_hold.reset();
+        return;
+    }
+    // The position callback stores its time and position and then bumps the counter (Release), so
+    // reading the counter first means everything read after it is that callback's or a later one's.
+    let pos_ticks = SHARED.dg_pos_ticks.load(Acquire);
+    let position_ns = SHARED.pres_fed.load(Relaxed);
+    let callback_ms = SHARED.dg_vpres_at.load(Relaxed);
+    let video = LaneTail { fed_ns: eng.max_fed_video_pts, queued_ns: crate::aq::aq_span_ns(video_q) };
+    let audio = LaneTail { fed_ns: eng.max_fed_audio_pts, queued_ns: crate::aq::aq_span_ns(audio_q) };
+    let reserve_ms = progressive_reserve_ns(position_ns, video, Some(audio)).map(|ns| ns / 1_000_000);
+    let watch = &mut eng.progressive_hold;
+    if SHARED.applied_rate_permille.load(Relaxed) != super::RATE_NORMAL
+        || position_ns == super::engine::PRES_NONE
+    {
+        // A position advance measures the link only against a clock running at the film's own speed.
+        watch.reset();
+        watch.seen_pos_ticks = pos_ticks;
+    } else if pos_ticks != watch.seen_pos_ticks {
+        watch.seen_pos_ticks = pos_ticks;
+        watch.debt = watch.debt.step(
+            &DebtParams::PROGRESSIVE,
+            DebtSample {
+                wall_ms: callback_ms,
+                pos_ns: position_ns,
+                video_queue_bytes: crate::aq::aq_bytes(video_q).max(0) as usize,
+                eligible: callback_ms != 0,
+            },
+        );
+    }
+    let silence_ms = native_clock_silence_ms();
+    let stopped = native_clock_stopped(silence_ms, reserve_ms);
+    let debt_fired = watch.debt.fired();
+    if !should_begin_progressive_rebuffer(debt_fired, stopped) {
+        return;
+    }
+    let Some(pause_token) = SHARED.prepare_progressive_rebuffer_pause(super::vclock_ms()) else {
+        super::log("feed: progressive rebuffer pause deferred by clock transition; will retry");
+        return;
+    };
+    let paused = unsafe { super::sink().pause(mt) };
+    match SHARED.complete_hls_rebuffer_pause(pause_token, paused != 0) {
+        HlsPauseCompletion::Accepted => {}
+        HlsPauseCompletion::Refused => {
+            super::log("feed: progressive rebuffer pause refused by Starfish; will retry");
+            return;
+        }
+        HlsPauseCompletion::Stale => {
+            super::log("feed: progressive rebuffer pause result was stale; will retry");
+            return;
+        }
+    }
+    arm_live_clock_prime(eng);
+    let watch = &mut eng.progressive_hold;
+    watch.holds += 1;
+    // `arm=` says which observation began it; `silent=` is the clock's own silence at that moment.
+    super::log(&format!(
+        "feed: progressive rebuffer hold n={} arm={} S={}ms debt={}ms pos={}ms reserve={}ms silent={}ms \
+         qv={}B qa={}B",
+        watch.holds,
+        match (debt_fired, stopped) {
+            (true, true) => "both",
+            (true, false) => "debt",
+            _ => "silence",
+        },
+        watch.debt.s_us() / 1_000,
+        watch.debt.debt_since_reset_us() / 1_000,
+        position_ns / 1_000_000,
+        reserve_ms.unwrap_or(-1),
+        silence_ms.map_or(-1, i64::from),
+        crate::aq::aq_bytes(video_q),
+        crate::aq::aq_bytes(audio_q),
+    ));
+    watch.reset();
 }
 
 /// Place only when the source, aspect or selected scaling changes; never restart playback.
@@ -2604,7 +2790,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
     // issuing Play. NOT while a seek is armed: on a resume the seek is armed before PLAYING, so
     // feeding first would present the file start for a frame before the seek repositions — a
     // visible jump. ----------
-    maybe_begin_hls_rebuffer(ps, mt, eng);
+    maybe_begin_rebuffer(ps, mt, eng);
     if eng.stage >= Stage::Playing && TX.feed_allowed() && TX.seek_to_ns.load(Relaxed) < 0 {
         if stream {
             // Two-lane feed, then the prime attempt — the ordering and the reason both live in
@@ -6863,6 +7049,94 @@ mod native_seek_pump_tests {
     }
 }
 
+/// A starved direct-play stream, held and reported as Buffering, through the real pump over the host
+/// sink. Shares the [`end_of_film_tests`] rig.
+#[cfg(all(test, feature = "hostsim"))]
+#[path = "progressive_rebuffer_pump_tests.rs"]
+mod progressive_rebuffer_pump_tests;
+
+/// What begins a progressive hold and which routes take one: the pure rules the pump applies.
+#[cfg(test)]
+mod progressive_begin_tests {
+    use super::*;
+
+    fn playing() -> ProgressiveStall {
+        ProgressiveStall {
+            seek_in_flight: false,
+            first_picture_seen: true,
+            producer_done: false,
+            queue_parked: false,
+        }
+    }
+
+    fn session(mark: impl FnOnce(&mut crate::route::PlaybackSession)) -> crate::route::PlaybackSession {
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        mark(&mut ps);
+        ps
+    }
+
+    /// Either arm begins the hold on its own: slow motion (the callback still reports and the debt
+    /// fired) and a dead link (the callback went silent over a spent reserve).
+    #[test]
+    fn either_arm_begins_a_progressive_hold_on_its_own() {
+        assert!(!should_begin_progressive_rebuffer(false, false), "a clock that keeps up is not held");
+        assert!(should_begin_progressive_rebuffer(true, false), "slow motion");
+        assert!(should_begin_progressive_rebuffer(false, true), "a silent clock over a spent reserve");
+        assert!(should_begin_progressive_rebuffer(true, true));
+    }
+
+    /// A clock is judged only while nothing but the link could explain it being slow or still.
+    #[test]
+    fn the_clock_is_judged_only_while_nothing_else_explains_it() {
+        assert!(playing().clock_may_be_judged());
+        for (what, facts) in [
+            ("a seek in flight", ProgressiveStall { seek_in_flight: true, ..playing() }),
+            ("no picture yet", ProgressiveStall { first_picture_seen: false, ..playing() }),
+            ("the end of the stream", ProgressiveStall { producer_done: true, ..playing() }),
+            ("a queue at its byte cap", ProgressiveStall { queue_parked: true, ..playing() }),
+        ] {
+            assert!(!facts.clock_may_be_judged(), "{what} must not be read as a starved link");
+        }
+    }
+
+    /// The progressive hold is for a stream with no quality ladder of its own: segmented HLS keeps
+    /// its hold, and a re-encode, an Auto-supervised Original, a preview or a sample-mode playback
+    /// take none.
+    #[test]
+    fn only_a_progressive_original_stream_takes_the_progressive_hold() {
+        use crate::route as r;
+        use RebufferRule::{Progressive, SegmentedHls};
+        assert_eq!(rebuffer_rule(&session(|_| {}), true), Some(Progressive), "direct play at Original");
+        let remux = session(|ps| r::install_transcode_for_test(ps, true, false));
+        assert_eq!(rebuffer_rule(&remux, true), Some(Progressive), "a remux is the same progressive file");
+        let hls = session(|ps| r::install_transcode_for_test(ps, false, true));
+        assert!(r::is_segmented_hls(&hls), "PRECONDITION FAILED, not the defect: the session is not HLS");
+        assert_eq!(rebuffer_rule(&hls, true), Some(SegmentedHls), "HLS keeps its own hold");
+        assert_eq!(rebuffer_rule(&session(|_| {}), false), None, "a sample file has no read-ahead to starve");
+        for (what, ps) in [
+            ("a trailer preview", session(r::mark_preview_for_test)),
+            ("a playback resolved as a preview", session(r::resolve_as_preview_for_test)),
+            ("a fixed quality's progressive re-encode", session(r::mark_fixed_quality_ceiling_for_test)),
+            ("an Original that Auto quality supervises", session(r::mark_auto_original_watched_for_test)),
+        ] {
+            assert_eq!(rebuffer_rule(&ps, true), None, "{what}");
+        }
+    }
+
+    /// The silence starts at the later of the last callback and the last restart of the watch, and
+    /// it is a distance on the wrapping 32-bit millisecond clock: the dead-link pump test ages its
+    /// stamps back from a clock that may be younger than the age (a test process starts at 0).
+    #[test]
+    fn the_silence_runs_from_the_later_of_the_last_callback_and_the_last_restart() {
+        assert_eq!(silence_between(0, 0, 9_000), None, "no callback this epoch: no observation");
+        assert_eq!(silence_between(0, 4_000, 9_000), None, "a seek zeroed the stamp: no observation");
+        assert_eq!(silence_between(4_000, 0, 9_000), Some(5_000), "dead after a callback");
+        assert_eq!(silence_between(4_000, 7_000, 9_000), Some(2_000), "dead after a resume: from the restart");
+        assert_eq!(silence_between(9_100, 7_000, 9_000), Some(0), "a stamp ahead of now is no silence");
+        assert_eq!(silence_between(2, u32::MAX - 100, 1_005), Some(1_003), "the millisecond clock wrapped");
+    }
+}
+
 /// **A film whose audio outlasts its video ends on the host sink too (#865).** The pipeline stops
 /// its clock at the last video frame, so the playhead never comes within [`EOS_TAIL_NS`] of the
 /// container's duration (the longest track's) and only the pipeline's own end-of-stream can end
@@ -6885,10 +7159,19 @@ mod end_of_film_tests {
     /// Steps a run may take: 23 s at one tick per step is 115.
     const STEP_BUDGET: usize = 400;
 
-    struct Rig {
-        ps: crate::route::PlaybackSession,
-        pa: super::super::adapter::PlayerAdapter,
-        now: u32,
+    pub(super) struct Rig {
+        pub(super) ps: crate::route::PlaybackSession,
+        pub(super) pa: super::super::adapter::PlayerAdapter,
+        pub(super) now: u32,
+        /// When set, each `step` re-stamps the position callback's time (`dg_vpres_at`) with this
+        /// virtual wall, advanced one period a step. The sink's clock is virtual
+        /// (`advance_clock_for_test`) but the callback stamps its time from the real monotonic
+        /// clock, on which a step takes microseconds; a detector that differences the wall against
+        /// the position needs the two to move together. The stamps sit far in the FUTURE of the real
+        /// clock, so the silence observation (`vclock_ms - stamp`, saturating) reads 0 and the
+        /// dead-link arm stays off. A test of that arm leaves the wall alone instead (it ages the
+        /// real clock by not ticking the sink: [`Rig::step_without_sink`]).
+        pub(super) wall_ms: Option<u32>,
     }
 
     impl Rig {
@@ -6896,6 +7179,12 @@ mod end_of_film_tests {
         /// callback gate is open: otherwise the sink reports nothing and a red run would be a dead
         /// instrument, not the defect), holding 20 s of video and 23 s of audio, primed to play.
         fn new() -> Rig {
+            Self::with_media(VIDEO_END_NS, AUDIO_END_NS)
+        }
+
+        /// [`Self::new`] with its own lane lengths: the same real session, holding `video_end_ns`
+        /// of video and `audio_end_ns` of audio, the producer done with neither (no EOF is set).
+        pub(super) fn with_media(video_end_ns: i64, audio_end_ns: i64) -> Rig {
             SHARED.reset_session();
             TX.reset();
             super::super::claim_hold::clear();
@@ -6914,24 +7203,24 @@ mod end_of_film_tests {
             assert!(eng.stage >= Stage::Playing, "PRECONDITION FAILED, not the defect: the engine is not past its Load");
             let au = [0u8; 64];
             let qv = &mut **eng.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
-            for i in 0..VIDEO_END_NS / V_STEP_NS {
+            for i in 0..video_end_ns / V_STEP_NS {
                 crate::aq::aq_push(qv, au.as_ptr(), au.len() as c_int, i * V_STEP_NS, c_int::from(i == 0), 1);
             }
             let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
-            for i in 0..AUDIO_END_NS / A_STEP_NS {
+            for i in 0..audio_end_ns / A_STEP_NS {
                 crate::aq::aq_push(qa, au.as_ptr(), au.len() as c_int, i * A_STEP_NS, 1, 2);
             }
             pa.install(eng);
-            SHARED.duration_ns.store(AUDIO_END_NS, Relaxed);
-            Rig { ps: crate::route::PlaybackSession::IDLE, pa, now: 1_000 }
+            SHARED.duration_ns.store(audio_end_ns, Relaxed);
+            Rig { ps: crate::route::PlaybackSession::IDLE, pa, now: 1_000, wall_ms: None }
         }
 
-        fn eng(&mut self) -> &mut Engine {
+        pub(super) fn eng(&mut self) -> &mut Engine {
             self.pa.engine().expect("engine")
         }
 
         /// The demuxer reached the end of the file: both lanes are complete.
-        fn producer_done(&mut self) {
+        pub(super) fn producer_done(&mut self) {
             let eng = self.eng();
             for q in [eng.aq_video.as_mut().unwrap(), eng.aq_audio.as_mut().unwrap()] {
                 crate::aq::aq_set_eof(&mut **q as *mut crate::aq::AuQueue);
@@ -6939,16 +7228,47 @@ mod end_of_film_tests {
         }
 
         /// One pipeline period: the clock runs 200 ms, the sink takes its tick, the frame runs.
-        fn step(&mut self) {
+        pub(super) fn step(&mut self) {
             ffi_host::advance_clock_for_test(TICK_MS);
             ffi_host::tick_for_test();
+            if let Some(wall) = self.wall_ms.as_mut() {
+                *wall += TICK_MS as u32;
+                SHARED.dg_vpres_at.store(*wall, Relaxed);
+            }
             let _frame = plx_base::task::FrameScope::enter();
             self.now += TICK_MS as u32;
             pump(&mut self.ps, &mut self.pa, self.now);
         }
 
+        /// One pump period in which the rig does not tick the sink. The host's own position thread
+        /// still reports while the clock plays, so a dead link also needs [`Rig::hushed`]: then no
+        /// position callback arrives, as on a link that died under a stream with nothing left to
+        /// present.
+        pub(super) fn step_without_sink(&mut self) {
+            let _frame = plx_base::task::FrameScope::enter();
+            self.now += TICK_MS as u32;
+            pump(&mut self.ps, &mut self.pa, self.now);
+        }
+
+        /// Stamp every later step's position callback with a virtual wall (see [`Rig::wall_ms`]).
+        /// Also [`hushed`](Rig::hushed): a real-time callback from the host's own position thread
+        /// would stamp the wall backwards.
+        pub(super) fn with_virtual_wall(mut self) -> Rig {
+            self.wall_ms = Some(crate::player::vclock_ms().wrapping_add(1_000_000));
+            self.hushed()
+        }
+
+        /// Silence the host's own position thread, which reports on REAL time whenever the clock
+        /// plays: from here the only position callbacks are the ones `step` takes, so a test owns
+        /// every callback and its stamp. With no `step` the pipeline reports nothing while the app
+        /// still believes it plays, which is a link that died under it (`step_without_sink`).
+        pub(super) fn hushed(self) -> Rig {
+            ffi_host::hush_ticker_for_test(true);
+            self
+        }
+
         /// Step until `done`, within [`STEP_BUDGET`].
-        fn run_until(&mut self, done: impl Fn(&mut Rig) -> bool) -> bool {
+        pub(super) fn run_until(&mut self, done: impl Fn(&mut Rig) -> bool) -> bool {
             for _ in 0..STEP_BUDGET {
                 self.step();
                 if done(self) {
@@ -6959,7 +7279,7 @@ mod end_of_film_tests {
         }
 
         /// What a failure message needs to explain itself.
-        fn facts(&mut self) -> String {
+        pub(super) fn facts(&mut self) -> String {
             let (clock_ns, running) = ffi_host::clock_state_for_test();
             let streaming = self.eng().stage >= Stage::Streaming;
             let pending = self.eng().pending_video.is_some();

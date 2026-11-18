@@ -81,6 +81,10 @@ use std::sync::{Condvar, Mutex};
 const FEED_ERROR: c_char = b'e' as c_char;
 /// `sf_feed`'s acceptance code.
 const FEED_OK: c_char = b'O' as c_char;
+/// `sf_feed`'s backpressure code. Only a test makes the sink answer it, for one lane
+/// ([`refuse_feed_lane_for_test`]); the engine keeps the AU pending and retries on its next pass.
+#[cfg(test)]
+const FEED_BUFFER_FULL: c_char = b'B' as c_char;
 
 /// How often the sink reports a position, milliseconds.
 ///
@@ -534,6 +538,12 @@ static NATIVE_UNLOAD_COMPLETED: AtomicBool = AtomicBool::new(false);
 static LIFECYCLE_BLOCKED: AtomicBool = AtomicBool::new(false);
 static PLAYING: AtomicBool = AtomicBool::new(false);
 static TICKING: AtomicBool = AtomicBool::new(false);
+/// The `clocksink` thread skips its ticks ([`hush_ticker_for_test`]).
+#[cfg(test)]
+static TICKER_HUSHED: AtomicBool = AtomicBool::new(false);
+/// The lane `sf_feed` answers `BufferFull` for ([`refuse_feed_lane_for_test`]); `i32::MIN` is none.
+#[cfg(test)]
+static FEED_REFUSED_LANE: AtomicI32 = AtomicI32::new(i32::MIN);
 /// Presentation position at the moment the clock last started running, in FED-PTS space.
 static BASE_NS: AtomicI64 = AtomicI64::new(0);
 /// `SDL_GetTicks`-equivalent wall clock at that same moment.
@@ -593,6 +603,8 @@ pub(super) fn reset_native_lifecycle_for_test() {
     LIFECYCLE_BLOCKED.store(false, Relaxed);
     FORCE_DESTROY_REFUSAL.store(false, Relaxed);
     OBJECT_READY.store(false, Relaxed);
+    TICKER_HUSHED.store(false, Relaxed);
+    FEED_REFUSED_LANE.store(i32::MIN, Relaxed);
     LOADED.store(false, Relaxed);
     LOAD_IN_FLIGHT.store(false, Relaxed);
     IN_FLIGHT_CALLS.store(0, Relaxed);
@@ -613,6 +625,22 @@ pub(super) fn clock_run_for_test(base_ns: i64) {
     FED_MAX_NS.store(i64::MAX / 2, Relaxed);
     RESUMED_AT_MS.store(now_ms(), Relaxed);
     PLAYING.store(true, Relaxed);
+}
+/// Silence the host's own `clocksink` position thread (it reports at the device's cadence whenever
+/// the clock plays, on real time, whatever a test does): from here only [`tick_for_test`] makes a
+/// position callback, so a test owns every callback and its stamp. With it hushed and no
+/// `tick_for_test`, the pipeline reports nothing while the application still believes it plays, as
+/// when a link dies under it. Cleared by [`reset_native_lifecycle_for_test`]. Test-only.
+#[cfg(test)]
+pub(super) fn hush_ticker_for_test(on: bool) {
+    TICKER_HUSHED.store(on, Relaxed);
+}
+/// Make the host sink answer `BufferFull` to every AU of one lane (`es_data`: 1 video, 2 audio), as
+/// a pipeline that has stopped taking that lane does, so its AU queue is not drained. `None`
+/// restores the sink. Cleared by [`reset_native_lifecycle_for_test`]. Test-only.
+#[cfg(test)]
+pub(super) fn refuse_feed_lane_for_test(es_data: Option<c_int>) {
+    FEED_REFUSED_LANE.store(es_data.unwrap_or(i32::MIN), Relaxed);
 }
 /// The sink clock's position and whether it is running. Test-only.
 #[cfg(test)]
@@ -741,6 +769,10 @@ impl Clock {
             .name("clocksink".into())
             .spawn(|| loop {
                 std::thread::sleep(std::time::Duration::from_millis(TICK_MS));
+                #[cfg(test)]
+                if TICKER_HUSHED.load(Relaxed) {
+                    continue;
+                }
                 Clock::tick();
             });
         if spawned.is_err() {
@@ -996,6 +1028,10 @@ unsafe fn sf_feed(p: *const u8, size: c_uint, pts: i64, es_data: c_int) -> c_cha
         if feeds.len() < FEED_LOG_ROOM {
             feeds.push((es_data, pts));
         }
+    }
+    #[cfg(test)]
+    if FEED_REFUSED_LANE.load(Relaxed) == es_data {
+        return FEED_BUFFER_FULL;
     }
     if es_data == 1 {
         FED_MAX_NS.fetch_max(pts, Relaxed);

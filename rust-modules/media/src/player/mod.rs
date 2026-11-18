@@ -56,6 +56,7 @@ pub mod ffi_host;
 mod era_callbacks; // the one diagnostic line for an era-chosen sink counter that never arrives (pure state)
 mod native_stall; // the surround native-audio stall watchdog (pure state) and the AU size evidence line
 mod segment_landing; // when an accepted Segment seek has reached the picture, else one reload (pure state)
+mod clock_debt; // a direct-play stream's position falling behind the wall (pure step); `pump` drives it
 mod pump;
 pub mod report;
 #[cfg(all(test, feature = "hostsim"))]
@@ -2816,7 +2817,6 @@ fn sf_on_event_inner(ty: c_int, num: i64, s: *const c_char, scope: shared::Event
             SHARED.dg_vpres_gap.fetch_max(gap, Relaxed);
         }
         SHARED.frames.fetch_add(1, Relaxed);
-        SHARED.dg_pos_ticks.fetch_add(1, Relaxed);
         SHARED.seen_frame.store(true, Relaxed); // session-scoped: unlike `frames`, a seek won't clear it
         // the rebuild an audio pick asked for has put its picture up: the switch is over
         let _ = SHARED.audio_switch.compare_exchange(
@@ -2832,6 +2832,9 @@ fn sf_on_event_inner(ty: c_int, num: i64, s: *const c_char, scope: shared::Event
             num - SHARED.pts_shift.load(Relaxed) + SHARED.disp_base.load(Relaxed),
             Relaxed,
         );
+        // Last, and with Release: the pump steps its clock-debt watch once per tick of this counter and
+        // then reads the time and position stored above, so a counter it sees must come with them.
+        SHARED.dg_pos_ticks.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
     if s.is_null() {
         return;

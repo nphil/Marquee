@@ -94,6 +94,27 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   made or was refused (`export_epoch`, `export_refused`), reopens quietly at the playhead the way a
   stall restart does; a refusal is retried once per playback. No signal inside the app says "frames
   shown but no video signal" (that is the TV's capture service), so the freeze watch does not guess.
+- **A starved direct-play (progressive) stream at Quality=Original is HELD and reads Buffering, like
+  a starved HLS one** (`pump::maybe_begin_rebuffer`, `clock_debt.rs`). Direct play has no rungs to
+  drop, so a link slower than the file used to play on in slow motion at the delivered rate and
+  then drop frames to catch up. The hold is the HLS hold's own machine (`ClockHold::ProgressiveRebuffer`:
+  one Pause, the `hls_rebuffering` mirror that `player::state` reads as Buffering, then the
+  `try_prime` Play), with its own release: a full video or audio queue (`reason=full`) or the end of
+  the stream (`reason=eof`), never a runway. It begins on one of two arms. The CLOCK DEBT
+  (`ClockDebt::step`, once per position callback: `S <- max(0, S + (dwall - dpos) - k * dwall)`,
+  k = 0.05, fires at 100 ms, resets whenever the app's video queue holds over 1 MiB) is slow motion;
+  a clock stopped for `NATIVE_CLOCK_STOPPED_MS` over a reserve it will never spend
+  (`native_clock_stopped`, the FURTHER lane's tail) is the dead link, which sends no callbacks for
+  the debt to see. **One component decides Buffering, and it is the hold.** `stall_watch` stays the
+  reporter (a hold counts as waiting: the 2 s network notice and the 10 s lower-quality offer) and the
+  restarter of a source parked on a full lane; a progressive hold never begins while a queue is at
+  its cap, so restart and hold cannot both act on one stall. Not judged while a prime owns the
+  clock, during a seek, before the first picture, under the viewer's Pause or once the demuxer is
+  done. Never held: a trailer preview, the looped sample, a progressive re-encode under a fixed
+  quality ceiling, and an Original that Auto quality supervises (`route::is_progressive_original`).
+  The log reads `feed: progressive rebuffer hold n= arm= S= debt= ...` and `... resume n= reason=
+  held=`. The constants (`DebtParams::PROGRESSIVE`) are upstream's, measured on its television; the
+  Buffering read-out during a hold is not yet seen on this one.
 - `threads.rs` — the workers beside the demuxer: **`load_thread`** (construct Starfish + `Load()`,
   which owns its own GMainContext) and **`timeline_thread`** (the ~10 s `/:/timeline` progress
   reporter). The **demux thread body is `ff::demux`** (spawned by `engine::start_bufferfeed`): open
