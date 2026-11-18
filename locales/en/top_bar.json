@@ -1,0 +1,22 @@
+{
+  "top_bar.title": {
+    "value": "Top bar",
+    "description": "Settings > Libraries row and page title: the page that chooses which items the top bar shows. Short."
+  },
+  "top_bar.detail": {
+    "value": "Choose what shows in the top bar.",
+    "description": "Detail line under the Top bar row on the Settings root. One short sentence."
+  },
+  "top_bar.copy": {
+    "value": "Pick what shows in the middle and at the top right. Settings stays on your profile.",
+    "description": "Top bar page header copy: the switches hide or show items in the bar at the top of the screen; Settings itself is always reached from the profile chip, which cannot be hidden."
+  },
+  "top_bar.section_middle": {
+    "value": "In the middle",
+    "description": "Top bar page: heading over the switches for the items in the middle pill of the top bar (Movies, TV Shows, Requests). Short."
+  },
+  "top_bar.section_right": {
+    "value": "At the top right",
+    "description": "Top bar page: heading over the switches for the items in the pill at the top right of the top bar (Watchlist, Search). Short."
+  }
+}

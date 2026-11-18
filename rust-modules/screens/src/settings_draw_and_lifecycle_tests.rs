@@ -177,8 +177,8 @@ fn every_root_detail_line_fits_a_known_good_width() {
         }
     }
     assert_eq!(
-        checked, 19,
-        "expected a detail line on exactly Favorite libraries, Under posters, Home rows, Video & playback, \
+        checked, 20,
+        "expected a detail line on exactly Favorite libraries, Under posters, Home rows, Top bar, Video & playback, \
          Subtitles, Audio & subtitles, Language, Bazarr, Requests, SpeechDock, Automatically Sign In, Play trailers automatically, \
          Spoiler protection, Privacy & \
          data, Legal notices, Record playback diagnostics, Save diagnostic log, About Marquee and Show the tour again (this host is not webOS 1-3, so no Interface \
