@@ -981,8 +981,11 @@ unsafe fn present_and_swap(
         plx_gfx::text::warm_fonts_idle(FONT_WARM_SLICE_US, plx_base::diag::heartbeat::now_us);
         // Device and macOS presented frames block in swap; WSLg/X11 presented frames use the
         // software budget above. A skipped frame reaches neither path, so sleep here to keep a
-        // settled screen from becoming a CPU spinner.
-        SDL_Delay(plx_machine::idle::IDLE_POLL_MS);
+        // settled screen from becoming a CPU spinner. A deferred iteration waits on the capture
+        // fence instead, so its present lands on the refresh after the GPU is done.
+        if !(fr.deferred && plx_gfx::gfx::snapshot_wait(plx_machine::idle::IDLE_POLL_MS)) {
+            SDL_Delay(plx_machine::idle::IDLE_POLL_MS);
+        }
     }
 }
 

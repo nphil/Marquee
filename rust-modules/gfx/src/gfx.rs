@@ -3047,6 +3047,23 @@ pub fn snapshot_pending() -> bool {
     SNAPSHOT_PENDING.load(Ordering::Relaxed)
 }
 
+/// Spend a deferred iteration's pause on the capture fence: returns once the GPU has passed it,
+/// or after `max_ms`. `false` with no fence to wait on, where the caller keeps its sleep.
+///
+/// That pause was a fixed `idle::IDLE_POLL_MS` sleep, two refreshes at 120 Hz, so every capture
+/// cost a missed refresh however soon its GPU work was done: three or four 16.7 ms intervals on
+/// each route dip (television, 2026-11-18).
+pub fn snapshot_wait(max_ms: u32) -> bool {
+    // SAFETY: main render thread.
+    match unsafe { (*std::ptr::addr_of!(SNAPSHOT_FENCE)).as_ref() } {
+        Some(fence) => {
+            fence.wait(u64::from(max_ms) * 1_000_000);
+            true
+        }
+        None => false,
+    }
+}
+
 /// Force a freshly uploaded texture RESIDENT now, on the upload's own frame, by sampling it once.
 ///
 /// On this driver `glTexImage2D` returns after the copy and defers the rest — the allocation and
@@ -8901,6 +8918,13 @@ mod tests {
         assert!(snapshot_defers(Some(false), 0), "in flight: defer");
         assert!(snapshot_defers(Some(false), SNAPSHOT_DEFER_MAX - 1));
         assert!(!snapshot_defers(Some(false), SNAPSHOT_DEFER_MAX), "the cap: present anyway");
+    }
+
+    /// With no fence there is nothing to wait on, and the loop keeps its own sleep: a deferral
+    /// that controlled replay supplies must not turn the loop into a spinner.
+    #[test]
+    fn an_unfenced_deferral_is_left_to_the_loops_sleep() {
+        assert!(!snapshot_wait(16));
     }
 
     #[test]

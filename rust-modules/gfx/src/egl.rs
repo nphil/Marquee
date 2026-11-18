@@ -712,6 +712,7 @@ pub mod fence {
     const EGL_SYNC_FENCE_KHR: c_uint = 0x30F9;
     const EGL_CONDITION_SATISFIED_KHR: c_int = 0x30F6;
     const EGL_NONE: c_int = 0x3038;
+    const EGL_SYNC_FLUSH_COMMANDS_BIT_KHR: c_int = 0x0001;
 
     type FnCreate = unsafe extern "C" fn(*mut c_void, c_uint, *const c_int) -> *mut c_void;
     type FnClientWait = unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, u64) -> c_int;
@@ -785,6 +786,18 @@ pub mod fence {
             let Some(a) = api() else { return true };
             let wait: FnClientWait = unsafe { std::mem::transmute(a.wait) };
             let r = unsafe { wait(a.dpy as *mut c_void, self.sync as *mut c_void, 0, 0) };
+            r == EGL_CONDITION_SATISFIED_KHR || r == 0
+        }
+
+        /// Block until the GPU has passed it, for at most `timeout_ns`. Flushes first: the fence
+        /// goes in after a swap, and nothing else is certain to submit it while presents are
+        /// held. `false` on a timeout; an error reads as passed, as in [`Self::signaled`].
+        pub fn wait(&self, timeout_ns: u64) -> bool {
+            let Some(a) = api() else { return true };
+            let wait: FnClientWait = unsafe { std::mem::transmute(a.wait) };
+            let r = unsafe {
+                wait(a.dpy as *mut c_void, self.sync as *mut c_void, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, timeout_ns)
+            };
             r == EGL_CONDITION_SATISFIED_KHR || r == 0
         }
     }
