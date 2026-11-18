@@ -93,6 +93,7 @@ impl Lane {
 }
 
 /// One poster: a title as Seerr names it, and how it stands.
+#[derive(PartialEq)]
 pub(crate) struct Card {
     elem: u32,
     kind: Kind,
@@ -254,14 +255,22 @@ impl RequestsScreen {
         self.ask(RequestsCmd::Open(self.tx.clone()), fx);
     }
 
-    /// Take one answer of the driver into the rows.
-    fn receive(&mut self, reply: RequestsReply) {
-        self.rev = self.rev.wrapping_add(1);
-        match reply {
+    /// Back from a title: read again only if what the page shows may have gone stale.
+    fn refresh<H: ContentLike>(&self, fx: &mut Effects<'_, H>) {
+        self.ask(RequestsCmd::Refresh, fx);
+    }
+
+    /// Take one answer of the driver into the rows. `true` when the page changed: an answer that
+    /// repeats what the page shows (a refresh behind a held copy) changes nothing, so nothing
+    /// redraws and focus stays where it is.
+    fn receive(&mut self, reply: RequestsReply) -> bool {
+        let changed = match reply {
             RequestsReply::Ready { art, .. } => {
+                let changed = self.art != art || self.phase != Phase::Ready || self.failure.is_some();
                 self.art = art;
                 self.phase = Phase::Ready;
                 self.failure = None;
+                changed
             }
             RequestsReply::Failed(error) => {
                 self.phase = Phase::Failed;
@@ -269,6 +278,7 @@ impl RequestsScreen {
                 for row in &mut self.rows {
                     row.loaded = true;
                 }
+                true
             }
             RequestsReply::Shelf { shelf, page, result } => {
                 let lane = Lane::of(shelf);
@@ -276,7 +286,7 @@ impl RequestsScreen {
                     Ok(p) => {
                         let more = p.more();
                         let cards = p.items.iter().map(|t| (t, None)).collect();
-                        self.land(lane, page <= 1, cards, more, page, 0);
+                        self.land(lane, page <= 1, cards, more, page, 0)
                     }
                     Err(_) => self.fail(lane),
                 }
@@ -285,13 +295,13 @@ impl RequestsScreen {
                 Ok((items, more)) => {
                     let read = items.len() as u32;
                     let cards = items.iter().map(|a| (&a.title, a.badge)).collect();
-                    self.land(Lane::Mine, skip == 0, cards, more, 0, skip + read);
+                    self.land(Lane::Mine, skip == 0, cards, more, 0, skip + read)
                 }
                 Err(_) => self.fail(Lane::Mine),
             },
             RequestsReply::Search { query, page, result } => {
                 if query != self.searched {
-                    return;
+                    return false;
                 }
                 self.searching = false;
                 match result {
@@ -300,25 +310,35 @@ impl RequestsScreen {
                         let cards = p.items.iter().map(|t| (t, None)).collect();
                         self.land(Lane::Results, page <= 1, cards, more, page, 0);
                     }
-                    Err(_) => self.fail(Lane::Results),
+                    Err(_) => {
+                        self.fail(Lane::Results);
+                    }
                 }
+                true
             }
-            RequestsReply::Detail { .. } | RequestsReply::Requested { .. } => {}
+            RequestsReply::Detail { .. } | RequestsReply::Requested { .. } => false,
+        };
+        if changed {
+            self.rev = self.rev.wrapping_add(1);
         }
+        changed
     }
 
-    fn fail(&mut self, lane: Lane) {
-        if let Some(row) = self.row_mut(lane) {
-            row.loaded = true;
-            row.more = false;
-            row.asked = false;
-        }
+    fn fail(&mut self, lane: Lane) -> bool {
+        let Some(row) = self.row_mut(lane) else { return false };
+        let was = (row.loaded, row.more, row.asked);
+        (row.loaded, row.more, row.asked) = (true, false, false);
+        was != (row.loaded, row.more, row.asked)
     }
 
     /// A page of `lane` landed: `first` replaces what the row held, a later one follows it.
     /// `badge` is the stated one of a title the viewer asked for; a title read off a shelf shows
-    /// the one its own state gives.
-    fn land(&mut self, lane: Lane, first: bool, titles: Vec<(&Title, Option<Badge>)>, more: bool, pages: u32, skip: u32) {
+    /// the one its own state gives. Returns whether the row changed.
+    ///
+    /// A first page that arrives over a row already read further (the page was held and has since
+    /// been refreshed) only patches the cards it names: a title keeps its place and its element, so
+    /// focus never moves, and the pages the viewer scrolled to stay.
+    fn land(&mut self, lane: Lane, first: bool, titles: Vec<(&Title, Option<Badge>)>, more: bool, pages: u32, skip: u32) -> bool {
         let mut cards = Vec::with_capacity(titles.len());
         for (title, badge) in titles {
             let elem = self.intern(lane, title.kind, title.tmdb);
@@ -332,22 +352,53 @@ impl RequestsScreen {
                 badge: badge.or_else(|| title.state.badge()),
             });
         }
-        let Some(row) = self.row_mut(lane) else { return };
+        let Some(row) = self.row_mut(lane) else { return false };
+        if first && row.loaded && (row.pages > pages || row.skip > skip) {
+            let mut changed = false;
+            for (at, card) in cards.into_iter().enumerate() {
+                match row.cards.iter_mut().find(|c| c.elem == card.elem) {
+                    Some(held) if *held == card => {}
+                    Some(held) => {
+                        *held = card;
+                        changed = true;
+                    }
+                    None => {
+                        row.cards.insert(at.min(row.cards.len()), card);
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                row.epoch = row.epoch.wrapping_add(1);
+            }
+            return changed;
+        }
+        let mut changed = !row.loaded;
         if first {
-            row.cards = cards;
+            if row.cards != cards || row.more != more {
+                row.cards = cards;
+                changed = true;
+            }
         } else {
             for card in cards {
                 if !row.cards.iter().any(|c| c.elem == card.elem) {
                     row.cards.push(card);
+                    changed = true;
                 }
             }
         }
+        // A first page that repeats the row leaves a next page in flight alone.
+        if changed || !first {
+            row.asked = false;
+            row.more = more;
+            row.pages = pages;
+            row.skip = skip;
+        }
         row.loaded = true;
-        row.more = more;
-        row.asked = false;
-        row.pages = pages;
-        row.skip = skip;
-        row.epoch = row.epoch.wrapping_add(1);
+        if changed {
+            row.epoch = row.epoch.wrapping_add(1);
+        }
+        changed
     }
 
     /// The row's next page, asked for once.
@@ -458,12 +509,11 @@ impl RequestsScreen {
     }
 
     fn tick<H: ContentLike>(&mut self, tick: plx_machine::machine::Tick, fx: &mut Effects<'_, H>) {
-        let mut landed = false;
+        let mut changed = false;
         while let Ok(reply) = self.inbox.try_recv() {
-            self.receive(reply);
-            landed = true;
+            changed |= self.receive(reply);
         }
-        if landed {
+        if changed {
             fx.invalidate(Provenance::Landing(fx.from()));
         }
         if self.editing {
@@ -524,7 +574,7 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
                 self.reseat(FocusTarget::Elem(self.key(FIELD)), fx);
             }
             // Back from a title: what was asked for shows on its poster.
-            ScreenEvent::Uncover => self.open(fx),
+            ScreenEvent::Uncover => self.refresh(fx),
             ScreenEvent::WillLeave(_) | ScreenEvent::Unmount | ScreenEvent::Cover | ScreenEvent::Suspend => {
                 self.keyboard(false, false, fx)
             }

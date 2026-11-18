@@ -62,9 +62,10 @@ fn a_later_page_follows_the_row_and_repeats_nothing() {
     assert_eq!(names(&h), [(Lane::Movies, vec![1, 2, 3])]);
     let row = h.screen.rows.iter().find(|r| r.lane == Lane::Movies).unwrap();
     assert!(row.more && row.pages == 2);
-    // a first page again replaces the row
+    // a first page again, over a row read further, patches it: what the viewer scrolled to stays
     h.screen.receive(shelf(Discover::Movies, 1, 1, &[9]));
-    assert_eq!(names(&h), [(Lane::Movies, vec![9])]);
+    assert_eq!(names(&h), [(Lane::Movies, vec![9, 1, 2, 3])]);
+    assert!(row_of(&h, Lane::Movies).pages == 2, "and the row is still read to its second page");
 }
 
 #[test]
@@ -93,9 +94,46 @@ fn a_poster_shows_the_state_seerr_gives_it_or_the_one_of_a_request() {
     assert_eq!(cards[1].badge, None);
     h.screen.receive(RequestsReply::Mine {
         skip: 0,
-        result: Ok((vec![crate::registry::AskedTitle { title: title(7), badge: Some(Badge::Downloading) }], false)),
+        result: Ok((vec![plx_plex::plex::seerr::Asked { title: title(7), badge: Some(Badge::Downloading) }], false)),
     });
     assert_eq!(h.screen.rows[0].cards[0].badge, Some(Badge::Downloading));
+}
+
+fn row_of(h: &Harness, lane: Lane) -> &Row {
+    h.screen.rows.iter().find(|r| r.lane == lane).unwrap()
+}
+
+#[test]
+fn an_answer_that_repeats_the_row_changes_nothing_and_leaves_a_page_in_flight_alone() {
+    let mut h = Harness::new(vec![]);
+    assert!(h.screen.receive(shelf(Discover::Movies, 1, 3, &[1, 2])), "the first landing is a change");
+    let (rev, epoch) = (h.screen.rev, row_of(&h, Lane::Movies).epoch);
+    h.screen.rows[2].asked = true;
+    assert!(!h.screen.receive(shelf(Discover::Movies, 1, 3, &[1, 2])), "the refresh found the same titles");
+    assert_eq!((h.screen.rev, row_of(&h, Lane::Movies).epoch), (rev, epoch), "so nothing redraws");
+    assert!(row_of(&h, Lane::Movies).asked, "the next page already asked for is still awaited");
+}
+
+#[test]
+fn a_refresh_changes_only_the_poster_that_changed_and_keeps_every_element() {
+    let mut h = Harness::new(vec![]);
+    h.screen.receive(shelf(Discover::Trending, 1, 3, &[1, 2, 3]));
+    let elems: Vec<u32> = row_of(&h, Lane::Trending).cards.iter().map(|c| c.elem).collect();
+    let mut asked = title(2);
+    asked.state = MediaState { have: Have::Pending, downloading: false };
+    let refreshed = RequestsReply::Shelf { shelf: Discover::Trending, page: 1, result: Ok(Page { items: vec![title(1), asked, title(3)], page: 1, pages: 3 }) };
+    assert!(h.screen.receive(refreshed), "a poster now says Requested");
+    let row = row_of(&h, Lane::Trending);
+    assert_eq!(row.cards.iter().map(|c| c.elem).collect::<Vec<_>>(), elems, "no poster moved, so focus on any of them stays");
+    assert_eq!(row.cards.iter().map(|c| c.badge).collect::<Vec<_>>(), [None, Some(Badge::Requested), None]);
+}
+
+#[test]
+fn coming_back_from_a_title_asks_for_a_refresh_not_a_second_listener() {
+    let mut h = Harness::new(vec![]);
+    let (out, _) = h.step_fx(ScreenEvent::Uncover);
+    let asked = app(&out);
+    assert!(matches!(asked.as_slice(), [AppFx::Requests(RequestsCmd::Refresh)]), "one listener per page, however often it is uncovered");
 }
 
 #[test]

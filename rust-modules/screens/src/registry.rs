@@ -90,8 +90,11 @@ pub enum AppFx {
 /// the command carries, as a [`RequestsReply`] the page reads on its tick.
 #[derive(Clone)]
 pub enum RequestsCmd {
-    /// The page opened: sign in, then answer the viewer's requests and the first page of each shelf.
+    /// The page opened: hand it the last answers held, if any, at once, and read Seerr again behind
+    /// them when they are old. Everything lands down the channel, the first page of each row.
     Open(std::sync::mpsc::Sender<RequestsReply>),
+    /// Back on the page from a title: read Seerr again if a request has made the held answers stale.
+    Refresh,
     /// Page `page` (from 1) of a discover shelf.
     Shelf { shelf: plx_plex::plex::seerr::Shelf, page: u32, reply: std::sync::mpsc::Sender<RequestsReply> },
     /// The viewer's requests after the first `skip`.
@@ -108,13 +111,6 @@ pub enum RequestsCmd {
         seasons: Vec<u32>,
         reply: std::sync::mpsc::Sender<RequestsReply>,
     },
-}
-
-/// A title the viewer asked for, with how that request stands.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AskedTitle {
-    pub title: plx_plex::plex::seerr::Title,
-    pub badge: Option<plx_plex::plex::seerr::Badge>,
 }
 
 /// A title's page as the Requests page shows it: Seerr's facts and, when Plex has it on a server
@@ -137,7 +133,7 @@ pub enum RequestsReply {
         result: Result<plx_plex::plex::seerr::Page<plx_plex::plex::seerr::Title>, plx_plex::plex::seerr::SeerrError>,
     },
     /// The requests after `skip`, and whether more follow.
-    Mine { skip: u32, result: Result<(Vec<AskedTitle>, bool), plx_plex::plex::seerr::SeerrError> },
+    Mine { skip: u32, result: Result<(Vec<plx_plex::plex::seerr::Asked>, bool), plx_plex::plex::seerr::SeerrError> },
     Search {
         query: String,
         page: u32,
