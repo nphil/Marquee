@@ -239,6 +239,7 @@ pub fn record(
         on: Vec::new(),
         off: Vec::new(),
         rows: Vec::new(),
+        bar_hidden: Vec::new(),
         extensions: Default::default(),
     };
     for (i, l) in libs.iter().enumerate() {
@@ -281,8 +282,9 @@ pub fn carry_forward(
     libs: &[LibRef<'_>],
 ) -> HomePins {
     let Some(prev) = prev else { return rec };
-    // the layout is not an answer about libraries: a pin commit keeps it whole
+    // the layout and the top bar are not answers about libraries: a pin commit keeps them whole
     rec.rows = prev.rows.clone();
+    rec.bar_hidden = prev.bar_hidden.clone();
     let absent = |p: &&PinnedLib| {
         // an entry with no machine can never be WRITTEN (see [`record`]), so it can never be
         // carried either — and matching it against a table row's empty id would adopt a neighbour's

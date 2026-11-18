@@ -2291,6 +2291,10 @@ pub struct HomePins {
     /// damaged layout costs the layout and never the pins beside it.
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<HomeRow>,
+    /// The top-bar items this profile hides, by the names `plex::top_bar` keeps. Empty shows every
+    /// item. Soft-parsed like the layout.
+    #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    pub bar_hidden: Vec<String>,
     #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
     pub extensions: OpaqueExtensions,
 

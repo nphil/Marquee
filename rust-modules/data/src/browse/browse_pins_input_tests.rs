@@ -270,3 +270,34 @@ fn a_home_rows_commit_survives_the_next_pin_commit() {
     browse.state.resolve_pins_from(&peek(), "u-owner");
     assert_eq!(browse.state.home_layout(), layout, "the stored record reads back the same layout");
 }
+
+/// Settings > Top bar's commit is recorded beside the pins, survives the next pin commit, reads back
+/// for the same profile only, and showing the item again leaves nothing recorded.
+#[test]
+fn a_top_bar_commit_survives_the_next_pin_commit_and_belongs_to_its_profile() {
+    use plx_plex::plex::top_bar::BarItem;
+    let _serial = plx_base::testlock::serial();
+    let t = TempPins::new("pins-input-top-bar");
+    t.watching("u-owner");
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    let before = browse.state.home_rows_gen();
+    browse.state.set_bar_item_from(BarItem::Search, true, &peek());
+    assert_ne!(browse.state.home_rows_gen(), before, "the directory republishes the bar");
+    assert!(browse.state.bar_hidden().hides(BarItem::Search));
+    browse.state.apply_pins(&[(2, true)]);
+    plx_base::storage_worker::drain_for_test();
+    browse.observe_pin_write();
+    let stored = peek().pins_for("u-owner").cloned().expect("the record was written");
+    assert_eq!(stored.bar_hidden, ["search"], "the pin commit kept the bar");
+    browse.state.resolve_pins_from(&peek(), "u-owner");
+    assert!(browse.state.bar_hidden().hides(BarItem::Search), "the stored record reads back");
+    browse.state.resolve_pins_from(&peek(), "u-friend");
+    assert!(!browse.state.bar_hidden().hides(BarItem::Search), "another profile shows everything");
+    browse.state.resolve_pins_from(&peek(), "u-owner");
+    browse.state.set_bar_item_from(BarItem::Search, false, &peek());
+    assert!(!browse.state.bar_hidden().hides(BarItem::Search));
+    plx_base::storage_worker::drain_for_test();
+    browse.observe_pin_write();
+    assert!(peek().pins_for("u-owner").is_some_and(|pins| pins.bar_hidden.is_empty()), "nothing is left recorded");
+}

@@ -100,6 +100,10 @@ pub mod pins;
 // record beside the pins, applied by the Hubs merge and edited by Settings > Home.
 pub mod home_rows;
 
+// Which items of the top bar a profile shows: pure rules over the hidden names kept in its Home
+// record, applied by the shared bar and edited by Settings > Top bar.
+pub mod top_bar;
+
 // The plex.tv METADATA PROVIDER (`discover.provider.plex.tv`) — a third service, but one that
 // shares the account API's transport + identity headers exactly, so it only adds an
 // `impl AccountClient` block (same pattern as the PMS op files above). Its host is

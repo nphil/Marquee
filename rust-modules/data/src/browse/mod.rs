@@ -2598,17 +2598,47 @@ impl BrowseState {
     }
     /// Replaces the profile's Home record; a layout that moved with it republishes.
     fn set_recorded(&mut self, record: Option<plx_plex::plex::session::HomePins>) {
-        fn layout(record: Option<&plx_plex::plex::session::HomePins>) -> &[plx_plex::plex::session::HomeRow] {
-            record.map_or(&[], |record| record.rows.as_slice())
+        fn layout(record: Option<&plx_plex::plex::session::HomePins>)
+            -> (&[plx_plex::plex::session::HomeRow], &[String]) {
+            record.map_or((&[], &[]), |record| (record.rows.as_slice(), record.bar_hidden.as_slice()))
         }
         if layout(self.recorded.as_ref()) != layout(record.as_ref()) {
             self.home_rows_gen = self.home_rows_gen.wrapping_add(1);
         }
         self.recorded = record;
     }
-    /// Moves whenever the profile's recorded Home layout does.
+    /// Moves whenever the profile's recorded layout does: its Home rows or its top-bar items.
     pub fn home_rows_gen(&self) -> u32 {
         self.home_rows_gen
+    }
+    /// The top-bar items the profile hides.
+    pub fn bar_hidden(&self) -> plx_plex::plex::top_bar::BarHidden {
+        plx_plex::plex::top_bar::BarHidden::from_names(
+            self.recorded.as_ref().map_or(&[], |record| record.bar_hidden.as_slice()))
+    }
+    /// Settings > Top bar's commit (`BrowseCmd::SetBarItem`): one item shown or hidden, recorded in
+    /// the profile's Home record through the same write and pending receipt as the pins. The worker
+    /// applies the change to the stored record, so pins and rows written while it was queued survive.
+    fn set_bar_item_from(&mut self, item: plx_plex::plex::top_bar::BarItem, hide: bool,
+        session: &plx_plex::plex::session::Session) {
+        use plx_plex::plex::top_bar::with_item;
+        if session.client_id.is_empty() { return; }
+        let user = plx_plex::plex::session::current_profile_key();
+        let blank = |user: &str| plx_plex::plex::session::HomePins { user: user.to_owned(), ..Default::default() };
+        let mut record = self.recorded.as_ref().or_else(|| session.pins_for(&user)).cloned()
+            .unwrap_or_else(|| blank(&user));
+        record.bar_hidden = with_item(&record.bar_hidden, item, hide);
+        let pending_user = user.clone();
+        let Ok(ticket) = plx_plex::plex::session::queue_update_ticket(move |session| {
+            let mut stored = session.pins_for(&user).cloned().unwrap_or_else(|| blank(&user));
+            stored.bar_hidden = with_item(&stored.bar_hidden, item, hide);
+            let mut next = session.clone();
+            next.set_pins_for(&user, stored);
+            Some(next)
+        }) else { return };
+        self.pending_pins = Some((pending_user, std::sync::Arc::new(std::sync::Mutex::new(PinWrite { ticket, saved: None }))));
+        self.set_recorded(Some(record));
+        plx_machine::idle::invalidate();
     }
     /// The profile's Home layout resolved to this run's server slots. An entry whose server is not
     /// in the table names no row this run and is left out here; it stays recorded.
@@ -3037,6 +3067,10 @@ impl BrowseState {
             }
             BrowseCmd::SetHomeRows(rows) => {
                 self.set_home_rows_from(&rows, session);
+                true
+            }
+            BrowseCmd::SetBarItem(item, hide) => {
+                self.set_bar_item_from(item, hide, session);
                 true
             }
             BrowseCmd::RetryDiscovery => {

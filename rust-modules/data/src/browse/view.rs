@@ -453,6 +453,8 @@ struct DirectoryData {
     favorites: Vec<(ServerId, i64, bool)>,
     /// The profile's Home layout, resolved to this run's server slots.
     home_layout: Vec<crate::pms::HomeRowRule>,
+    /// The top-bar items the profile hides.
+    bar_hidden: plx_plex::plex::top_bar::BarHidden,
 }
 
 /// Retained by the Bridge-owned `BrowseStore` and captured from its `BrowseState`, never a new
@@ -515,6 +517,7 @@ impl DirectorySnapshot {
                     }).collect(),
                 favorites: state.favorite_sections(),
                 home_layout: state.home_layout(),
+                bar_hidden: state.bar_hidden(),
             });
             self.stamp = Some(stamp);
         }
@@ -546,6 +549,7 @@ impl DirectorySnapshot {
                 sections: Vec::new(),
                 favorites: Vec::new(),
                 home_layout: Vec::new(),
+                bar_hidden: Default::default(),
             }),
             items: super::SecItems::default(),
             source: Some(0),
@@ -566,6 +570,13 @@ impl DirectorySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_sample(mut self, items: Vec<crate::pms::PmsMovie>) -> Self {
         self.items = super::SecItems::from_vec(items.into_iter().map(Some).collect());
+        self
+    }
+
+    /// This directory with the profile's top-bar record set to `hidden` (what [`DirectoryView::bar_hidden`] reads).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_bar_hidden(mut self, hidden: plx_plex::plex::top_bar::BarHidden) -> Self {
+        Arc::get_mut(&mut self.data).expect("a fixture directory is not shared").bar_hidden = hidden;
         self
     }
 
@@ -608,6 +619,7 @@ impl DirectorySnapshot {
                 sections,
                 favorites,
                 home_layout: Vec::new(),
+                bar_hidden: Default::default(),
             }),
             items: super::SecItems::default(),
             source: None,
@@ -665,6 +677,10 @@ impl<'a> DirectoryView<'a> {
     /// The profile's Home layout (`pms::HomeRowRule`): what the Hubs merge orders and hides by.
     pub fn home_layout(self) -> &'a [crate::pms::HomeRowRule] {
         &self.0.data.home_layout
+    }
+    /// The top-bar items the profile hides (`plex::top_bar`).
+    pub fn bar_hidden(self) -> plx_plex::plex::top_bar::BarHidden {
+        self.0.data.bar_hidden
     }
     /// The rows Home offers to arrange, hidden ones included, as Home last merged them.
     pub fn home_rows(self) -> &'a [crate::pms::HomeRowOffer] {

@@ -1748,6 +1748,7 @@ mod tests {
             on: Vec::new(),
             off: Vec::new(),
             rows: Vec::new(),
+            bar_hidden: Vec::new(),
             extensions: Default::default(),
         });
         first.retry_cd = 120;

@@ -83,6 +83,9 @@ pub enum BrowseCmd {
     /// whether the profile hides it. Recorded in the profile's Home record beside its pins
     /// (`plex::home_rows::record_edit`).
     SetHomeRows(Vec<(crate::pms::HomeRowId, bool)>),
+    /// Settings > Top bar's commit: one item of the bar, hidden (`true`) or shown, recorded in the
+    /// profile's Home record (`plex::top_bar`).
+    SetBarItem(plx_plex::plex::top_bar::BarItem, bool),
     RetryDiscovery,
     /// The profile/account switch: wipe everything and supersede everything in flight.
     Reset,
@@ -170,7 +173,7 @@ impl BrowseStore {
     /// layout or discovery command is refused here, because the session it must read was never
     /// handed: those reach [`BrowseStore::run_with_session`].
     pub fn run(&mut self, cmd: BrowseCmd, keys: &ClientKeys) -> bool {
-        if matches!(cmd, BrowseCmd::ApplyPins(_) | BrowseCmd::SetHomeRows(_) | BrowseCmd::Discovery(_)) {
+        if matches!(cmd, BrowseCmd::ApplyPins(_) | BrowseCmd::SetHomeRows(_) | BrowseCmd::SetBarItem(..) | BrowseCmd::Discovery(_)) {
             debug_assert!(false, "a pin, layout or discovery command reached a step handed no session");
             plx_base::eventlog::log(
                 "browse: a pin, layout or discovery command reached a step handed no session — dropped");
