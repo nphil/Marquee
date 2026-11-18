@@ -268,6 +268,18 @@ struct Reading {
     key: Option<Cow<'static, str>>,
 }
 
+/// The words of a title's source that tell a track apart: brackets and parentheses are dropped (they
+/// nest, "Subs(Official Subs)"), as are words that only say "subtitles" or name the language.
+fn distinctive(source: &str, lang: &str) -> String {
+    const GENERIC: [&str; 5] = ["sub", "subs", "subtitle", "subtitles", "full"];
+    source
+        .split(|c: char| !(c.is_alphanumeric() || matches!(c, '-' | '\'' | '.')))
+        .filter(|w| !w.is_empty())
+        .filter(|w| !GENERIC.iter().any(|g| w.eq_ignore_ascii_case(g)) && !lang.split_whitespace().any(|l| w.eq_ignore_ascii_case(l)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn reading(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) -> Option<Reading> {
     let s = subs.get(i)?;
     let lang = display_lang(s);
@@ -280,7 +292,7 @@ fn reading(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) ->
         k => k,
     };
     let restates_kind = track_label::names_signs_and_songs(&parsed.source) || track_label::names_dub(&parsed.source);
-    let source = if restates_kind { String::new() } else { parsed.source };
+    let source = if restates_kind { String::new() } else { distinctive(&parsed.source, &lang) };
     let (group, key) = group_of(s, i, &lang);
     Some(Reading { region: track_label::region_detail(&s.language_tag), kind, source, group, key, lang })
 }
@@ -834,6 +846,19 @@ mod tests {
         for i in 0..4 {
             assert_eq!(downloaded_twin(&subs, i, &TrackNames::new()), None, "built-in {i} has no single twin");
         }
+    }
+
+    /// A title's nested brackets and generic words never reach the row: "Subs(Official Subs)" is "Official".
+    #[test]
+    fn source_names_lose_brackets_and_generic_words() {
+        let one = |title: &str| {
+            let subs = vec![stream(1, 0, "English", "eng", title), stream(2, 1, "English", "eng", "Commie")];
+            listed(&model(&subs, &["eng"]))[0].0.clone()
+        };
+        assert_eq!(one("Subs(Official Subs)"), "English (Official)");
+        assert_eq!(one("[English Subtitles]"), "English");
+        assert_eq!(one("Full (Judas) [Subs]"), "English (Judas)");
+        assert_eq!(one("English Subs"), "English");
     }
 
     /// Two nameless built-in tracks are the language and the language counted.
