@@ -117,6 +117,10 @@ pub(super) fn execute(command: PreferenceCmd) {
             });
         }
         PreferenceCmd::SeerrLink { change, reply } => {
+            use plx_plex::plex::session::SeerrChange;
+            if matches!(change, SeerrChange::Url(_) | SeerrChange::Forget | SeerrChange::Enabled(false)) {
+                super::bridge::forget_held_answers();
+            }
             plx_plex::plex::session::queue_update_settled(
                 move |current| Some(current.with_seerr(&change.applied(&current.seerr()))),
                 move |durable| {

@@ -387,6 +387,8 @@ pub(crate) struct Bridge {
     /// loses its predecessor's job) still reads as a refresh begun and lost.
     cache_refresh_begun: Option<u32>,
     home_io: Option<super::bootstrap::HomeIo>,
+    /// The Requests page's background preparation ([`Bridge::requests_warm`]).
+    requests_warm: requests::RequestsWarm,
     recorded_clients: std::collections::BTreeMap<u32, &'static plx_plex::plex::Client>,
     initial_subhash: u64,
     session: plx_session::auth::SessionMachine,
@@ -665,6 +667,7 @@ impl Bridge {
             cache_refresh_begun: None,
             endpoint_carry: Default::default(),
             home_io: None,
+            requests_warm: Default::default(),
             recorded_clients: std::collections::BTreeMap::new(),
             initial_subhash: 0,
             session: plx_session::auth::SessionMachine::from_init(init),
@@ -2912,6 +2915,7 @@ fn frame_ingest(
     // after the tick would draw the new cards at their final slots for one frame before the
     // landing began from the old ones (a snap, then a jump back).
     rig.watchlist_pump();
+    rig.requests_warm(d, tick);
     rig.watchlist_feed(d);
     // Library used to be the only route that pumped Browse. Onboard schedules the roster-only
     // owner work from its Tick, but Tick runs after views are captured; land the roster first so
@@ -4734,7 +4738,7 @@ pub(crate) use watchlist::{hex_of_guid, open_catalog, open_watchlist_menu};
 
 #[path = "requests.rs"]
 mod requests;
-pub(crate) use requests::test_seerr;
+pub(crate) use requests::{forget_held_answers, test_seerr};
 
 #[cfg(test)]
 #[path = "watchlist_press_tests.rs"]
