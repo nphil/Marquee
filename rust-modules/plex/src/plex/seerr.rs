@@ -26,6 +26,7 @@
 //! header or the sign-in body; no error value holds them and nothing here logs a URL.
 
 use super::bazarr::{enc, int, text};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
@@ -113,7 +114,7 @@ pub const REQUEST_PAGE: u32 = 20;
 
 // ---- what Seerr says ---------------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Kind {
     Movie,
     Tv,
@@ -129,7 +130,7 @@ impl Kind {
 }
 
 /// Seerr's media status (`MediaStatus`): how much of a title (or a season) it holds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Have {
     /// Seerr knows nothing, or it was removed (`UNKNOWN`, `DELETED`): it may be asked for.
     #[default]
@@ -157,7 +158,7 @@ impl Have {
 }
 
 /// The word a tile or a page shows about a title.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Badge {
     Requested,
     Approved,
@@ -170,7 +171,7 @@ pub enum Badge {
 }
 
 /// What Seerr holds of a title and whether a download is running.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaState {
     pub have: Have,
     pub downloading: bool,
@@ -199,7 +200,7 @@ impl MediaState {
 
 /// A title as a row or a page shows it. `poster` and `backdrop` are TMDB image paths (see
 /// [`tmdb_image`]), empty when TMDB has none.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Title {
     pub kind: Kind,
     pub tmdb: u32,
@@ -250,7 +251,7 @@ pub fn tmdb_image(path: &str, width: &str) -> String {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Page<T> {
     pub items: Vec<T>,
     pub page: u32,
@@ -273,6 +274,16 @@ pub enum Shelf {
 
 impl Shelf {
     pub const ALL: [Shelf; 4] = [Shelf::Trending, Shelf::Movies, Shelf::Shows, Shelf::Upcoming];
+
+    /// This shelf's place in [`Shelf::ALL`].
+    pub fn index(self) -> usize {
+        match self {
+            Shelf::Trending => 0,
+            Shelf::Movies => 1,
+            Shelf::Shows => 2,
+            Shelf::Upcoming => 3,
+        }
+    }
 
     fn path(self) -> &'static str {
         match self {
@@ -320,7 +331,7 @@ pub enum Ask {
 }
 
 /// The server's request settings that change what may be asked for.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rules {
     /// A request may name some seasons; otherwise only every missing season at once.
     pub partial: bool,
@@ -433,6 +444,13 @@ impl Detail {
     }
 }
 
+/// One of the viewer's requests as the Requests page shows it: the title and how the request stands.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asked {
+    pub title: Title,
+    pub badge: Option<Badge>,
+}
+
 /// One of the viewer's own requests, newest first. Seerr names the title by id only; the page
 /// reads the title itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -521,6 +539,11 @@ pub struct Seerr<'a, T: Transport> {
 impl<'a, T: Transport> Seerr<'a, T> {
     pub fn new(base: &'a str, cookie: &str, plex_token: &'a str, http: &'a T) -> Self {
         Self { base, plex_token, cookie: RefCell::new(cookie.to_string()), http }
+    }
+
+    /// Another run of calls under the session held now, for a call made beside this one.
+    pub fn sibling(&self) -> Self {
+        Self::new(self.base, &self.cookie.borrow(), self.plex_token, self.http)
     }
 
     /// The session after the calls made: a new one when Seerr signed in again, empty when it would not.

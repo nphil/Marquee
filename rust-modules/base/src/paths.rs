@@ -650,6 +650,27 @@ pub fn image_cache_dir_is_private(path: &Path) -> bool {
     path.parent() == Some(Path::new("/media/developer/temp"))
 }
 
+/// Where the Requests page keeps its last answers (`plex::seerr_cache`), best first, on
+/// [`session_candidates`]'s pattern and keyed by [`app_id`]: a steerable build's own runtime root
+/// first, then the two persistent locations, and the runtime root last on a device (`/tmp`, cleared
+/// by a restart: a copy kept only there is just a shorter-lived one). The file is written owner-only
+/// and never directly in the world-writable `/media/developer/temp`.
+pub fn requests_cache_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if ENV_STEERABLE {
+        v.push(in_runtime_dir("requests-cache.json"));
+    }
+    let id = app_id();
+    v.extend([
+        PathBuf::from(format!("/media/developer/{id}-requests.json")),
+        PathBuf::from(format!("/media/internal/.{id}-requests.json")),
+    ]);
+    if !ENV_STEERABLE {
+        v.push(in_runtime_dir("requests-cache.json"));
+    }
+    v
+}
+
 /// Where the installed player-HUD packages may live (`data::hudpacks`), best first, on
 /// [`image_cache_candidates`]'s pattern and keyed by [`app_id`] so two flavours never share a store
 /// (a debug build's unreviewed sideload must never reach the stable install):

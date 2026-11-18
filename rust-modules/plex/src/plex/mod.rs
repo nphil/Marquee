@@ -45,6 +45,9 @@ pub mod bazarr;
 /// titles as the seated Plex account. A third-party service the viewer runs, reached by the
 /// address they typed.
 pub mod seerr;
+/// What the Requests page shows before Seerr answers: the last answers, held in memory and on
+/// disk, refreshed in the background.
+pub mod seerr_cache;
 /// The PMS server-sent-event notification feed: the SSE parser, the lenient `playing` models and
 /// the one-connection client. `docs/pms-api.md` §9; the data layer decides when to connect.
 pub mod notify;
