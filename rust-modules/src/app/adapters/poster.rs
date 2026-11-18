@@ -1086,6 +1086,53 @@ const _: () = assert!(tex::AHEAD_SET_MAX < AHEAD_MAX);
 /// decoded size are the cache's answer for that key.
 type Hit = Option<PosterKey>;
 
+/// What a slot is made into when it is claimed for one picture.
+struct Claim<'a> {
+    srv: ServerId,
+    key: &'a str,
+    cache_gen: u64,
+    token_gen: u32,
+    grant_epoch: u32,
+    /// `P_WANT` for a request a worker will fill; `P_LOADING` for a slot the main thread fills
+    /// itself ([`avatars`]), which no worker ever picks up.
+    state: c_int,
+    visible: bool,
+    ahead: bool,
+    use_: c_uint,
+    frame: c_uint,
+}
+
+/// Recycle `s` for `c`: every field a previous occupant could have left behind is reset in this
+/// one place, so a slot filed by a lookup and one filed by [`avatars`] cannot differ. Returns the
+/// slot's new generation.
+fn claim(s: &mut Pslot, c: Claim<'_>) -> c_uint {
+    s.px = 0;
+    s.gen = s.gen.wrapping_add(1);
+    s.cache_gen = c.cache_gen;
+    s.token_gen = c.token_gen;
+    s.grant_epoch = c.grant_epoch;
+    set_key(s, c.key);
+    s.srv = c.srv; // captured on the main thread — the worker asks no one which server
+    s.state = c.state;
+    s.visible = c.visible;
+    s.ahead = c.ahead;
+    s.return_pin = false;
+    s.use_ = c.use_;
+    s.frame = c.frame;
+    s.pw = 0;
+    s.ph = 0;
+    s.retry_at = None;
+    s.retry_wake_sent = false;
+    s.attempts = 0;
+    // A recycled slot is a DIFFERENT key's identity now — the eviction-thrash history belongs to
+    // whatever image used to live here, not to this one.
+    s.evicted_at = None;
+    s.evict_attempts = 0;
+    s.evict_cooldown_until = None;
+    s.evict_wake_sent = false;
+    s.gen
+}
+
 /// MAIN thread. The one store lookup behind [`poster_get`], [`poster_get_wh`] and [`poster_warm`]:
 /// hit → the READY texture + its size; miss → claim a slot and enqueue the fetch, IF the request is
 /// admitted. Three things decide, and `touch` is only the first: `touch` itself (LRU bookkeeping on
@@ -1333,34 +1380,21 @@ fn lookup(srv: ServerId, key_s: &str, touch: Touch) -> (Hit, Warm) {
             (g.clock, g.frame.wrapping_sub(1))
         }
     };
-    {
-        let s = &mut g.slots[idx];
-        s.px = 0;
-        s.gen = s.gen.wrapping_add(1);
-        s.cache_gen = cache_gen;
-        s.token_gen = token_gen;
-        s.grant_epoch = grant_epoch;
-        set_key(s, key_s);
-        s.srv = srv; // captured HERE, on the main thread — the worker asks no one which server
-        s.state = P_WANT;
-        s.visible = touch == Touch::Draw;
-        s.ahead = touch == Touch::Ahead;
-        s.return_pin = false;
-        s.use_ = use_;
-        s.frame = frame;
-        s.pw = 0;
-        s.ph = 0;
-        s.retry_at = None;
-        s.retry_wake_sent = false;
-        s.attempts = 0;
-        // A recycled slot is a DIFFERENT key's identity now — the eviction-thrash history above
-        // belongs to whatever image used to live here, not to this one.
-        s.evicted_at = None;
-        s.evict_attempts = 0;
-        s.evict_cooldown_until = None;
-        s.evict_wake_sent = false;
-    }
-    let claimed_gen = g.slots[idx].gen;
+    let claimed_gen = claim(
+        &mut g.slots[idx],
+        Claim {
+            srv,
+            key: key_s,
+            cache_gen,
+            token_gen,
+            grant_epoch,
+            state: P_WANT,
+            visible: touch == Touch::Draw,
+            ahead: touch == Touch::Ahead,
+            use_,
+            frame,
+        },
+    );
     drop(g);
     trace::claim(trace::current(), idx, claimed_gen);
     // free the evicted resources off-lock (this is the GL/main thread): the cache's texture for

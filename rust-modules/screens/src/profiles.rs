@@ -132,6 +132,10 @@ const NAME_DY: f32 = AvatarRow::STYLE.h
     + AvatarRow::STYLE.h * (AvatarRow::STYLE.focus_scale - 1.0) * 0.5
     + theme::space::MD;
 const PIN_LEN: usize = 4;
+/// The box a profile picture is requested in from the photo transcoder. The stored, already
+/// decoded pictures (`imgcache::tiles`) are filed under this same request, so the picker's draw
+/// and the cold-start seed name one picture: it is changed here, not in a second copy.
+pub const AVATAR_BOX: i32 = 300;
 const FOOTER_Y: f32 = 780.0;
 const FOOTER_H: f32 = 60.0;
 /// The switch-failure message's vertical centre, below the pill with a full `space::XL` of air —
@@ -800,7 +804,7 @@ impl ProfilesScreen {
         Art::Thumb {
             sid: plx_plex::plex::current_server().raw(),
             key: &u.thumb,
-            res: (300, 300),
+            res: (AVATAR_BOX, AVATAR_BOX),
         }
     }
 
