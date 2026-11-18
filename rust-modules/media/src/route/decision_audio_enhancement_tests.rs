@@ -4263,6 +4263,7 @@ fn admit_side_reader(ps: &mut PlaybackSession) {
         ctx: String::new(),
         preview: false,
         version: None,
+        show_rk: String::new(),
     });
 }
 

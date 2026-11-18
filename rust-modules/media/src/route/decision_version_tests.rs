@@ -381,6 +381,7 @@ fn no_pick_is_the_default_version_exactly_as_before() {
     assert_eq!((plan.part_id, plan.media_index), (3134, 0));
 }
 
+
 /// A retry or quality change resolves the same item again from the stored request, so the pick
 /// rides it; the session installs the landed version for every later encoder of the playback.
 #[test]
@@ -389,7 +390,7 @@ fn the_picked_version_rides_the_request_and_the_landing() {
     let _g = fresh_registry(&mut ps);
     let mut meta = plx_data::stores::metadata::MetadataStore::default();
     assert!(request_play(&mut ps, &mut meta, plx_platform::devcaps::caps(), ServerId::from_raw(0), "rk-v", "/library/parts/3134/1/file.mkv",
-        "h264", "aac", "Episode", "", Some(plx_plex::plex::MediaId(3082))));
+        "h264", "aac", "Episode", "", Some(plx_plex::plex::MediaId(3082)), ""));
     assert_eq!(ps.request.as_ref().and_then(|r| r.version), Some(plx_plex::plex::MediaId(3082)));
     let env = request_env(&ps, meta.view(), ps.request.as_ref().unwrap(), None);
     assert_eq!(env.version, Some(plx_plex::plex::MediaId(3082)));

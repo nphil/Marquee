@@ -58,6 +58,7 @@
 - Pausing a film while the player is quietly testing a higher streaming quality no longer breaks playback: the test is dropped and the stream carries on.
 - Playback that moves to another quality, or restarts at a new spot, no longer leaves a ghost row on the Plex server's dashboard: the session it moved away from is told it stopped, at the spot where playback carried on.
 - When the Plex server ends a stream (an admin stopping it from the dashboard), playback now stops at once, shows the server's own reason with Back as the only action, and clears the dashboard row, instead of carrying on playing a stream the server had already dropped.
+- Previous in the player always plays the previous episode: after the first five seconds it no longer restarts the current one, which also rewound the progress Plex had saved for it. An episode started from Continue Watching, or from a show, season or episode page, now has the episodes before it in its queue, so Previous is available there too.
 
 ## 0.10.0
 
