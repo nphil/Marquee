@@ -1,23 +1,24 @@
-//! The Requests page's paint: the search field, the poster rows and the status read-out.
+//! The Requests page's paint: the search pill, the poster rows and the status read-out.
 use super::*;
 use plx_ui::consts::MARGIN_X;
-use plx_ui::label::Label;
-use plx_ui::widgets::{StatusKind, StatusOverlay};
+use plx_ui::icons::Icon;
+use plx_ui::widgets::{Button, StatusKind, StatusOverlay, BTN_PILL_AIR};
 use plx_ui::{theme, Env, Painter, View};
 use std::ffi::CString;
 use std::rc::Rc;
 
-const CARET_W: f32 = 5.0;
-const CARET_GAP: f32 = 8.0;
+const CARET_W: f32 = 4.0;
+const CARET_GAP: f32 = 6.0;
 
-/// The field's words as drawn, measured once per edit.
+/// The pill's words as drawn, measured once per edit.
 #[derive(Default)]
 pub(super) struct Resources {
     query: String,
     caret: usize,
     run: Option<Rc<std::ffi::CStr>>,
-    /// The width of the words up to the caret.
-    head_w: f32,
+    /// Where the caret stands, from the pill's centre: the button centres its icon and words as one
+    /// run, so the words start at `run / 2 - words` from the centre.
+    caret_dx: f32,
 }
 
 impl Resources {
@@ -28,12 +29,17 @@ impl Resources {
         self.query.clear();
         self.query.push_str(query);
         self.caret = caret;
-        let width = layout::FIELD.w - CARET_W - CARET_GAP;
+        let size = theme::size::BODY;
+        // What the pill carries around its words: the icon, its gap and the air.
+        let chrome = Button::pill_w_measured(c"", size, true, None, cx.measure);
+        let width = layout::FIELD.w - chrome - CARET_W - CARET_GAP;
         let blank = query.trim().is_empty();
         let words = if blank { plx_platform::i18n::msg::requests_placeholder() } else { query };
-        self.run = Some(cx.measure.fit_line(words, width, theme::size::HERO, true));
-        let head = query.get(..caret).unwrap_or(query);
-        self.head_w = if blank { 0.0 } else { cx.measure.width_str(head, theme::size::HERO, true).min(width) };
+        let (run, words_w) = cx.measure.fit_line_measured(words, width, size, true);
+        let head_w = if blank { 0.0 } else { cx.measure.width_str(query.get(..caret).unwrap_or(query), size, true).min(words_w) };
+        let run_w = Button::pill_w_measured(&run, size, true, None, cx.measure) - BTN_PILL_AIR;
+        self.caret_dx = run_w / 2.0 - words_w + head_w;
+        self.run = Some(run);
     }
 }
 
@@ -59,26 +65,18 @@ pub(super) fn draw<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_
 
 fn field<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p: Painter) {
     let rect = Rect::new(layout::FIELD.x, layout::FIELD.y - screen.stack.scroll(), layout::FIELD.w, layout::FIELD.h);
-    let blank = screen.query.text().trim().is_empty();
     let hot = screen.editing || f.cx.focus.current == Some(screen.key(FIELD));
-    let ink = match (blank, hot) {
-        (true, false) => theme::TEXT_TERTIARY,
-        (true, true) => theme::TEXT_SECONDARY,
-        (false, false) => theme::TEXT_SECONDARY,
-        (false, true) => theme::TEXT_PRIMARY,
-    };
     if let Some(run) = &screen.render.run {
-        let (cap_top, cap_base) = plx_gfx::text::text_cap_band(theme::size::HERO, 1);
-        let pad = plx_gfx::text::text_height(theme::size::HERO, 1) - rect.h;
-        let _clip = f.clip(p, Rect::new(rect.x, rect.y, rect.w, rect.h + pad.max(0.0)));
-        Label::new(run.as_ptr(), theme::size::HERO, ink).bold().draw(p, rect);
+        Button::new(run.as_ptr(), theme::size::BODY, rect).icon(Icon::Search).focused(hot).draw(&Env::inert(), p);
         if screen.editing && screen.blink_us < BLINK_US {
-            let text_y = plx_gfx::text::text_vcenter_y(theme::size::HERO, 1, rect.cy());
+            let (cap_top, cap_base) = plx_gfx::text::text_cap_band(theme::size::BODY, 1);
+            let text_y = plx_gfx::text::text_vcenter_y(theme::size::BODY, 1, rect.cy());
+            // The pill is focused while it is edited, so it wears the focused face's dark ink.
             p.rect(
-                Rect::new(rect.x + screen.render.head_w, text_y + cap_top, CARET_W, cap_base - cap_top),
+                Rect::new(rect.cx() + screen.render.caret_dx, text_y + cap_top, CARET_W, cap_base - cap_top),
                 0.0,
-                theme::TEXT_PRIMARY,
-                theme::TEXT_PRIMARY,
+                theme::ACCENT_INK,
+                theme::ACCENT_INK,
                 0.0,
             );
         }

@@ -128,8 +128,8 @@
     "description": "Requests area. Label of the top bar pill. One word."
   },
   "requests.placeholder": {
-    "value": "Search to request",
-    "description": "Requests area. Placeholder in the search field."
+    "value": "Search",
+    "description": "Requests area. Label of the search pill in the page header; the same word as the top bar's Search."
   },
   "requests.mine": {
     "value": "My requests",

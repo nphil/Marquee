@@ -30,7 +30,7 @@
   "seerr.status_failed": "Seerr не смог это сделать. Повторите позже.",
   "requests.title": "Запросы",
   "requests.tab": "Запросы",
-  "requests.placeholder": "Поиск для запроса",
+  "requests.placeholder": "Поиск",
   "requests.mine": "Мои запросы",
   "requests.trending": "В тренде",
   "requests.movies": "Популярные фильмы",
