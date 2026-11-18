@@ -178,6 +178,20 @@ thread_local! {
     static WAS_MOVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Would [`should_present`] present this frame on what the update phase has reported so far:
+/// motion, the settle frame after it, damage, a wake, the video plane or a closed gate? Speculative
+/// work that must not cost a presented frame runs only when this is false. A report raised later
+/// in the frame can still make it present.
+pub fn presenting_so_far() -> bool {
+    MOVING.with(|m| m.get())
+        || WAS_MOVING.with(|w| w.get())
+        || DIRTY.load(Relaxed)
+        || WAKE.load(Relaxed)
+        || PRESENT_DAMAGE_GEN.with(|seen| seen.get() != DAMAGE_GEN.load(Relaxed))
+        || VIDEO_PLANE.load(Relaxed)
+        || !ENABLED.load(Relaxed)
+}
+
 /// A discrete change happened; present once more. Taken-and-cleared by [`should_present`] — NOT by
 /// [`note_present`], so that a report raised during a draw survives to the frame it belongs to.
 static DIRTY: AtomicBool = AtomicBool::new(true);

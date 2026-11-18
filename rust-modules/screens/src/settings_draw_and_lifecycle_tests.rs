@@ -190,6 +190,7 @@ fn every_root_detail_line_fits_a_known_good_width() {
 /// A Settings surface at rest on the root, its focus on `row`, with an empty text cache.
 fn root_focused_on(row: RootId) -> RouteSurface {
     plx_gfx::text::reset_prewarm_for_test();
+    plx_machine::idle::reset_for_test();
     plx_gfx::text::begin_frame();
     let mut s = RouteSurface::new(EntryId(0), InstanceId(0), Family::Settings, SettingsPage::Root);
     step(&mut s, ScreenEvent::Mount, None);
@@ -198,13 +199,25 @@ fn root_focused_on(row: RootId) -> RouteSurface {
     s
 }
 
-/// One presented frame's prepare pass; `moving` when a spring moved in its update phase.
-fn prepare_frame(s: &mut RouteSurface, moving: bool) {
+/// One iteration of the loop: its update phase ticks every body (a spring moved in it when
+/// `moving`), then the present gate judges it, which the next frame's settle test reads.
+fn frame(s: &mut RouteSurface, moving: bool, ms: u32) {
     plx_machine::idle::frame_begin(1.0 / 120.0);
     if moving {
         plx_machine::idle::note_motion();
     }
-    <RouteSurface as Screen<InnerHost>>::prepare(s, &mut Budget::new(), &cx(None));
+    step(s, ScreenEvent::Tick(Tick { ms, dt_us: 8_333 }), None);
+    let _ = plx_machine::idle::should_present(ms);
+}
+
+/// Still frames until one lays out the focused row's page.
+fn still_frames(s: &mut RouteSurface) {
+    for i in 1..120u32 {
+        frame(s, false, 1_000 + i * 8);
+        if plx_gfx::text::background_prewarm_pending() {
+            return;
+        }
+    }
 }
 
 /// **The focused row's page is laid out while Settings is still, so its push draws no cold
@@ -214,7 +227,7 @@ fn the_focused_rows_page_is_warm_before_its_push() {
     let _g = plx_base::testlock::serial();
     let _sess = seated_scratch_session("settings-lookahead-warm");
     let mut s = root_focused_on(RootId::Playback);
-    prepare_frame(&mut s, false);
+    still_frames(&mut s);
     assert!(plx_gfx::text::background_prewarm_pending(), "Playback's strings wait for idle time");
     for _ in 0..64 {
         plx_ui::panel_motion::PanelMotion::drain_idle_text(|| plx_gfx::text::rasterised_for_test() * 1000);
@@ -235,21 +248,25 @@ fn the_focused_rows_page_is_warm_before_its_push() {
     plx_gfx::text::reset_prewarm_for_test();
 }
 
-/// **The look-ahead spends no moving frame, and drops its queue once the surface slides or leaves.**
+/// **The look-ahead spends no presented frame and drops its queue once the surface slides or
+/// leaves.** It runs on a tick, as Settings at rest presents almost no frames, but neither on a
+/// moving one nor on the settle frame after it, which presents too.
 #[test]
-fn the_look_ahead_waits_for_a_still_frame_and_yields_to_a_slide() {
+fn the_look_ahead_waits_for_an_unpresented_frame_and_yields_to_a_slide() {
     let _g = plx_base::testlock::serial();
     let _sess = seated_scratch_session("settings-lookahead-yield");
     let mut s = root_focused_on(RootId::Playback);
-    prepare_frame(&mut s, true);
+    frame(&mut s, true, 8);
     assert!(!plx_gfx::text::background_prewarm_pending(), "a moving frame keeps its budget");
-    prepare_frame(&mut s, false);
-    assert!(plx_gfx::text::background_prewarm_pending());
+    frame(&mut s, false, 16);
+    assert!(!plx_gfx::text::background_prewarm_pending(), "so does the settle frame after it");
+    still_frames(&mut s);
+    assert!(plx_gfx::text::background_prewarm_pending(), "the frames after that lay the page out");
     forwarded(&mut s, Fx::Nav(NavOp::Push(SettingsPage::Legal)));
-    prepare_frame(&mut s, true);
+    frame(&mut s, true, 2_000);
     assert!(!plx_gfx::text::background_prewarm_pending(), "the slide drops the queue");
     settle(&mut s);
-    prepare_frame(&mut s, false);
+    still_frames(&mut s);
     assert!(plx_gfx::text::background_prewarm_pending(), "the arrived page warms its own focused row's page");
     step(&mut s, ScreenEvent::WillLeave(plx_machine::machine::Leave::ForGood), None);
     assert!(!plx_gfx::text::background_prewarm_pending(), "a leaving surface drops it too");

@@ -461,11 +461,11 @@ impl RouteSurface {
         self.top().map_or(word::SETTINGS, |i| i.screen.name())
     }
 
-    /// On a still frame (the one a focus move settles on), mount the focused row's page off the
-    /// stack, walk it through the text recorder and drop it; its strings rasterise in idle time,
-    /// so a push slides on its very next frame with the text resident. The throwaway page's
-    /// effects are discarded and the walk is a speculative pass (`ui::rec::speculative`), so
-    /// nothing logical or graded comes of it.
+    /// On an unpresented frame, mount the focused row's page off the stack, walk it through the
+    /// text recorder and drop it; its strings rasterise in idle time, so a push slides on its very
+    /// next frame with the text resident. The throwaway page's effects are discarded and the walk
+    /// is a speculative pass (`ui::rec::speculative`), so nothing logical or graded comes of it.
+    /// Called on every tick: Settings at rest presents almost no frames.
     fn look_ahead(&mut self, cx: &Cx<'_, InnerHost>) {
         let next = if self.at_rest() { self.top().and_then(|i| i.screen.next_page()) } else { None };
         if next.is_some() && self.lookahead.is_some_and(|(page, _)| Some(page) == next) {
@@ -473,9 +473,10 @@ impl RouteSurface {
         }
         self.cancel_lookahead();
         let Some(page) = next else { return };
-        // A moving frame keeps its budget. A foreground recording or another screen's
-        // speculative page owns the queues first.
-        if plx_machine::idle::present_moving() || plx_gfx::text::prewarm_pending()
+        // Only a frame that will not present: a moving one, the settle frame after it and one
+        // with damage keep their budget. A foreground recording or another screen's speculative
+        // page owns the queues first.
+        if plx_machine::idle::presenting_so_far() || plx_gfx::text::prewarm_pending()
             || plx_gfx::text::background_prewarm_pending()
         {
             return;
@@ -845,6 +846,8 @@ impl RouteSurface {
             }
         }
         self.forward(out, cx, fx);
+        // after every body stepped, so a page still moving defers it
+        self.look_ahead(&inner_cx(cx));
     }
 }
 
@@ -899,7 +902,6 @@ impl<H: DirectoryLike> Screen<H> for RouteSurface {
                 i.screen.prepare(b, &icx);
             }
         }
-        self.look_ahead(&icx);
     }
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
         let a = f.page_alpha;
