@@ -933,7 +933,7 @@ fn the_top_bar_draws_every_label_at_full_ink_in_one_weight_per_frame() {
         TabFace::Icon(crate::icons::Icon::Bookmark),
         TabFace::Icon(crate::icons::Icon::Search),
     ];
-    let labels = TabLabels { generation: 1, faces: &faces };
+    let labels = TabLabels { generation: 1, faces: &faces, split: usize::MAX };
     let words = ["Home", "Movies", "TV Shows"];
     let mut mid_weight_frames = 0;
     let mut stepped = 0;
@@ -1009,7 +1009,7 @@ fn painted_pill_frames_stand_one_gap_apart_in_the_top_bar_and_in_a_strip() {
         TabFace::Label("TV Shows".into()),
         TabFace::Icon(crate::icons::Icon::Search),
     ];
-    let labels = TabLabels { generation: 1, faces: &faces };
+    let labels = TabLabels { generation: 1, faces: &faces, split: usize::MAX };
     let mut strip = StripRender::new();
     let mut band = TabBand::new();
     for _ in 0..90 {
@@ -1023,7 +1023,7 @@ fn painted_pill_frames_stand_one_gap_apart_in_the_top_bar_and_in_a_strip() {
     }
     // the Search icon pill's frame is the geometry's (an icon has no run to read): TAB_ICON_PILL_W
     // wide, and one TAB_GAP after the last label's painted frame
-    let search = with_tab_metrics_for(labels, |_, _, widths| tab_geometry(widths, 0.0).pill(3));
+    let search = with_tab_metrics_for(labels, |_, _, widths| tab_geometry(widths, 0.0, TabSide::Middle).pill(3));
     assert_eq!(search.w, TAB_ICON_PILL_W, "the Search pill is the icon pill's width");
     let air = search.x - (bar[2].0 + bar[2].1);
     assert!((air - TAB_GAP).abs() <= 0.5, "the Search pill's frame stands {air} after TV Shows, not {TAB_GAP}");

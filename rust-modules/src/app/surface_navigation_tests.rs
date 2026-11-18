@@ -1395,16 +1395,16 @@ fn search_route_steps_the_shared_strip_so_its_published_rects_do_not_go_stale() 
         .map(|i| plx_ui::widgets::TabFace::Label(format!("Wide Destination Label Number {i}")))
         .collect();
     rig.strip.reveal(
-        plx_ui::widgets::TabLabels { generation: 1, faces: &wide },
+        plx_ui::widgets::TabLabels { generation: 1, faces: &wide, split: usize::MAX },
         wide.len() - 1,
     );
 
     super::show_page(&mut d, AppArg::Search);
     rig.capture_chrome(&mut d);
 
-    let base = plx_ui::dispatch::STRIP_BASE;
+    // The Home pill is in the middle pill, the one that scrolls; the right pill holding Search never does.
     let search_member = |d: &Dispatcher<AppHost>| {
-        d.nav.tabs.strip.iter().find(|m| m.elem == base + 3).copied().expect("Search pill published")
+        d.nav.tabs.strip.iter().find(|m| m.elem == plx_screens::home::STRIP_HOME_ELEM).copied().expect("Home pill published")
     };
     let before = search_member(&d);
     let stale_gap = (before.drawn.x - before.target.x).abs();
@@ -1424,6 +1424,31 @@ fn search_route_steps_the_shared_strip_so_its_published_rects_do_not_go_stale() 
         "the strip's published rect must travel to its target once Search steps it each frame \
          (stale={stale_gap}, settled after 1s={settled_gap}) — losing the Search chrome arm \
          again silently reproduces the frozen capsule / stale pointer targets this pins");
+}
+
+/// **A page whose own pill the profile hides marks no pill.** It is reached by a link or a voice
+/// command, so it still opens; the strip does not publish the hidden pill, nothing is marked, and a
+/// move up from the page lands on Home, which is never hidden.
+#[test]
+fn a_page_whose_pill_is_hidden_marks_none_and_falls_back_to_home() {
+    use plx_plex::plex::top_bar::{with_item, BarHidden, BarItem};
+    let _guard = plx_base::testlock::serial();
+    let mut d = Dispatcher::<AppHost>::new();
+    let mut rig = Bridge::for_test(|| 0);
+    rig.stores.browse.borrow_mut().seed_two_source_table_for_test();
+    rig.refresh_browse_directory();
+    super::show_page(&mut d, AppArg::Search);
+    rig.capture_chrome(&mut d);
+    assert!(d.nav.tabs.strip_selected.is_some(), "premise: Search marks its own pill while it is shown");
+    let search = plx_ui::widgets::TAB_KEY_SEARCH;
+    assert!(d.nav.tabs.strip.iter().any(|m| m.elem == search));
+
+    let hidden = BarHidden::from_names(&with_item(&[], BarItem::Search, true));
+    rig.directory = std::mem::take(&mut rig.directory).with_bar_hidden(hidden);
+    rig.capture_chrome(&mut d);
+    assert!(d.nav.tabs.strip.iter().all(|m| m.elem != search), "a hidden pill publishes no stop");
+    assert_eq!(d.nav.tabs.strip_selected, None, "no pill is marked");
+    assert_eq!(d.nav.tabs.strip_fallback, Some(plx_screens::home::STRIP_HOME_ELEM));
 }
 
 /// **A second open of the detail page already on its way is not a new navigation** — the detail

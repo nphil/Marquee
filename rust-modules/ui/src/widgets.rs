@@ -6649,8 +6649,21 @@ const TAB_GAP: f32 = 16.0;
 /// the screen less a symmetric chip-clearing margin, less the track's own inset on both ends. The
 /// track stays glass while the pills scroll inside it ([`tab_glass_on`]): the width never decides
 /// the material.
-const TAB_SIDE_CLEAR: f32 = CHIP_FRAME.x + CHIP_D + theme::space::MD;
+///
+/// The right pill is the other thing the centred row must clear, so the clearance is the wider of
+/// the two sides: the chip on the left, the right pill at its widest on the right
+/// ([`TAB_RIGHT_TRACK_MAX`]). The row stays centred, so both sides get the larger figure.
+const TAB_SIDE_CLEAR: f32 = {
+    let chip = CHIP_FRAME.x + CHIP_D + theme::space::MD;
+    let right = crate::consts::MARGIN_X + TAB_RIGHT_TRACK_MAX + theme::space::MD;
+    if chip > right { chip } else { right }
+};
 const TAB_VIEW_MAX: f32 = crate::consts::SCR_W - 2.0 * (TAB_SIDE_CLEAR + TAB_TRACK_PAD);
+/// The top-right pill's widest content: two icon marks (Watchlist, Search) a gap apart. It holds
+/// only marks, so it never scrolls and its width is its content.
+const TAB_RIGHT_VIEW_MAX: f32 = 2.0 * TAB_ICON_PILL_W + TAB_GAP;
+/// …and its track, the pill area plus the uniform inset: what the middle row clears.
+const TAB_RIGHT_TRACK_MAX: f32 = TAB_RIGHT_VIEW_MAX + 2.0 * TAB_TRACK_PAD;
 /// **The shared top bar's outermost drawn chrome, for the overscan audit**
 /// ([`crate::consts::SAFE`]) — the one band Home, the Library and Search all wear, i.e. the
 /// "main page" LG's checklist item #2 is about.
@@ -6680,40 +6693,54 @@ pub fn overscan_rects(out: &mut Vec<(&'static str, Rect)>) {
             TAB_PILL_H,
         ),
     ));
+    out.push((
+        "top right pill",
+        Rect::new(
+            crate::consts::SCR_W - crate::consts::MARGIN_X - TAB_RIGHT_TRACK_MAX,
+            TOP_BAR_Y - TAB_TRACK_PAD,
+            TAB_RIGHT_TRACK_MAX,
+            TAB_PILL_H + 2.0 * TAB_TRACK_PAD,
+        ),
+    ));
     out.push(("profile chip", CHIP_FRAME));
     out.push(("profile chip, focused capsule", CHIP_CAP_MAX));
 }
 
-/// The overscan rect and the strip's real geometry agree at the widest the strip is shown: six
-/// focus stops (Home, both type pills, the Watchlist and Search marks, the chip) fit without scrolling.
+/// The overscan rects and the bar's real geometry agree at the widest the bar is shown: the middle
+/// pill (Home, both type pills, Requests) fits without scrolling, and the right pill (the Watchlist
+/// and Search marks) sits inside its own audited rect.
 #[cfg(test)]
 mod overscan_strip_tests {
     use super::*;
 
     #[test]
-    fn six_stops_do_not_scroll_and_the_drawn_track_clears_the_overscan_rect() {
+    fn the_stops_do_not_scroll_and_both_drawn_tracks_clear_the_overscan_rects() {
         let faces = [
             TabFace::Label("Home".into()),
             TabFace::Label("Movies".into()),
             TabFace::Label("TV Shows".into()),
+            TabFace::Label("Requests".into()),
             TabFace::Icon(crate::icons::Icon::Bookmark),
             TabFace::Icon(crate::icons::Icon::Search),
         ];
+        let split = 4;
         // A generous per-glyph measure: wider than any shipped label at BODY.
         let widths = tab_metrics_from(&faces, |s| s.to_bytes().len() as f32 * 20.0).1;
-        assert!(tab_content_w(&widths) <= TAB_VIEW_MAX, "five pills must fit the strip's viewport");
-        for idx in 0..faces.len() {
-            assert_eq!(tab_scroll_target(&widths, idx, 0.0), 0.0, "stop {idx} must not scroll the strip");
+        let (middle, right) = (tab_side(&widths, split, TabSide::Middle), tab_side(&widths, split, TabSide::Right));
+        assert!(tab_content_w(middle) <= TAB_VIEW_MAX, "the middle pill must fit its viewport");
+        for idx in 0..middle.len() {
+            assert_eq!(tab_scroll_target(middle, idx, 0.0), 0.0, "stop {idx} must not scroll the strip");
         }
-        let geometry = tab_geometry(&widths, 0.0);
         let mut rects = Vec::new();
         overscan_rects(&mut rects);
-        let (_, outer) = rects.iter().copied().find(|(name, _)| *name == "top tab track (widest)")
-            .expect("the strip publishes its widest track to the audit");
-        let track = geometry.track;
-        assert!(track.x >= outer.x && track.x + track.w <= outer.x + outer.w + 0.5,
-            "the drawn track must sit inside the widest track the audit checks");
-        assert!(track.y >= outer.y && track.y + track.h <= outer.y + outer.h + 0.5);
+        let audited = |name: &str| rects.iter().copied().find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("the bar publishes {name} to the audit")).1;
+        for (side, widths, name) in [(TabSide::Middle, middle, "top tab track (widest)"), (TabSide::Right, right, "top right pill")] {
+            let (outer, track) = (audited(name), tab_geometry(widths, 0.0, side).track);
+            assert!(track.x >= outer.x && track.x + track.w <= outer.x + outer.w + 0.5,
+                "the drawn {name} must sit inside the widest one the audit checks");
+            assert!(track.y >= outer.y && track.y + track.h <= outer.y + outer.h + 0.5);
+        }
     }
 }
 
@@ -6742,6 +6769,9 @@ pub struct StripRender {
     /// down here (`library::view_section`), which is what puts the capsule on the new pill while
     /// the grid is still dissolving under it.
     top_strip: TabStrip,
+    /// The capsules of the pill at the top right: the same material and motion as `top_strip`, on
+    /// the stops past the split ([`TabLabels::split`]).
+    right_strip: TabStrip,
     /// How far the chip is into its focused face, 0..1. Owned here for the same reason `tab_scroll`
     /// is: ONE bar is drawn by three screens, and the unfurl has to carry ACROSS a
     /// Home↔Library↔Search route flip rather than restart on the far side. It lived in `home.rs`
@@ -6832,6 +6862,7 @@ impl StripRender {
         Self {
             tab_scroll: crate::Spring::at(0.0),
             top_strip: TabStrip::new(),
+            right_strip: TabStrip::new(),
             chip_expand: crate::Spring::at(0.0),
             pulse: None,
         }
@@ -7535,6 +7566,38 @@ pub enum TabFace {
 pub struct TabLabels<'a> {
     pub generation: u32,
     pub faces: &'a [TabFace],
+    /// How many of the leading `faces` stand in the MIDDLE pill; the rest stand in the pill at the
+    /// top right. The faces stay one list in visual order, so a pill index is the same number to
+    /// the focus, the selection and the pulse whichever side it is on ([`TabSide`]).
+    pub split: usize,
+}
+
+/// Which of the bar's two glass pills a stop stands in. The middle pill is centred between the
+/// profile chip and the right pill and scrolls when it outgrows its viewport; the right one is
+/// anchored to the right safe margin and holds only marks, so it never scrolls.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TabSide {
+    Middle,
+    Right,
+}
+
+/// The faces/widths/keys of one side of the bar, cut from the one list at `split`.
+fn tab_side<T>(all: &[T], split: usize, side: TabSide) -> &[T] {
+    let (middle, right) = all.split_at(split.min(all.len()));
+    match side {
+        TabSide::Middle => middle,
+        TabSide::Right => right,
+    }
+}
+
+/// A global pill index as the side's own index, or `-1` ("not on this side": the strip's mark
+/// reads a negative or out-of-range index as nothing to mark).
+fn tab_local(idx: c_int, split: usize, side: TabSide) -> c_int {
+    match side {
+        TabSide::Middle if idx >= 0 && (idx as usize) < split => idx,
+        TabSide::Right if idx >= 0 && idx as usize >= split => idx - split as c_int,
+        _ => -1,
+    }
 }
 
 /// Build glyph runs and widths from an explicitly supplied vocabulary. The application's
@@ -7565,19 +7628,28 @@ pub fn tab_widths(faces: &[TabFace], measure: &dyn plx_machine::machine::Measure
 /// static read, since the caller (`app::chrome::ChromeSnapshot::members`) has no `StripRender` of
 /// its own to reach into; `app::bridge::Bridge` is the one place both live, and it threads the
 /// value through.
-pub fn tab_members(widths: &[f32], keys: &[u32], selected: c_int, focus: TopFocus,
+///
+/// `widths` and `keys` are the whole bar in visual order, the middle pill's first; `split` is how
+/// many belong to it. The right pill's members never scroll, so only the middle ones follow `scroll`.
+pub fn tab_members(widths: &[f32], keys: &[u32], split: usize, selected: c_int, focus: TopFocus,
     scroll: f32, out: &mut Vec<crate::containers::tabs::StripMember<u32>>) {
+    debug_assert_eq!(widths.len(), keys.len());
     let index = if focus.pill() >= 0 { focus.pill() } else { selected.max(0) } as usize;
-    let target = tab_scroll_target(widths, index, scroll);
-    tab_members_at(widths, keys, scroll, target, out);
+    let middle = tab_side(widths, split, TabSide::Middle);
+    let target = tab_scroll_target(middle, index, scroll);
+    for side in [TabSide::Middle, TabSide::Right] {
+        let (widths, keys) = (tab_side(widths, split, side), tab_side(keys, split, side));
+        let (scroll, target) = if side == TabSide::Middle { (scroll, target) } else { (0.0, 0.0) };
+        tab_members_at(widths, keys, side, scroll, target, out);
+    }
 }
 
-fn tab_members_at(widths: &[f32], keys: &[u32], scroll: f32, target: f32,
+fn tab_members_at(widths: &[f32], keys: &[u32], side: TabSide, scroll: f32, target: f32,
     out: &mut Vec<crate::containers::tabs::StripMember<u32>>) {
     debug_assert_eq!(widths.len(), keys.len());
-    let drawn = tab_geometry(widths, scroll);
-    let resting = tab_geometry(widths, target);
-    for (i, (_, &elem)) in widths.iter().zip(keys).enumerate() {
+    let drawn = tab_geometry(widths, scroll, side);
+    let resting = tab_geometry(widths, target, side);
+    for (i, &elem) in keys.iter().enumerate() {
         out.push(crate::containers::tabs::StripMember {
             elem,
             drawn: drawn.pill(i),
@@ -7633,12 +7705,14 @@ fn tab_content_w(widths: &[f32]) -> f32 {
 fn tab_stack(widths: &[f32]) -> HStack<'_> {
     HStack::widths(widths, TAB_GAP, StackAlign::Leading(0.0))
 }
-/// The VISIBLE pill area: the strip's own width until it outgrows [`TAB_VIEW_MAX`], then that.
+/// The MIDDLE row's VISIBLE pill area: the strip's own width until it outgrows [`TAB_VIEW_MAX`],
+/// then that. (The right pill's is its content: it holds at most two marks, [`TAB_RIGHT_VIEW_MAX`].)
 fn tab_view_w(widths: &[f32]) -> f32 {
     tab_content_w(widths).min(TAB_VIEW_MAX).max(0.0)
 }
-/// The TRACK's own width — the pill area plus its uniform inset on both sides. What the chip's name
-/// budget is solved against ([`chip_name_budget`]), and what `draw_tab_row` builds its rect from.
+/// The MIDDLE track's own width — the pill area plus its uniform inset on both sides. What the
+/// chip's name budget is solved against ([`chip_name_budget`]), and what `draw_tab_row` builds its
+/// rect from.
 pub fn tab_track_w(widths: &[f32]) -> f32 {
     tab_view_w(widths) + 2.0 * TAB_TRACK_PAD
 }
@@ -7669,9 +7743,20 @@ impl TabGeometry<'_> {
 }
 
 /// The one geometry expression consumed by both paint and the container's keyed members.
-fn tab_geometry(widths: &[f32], scroll: f32) -> TabGeometry<'_> {
-    let view_w = tab_view_w(widths);
-    let x0 = (crate::consts::SCR_W - view_w) * 0.5;
+///
+/// The middle row is centred on the screen; the right pill's track ends at the right safe margin
+/// ([`crate::consts::MARGIN_X`]), at the same y and height, so the two read as one band.
+fn tab_geometry(widths: &[f32], scroll: f32, side: TabSide) -> TabGeometry<'_> {
+    let (view_w, x0) = match side {
+        TabSide::Middle => {
+            let view_w = tab_view_w(widths);
+            (view_w, (crate::consts::SCR_W - view_w) * 0.5)
+        }
+        TabSide::Right => {
+            let view_w = tab_content_w(widths);
+            (view_w, crate::consts::SCR_W - crate::consts::MARGIN_X - TAB_TRACK_PAD - view_w)
+        }
+    };
     let clip = Rect::new(x0, TOP_BAR_Y, view_w, TAB_PILL_H);
     TabGeometry {
         widths,
@@ -7755,10 +7840,17 @@ impl StripRender {
         // Both reads happen inside the ONE `with_tab_metrics` closure — its doc forbids nesting, and
         // the capsules must be placed from the SAME widths the pills are laid out with, so a capsule
         // can never come to rest somewhere no pill is.
+        let split = data.split;
         let t = with_tab_metrics_for(data, |_, _, w| {
-            let target = tab_scroll_target(w, idx, cur.pos);
-            let span = |i: usize| (i < w.len()).then(|| (tab_pill_x(w, i), w[i]));
-            self.top_strip.update(selected, focused, span, SelMark::Travels, dt);
+            let (mid, right) = (tab_side(w, split, TabSide::Middle), tab_side(w, split, TabSide::Right));
+            let target = tab_scroll_target(mid, idx, cur.pos);
+            fn span(ws: &[f32]) -> impl Fn(usize) -> Option<(f32, f32)> + '_ {
+                move |i| (i < ws.len()).then(|| (tab_pill_x(ws, i), ws[i]))
+            }
+            self.top_strip.update(tab_local(selected, split, TabSide::Middle),
+                tab_local(focused, split, TabSide::Middle), span(mid), SelMark::Travels, dt);
+            self.right_strip.update(tab_local(selected, split, TabSide::Right),
+                tab_local(focused, split, TabSide::Right), span(right), SelMark::Travels, dt);
             target
         });
         self.tab_scroll.step(t, K_TAB_SCROLL, dt);
@@ -7823,16 +7915,15 @@ impl StripRender {
         if n == 0 {
             return;
         }
-        let content_w = tab_content_w(widths);
-        let geometry = tab_geometry(widths, self.tab_scroll.pos);
-        let view_w = geometry.clip.w;
+        let (mid, right) = (tab_side(widths, data.split, TabSide::Middle), tab_side(widths, data.split, TabSide::Right));
+        let geometry = tab_geometry(mid, self.tab_scroll.pos, TabSide::Middle);
+        let right_geometry = (!right.is_empty()).then(|| tab_geometry(right, 0.0, TabSide::Right));
         // ONE translucent dark capsule contains the whole row — the tvOS tab-bar track. It (not the
         // segments) owns legibility over bright hero art: inside it the segments keep their clean
         // season-tab looks (plain = bare dim text). Sheened for the 1px glass rim. The uniform inset
         // (and so the concentric radii) is [`TAB_TRACK_PAD`], shared with the focused profile chip.
         // The track is the strip's width until the strip outgrows the screen, then it caps and the
         // pills scroll inside it — the track itself never moves.
-        let x0 = geometry.clip.x;
         let track = geometry.track;
         // The dispatcher owns the whole chrome band as one z layer. This widget has no
         // source-pass or modal exclusion: declaration, source and visible walks share this draw.
@@ -7904,6 +7995,10 @@ impl StripRender {
             }
             LAST.store(n.wrapping_add(1), Relaxed);
         }
+        // The pill at the top right wears the band's one material: it is the same object as the middle
+        // track, solved once from the middle track's ground (like the chip, it is not sampled itself).
+        // It is absent, not empty, when every mark in it is hidden, in every walk alike.
+        for track in [Some(track), right_geometry.map(|g| g.track)].into_iter().flatten() {
         if glass_on {
             // The track never moves, so its drawn rect IS its rest rect — no slide to correct for.
             // Hoisted out of the call, because it is now the BAND's face and not just this
@@ -7987,14 +8082,23 @@ impl StripRender {
                 theme::TAB_TRACK_BOT,
             );
         }
+        }
         // A strip wider than its track is a bounded panel, not a scrolling document, so this is the
         // scissor case (see the ui/CLAUDE.md clipping rule): a pill leaving the row is cut at the
         // pill area's edge — which is also the "there is more over there" affordance. Paired below.
         // A non-zero scroll clips too even when the strip fits: the viewport can shrink
         // (sign-out, server switch) and the spring takes a few frames to unwind, and those frames
         // must not paint pills outside the track.
-        let view = geometry.clip;
-        let sx = self.tab_scroll.pos;
+        for side in [TabSide::Middle, TabSide::Right] {
+        let (geometry, strip, first, sx) = match side {
+            TabSide::Middle => (Some(geometry), &mut self.top_strip, 0, self.tab_scroll.pos),
+            TabSide::Right => (right_geometry, &mut self.right_strip, data.split, 0.0),
+        };
+        let Some(geometry) = geometry else { continue };
+        let (faces, words, widths) = (
+            tab_side(faces, data.split, side), tab_side(words, data.split, side), tab_side(widths, data.split, side));
+        let (content_w, view_w) = (tab_content_w(widths), geometry.clip.w);
+        let (x0, view) = (geometry.clip.x, geometry.clip);
         let scrolls = content_w > view_w + 0.5 || sx.abs() > 0.5;
         // A `ClipScope`, not the bare `p.clip(view)`: a pill a capsule's edge crosses is painted in
         // stretches, each in a scissor of its own, and a scope restores THIS clip when it closes
@@ -8007,7 +8111,7 @@ impl StripRender {
         // pills' ground. This strip is NOT plated — it sits inside the tab-bar track above, which
         // already is the ground, so the pills paint no fill of their own at all here.
         let cp = p.translate(x0 - sx, 0.0);
-        self.top_strip.draw(
+        strip.draw(
             cp,
             TOP_BAR_Y,
             TAB_PILL_H,
@@ -8017,7 +8121,7 @@ impl StripRender {
         // pills are all present, so the i-th span is pill i, and the rect and the capsule coverage
         // both read its x. The hit test builds the SAME stack from the same widths.
         let mut stand = tab_stack(widths).placed();
-        for i in 0..n {
+        for i in 0..faces.len() {
             let px = stand.next().map_or(0.0, |span| span.x);
             let r = geometry.pill_at(px, i);
             // ONE rule for "is this pill on screen": its rect clipped to the viewport. The clipped
@@ -8029,7 +8133,7 @@ impl StripRender {
                 // ink comes from what the capsules above cover of each PIXEL of this pill — never from
                 // its own booleans, or a mid-travel label could darken toward ACCENT_INK with nothing
                 // bright under it (`pill_ink` reads the shapes `Capsule::drawn` paints, so the fill and the ink agree).
-                let ink = self.top_strip.pill_ink(Rect::new(px, TOP_BAR_Y, widths[i], TAB_PILL_H), TabGround::Tracked { glass: glass_on });
+                let ink = strip.pill_ink(Rect::new(px, TOP_BAR_Y, widths[i], TAB_PILL_H), TabGround::Tracked { glass: glass_on });
                 match &faces[i] {
                     // An icon face is a MARK, and it takes its ink from exactly the same
                     // `mixed_ink` the labels do — so it darkens toward ACCENT_INK under the focus
@@ -8037,7 +8141,7 @@ impl StripRender {
                     TabFace::Icon(icon) => {
                         let d = TAB_ICON_D;
                         let ir = Rect::new(r.x + (r.w - d) * 0.5, r.y + (r.h - d) * 0.5, d, d);
-                        let env = pulse.filter(|&(at, _)| at == i).map_or(0.0, |(_, e)| e);
+                        let env = pulse.filter(|&(at, _)| at == first + i).map_or(0.0, |(_, e)| e);
                         // The glow is no ink: laid down once, the glyph inked region by region.
                         let look = tab_pulse_look(ir, env);
                         draw_tab_glow(p, look);
@@ -8057,6 +8161,7 @@ impl StripRender {
             }
         }
         drop(strip_clip);
+        }
     })
     }
 }

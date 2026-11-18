@@ -1167,20 +1167,30 @@ impl Bridge {
         let route = d.top_or_mounting_arg().cloned().unwrap_or(AppArg::Home);
         let route = &route;
         if wears_tab_bar(route) {
-            d.nav.tabs.strip_fallback = Some(match route {
-                AppArg::Search => plx_ui::widgets::TAB_KEY_SEARCH,
-                AppArg::Requests => plx_ui::widgets::TAB_KEY_REQUESTS,
-                AppArg::Watchlist => plx_ui::widgets::TAB_KEY_WATCHLIST,
-                _ => plx_screens::home::STRIP_HOME_ELEM,
-            });
             if let Some(io) = &self.home_io {
                 refresh_chrome(&mut self.chrome, &self.measure, self.directory.view(),
                     Some((&io.profile, &io.preferences)));
             } else {
                 refresh_chrome(&mut self.chrome, &self.measure, self.directory.view(), None);
             }
+            // A page whose own pill the profile hides (opened by a link or a voice command) falls
+            // back to Home, which is never hidden.
+            let own = match route {
+                AppArg::Search => plx_ui::widgets::TAB_KEY_SEARCH,
+                AppArg::Requests => plx_ui::widgets::TAB_KEY_REQUESTS,
+                AppArg::Watchlist => plx_ui::widgets::TAB_KEY_WATCHLIST,
+                _ => plx_screens::home::STRIP_HOME_ELEM,
+            };
+            d.nav.tabs.strip_fallback = Some(if self.chrome.keys.contains(&own) { own } else { plx_screens::home::STRIP_HOME_ELEM });
             // The page's own pill: Home's is the first, and a library page's is its library's type.
-            self.chrome_selection = pill_of_arg(route, self.directory.view()).unwrap_or(0) as u32;
+            // A hidden one is `u32::MAX` (-1 as the strip's index): no pill is marked, and none is
+            // the landing pill for a move up from the page.
+            self.chrome_selection = if bar_item_of_arg(route, self.directory.view())
+                .is_some_and(|item| self.directory.view().bar_hidden().hides(item)) {
+                u32::MAX
+            } else {
+                pill_of_arg(route, self.directory.view()).unwrap_or(0) as u32
+            };
             let selected = self.navigation_presentation().view_tab.unwrap_or(self.chrome_selection) as i32;
             self.publish_strip(d, selected);
         } else {
@@ -3877,6 +3887,24 @@ pub(crate) fn nav_push_with_return(
 pub(crate) fn wears_tab_bar(arg: &AppArg) -> bool {
     use plx_ui::screen::ScreenArg;
     arg.chrome() == plx_machine::machine::Chrome::TabBar
+}
+
+/// The top-bar item a page belongs to, for the profile's visibility record.
+fn bar_item_of_arg(arg: &AppArg, directory: plx_data::stores::browse::DirectoryView<'_>) -> Option<plx_plex::plex::top_bar::BarItem> {
+    use plx_data::stores::browse::SecKind;
+    use plx_plex::plex::top_bar::BarItem;
+    match arg {
+        AppArg::Search => Some(BarItem::Search),
+        AppArg::Requests => Some(BarItem::Requests),
+        AppArg::Watchlist => Some(BarItem::Watchlist),
+        arg if arg.is_library_family() => {
+            Some(match directory.current().map(|i| directory.sections()[i].kind)? {
+                SecKind::Movie => BarItem::Movies,
+                SecKind::Show => BarItem::Shows,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// **Which PILL of the shared strip a page argument is**, for the pending selection the capsule

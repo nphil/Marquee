@@ -399,6 +399,37 @@ fn the_home_strip_walks_both_endpoints_for_every_type_composition() {
     }
 }
 
+/// **Two pills, one row of stops.** RIGHT from the middle pill's last item reaches the right pill's
+/// first, LEFT returns, the ends of the bar stop, and DOWN from either pill leaves the strip for the page.
+#[test]
+fn the_two_pills_are_one_walk_and_down_from_either_reaches_the_page() {
+    use super::widgets::{tab_members, TopFocus, CHIP_FRAME, TAB_KEY_CHIP};
+    let (mut d, mut rig) = boot(FixtureArg::Home);
+    let entry = d.nav.top_page().unwrap().id;
+    // the chip, then the middle pill (Home, Movies) and the right pill (Watchlist, Search)
+    let keys = [STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 5, STRIP_BASE + 3];
+    let mut members = vec![StripMember::new(TAB_KEY_CHIP, CHIP_FRAME)];
+    tab_members(&[140.0, 160.0, 60.0, 60.0], &keys, 2, 0, TopFocus::Away, 0.0, &mut members);
+    d.nav.tabs.strip = members;
+    d.set_focus(Some(FocusKey { entry, elem: keys[1] }));
+    let mut ms = 0;
+    let mut step = |d: &mut Dispatcher<FixtureHost>, dir| {
+        ms += 16;
+        d.frame(&mut rig, tick(ms), vec![key(dir, tick(ms))], vec![], &mut NoTap);
+        d.focus().map(|focus| focus.elem)
+    };
+    assert_eq!(step(&mut d, Key::Right), Some(keys[2]), "RIGHT from the last middle item reaches the right pill");
+    assert_eq!(step(&mut d, Key::Right), Some(keys[3]));
+    assert_eq!(step(&mut d, Key::Right), Some(keys[3]), "the bar ends at the right pill");
+    assert_eq!(step(&mut d, Key::Left), Some(keys[2]));
+    assert_eq!(step(&mut d, Key::Left), Some(keys[1]), "LEFT crosses back to the middle pill");
+    for from in keys {
+        d.set_focus(Some(FocusKey { entry, elem: from }));
+        let landed = step(&mut d, Key::Down).expect("DOWN keeps a focus");
+        assert!(landed < STRIP_BASE, "DOWN from {from:#x} reaches the page, not {landed:#x}");
+    }
+}
+
 #[test]
 fn removing_a_preceding_tab_keeps_the_same_destination_focused() {
     let (mut d, mut rig) = boot(FixtureArg::Home);
@@ -458,7 +489,7 @@ fn strip_pointer_stops_use_drawn_geometry_and_stable_keys() {
 fn publish_bar(d: &mut Dispatcher<FixtureHost>) -> Vec<StripMember<u32>> {
     use super::widgets::{tab_members, TopFocus, CHIP_FRAME, TAB_KEY_CHIP};
     let mut members = vec![StripMember::new(TAB_KEY_CHIP, CHIP_FRAME)];
-    tab_members(&[140.0; 3], &[STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 2], 0, TopFocus::Away, 0.0, &mut members);
+    tab_members(&[140.0; 3], &[STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 2], usize::MAX, 0, TopFocus::Away, 0.0, &mut members);
     d.nav.tabs.strip = members.clone();
     members
 }

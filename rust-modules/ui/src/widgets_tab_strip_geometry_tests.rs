@@ -10,7 +10,7 @@ fn keyed_tab_geometry_uses_the_same_centered_lattice_for_draw_and_target() {
     let widths = [140.0, 220.0, TAB_ICON_PILL_W];
     let keys = [7, 2, 9];
     let mut members = Vec::new();
-    tab_members_at(&widths, &keys, 17.0, 43.0, &mut members);
+    tab_members_at(&widths, &keys, TabSide::Middle, 17.0, 43.0, &mut members);
     assert_eq!(members.iter().map(|m| m.elem).collect::<Vec<_>>(), keys);
     let content = widths.iter().sum::<f32>() + 2.0 * TAB_GAP;
     let left = (crate::consts::SCR_W - content) * 0.5;
@@ -33,9 +33,9 @@ fn tab_geometry_is_shared_by_paint_members_and_clipping() {
     let widths = [900.0, 700.0, TAB_ICON_PILL_W];
     let keys = [7, 2, 9];
     let scroll = 411.0;
-    let geometry = tab_geometry(&widths, scroll);
+    let geometry = tab_geometry(&widths, scroll, TabSide::Middle);
     let mut members = Vec::new();
-    tab_members_at(&widths, &keys, scroll, scroll, &mut members);
+    tab_members_at(&widths, &keys, TabSide::Middle, scroll, scroll, &mut members);
     assert_eq!(widths.len(), members.len());
     let same = |a: Rect, b: Rect| (a.x, a.y, a.w, a.h) == (b.x, b.y, b.w, b.h);
     for (i, member) in members.iter().enumerate() {
@@ -88,15 +88,15 @@ fn tab_metrics_cache_rejects_different_captured_labels_even_at_the_same_generati
         TabFace::Icon(crate::icons::Icon::Search)];
     let (words, widths) = tab_metrics_from(&faces, |_| 42.0);
     let cache = (7, faces.clone(), words, widths);
-    assert!(tab_cache_matches(&cache, TabLabels { generation: 7, faces: &faces }));
-    assert!(!tab_cache_matches(&cache, TabLabels { generation: 8, faces: &faces }));
+    assert!(tab_cache_matches(&cache, TabLabels { generation: 7, faces: &faces, split: usize::MAX }));
+    assert!(!tab_cache_matches(&cache, TabLabels { generation: 8, faces: &faces, split: usize::MAX }));
     let changed = vec![TabFace::Label("Home".into()), TabFace::Label("TV Shows".into()),
         TabFace::Icon(crate::icons::Icon::Search)];
-    assert!(!tab_cache_matches(&cache, TabLabels { generation: 7, faces: &changed }));
-    assert!(!tab_cache_matches(&cache, TabLabels { generation: 7, faces: &faces[..2] }));
+    assert!(!tab_cache_matches(&cache, TabLabels { generation: 7, faces: &changed, split: usize::MAX }));
+    assert!(!tab_cache_matches(&cache, TabLabels { generation: 7, faces: &faces[..2], split: usize::MAX }));
     let mark_as_word = vec![TabFace::Label("Home".into()), TabFace::Label("Movies".into()),
         TabFace::Label(String::new())];
-    assert!(!tab_cache_matches(&cache, TabLabels { generation: 7, faces: &mark_as_word }),
+    assert!(!tab_cache_matches(&cache, TabLabels { generation: 7, faces: &mark_as_word, split: usize::MAX }),
         "an empty word is not the Search mark: the face kind is part of the captured vocabulary");
 }
 
@@ -310,7 +310,7 @@ fn every_thread_reads_its_own_tab_labels_back_from_the_memo() {
             .collect();
         for round in 0..ROUNDS {
             let k = round % 2;
-            let labels = TabLabels { generation: (t * 2 + k) as u32 + 1, faces: &vocabs[k] };
+            let labels = TabLabels { generation: (t * 2 + k) as u32 + 1, faces: &vocabs[k], split: usize::MAX };
             with_tab_metrics_for(labels, |faces, words, widths| {
                 assert_eq!(faces, vocabs[k].as_slice(), "round {round}: another thread's faces");
                 assert_eq!(words, expect[k].0.as_slice(), "round {round}: another thread's words");
@@ -337,7 +337,7 @@ fn the_tab_pulse_envelope_is_zero_at_both_ends_and_one_at_the_peak() {
 fn a_tab_pulse_runs_its_beat_then_is_gone_without_holding_the_page() {
     let _g = serial_for_motion(); // asserts `plx_machine::idle`'s process-global flags
     let faces = [TabFace::Label("Home".into()), TabFace::Icon(crate::icons::Icon::Bookmark)];
-    let labels = TabLabels { generation: 1, faces: &faces };
+    let labels = TabLabels { generation: 1, faces: &faces, split: usize::MAX };
     let mut strip = StripRender::new();
     // The strip's own springs settle first, so what is measured below is the pulse alone.
     for _ in 0..600 {
@@ -368,7 +368,7 @@ fn a_tab_pulse_runs_its_beat_then_is_gone_without_holding_the_page() {
 fn a_running_tab_pulse_reports_motion_not_page_damage() {
     let _g = serial_for_motion(); // resets and asserts `plx_machine::idle`'s process-global flags
     let faces = [TabFace::Label("Home".into()), TabFace::Icon(crate::icons::Icon::Bookmark)];
-    let labels = TabLabels { generation: 1, faces: &faces };
+    let labels = TabLabels { generation: 1, faces: &faces, split: usize::MAX };
     let mut strip = StripRender::new();
     for _ in 0..600 {
         strip.update(labels, 0, TopFocus::Away, 1.0 / 60.0);
@@ -447,4 +447,55 @@ fn the_tab_pulse_grows_the_glyph_with_a_white_glow_and_draws_no_plate() {
 #[test]
 fn the_tab_pulse_is_a_400_ms_beat() {
     assert!((TAB_PULSE_S - 0.4).abs() < 1e-6);
+}
+
+/// The pill at the top right ends at the right safe margin, on the middle row's baseline and
+/// height, so the two read as one band; it holds its marks flush to its inset and never scrolls.
+#[test]
+fn the_right_pill_ends_at_the_safe_margin_on_the_rows_baseline() {
+    let marks = [TAB_ICON_PILL_W, TAB_ICON_PILL_W];
+    let right = tab_geometry(&marks, 0.0, TabSide::Right);
+    let middle = tab_geometry(&[140.0, 220.0], 0.0, TabSide::Middle);
+    assert_eq!(right.track.x + right.track.w, crate::consts::SCR_W - crate::consts::MARGIN_X);
+    assert_eq!((right.track.y, right.track.h), (middle.track.y, middle.track.h));
+    assert_eq!(right.pill(0).y, TOP_BAR_Y);
+    assert_eq!(right.pill(0).x, right.track.x + TAB_TRACK_PAD);
+    assert_eq!(right.pill(1).x + right.pill(1).w + TAB_TRACK_PAD, right.track.x + right.track.w);
+    assert_eq!(right.track.w, TAB_RIGHT_TRACK_MAX, "two marks are the widest the pill is");
+}
+
+/// The widest the centred row can be still leaves a gap to the right pill, as it does to the chip.
+#[test]
+fn the_widest_middle_row_clears_the_right_pill_and_the_chip() {
+    let widest = tab_geometry(&[TAB_VIEW_MAX], 0.0, TabSide::Middle).track;
+    let right = tab_geometry(&[TAB_ICON_PILL_W; 2], 0.0, TabSide::Right).track;
+    assert!(widest.x + widest.w + theme::space::MD <= right.x, "the row meets the right pill");
+    assert!(widest.x >= CHIP_FRAME.x + CHIP_D + theme::space::MD, "the row meets the chip");
+}
+
+/// One list, two pills: the members are published in visual order, the middle pill's follow its
+/// scroll and the right pill's stand still, each clipped to its own pill.
+#[test]
+fn members_of_both_pills_are_published_with_the_right_pill_unscrolled() {
+    let widths = [900.0, 700.0, TAB_ICON_PILL_W, TAB_ICON_PILL_W];
+    let keys = [7, 2, 9, 4];
+    let mut members = Vec::new();
+    tab_members(&widths, &keys, 2, 0, TopFocus::Pill(2), 300.0, &mut members);
+    assert_eq!(members.iter().map(|m| m.elem).collect::<Vec<_>>(), keys);
+    let scrolled = tab_geometry(&widths[..2], 300.0, TabSide::Middle);
+    assert_eq!(members[0].drawn.x, scrolled.pill(0).x);
+    assert_eq!(members[2].drawn.x, members[2].target.x, "the right pill never scrolls");
+    assert_eq!(members[2].clip.x, members[3].clip.x);
+    assert!(members[2].clip.x >= members[1].clip.x + members[1].clip.w, "the pills' clips do not overlap");
+    assert!(members[3].drawn.x + members[3].drawn.w <= crate::consts::SCR_W - crate::consts::MARGIN_X);
+}
+
+/// A global pill index is the side's own index on its side and "not here" on the other, which the
+/// strip's capsule reads as nothing to mark.
+#[test]
+fn a_pill_index_is_local_to_its_side() {
+    for (idx, middle, right) in [(0, 0, -1), (2, 2, -1), (3, -1, 0), (4, -1, 1), (-1, -1, -1)] {
+        assert_eq!(tab_local(idx, 3, TabSide::Middle), middle, "middle of {idx}");
+        assert_eq!(tab_local(idx, 3, TabSide::Right), right, "right of {idx}");
+    }
 }

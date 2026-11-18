@@ -16,26 +16,35 @@ pub(crate) enum Pill {
     Search,
 }
 
-/// The strip's destination keys in strip order: Home, one key per type pill, the Watchlist
-/// bookmark, Requests (only while Seerr is set up), Search. The one
-/// place that order is written; `refresh` publishes it and the pill maps below read it, so no
-/// map assumes which index Search holds.
-fn strip_keys(directory: DirectoryView<'_>, requests: bool) -> Vec<u32> {
+/// The strip's destination keys in strip order, and how many of them stand in the MIDDLE pill.
+/// The middle pill is Home, one key per type pill and Requests (only while Seerr is set up); the
+/// pill at the top right is the Watchlist bookmark and Search. An item the profile hides is not
+/// published at all (`plex::top_bar`), so no stop, face or width exists for it; Home is never
+/// hidden. The one place that order is written; `refresh` publishes it and the pill maps below
+/// read it, so no map assumes which index Search holds.
+fn strip_keys(directory: DirectoryView<'_>, requests: bool) -> (Vec<u32>, usize) {
+    use plx_plex::plex::top_bar::BarItem;
+    let hidden = directory.bar_hidden();
     let mut keys = vec![widgets::TAB_KEY_HOME];
-    keys.extend((0..directory.tab_count()).filter_map(|i| directory.tab_kind(i)).map(|kind| match kind {
-        SecKind::Movie => widgets::TAB_KEY_MOVIES,
-        SecKind::Show => widgets::TAB_KEY_SHOWS,
+    keys.extend((0..directory.tab_count()).filter_map(|i| directory.tab_kind(i)).filter_map(|kind| match kind {
+        SecKind::Movie => (!hidden.hides(BarItem::Movies)).then_some(widgets::TAB_KEY_MOVIES),
+        SecKind::Show => (!hidden.hides(BarItem::Shows)).then_some(widgets::TAB_KEY_SHOWS),
     }));
-    keys.push(widgets::TAB_KEY_WATCHLIST);
-    if requests {
+    if requests && !hidden.hides(BarItem::Requests) {
         keys.push(widgets::TAB_KEY_REQUESTS);
     }
-    keys.push(widgets::TAB_KEY_SEARCH);
-    keys
+    let split = keys.len();
+    if !hidden.hides(BarItem::Watchlist) {
+        keys.push(widgets::TAB_KEY_WATCHLIST);
+    }
+    if !hidden.hides(BarItem::Search) {
+        keys.push(widgets::TAB_KEY_SEARCH);
+    }
+    (keys, split)
 }
 
 pub(crate) fn pill_at(directory: DirectoryView<'_>, i: usize) -> Pill {
-    pill_in(i, &strip_keys(directory, requests_on()))
+    pill_in(i, &strip_keys(directory, requests_on()).0)
 }
 
 /// The destination a strip index names, by the KEY published at that index.
@@ -51,7 +60,7 @@ fn pill_in(i: usize, keys: &[u32]) -> Pill {
 }
 
 pub(crate) fn pill_of(directory: DirectoryView<'_>, pill: Pill) -> Option<usize> {
-    pill_index(pill, &strip_keys(directory, requests_on()))
+    pill_index(pill, &strip_keys(directory, requests_on()).0)
 }
 
 fn pill_index(pill: Pill, keys: &[u32]) -> Option<usize> {
@@ -76,6 +85,10 @@ pub(crate) struct ChromeSnapshot {
     tabs_generation: Option<u32>,
     /// Whether the strip as captured carries the Requests pill.
     requests: bool,
+    /// The items the profile hides, as captured: a change re-derives the strip like a new library does.
+    hidden: plx_plex::plex::top_bar::BarHidden,
+    /// How many of `keys`, `faces` and `widths` stand in the middle pill; the rest are the pill at the top right.
+    split: usize,
     profile_generation: Option<u32>,
     session_watch: plx_plex::plex::session::VisibleSessionWatch,
     faces: Vec<TabFace>,
@@ -124,10 +137,13 @@ impl ChromeSnapshot {
         captured: Option<(&plx_plex::plex::session::CurrentProfile, &plx_plex::plex::session::Session)>) {
         let generation = directory.tabs_gen();
         let requests = captured.map_or_else(requests_on, |(_, saved)| saved.seerr().is_ready());
-        let strip_changed = self.tabs_generation != Some(generation) || self.requests != requests;
+        let hidden = directory.bar_hidden();
+        let strip_changed = self.tabs_generation != Some(generation) || self.requests != requests
+            || self.hidden != hidden;
         if strip_changed {
-            self.keys = strip_keys(directory, requests);
+            (self.keys, self.split) = strip_keys(directory, requests);
             self.requests = requests;
+            self.hidden = hidden;
             self.faces = self.keys.iter().map(|&key| match key {
                 widgets::TAB_KEY_HOME => TabFace::Label(plx_platform::i18n::msg::browse_chrome_home().into()),
                 widgets::TAB_KEY_MOVIES => TabFace::Label(plx_platform::i18n::msg::browse_kind_movies().into()),
@@ -158,23 +174,24 @@ impl ChromeSnapshot {
         }
     }
 
-    /// Elide the chip's name to the room the strip's CURRENT widths leave it. Called when the
+    /// Elide the chip's name to the room the strip's CURRENT middle widths leave it. Called when the
     /// profile changes and when the strip does (a library kind appearing or leaving changes the
     /// track), because the budget is a function of both and drawing measures nothing.
     fn elide_chip_name(&mut self, measure: &dyn Measure) {
-        let budget = widgets::chip_name_budget(widgets::tab_track_w(&self.widths));
+        let budget = widgets::chip_name_budget(widgets::tab_track_w(&self.widths[..self.split.min(self.widths.len())]));
         (self.initial, self.name, self.name_w) =
             widgets::profile_chip_text(&self.label, &self.initial_text, budget, measure);
     }
 
     pub(crate) fn labels(&self) -> TabLabels<'_> {
-        TabLabels { generation: self.tabs_generation.unwrap_or(0), faces: &self.faces }
+        TabLabels { generation: self.tabs_generation.unwrap_or(0), faces: &self.faces, split: self.split }
     }
 
     /// The strip key published at `selected` (an index into [`Self::keys`], as `members` takes it):
-    /// the page's own pill, for the landing rule `TabContainer::strip_selected` states.
+    /// the page's own pill, for the landing rule `TabContainer::strip_selected` states. A negative
+    /// index is a page whose own pill the profile hides: it has none.
     pub(crate) fn key_at(&self, selected: i32) -> Option<u32> {
-        self.keys.get(selected.max(0) as usize).copied()
+        self.keys.get(usize::try_from(selected).ok()?).copied()
     }
 
     pub(crate) fn profile(&self) -> ProfileChipRead<'_> {
@@ -202,7 +219,7 @@ impl ChromeSnapshot {
     pub(crate) fn members(&self, selected: i32, focus: Option<FocusKey<u32>>, scroll: f32, out: &mut Vec<StripMember<u32>>) {
         out.clear();
         out.push(StripMember::new(widgets::TAB_KEY_CHIP, widgets::CHIP_FRAME));
-        widgets::tab_members(&self.widths, &self.keys, selected, self.focus(focus), scroll, out);
+        widgets::tab_members(&self.widths, &self.keys, self.split, selected, self.focus(focus), scroll, out);
     }
 
     #[cfg(test)]
@@ -214,6 +231,8 @@ impl ChromeSnapshot {
             .collect();
         self.keys = (0..self.faces.len()).map(|i| plx_ui::dispatch::STRIP_BASE + i as u32).collect();
         self.widths = widgets::tab_widths(&self.faces, measure);
+        // the marks stand in the right pill, as in the real bar
+        self.split = self.faces.iter().position(|face| matches!(face, TabFace::Icon(_))).unwrap_or(self.faces.len());
         self.profile_generation = Some(1);
         self.thumb.clear();
         self.label = name.to_owned();
@@ -261,7 +280,7 @@ mod tests {
     struct Wide;
     impl Measure for Wide {
         fn width(&self, s: &std::ffi::CStr, sz: i32, _bold: bool) -> f32 {
-            s.to_bytes().len() as f32 * sz as f32 * 3.0
+            s.to_bytes().len() as f32 * sz as f32 * 4.5
         }
         fn cap_h(&self, sz: i32) -> f32 { sz as f32 * 0.7 }
         fn line_h(&self, sz: i32) -> f32 { sz as f32 * 1.2 }
@@ -283,7 +302,7 @@ mod tests {
         snapshot.tabs_generation = None;
         snapshot.refresh(&plx_ui::fixture::FixtureMeasure, directory.view());
         let roomy = snapshot.name_w;
-        let budget = widgets::chip_name_budget(widgets::tab_track_w(&snapshot.widths));
+        let budget = widgets::chip_name_budget(widgets::tab_track_w(&snapshot.widths[..snapshot.split]));
         assert!(budget > 0.0, "the ordinary strip leaves the chip a name");
         assert!(roomy > 0.0 && roomy <= budget, "name {roomy} against a budget of {budget}");
         assert!(snapshot.name.to_str().unwrap().ends_with('\u{2026}'), "a long name is elided");
@@ -291,8 +310,8 @@ mod tests {
         // the strip is rebuilt with wider pills; the profile generation does not move
         snapshot.tabs_generation = None;
         snapshot.refresh(&Wide, directory.view());
-        assert!(widgets::tab_track_w(&snapshot.widths) > 1500.0, "the fixture strip must fill the bar");
-        assert_eq!(widgets::chip_name_budget(widgets::tab_track_w(&snapshot.widths)), 0.0);
+        assert!(widgets::tab_track_w(&snapshot.widths[..snapshot.split]) > 1300.0, "the fixture strip must fill the bar");
+        assert_eq!(widgets::chip_name_budget(widgets::tab_track_w(&snapshot.widths[..snapshot.split])), 0.0);
         assert!(snapshot.name.as_bytes().is_empty() && snapshot.name_w == 0.0,
             "no room, no name: {:?} ({})", snapshot.name, snapshot.name_w);
         assert_eq!(widgets::chip_cap(1.0, snapshot.name_w), widgets::chip_cap(0.0, 0.0),
@@ -379,12 +398,71 @@ mod tests {
     fn pill_maps_follow_the_published_strip_keys() {
         let directory = directory(&[SecKind::Movie, SecKind::Show]);
         let view = directory.view();
-        assert_eq!(strip_keys(view, false), vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES,
+        assert_eq!(strip_keys(view, false).0, vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES,
             widgets::TAB_KEY_SHOWS, widgets::TAB_KEY_WATCHLIST, widgets::TAB_KEY_SEARCH]);
         assert_eq!(pill_of(view, Pill::Watchlist), Some(3));
         assert_eq!(pill_of(view, Pill::Search), Some(4));
         assert_eq!(pill_at(view, 3), Pill::Watchlist);
         assert_eq!(pill_at(view, 4), Pill::Search);
+    }
+
+    fn hiding(items: &[plx_plex::plex::top_bar::BarItem]) -> plx_plex::plex::top_bar::BarHidden {
+        let names = items.iter().fold(Vec::new(), |names, item| plx_plex::plex::top_bar::with_item(&names, *item, true));
+        plx_plex::plex::top_bar::BarHidden::from_names(&names)
+    }
+
+    /// The middle pill is Home, the types and Requests; the right pill is Watchlist and Search.
+    /// A hidden item publishes no stop, and the split is the middle pill's size, so the right
+    /// pill is empty (and not drawn) once both its marks are hidden.
+    #[test]
+    fn hidden_items_leave_the_strip_and_the_split_follows_the_pills() {
+        use plx_plex::plex::top_bar::BarItem::*;
+        use widgets::{TAB_KEY_HOME as HOME, TAB_KEY_MOVIES as MOVIES, TAB_KEY_REQUESTS as REQUESTS,
+            TAB_KEY_SEARCH as SEARCH, TAB_KEY_SHOWS as SHOWS, TAB_KEY_WATCHLIST as WATCHLIST};
+        let keys = |hidden| strip_keys(directory(&[SecKind::Movie, SecKind::Show]).with_bar_hidden(hidden).view(), true);
+        assert_eq!(keys(hiding(&[])), (vec![HOME, MOVIES, SHOWS, REQUESTS, WATCHLIST, SEARCH], 4));
+        assert_eq!(keys(hiding(&[Movies, Search])), (vec![HOME, SHOWS, REQUESTS, WATCHLIST], 3));
+        assert_eq!(keys(hiding(&[Watchlist, Search])), (vec![HOME, MOVIES, SHOWS, REQUESTS], 4),
+            "no right pill: the split is the whole strip");
+        assert_eq!(keys(hiding(&[Movies, Shows, Requests, Watchlist, Search])), (vec![HOME], 1),
+            "Home is never hidden");
+        let without_plugin = strip_keys(directory(&[SecKind::Movie]).view(), false);
+        assert_eq!(without_plugin, (vec![HOME, MOVIES, WATCHLIST, SEARCH], 2), "Requests only while the plugin is on");
+    }
+
+    /// A changed record re-derives the strip, its faces and the label split with no library change,
+    /// and the page's own hidden pill has no index to mark.
+    #[test]
+    fn a_changed_record_re_derives_the_strip_and_the_label_split() {
+        use plx_plex::plex::top_bar::BarItem::*;
+        let mut snapshot = ChromeSnapshot {
+            profile_generation: Some(plx_plex::plex::session::current_gen()), ..Default::default()
+        };
+        let measure = plx_ui::fixture::FixtureMeasure;
+        snapshot.refresh(&measure, directory(&[SecKind::Movie]).view());
+        assert_eq!((snapshot.keys.len(), snapshot.labels().split), (4, 2));
+        snapshot.refresh(&measure, directory(&[SecKind::Movie]).with_bar_hidden(hiding(&[Search])).view());
+        assert_eq!((snapshot.keys.len(), snapshot.faces.len(), snapshot.labels().split), (3, 3, 2));
+        assert_eq!(snapshot.key_at(2), Some(widgets::TAB_KEY_WATCHLIST));
+        assert_eq!(snapshot.key_at(-1), None, "a page whose pill is hidden lands on no pill");
+        snapshot.refresh(&measure, directory(&[SecKind::Movie]).view());
+        assert_eq!(snapshot.keys.last(), Some(&widgets::TAB_KEY_SEARCH), "showing it again puts it back");
+    }
+
+    /// The pill indices the focus, the selection and the pulse share are global, so the Watchlist
+    /// mark's pulse index is where the mark stands in the one list, whichever pill holds it.
+    #[test]
+    fn the_pulse_index_is_the_marks_place_in_the_one_list() {
+        use plx_plex::plex::top_bar::BarItem::*;
+        let mut snapshot = ChromeSnapshot {
+            profile_generation: Some(plx_plex::plex::session::current_gen()), ..Default::default()
+        };
+        snapshot.refresh(&plx_ui::fixture::FixtureMeasure,
+            directory(&[SecKind::Movie, SecKind::Show]).with_bar_hidden(hiding(&[Movies])).view());
+        snapshot.pulse(widgets::TAB_KEY_WATCHLIST);
+        assert_eq!(snapshot.take_pulse(), Some(snapshot.labels().split), "the first mark of the right pill");
+        snapshot.pulse(widgets::TAB_KEY_MOVIES);
+        assert_eq!(snapshot.take_pulse(), None, "a hidden destination has nothing to pulse");
     }
 
     #[test]

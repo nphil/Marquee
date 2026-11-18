@@ -198,7 +198,7 @@ fn drawn_strip(generation: u32, faces: &[TabFace]) -> DrawnStrip {
     let _g = serial_for_motion();
     // the draw calls `gfx::sample_ground`, which reads a band image and so needs a walk; with none
     // it answers the last reading and copies nothing
-    let labels = TabLabels { generation, faces };
+    let labels = TabLabels { generation, faces, split: usize::MAX };
     let mut strip = StripRender::new();
     let mut band = TabBand::new();
     strip.update(labels, 0, TopFocus::Away, DT);
