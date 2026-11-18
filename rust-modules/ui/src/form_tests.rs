@@ -360,6 +360,22 @@ fn a_disabled_item_is_dim_focusable_and_inert() {
     assert_eq!(t.activate(2), Some(Activation::Action(Act::C)));
 }
 
+/// **`selected_push` names the page OK would open, and nothing OK would not.**
+#[test]
+fn selected_push_is_the_focused_enabled_nav_row_s_page() {
+    let mut t = table(sample(true));
+    t.table.sel = 0;
+    assert_eq!(t.selected_push(), Some(&Dest::Sub));
+    t.table.list_focused = false;
+    assert_eq!(t.selected_push(), None, "focus is off the list");
+    t.table.list_focused = true;
+    t.table.sel = 1;
+    assert_eq!(t.selected_push(), None, "a toggle row opens no page");
+    let mut t = table(F::new().section(S::new("").item(Id::A, nav(), Act::A, Row::new("Alpha")).disabled(true)));
+    t.table.sel = 0;
+    assert_eq!(t.selected_push(), None, "a disabled Nav row does not push");
+}
+
 /// **`disabled` after a skipped `_if` disables nothing**: the "Style omitted during a server burn,
 /// dim during the app's own burn" shape must not dim the row declared before the skipped one.
 #[test]

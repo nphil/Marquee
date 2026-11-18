@@ -77,7 +77,7 @@ fn nested_draw_preserves_navigation_at_rest_and_through_push_and_pop() {
             inner, ids: Minter::default(),
             push: Push { route: plx_ui::route_screen::RoutePush::at(pos), open: target == 1.0,
                 leaving: popping.then(|| instance(3)) },
-            ground: RouteGround::new(), ground_ready: false, remembered: Vec::new(),
+            ground: RouteGround::new(), ground_ready: false, remembered: Vec::new(), lookahead: None,
         };
         let outer = cx(None);
         let c = inner_cx(&outer);
@@ -185,4 +185,73 @@ fn every_root_detail_line_fits_a_known_good_width() {
          resolution row; its fit is `settings_text_fit_tests`) — got {checked}; \
          did the signed-in multi-user fixture stop building one of these rows?"
     );
+}
+
+/// A Settings surface at rest on the root, its focus on `row`, with an empty text cache.
+fn root_focused_on(row: RootId) -> RouteSurface {
+    plx_gfx::text::reset_prewarm_for_test();
+    plx_gfx::text::begin_frame();
+    let mut s = RouteSurface::new(EntryId(0), InstanceId(0), Family::Settings, SettingsPage::Root);
+    step(&mut s, ScreenEvent::Mount, None);
+    let to = FocusKey { entry: EntryId(0), elem: root_key(row) };
+    step(&mut s, ScreenEvent::FocusMoved { from: None, to, by: plx_ui::screen::By::Dir }, None);
+    s
+}
+
+/// One presented frame's prepare pass; `moving` when a spring moved in its update phase.
+fn prepare_frame(s: &mut RouteSurface, moving: bool) {
+    plx_machine::idle::frame_begin(1.0 / 120.0);
+    if moving {
+        plx_machine::idle::note_motion();
+    }
+    <RouteSurface as Screen<InnerHost>>::prepare(s, &mut Budget::new(), &cx(None));
+}
+
+/// **The focused row's page is laid out while Settings is still, so its push draws no cold
+/// string.** A page's first push rasterised its 21–28 strings inside the slide's first frame.
+#[test]
+fn the_focused_rows_page_is_warm_before_its_push() {
+    let _g = plx_base::testlock::serial();
+    let _sess = seated_scratch_session("settings-lookahead-warm");
+    let mut s = root_focused_on(RootId::Playback);
+    prepare_frame(&mut s, false);
+    assert!(plx_gfx::text::background_prewarm_pending(), "Playback's strings wait for idle time");
+    for _ in 0..64 {
+        plx_ui::panel_motion::PanelMotion::drain_idle_text(|| plx_gfx::text::rasterised_for_test() * 1000);
+        if !plx_gfx::text::background_prewarm_pending() {
+            break;
+        }
+    }
+    let warmed = plx_gfx::text::rasterised_for_test();
+    assert!(warmed >= 10, "the page's rows were laid out, not just its title: {warmed}");
+    forwarded(&mut s, Fx::Nav(NavOp::Push(SettingsPage::Playback)));
+    assert_eq!(s.inner.top().map(|e| e.arg), Some(SettingsPage::Playback));
+    let outer = cx(None);
+    let icx = inner_cx(&outer);
+    let top = s.top_mut().expect("Playback is mounted");
+    plx_ui::record_walk(|| top.screen.draw(&mut DrawFrame::new(&icx, Painter::recording())));
+    plx_gfx::text::drain_prewarm(u64::MAX, || 0);
+    assert_eq!(plx_gfx::text::rasterised_for_test(), warmed, "the slide draws no string the look-ahead missed");
+    plx_gfx::text::reset_prewarm_for_test();
+}
+
+/// **The look-ahead spends no moving frame, and drops its queue once the surface slides or leaves.**
+#[test]
+fn the_look_ahead_waits_for_a_still_frame_and_yields_to_a_slide() {
+    let _g = plx_base::testlock::serial();
+    let _sess = seated_scratch_session("settings-lookahead-yield");
+    let mut s = root_focused_on(RootId::Playback);
+    prepare_frame(&mut s, true);
+    assert!(!plx_gfx::text::background_prewarm_pending(), "a moving frame keeps its budget");
+    prepare_frame(&mut s, false);
+    assert!(plx_gfx::text::background_prewarm_pending());
+    forwarded(&mut s, Fx::Nav(NavOp::Push(SettingsPage::Legal)));
+    prepare_frame(&mut s, true);
+    assert!(!plx_gfx::text::background_prewarm_pending(), "the slide drops the queue");
+    settle(&mut s);
+    prepare_frame(&mut s, false);
+    assert!(plx_gfx::text::background_prewarm_pending(), "the arrived page warms its own focused row's page");
+    step(&mut s, ScreenEvent::WillLeave(plx_machine::machine::Leave::ForGood), None);
+    assert!(!plx_gfx::text::background_prewarm_pending(), "a leaving surface drops it too");
+    plx_gfx::text::reset_prewarm_for_test();
 }

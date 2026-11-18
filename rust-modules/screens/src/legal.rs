@@ -297,6 +297,9 @@ impl Screen<InnerHost> for LegalIndex {
     fn hit_source(&self) -> HitSource {
         HitSource::Engine
     }
+    fn next_page(&self) -> Option<SettingsPage> {
+        self.form.selected_push().copied()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

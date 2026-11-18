@@ -971,6 +971,9 @@ impl Screen<InnerHost> for ConsentPage {
     fn hit_source(&self) -> HitSource {
         HitSource::Engine
     }
+    fn next_page(&self) -> Option<SettingsPage> {
+        self.form.selected_push().copied()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

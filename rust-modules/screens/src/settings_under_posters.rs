@@ -456,6 +456,7 @@ impl Screen<InnerHost> for UnderPostersPage {
     fn render(&self) -> RenderStrategy { RenderStrategy::Page }
     fn focus_source(&self) -> FocusSource { FocusSource::Engine }
     fn hit_source(&self) -> HitSource { HitSource::Engine }
+    fn next_page(&self) -> Option<SettingsPage> { self.form.selected_push().copied() }
 }
 
 // ---------------------------------------------------------------------------------------------

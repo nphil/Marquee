@@ -801,6 +801,9 @@ impl Screen<InnerHost> for PreferencesPage {
     fn hit_source(&self) -> HitSource {
         HitSource::Engine
     }
+    fn next_page(&self) -> Option<SettingsPage> {
+        self.form.selected_push().copied()
+    }
 }
 
 /// The `(focus key, destination)` of every `Nav` row a page lists for `prefs` — the structural

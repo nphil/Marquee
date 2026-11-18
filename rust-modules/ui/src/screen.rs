@@ -200,6 +200,11 @@ pub trait Screen<H: Host>: Machine<H, Ev = ScreenEvent<H>> + Focusable<H> {
     fn ground_ready(&self) -> bool {
         false
     }
+    /// The page OK on the focused element would push inside this screen's own container (a
+    /// Settings row's drill-in), so the container can lay it out before the press. Pure.
+    fn next_page(&self) -> Option<H::Arg> {
+        None
+    }
     /// This screen's own [`ReturnState::memory`] payload, RIGHT NOW — asked by the dispatcher's
     /// `ret()` (spec §6.1 tier 2) at the moment a navigation OFF this screen is raised, exactly as
     /// `focus` is read off the engine at the same instant. **Pure, like every other query here**:

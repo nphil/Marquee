@@ -39,7 +39,7 @@ use plx_machine::machine::{
     Canon, Cx, Delivery, Effects, EntryId, FocusKey, Fx, GroupId, Handled, InstanceId, Key,
     LogicalState, Machine, MachineId, NavOp, PresentHandle, Stamped, Tick,
 };
-use plx_machine::present::Provenance;
+use plx_machine::present::{Present, Provenance};
 use plx_ui::route_screen::{RouteLayout, RoutePush};
 use plx_ui::route_screen::RouteGround;
 use plx_ui::screen::{
@@ -128,6 +128,12 @@ pub struct RouteSurface {
     ground_ready: bool,
     /// The focus each inner entry was left at, for the `Restored` seat on a pop.
     remembered: Vec<(EntryId, u32)>,
+    /// **The page the focused row opens, laid out before the press** ([`Self::look_ahead`]), and
+    /// the owner token of its strings' idle queue. A page's first push drew all its text for the
+    /// first time inside the slide's first frame: 21–28 strings at 1–3 ms each on the television
+    /// (`ui::panel_motion`), one 25–75 ms frame at the start of a 120 Hz slide. Render state, out
+    /// of the hash like the spring.
+    lookahead: Option<(SettingsPage, u64)>,
 }
 
 impl RouteSurface {
@@ -148,6 +154,7 @@ impl RouteSurface {
             ground: if kind == Family::FirstRunConsent { RouteGround::authored() } else { RouteGround::new() },
             ground_ready: false,
             remembered: Vec::new(),
+            lookahead: None,
         };
         let mut trail = root.boot_trail().into_iter();
         if let Some(first) = trail.next() {
@@ -453,6 +460,44 @@ impl RouteSurface {
     fn top_word(&self) -> &'static str {
         self.top().map_or(word::SETTINGS, |i| i.screen.name())
     }
+
+    /// On a still frame (the one a focus move settles on), mount the focused row's page off the
+    /// stack, walk it through the text recorder and drop it; its strings rasterise in idle time,
+    /// so a push slides on its very next frame with the text resident. The throwaway page's
+    /// effects are discarded and the walk is a speculative pass (`ui::rec::speculative`), so
+    /// nothing logical or graded comes of it.
+    fn look_ahead(&mut self, cx: &Cx<'_, InnerHost>) {
+        let next = if self.at_rest() { self.top().and_then(|i| i.screen.next_page()) } else { None };
+        if next.is_some() && self.lookahead.is_some_and(|(page, _)| Some(page) == next) {
+            return;
+        }
+        self.cancel_lookahead();
+        let Some(page) = next else { return };
+        // A moving frame keeps its budget. A foreground recording or another screen's
+        // speculative page owns the queues first.
+        if plx_machine::idle::present_moving() || plx_gfx::text::prewarm_pending()
+            || plx_gfx::text::background_prewarm_pending()
+        {
+            return;
+        }
+        let entry = self.entry;
+        let (mut out, mut present) = (Vec::new(), Present::new());
+        let mut fx = Effects::new(&mut out, MachineId::Instance(self.id), &mut present);
+        plx_gfx::gfx::without_frame_clear(|| {
+            plx_ui::rec::speculative(|| {
+                plx_ui::record_walk(|| {
+                    mount_page(entry, page, cx, &mut fx).draw(&mut DrawFrame::new(cx, Painter::recording()));
+                })
+            })
+        });
+        self.lookahead = Some((page, plx_gfx::text::park_prewarm_as_idle_background()));
+    }
+
+    fn cancel_lookahead(&mut self) {
+        if let Some((_, owner)) = self.lookahead.take() {
+            plx_gfx::text::clear_background_prewarm_owned(owner);
+        }
+    }
 }
 
 /// The mounter's one `match` for the family (§6.1).
@@ -727,12 +772,14 @@ impl<H: DirectoryLike> Machine<H> for RouteSurface {
             // because `Deeper` and `ForGood` mean different things to a page and only the
             // container knows which this is.
             ScreenEvent::WillLeave(l) => {
+                self.cancel_lookahead();
                 for eid in self.inner.entries.iter().map(|e| e.id).collect::<Vec<_>>() {
                     self.deliver(eid, ScreenEvent::WillLeave(*l), cx, fx);
                 }
                 Handled::Yes
             }
             ScreenEvent::Unmount => {
+                self.cancel_lookahead();
                 for eid in self.inner.entries.iter().map(|e| e.id).collect::<Vec<_>>() {
                     self.deliver(eid, ScreenEvent::Unmount, cx, fx);
                 }
@@ -852,6 +899,7 @@ impl<H: DirectoryLike> Screen<H> for RouteSurface {
                 i.screen.prepare(b, &icx);
             }
         }
+        self.look_ahead(&icx);
     }
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
         let a = f.page_alpha;
@@ -1845,6 +1893,9 @@ impl Screen<InnerHost> for RootPage {
     fn hit_source(&self) -> HitSource {
         HitSource::Engine
     }
+    fn next_page(&self) -> Option<SettingsPage> {
+        self.form.selected_push().copied()
+    }
 }
 
 #[path = "settings_under_posters.rs"]
@@ -2116,6 +2167,7 @@ impl Screen<InnerHost> for LanguagePage {
     fn render(&self) -> RenderStrategy { RenderStrategy::Page }
     fn focus_source(&self) -> FocusSource { FocusSource::Engine }
     fn hit_source(&self) -> HitSource { HitSource::Engine }
+    fn next_page(&self) -> Option<SettingsPage> { self.form.selected_push().copied() }
 }
 
 #[cfg(test)]

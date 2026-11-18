@@ -546,6 +546,18 @@ impl<Id: PartialEq + Clone, A: Clone, Dest: Clone> FormTable<Id, A, Dest> {
             _ => Activation::Action(b.action.clone()),
         })
     }
+    /// The page OK on the selected row would push: its [`RowKind::Nav`] destination, while the
+    /// list holds focus and the row is enabled. What a container may lay out before the press.
+    pub fn selected_push(&self) -> Option<&Dest> {
+        if !self.table.list_focused {
+            return None;
+        }
+        let b = self.binding_at(usize::try_from(self.table.sel).ok()?).filter(|b| !b.disabled)?;
+        match &b.kind {
+            RowKind::Nav(d) => Some(d),
+            _ => None,
+        }
+    }
 }
 
 impl<Id: PartialEq + Clone, A: Clone, Dest: Clone> RowKeys for FormTable<Id, A, Dest> {
