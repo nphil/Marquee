@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The Subtitles menu lists every built-in track again when several share a language and kind (two releases of the English translation). A downloaded subtitle hides a built-in one only when that is the only built-in track of its language and kind, and tracks that would read alike are told apart by the name in their own title ("English (Commie)") or a count ("English 2").
 - Player menus over a film no longer add their black dimming layer to the colour-conversion work, so they open and close with less graphics work. Adapted from plx-native 233a94839.
 - A Library opens on the Recommended or Collections page it was last left on, kept per profile and library. Closing the page clears it. Adapted from plx-native 095f74ca9.
 - Library grid cards ease down from their lift when focus leaves them, and Back to the top raises the first-row card and closes its caption band over frames instead of snapping. Adapted from plx-native 612fc8cf0, 583722c8c and 0aaf63f2e.

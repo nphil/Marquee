@@ -1649,7 +1649,7 @@ impl TrackMenuState {
             tracks => {
                 let current = tracks.iter().find(|t| active >= 0 && t.i == active as usize);
                 let value = match current {
-                    Some(t) => in_lang_label(t),
+                    Some(t) => t.label.clone(),
                     None => plx_platform::i18n::msg::widgets_tracks_count(tracks.len() as i64),
                 };
                 let row = Row::new(lang.name.clone()).value(value).checked(current.is_some());
@@ -1664,7 +1664,7 @@ impl TrackMenuState {
         let active = self.checked_sub();
         let tracks = self.other_lang(stream).map(|o| o.tracks.as_slice()).unwrap_or_default();
         let sec = tracks.iter().fold(FormSection::new(""), |sec, t| {
-            sec.item(TrackRow::Sub(t.i), RowKind::Choice, (), in_lang_row(t, active))
+            sec.item(TrackRow::Sub(t.i), RowKind::Choice, (), flat_row(t, active))
         });
         Form::new().section(sec)
     }
@@ -3041,28 +3041,10 @@ pub fn search_languages() -> Vec<&'static plx_plex::plex::languages::Language> {
     plx_plex::plex::languages::picker().filter(|l| l.code.len() == 2).collect()
 }
 
-/// A flat row: label = the track's plain name (+ "Track N" when this track needed one). Used for
-/// a single-track "yours" language, and for every "Other languages" row.
+/// A track row: label = the track's plain name. Used for a single-track "yours" language, inside a
+/// multi-track language's section and page (`player.html:1110-1115`), and for every "Other languages" row.
 fn flat_row(t: &SubTrack, active_sub: c_int) -> Row {
-    let mut row = Row::new(t.label.clone()).checked(active_sub >= 0 && t.i == active_sub as usize);
-    if let Some(n) = t.ordinal {
-        row = row.detail(plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64));
-    }
-    row
-}
-
-/// A row inside a multi-track "yours" language section (`player.html:1110-1115`).
-fn in_lang_row(t: &SubTrack, active_sub: c_int) -> Row {
-    Row::new(in_lang_label(t)).checked(active_sub >= 0 && t.i == active_sub as usize)
-}
-
-/// A track's label inside its language: its plain name (+ "Track N" if needed). Also the value a
-/// language's drill-in reads out for its active variant.
-fn in_lang_label(t: &SubTrack) -> String {
-    match t.ordinal {
-        Some(n) => format!("{} \u{b7} {}", t.label, plx_platform::i18n::msg::widgets_tracks_track_ordinal(n as i64)),
-        None => t.label.clone(),
-    }
+    Row::new(t.label.clone()).checked(active_sub >= 0 && t.i == active_sub as usize)
 }
 
 /// **Declare the Subtitles root** from its model (`metadata::sub_layout::sub_sections`) as a keyed
@@ -3136,7 +3118,7 @@ fn table_form(
                     })
                 }
                 SubRow::Flat(t) => out.item(id, RowKind::Choice, (), flat_row(t, checked_sub)),
-                SubRow::InLanguage(t) => out.item(id, RowKind::Choice, (), in_lang_row(t, checked_sub)),
+                SubRow::InLanguage(t) => out.item(id, RowKind::Choice, (), flat_row(t, checked_sub)),
                 SubRow::OtherLanguages { languages } => {
                     let (value, checked) = match active_other {
                         Some(o) => (o.name.clone(), true),
@@ -3292,10 +3274,10 @@ mod tests {
         assert_eq!(rows, [("Russian", 0), ("Russian (dub)", 0), ("Russian (on-screen text)", 0)]);
     }
 
-    // ---- sub_layout: identical tracks get "Track N" --------------------------------------------
+    // ---- sub_layout: identical tracks are told apart --------------------------------------------
 
     #[test]
-    fn identical_tracks_in_one_group_are_told_apart_by_an_ordinal() {
+    fn identical_tracks_in_one_group_are_told_apart_by_their_shared_name_then_a_count() {
         let subs = vec![
             stream(1, 0, "Russian", "rus", "iTunes"),
             stream(2, 1, "Russian", "rus", "iTunes"),
@@ -3305,7 +3287,7 @@ mod tests {
         let (sections, _targets) =
             sub_layout(&subs, &offered, &names, &["rus"], -1, true, 0);
         let labels: Vec<&str> = sections[1].rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, ["Russian \u{b7} Track 1", "Russian \u{b7} Track 2"]);
+        assert_eq!(labels, ["Russian (iTunes)", "Russian (iTunes) 2"]);
     }
 
     // ---- sub_layout: "Other languages" is ONE drill-in row on the root -------------------------
@@ -3329,7 +3311,7 @@ mod tests {
     }
 
     /// **Every Subtitles-panel row fits the panel in every shipped language** — the grouped
-    /// layout's section words, the kind fallbacks, the "Track N" ordinal and a region name beside
+    /// layout's section words, the kind fallbacks, the "English 2" count and a region name beside
     /// each badge, against [`MENU_MAX_W`](plx_ui::table::MENU_MAX_W), measured with the device's whole-pixel advances. (A source is
     /// server text and may elide; the fixture's sources are short so only app text is judged.)
     #[test]

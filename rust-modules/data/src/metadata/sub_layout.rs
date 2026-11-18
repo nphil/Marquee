@@ -76,13 +76,11 @@ pub struct SubTrack {
     pub lang: String,
     /// What the row reads, in plain words: the language, then in brackets only what tells it
     /// apart: a region, and what the track carries ("English (dub)", "English (on-screen text)").
-    /// Never a format, an acronym or the file's own title.
+    /// Never a format or an acronym. Two tracks that would read alike add the short name their own
+    /// title carries ("English (Commie)"), else a count ("English 2").
     pub label: String,
     /// The rank kind: a title naming a dub or signs and songs counts as dub or on-screen text.
     pub kind: Kind,
-    /// `Some(n)` when this track's [`Self::label`] is the same as at least one other offered
-    /// track's — an ordinal among those only (`player.html:959-962,1110`).
-    pub ordinal: Option<u32>,
 }
 
 /// A section's header, as a meaning rather than a string — the caller owns the catalog words.
@@ -263,6 +261,9 @@ struct Reading {
     lang: String,
     region: Option<String>,
     kind: Kind,
+    /// What the title says beyond the kind: a release group, a typesetter, a source. Empty when the
+    /// title says nothing more, or only restates the kind ("Dubtitle", "Signs / Songs").
+    source: String,
     group: LangGroup,
     key: Option<Cow<'static, str>>,
 }
@@ -272,13 +273,16 @@ fn reading(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) ->
     let lang = display_lang(s);
     let container = names.sub(super::sub_render_ordinal(subs, i));
     let merged = track_label::track_name(&s.title, container, &lang);
-    let kind = match track_label::parse(&merged, &lang, s.forced, s.sdh).kind {
+    let parsed = track_label::parse(&merged, &lang, s.forced, s.sdh);
+    let kind = match parsed.kind {
         Kind::Full if track_label::names_signs_and_songs(&merged) => Kind::Forced,
         Kind::Full if track_label::names_dub(&merged) => Kind::Sdh,
         k => k,
     };
+    let restates_kind = track_label::names_signs_and_songs(&parsed.source) || track_label::names_dub(&parsed.source);
+    let source = if restates_kind { String::new() } else { parsed.source };
     let (group, key) = group_of(s, i, &lang);
-    Some(Reading { region: track_label::region_detail(&s.language_tag), kind, group, key, lang })
+    Some(Reading { region: track_label::region_detail(&s.language_tag), kind, source, group, key, lang })
 }
 
 /// **The downloaded subtitle that stands for a built-in track.** `subs[i]` is a built-in track and a
@@ -286,55 +290,86 @@ fn reading(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) ->
 /// and kind, so the two would read as one row. [`sub_sections`] lists only the downloaded one, and a
 /// pick of the built-in lands on it (`route::plan::visible_pick`). A built-in with no such twin stays:
 /// one whose downloaded file is another kind (a downloaded full translation does not stand for the
-/// built-in signs and songs) or one only a server burn could show (an image sidecar, a keyless one).
+/// built-in signs and songs), one only a server burn could show (an image sidecar, a keyless one),
+/// and one of several built-in tracks of the same language, region and kind (two releases of the
+/// English translation): the file is a copy of at most one of them and nothing says which.
 pub fn downloaded_twin(subs: &[Stream], i: usize, names: &super::track_names::TrackNames) -> Option<usize> {
     if subs.get(i)?.external {
         return None;
     }
+    twins(subs, names).get(i).copied().flatten()
+}
+
+/// [`downloaded_twin`] for every track, each track parsed once.
+fn twins(subs: &[Stream], names: &super::track_names::TrackNames) -> Vec<Option<usize>> {
     // Most items carry no downloaded subtitle at all: nothing to compare, nothing parsed.
     let drawable = |s: &Stream| s.id > 0 && s.sidecar_renderable();
     if !subs.iter().any(drawable) {
-        return None;
+        return vec![None; subs.len()];
     }
-    let mine = reading(subs, i, names)?;
-    (0..subs.len()).find(|&j| {
-        drawable(&subs[j])
-            && reading(subs, j, names).is_some_and(|o| o.group == mine.group && o.region == mine.region && o.kind == mine.kind)
-    })
+    let readings: Vec<Option<Reading>> = (0..subs.len()).map(|i| reading(subs, i, names)).collect();
+    let alike = |a: &Reading, b: &Reading| a.group == b.group && a.region == b.region && a.kind == b.kind;
+    (0..subs.len())
+        .map(|i| {
+            let mine = readings[i].as_ref().filter(|_| !subs[i].external)?;
+            let built_in_alike = (0..subs.len())
+                .filter(|&j| !subs[j].external && readings[j].as_ref().is_some_and(|o| alike(o, mine)))
+                .count();
+            if built_in_alike > 1 {
+                return None;
+            }
+            (0..subs.len()).find(|&j| drawable(&subs[j]) && readings[j].as_ref().is_some_and(|o| alike(o, mine)))
+        })
+        .collect()
 }
 
-/// Parse every listed track once, fill in [`SubTrack::ordinal`] for tracks that would otherwise
-/// draw the exact same row, and pair each with its [`LangGroup`] and its code's canonical key. A
-/// built-in track whose downloaded twin is offered is not listed ([`downloaded_twin`]).
+/// Parse every listed track once and label it: a track that would read exactly as another adds the
+/// short name its own title carries, and one still alike is counted ("English 2"). Each is paired with
+/// its [`LangGroup`] and its code's canonical key. A built-in track whose downloaded twin is offered is
+/// not listed ([`downloaded_twin`]).
 fn sub_tracks(
     subs: &[Stream],
     offered: &[usize],
     names: &super::track_names::TrackNames,
 ) -> Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> {
-    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> = offered
-        .iter()
-        .filter(|&&i| downloaded_twin(subs, i, names).is_none_or(|twin| !offered.contains(&twin)))
-        .filter_map(|&i| {
-            let Reading { lang, region, kind, group, key } = reading(subs, i, names)?;
-            let words: Vec<&'static str> = kind.variant_word().into_iter().collect();
-            let label = natural_label(&lang, region.as_deref(), &words);
-            Some((SubTrack { i, lang, label, kind, ordinal: None }, group, key))
-        })
-        .collect();
-
-    type Identity = String;
-    let identity = |t: &SubTrack| -> Identity { t.label.clone() };
-    let keys: Vec<Identity> = out.iter().map(|(t, ..)| identity(t)).collect();
-    let mut totals: HashMap<&Identity, u32> = HashMap::new();
-    for k in &keys {
-        *totals.entry(k).or_insert(0) += 1;
+    let twins = twins(subs, names);
+    let mut out: Vec<(SubTrack, LangGroup, Option<Cow<'static, str>>)> = Vec::new();
+    let mut parts: Vec<(Option<String>, Vec<&'static str>, String)> = Vec::new();
+    for &i in offered {
+        if twins.get(i).copied().flatten().is_some_and(|twin| offered.contains(&twin)) {
+            continue;
+        }
+        let Some(Reading { lang, region, kind, source, group, key }) = reading(subs, i, names) else { continue };
+        let words: Vec<&'static str> = kind.variant_word().into_iter().collect();
+        let label = natural_label(&lang, region.as_deref(), &words);
+        out.push((SubTrack { i, lang, label, kind }, group, key));
+        parts.push((region, words, source));
     }
-    let mut seen: HashMap<&Identity, u32> = HashMap::new();
-    for ((t, ..), k) in out.iter_mut().zip(&keys) {
-        if totals[k] > 1 {
-            let n = seen.entry(k).or_insert(0);
+
+    let count = |out: &[(SubTrack, LangGroup, Option<Cow<'static, str>>)]| -> HashMap<String, u32> {
+        let mut totals = HashMap::new();
+        for (t, ..) in out {
+            *totals.entry(t.label.clone()).or_insert(0) += 1;
+        }
+        totals
+    };
+    let totals = count(&out);
+    for ((t, ..), (region, words, source)) in out.iter_mut().zip(&parts) {
+        if totals[&t.label] > 1 && !source.is_empty() {
+            let mut words = words.clone();
+            words.push(source);
+            t.label = natural_label(&t.lang, region.as_deref(), &words);
+        }
+    }
+    let totals = count(&out);
+    let mut seen: HashMap<String, u32> = HashMap::new();
+    for (t, ..) in &mut out {
+        if totals[&t.label] > 1 {
+            let n = seen.entry(t.label.clone()).or_insert(0);
             *n += 1;
-            t.ordinal = Some(*n);
+            if *n > 1 {
+                t.label = format!("{} {n}", t.label);
+            }
         }
     }
     out
@@ -705,18 +740,18 @@ mod tests {
         subs[2].sdh = true;
         subs[4].language_tag = "pt-BR".into();
         let m = model(&subs, &[]);
-        let labels = |name: &str| -> Vec<(usize, String, Option<u32>)> {
+        let labels = |name: &str| -> Vec<(usize, String)> {
             let lang = m.other.iter().find(|o| o.name == name).unwrap();
-            lang.tracks.iter().map(|t| (t.i, t.label.clone(), t.ordinal)).collect()
+            lang.tracks.iter().map(|t| (t.i, t.label.clone())).collect()
         };
         let own = |s: &str| s.to_string();
         assert_eq!(labels("English"), [
-            (1, own("English"), None),
-            (2, own("English (dub)"), Some(1)),
-            (3, own("English (dub)"), Some(2)),
-            (0, own("English (on-screen text)"), None),
+            (1, own("English")),
+            (2, own("English (dub)")),
+            (3, own("English (dub) 2")),
+            (0, own("English (on-screen text)")),
         ]);
-        assert_eq!(labels("Portuguese"), [(4, own("Portuguese (Brazil)"), None)]);
+        assert_eq!(labels("Portuguese"), [(4, own("Portuguese (Brazil)"))]);
     }
 
     /// **A downloaded track stands for its built-in twin.** One-Punch Man S02E01: two built-in image
@@ -766,6 +801,46 @@ mod tests {
         for i in [0, 1, 2, 3, 4, 6, 7] {
             assert!(kept.contains(&i), "track {i} has no downloaded twin and is listed: {kept:?}");
         }
+    }
+
+    /// **Demon Slayer S01E01** (the Marquee morning check, 2026-11-18, showed 4 of its 6 subtitle
+    /// tracks): two built-in English translations from different groups, English signs and songs from
+    /// two groups, and a downloaded English translation and dub transcript. The downloaded translation
+    /// is a copy of at most one built-in translation and nothing says which, so both stay; every
+    /// row reads differently, by the name its own title carries.
+    /// [INFERENCE] the track set is rebuilt from the symptom, not read from the server.
+    #[test]
+    fn built_in_tracks_sharing_a_name_all_stay_and_are_told_apart() {
+        let subs = vec![
+            stream(1, 0, "English", "eng", "Commie"),
+            stream(2, 1, "English", "eng", "Judas"),
+            stream(3, 2, "English", "eng", "Signs & Songs [Commie]"),
+            stream(4, 3, "English", "eng", "Signs & Songs [Judas]"),
+            downloaded(5, 4, "English", "eng", ""),
+            downloaded(6, 5, "English", "eng", "Dub (SDH)"),
+        ];
+        let m = model(&subs, &["eng"]);
+        assert_eq!(
+            listed(&m),
+            own(&[
+                ("English (Commie)", 0),
+                ("English (Judas)", 1),
+                ("English", 4),
+                ("English (dub)", 5),
+                ("English (on-screen text)", 2),
+                ("English (on-screen text) 2", 3),
+            ]),
+        );
+        for i in 0..4 {
+            assert_eq!(downloaded_twin(&subs, i, &TrackNames::new()), None, "built-in {i} has no single twin");
+        }
+    }
+
+    /// Two nameless built-in tracks are the language and the language counted.
+    #[test]
+    fn nameless_tracks_with_one_name_are_counted() {
+        let subs = vec![stream(1, 0, "English", "eng", ""), stream(2, 1, "English", "eng", ""), stream(3, 2, "English", "eng", "")];
+        assert_eq!(listed(&model(&subs, &["eng"])), own(&[("English", 0), ("English 2", 1), ("English 3", 2)]));
     }
 
     /// A downloaded file only a server burn can show (an image format, no delivery key) is not a
