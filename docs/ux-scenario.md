@@ -564,7 +564,7 @@ distinction §6.1 draws.
 | **Rewind / Fast-forward** | the same as LEFT / RIGHT (§1.2) |
 | **UP / DOWN** | move between the HUD's three bands; a press on a hidden HUD is spent raising it |
 | **Stop** | leave the player |
-| **BACK** | cancel a scrub in progress (§6.6); otherwise hide the HUD if it is up, and leave the player from a bare picture. While playback is still loading, buffering or seeking, the HUD cannot come down: the first BACK hides it with nothing visible, and the next BACK leaves. Any other key in between, or the load finishing, makes it a first BACK again |
+| **BACK** | cancel a scrub in progress (§6.6); otherwise hide the HUD if it is up, and leave the player from a bare picture. While playback is still loading, buffering or seeking, the HUD cannot come down: the first BACK hides it with nothing visible, and the next BACK leaves. Any other key in between, or the load finishing, makes it a first BACK again. The few pixels a Magic Remote moves as the button is pressed do not bring a hidden HUD back; a real move of the pointer does |
 | **EXIT** | terminate the app (§2.3) |
 
 **Stop, and a BACK that finds nothing to cancel or hide (or that is the second in a row while the player is busy), do the same thing here**: both run one teardown ritual — cancel any play still being

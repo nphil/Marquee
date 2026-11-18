@@ -1348,6 +1348,13 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
         if let Some(player) = super::bridge::player_mut(&mut app.pages) {
             player.publish();
         }
+        // A BACK over the player holds the pointer's rest for the jitter of its own press; any
+        // other fresh key lets it go (`Pointer::back_jitter`).
+        if matches!(key, Key::Back) && tree_owns_key && matches!(app.route(), AppArg::Player) && !app.pages.surface_up() {
+            app.ptr.hold_for_back();
+        } else {
+            app.ptr.back_rest = None;
+        }
 
         // LAB BUILDS ONLY, and above every arm below including the modals: the
         // diagnostics trigger. It has to outrank the chain because the screen a tester
@@ -1560,6 +1567,12 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
             && !app.pages.surface_up()
             && super::bridge::owns_input(&app.pages)
         {
+            // The jitter of the BACK that just hid the transport must not raise it again.
+            if !app.ptr.button_down
+                && app.ptr.back_jitter(mx, my, super::bridge::player(&app.pages).is_some_and(|page| page.hud.dismissed))
+            {
+                return;
+            }
             let at = plx_machine::machine::Tick { ms: app.last_input, dt_us: 0 };
             app.inputs.push(if app.ptr.button_down {
                 super::bridge::drag_input(mx, my, at)
@@ -4646,6 +4659,87 @@ mod lifecycle_regression_tests {
         assert!(glide(&mut app, off, row) > 30, "off the buttons, at the edge, the page glides");
         assert_eq!(glide(&mut app, tab.cx(), row), 0, "on a bar button the glide stops");
         assert!(glide(&mut app, off, row) > 30, "off it again the glide goes on");
+    }
+
+    /// One pointer move to `(x, y)` through the real ingest, then the page's frame. Whether the move
+    /// reached the page.
+    fn pointer_move(app: &mut App, x: i32, y: i32, now: u32) -> bool {
+        app.ev = [0; 128];
+        app.ev[20..24].copy_from_slice(&x.to_ne_bytes());
+        app.ev[24..28].copy_from_slice(&y.to_ne_bytes());
+        let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
+        event(app, &mut fr, SDL_MOUSEMOTION);
+        let reached = !app.inputs.is_empty();
+        deliver_inputs(app, now);
+        reached
+    }
+
+    /// One BACK press and release through the real ingest, then the page's frame.
+    fn press_back(app: &mut App, now: u32) {
+        let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
+        for (down, et) in [(true, SDL_KEYDOWN), (false, SDL_KEYUP)] {
+            app.ev = encode_key(plx_ui::consts::SDLK_ESCAPE, 0, down);
+            event(app, &mut fr, et);
+        }
+        deliver_inputs(app, now);
+    }
+
+    fn deliver_inputs(app: &mut App, now: u32) {
+        super::super::bridge::frame(
+            &mut app.pages,
+            &mut app.bridge,
+            plx_machine::machine::Tick { ms: now, dt_us: 16_000 },
+            std::mem::take(&mut app.inputs),
+        );
+    }
+
+    fn transport_dismissed(app: &App) -> bool {
+        super::super::bridge::player(&app.pages).is_some_and(|page| page.hud.dismissed)
+    }
+
+    /// The player page with its transport raised by the pointer and then hidden with BACK: where a
+    /// Magic Remote user is just after dismissing the controls.
+    fn player_with_the_transport_hidden_by_back() -> App {
+        clock::set_replay(100);
+        let mut app = app();
+        super::super::bridge::show_page(&mut app.pages, AppArg::Player);
+        frame(&mut app, 16);
+        assert!(pointer_move(&mut app, 500, 300, 100), "premise: motion over the video reaches the page");
+        assert!(!transport_dismissed(&app), "premise: and raises the transport");
+        press_back(&mut app, 116);
+        assert!(transport_dismissed(&app), "premise: BACK hides the raised transport");
+        app.bridge.take_player_reqs();
+        app
+    }
+
+    /// **A Magic Remote moves a little when a button is pressed, and that must not undo the BACK.**
+    /// BACK hides the raised transport and the press's own pointer motion raised it again, so the
+    /// next BACK found it on screen and hid it once more: playback could not be left with BACK while
+    /// the pointer was in hand. Motion within the press's own jitter is not a request for the
+    /// transport, and the second BACK leaves.
+    #[test]
+    fn pointer_jitter_after_back_leaves_the_transport_hidden_and_the_second_back_leaves() {
+        let _serial = plx_base::testlock::serial();
+        let mut app = player_with_the_transport_hidden_by_back();
+        for x in [502, 498, 502] {
+            assert!(!pointer_move(&mut app, x, 300, 132), "a nudge of the press itself is not handed to the page");
+            assert!(transport_dismissed(&app), "and does not raise the hidden transport");
+        }
+        press_back(&mut app, 148);
+        assert!(
+            app.bridge.take_player_reqs().contains(&plx_screens::registry::PlayerReq::Exit),
+            "the second BACK leaves the player"
+        );
+    }
+
+    /// **A deliberate move after BACK still brings the transport back**: the hold covers the press's
+    /// own jitter and nothing past it.
+    #[test]
+    fn a_real_pointer_move_after_back_raises_the_transport_again() {
+        let _serial = plx_base::testlock::serial();
+        let mut app = player_with_the_transport_hidden_by_back();
+        assert!(pointer_move(&mut app, 540, 300, 132), "a move past the jitter reaches the page");
+        assert!(!transport_dismissed(&app), "and raises the transport");
     }
 
     /// **The HUD's per-frame snapshot carries each global its presentation used to read itself**

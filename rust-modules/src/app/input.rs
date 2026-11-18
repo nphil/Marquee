@@ -51,6 +51,9 @@ pub(crate) struct Pointer {
     pub(crate) ok_from_click: bool,
     /// The pointer resting in the top or bottom edge band scrolls the page ([`EdgeScroll`]).
     pub(crate) edge: EdgeScroll,
+    /// Where the pointer rested when the last BACK over the player arrived, until that press's own
+    /// jitter is over ([`Pointer::back_jitter`]).
+    pub(crate) back_rest: Option<(f32, f32)>,
 }
 impl Pointer {
     /// Pointer mode, cursor shown, nothing held or dragging — where the loop starts.
@@ -65,7 +68,29 @@ impl Pointer {
         last_wheel: 0,
         ok_from_click: false,
         edge: EdgeScroll::IDLE,
+        back_rest: None,
     };
+
+    /// A BACK arrived over the player: remember where the pointer rests, so the jitter of the press
+    /// can be told from a move. A pointer that has never moved has no rest to hold.
+    pub(crate) fn hold_for_back(&mut self) {
+        self.back_rest = (self.prev_mx >= 0.0).then_some((self.prev_mx, self.prev_my));
+    }
+
+    /// **Is this motion only the BACK press's own jitter?** A Magic Remote moves a little when a
+    /// button is pressed, and over full-screen video any pointer motion raises the transport
+    /// (`PlayerScreen`'s pointer arm), so the BACK that hid it brought it straight back and the
+    /// next BACK hid it again instead of leaving. While the transport stays hidden, motion within
+    /// [`BACK_WAKE_PX`] of the rest is the press's own and is kept from the page; a real move past
+    /// it, or the transport coming back some other way, ends the hold.
+    pub(crate) fn back_jitter(&mut self, x: f32, y: f32, transport_hidden: bool) -> bool {
+        let Some((rx, ry)) = self.back_rest else { return false };
+        if transport_hidden && (x - rx).abs() + (y - ry).abs() < BACK_WAKE_PX {
+            return true;
+        }
+        self.back_rest = None;
+        false
+    }
 }
 
 /// How far from the top or bottom of the screen the pointer scrolls the page ([`EdgeScroll`]).
@@ -266,6 +291,11 @@ pub(crate) fn click_is_ok(dpad_mode: bool, motion_since_dpad: f32, on_control: b
 /// Pointer travel, in logical px accumulated since the last D-pad press, that hands focus back to
 /// the pointer: below it, motion is the hand holding the remote, not a deliberate move.
 pub(crate) const DPAD_MOTION_GATE: f32 = 120.0;
+
+/// Pointer travel, in logical px from where it rested at a BACK over the player, that is a move
+/// rather than the press's own jitter ([`Pointer::back_jitter`]). The value the upstream fix for
+/// this uses; the jitter itself has not been measured on this build.
+pub(crate) const BACK_WAKE_PX: f32 = 4.0;
 
 // `home_activate` (the OK/pointer activation ladder for the legacy Home grid) was retired with
 // the legacy `ui::home` module when phase 8 made Home an owned `Screen` — its job (trail reset,
