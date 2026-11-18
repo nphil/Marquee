@@ -725,7 +725,8 @@ impl ArtImage {
 /// A not-yet-loaded skeleton falls back to a rimmed fill (no shadow until the art arrives).
 /// The source-facing half of the card primitive, also exercised without a GPU in
 /// host admission tests. The same final rect then goes to the card composite below.
-/// Text-only prewarming neither observes placement nor starts image work.
+/// Text-only prewarming neither observes placement nor starts image work; the prewarm walk of a
+/// page about to be shown asks for its on-screen cards' art ([`crate::art_prewarm_walk`]).
 ///
 /// **One call per card per walk.** It opens the card's motion scope (`card_motion::Scope::card`),
 /// which counts a second call for the same art in the same walk as a second occurrence of the card
@@ -734,7 +735,10 @@ impl ArtImage {
 /// first, [`lead_card_art`]) resolves here once and hands the result to [`card_named_led`], never
 /// calls this twice.
 pub fn resolve_card_art(p: Painter, rect: Rect, art: &Art<'_>) -> ArtImage {
-    if p.is_recording() { return ArtImage::NONE; }
+    if p.is_recording() {
+        prewarm_card_art(p, rect, art);
+        return ArtImage::NONE;
+    }
     let admission = art.motion_identity()
         .map(|id| crate::card_motion::Scope::card(id, p.to_screen(rect).0));
     let (tex, w, h) = card_art_request(art).map_or((0, 0.0, 0.0), |(srv, path, w, h)| resolve_tex_wh_on(srv, path, w, h, 0));
@@ -747,6 +751,20 @@ pub fn resolve_card_art(p: Painter, rect: Rect, art: &Art<'_>) -> ArtImage {
     }
     let shown = admission.as_ref().map_or(1.0, |scope| scope.arrival(tex != 0));
     ArtImage { tex, w, h, shown }
+}
+
+/// A recording walk paints nothing and keeps no placement history. Under
+/// [`crate::art_prewarm_walk`] a card it would put on screen asks for its art anyway: the page is
+/// standing still behind a dip or its held image, at the placement it will be shown at, so the
+/// admission that waits for a second placement sample has nothing to protect.
+fn prewarm_card_art(p: Painter, rect: Rect, art: &Art<'_>) {
+    if !crate::prewarms_art() { return; }
+    // recording visits offscreen cards too (`card_row::paint_visible`); only the screen's are asked for
+    let on_screen = p.to_screen(rect).0.intersect(Rect::FULL);
+    if on_screen.w <= 0.0 || on_screen.h <= 0.0 { return; }
+    if let Some((srv, path, w, h)) = card_art_request(art) {
+        crate::tex::resolve_on(srv, path, w, h, false);
+    }
 }
 
 /// The `(server, path, width, height)` [`resolve_card_art`] asks the source for, for a screen that
@@ -807,9 +825,12 @@ pub fn card_named(p: Painter, frame: Rect, art: Art, fan_name: Option<&str>, rad
 #[allow(clippy::too_many_arguments)]
 pub fn card_named_led(p: Painter, frame: Rect, art: Art, fan_name: Option<&str>, rad: f32, focused: bool,
     scale: f32, f: f32, led: Option<ArtImage>) {
-    // Text prewarming visits an offscreen page. This leaf has no text: starting
-    // image work here would bypass on-screen admission, and pollute its history.
-    if p.is_recording() { return; }
+    // Text prewarming visits an offscreen page. This leaf has no text: it paints nothing, and asks
+    // for art only in a page's prewarm walk.
+    if p.is_recording() {
+        if led.is_none() { prewarm_card_art(p, if focused { frame.scaled(scale) } else { frame }, &art); }
+        return;
+    }
     let r = if focused { frame.scaled(scale) } else { frame };
     // All card variants resolve inside their final placement scope. Neither the
     // screen nor its springs can forget to report a new positional expression.

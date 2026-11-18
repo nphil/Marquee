@@ -1683,9 +1683,11 @@ where
                     // Raw screen clears bypass Painter::recording; they must not erase
                     // the outgoing page while its destination only records text. The walk
                     // measures ahead of any frame that draws the page, so it is speculative to
-                    // the recorder (`rec::speculative`).
+                    // the recorder (`rec::speculative`). Its on-screen cards ask for their art
+                    // (`art_prewarm_walk`), so posters load under the dip and the held image
+                    // instead of on the page's first live frames.
                     plx_base::diag::spans::span("warm", || plx_gfx::gfx::without_frame_clear(|| {
-                        super::rec::speculative(|| super::record_walk(|| inst.screen.draw(&mut f)))
+                        super::art_prewarm_walk(|| super::rec::speculative(|| super::record_walk(|| inst.screen.draw(&mut f))))
                     }));
                 }
             }

@@ -2221,6 +2221,53 @@ fn frozen_dispatch_holds_past_the_dip_while_page_motion_and_resource_work_remain
     assert_eq!(begins.get(), 2);
 }
 
+thread_local! {
+    static PROBED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+/// A source that records every draw probe and never has the art.
+struct ProbeSpy;
+impl crate::tex::Source for ProbeSpy {
+    fn probe(&self, _: u16, path: &str, _: i32, _: i32, _: bool) -> Option<plx_machine::machine::PosterKey> {
+        PROBED.with(|p| p.borrow_mut().push(path.to_string()));
+        None
+    }
+    fn warm(&self, _: u16, _: &str, _: i32, _: i32, _: bool) -> crate::tex::Warm { crate::tex::Warm::Known }
+    fn logo(&self, _: u16, _: &str) -> Option<plx_machine::machine::PosterKey> { None }
+    fn logo_warm(&self, _: u16, _: &str) -> crate::tex::Warm { crate::tex::Warm::Known }
+    fn unresident(&self, _: plx_machine::machine::PosterKey, _: bool) {}
+    fn idle(&self) -> bool { true }
+}
+
+/// **A destination's on-screen art is asked for under the dip, before its first draw.** The floor
+/// capture is the page's only draw before the hand-over, and a card with no placement history starts
+/// no work there, so every visible poster used to be asked for when the page went live and landed
+/// on its first live frames (Requests, 2026-11-18: 9 frames over 8.3 ms). The dip-out's prewarm
+/// walk asks instead, for the cards on screen only.
+#[test]
+fn a_destination_asks_for_its_on_screen_art_before_its_first_draw() {
+    let _guard = plx_base::testlock::serial();
+    static SPY: ProbeSpy = ProbeSpy;
+    crate::tex::install(&SPY);
+    crate::tex::reset_for_test(usize::MAX);
+    PROBED.with(|p| p.borrow_mut().clear());
+    let (mut d, mut rig) = frozen_fixture();
+    d.request(MachineId::Nav, NavOp::Push(FixtureArg::Page(crate::fixture::ART_PAGE)));
+    d.frame_with(&mut rig, tick(0), vec![], vec![], &mut NoTap, false);
+    d.draw(&mut rig, true); // outgoing capture
+    let mut before_first_draw = Vec::new();
+    let mut ms = 0;
+    while d.top_arg() != Some(&FixtureArg::Page(crate::fixture::ART_PAGE)) {
+        before_first_draw = PROBED.with(|p| p.borrow().clone());
+        ms += 16;
+        assert!(ms < 400, "the push reaches its floor");
+        plx_machine::idle::frame_begin(1.0 / 60.0);
+        d.frame_with(&mut rig, tick(ms), vec![], vec![], &mut NoTap, false);
+        d.draw(&mut rig, true);
+    }
+    assert!(before_first_draw.iter().any(|p| p == "/fixture-art"), "asked for under the dip: {before_first_draw:?}");
+    assert!(!before_first_draw.iter().any(|p| p == "/fixture-offscreen"), "an offscreen card is not asked for");
+}
+
 /// **A page's text is resident before the hand-over draws it.** Content that lands after the dip's
 /// floor — a detail page's metadata — is drawn by nothing while the image stands in for the page,
 /// so the first frame to draw the settled page used to rasterise every new string at once (84 ms

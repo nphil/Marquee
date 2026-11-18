@@ -642,6 +642,7 @@ pub struct Painter {
 }
 thread_local! {
     static RECORD_WALK: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static ART_PREWARM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static OUTPUT_GAIN: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
     /// The key of the picture the region's texture was last filled with ([`Painter::cached_region`]) and
     /// the placeholders that fill drew: what a frame served from the texture counts again. Beside the
@@ -690,6 +691,29 @@ pub fn record_walk<R>(f: impl FnOnce() -> R) -> R {
     RECORD_WALK.with(|d| d.set(d.get() + 1));
     let _restore = Restore;
     f()
+}
+
+/// **Run `f` as the prewarm walk of a page about to be shown** (a dip's staged destination, or the
+/// page its held image stands in for): the cards it would put on screen ask for their art, as a
+/// draw does, while painting nothing ([`widgets::resolve_card_art`]). The one draw of such a page
+/// before its hand-over is the floor capture, whose cards have no placement history and so start no
+/// work there (`card_motion`); without this walk every visible poster was asked for when the page
+/// went live and landed on its first live frames (Requests: 9 frames over 8.3 ms, 2026-11-18).
+/// The scope is per thread and restored on unwind.
+pub fn art_prewarm_walk<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ART_PREWARM.with(|a| a.set(self.0));
+        }
+    }
+    let _restore = Restore(ART_PREWARM.with(|a| a.replace(true)));
+    f()
+}
+
+/// Is this walk an [`art_prewarm_walk`]?
+pub(crate) fn prewarms_art() -> bool {
+    ART_PREWARM.with(std::cell::Cell::get)
 }
 
 /// Resting→lifted drop-shadow params — penumbra `blur`, downward `off`, ink `alpha` — for a tile of

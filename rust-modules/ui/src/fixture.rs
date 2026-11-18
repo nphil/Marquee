@@ -308,6 +308,8 @@ impl LogicalState for FixtureState {
 pub const ANIMATED_PAGE: u32 = 950;
 /// A transition fixture whose page-owned motion intentionally outlives PageDip's 140 ms In ramp.
 pub const QUIESCENCE_PAGE: u32 = 951;
+/// A page with one card on screen (`/fixture-art`) and one far off it (`/fixture-offscreen`).
+pub const ART_PAGE: u32 = 952;
 
 pub struct FixtureScreen {
     pub arg: FixtureArg,
@@ -533,6 +535,12 @@ impl Screen<FixtureHost> for FixtureScreen {
             self.lifted = f.lifted;
         }
         composed_draw(self, f);
+        if self.arg == FixtureArg::Page(ART_PAGE) {
+            for (x, key) in [(100.0, "/fixture-art"), (4000.0, "/fixture-offscreen")] {
+                let art = crate::widgets::Art::Thumb { sid: 1, key, res: (250, 375) };
+                crate::widgets::card(f.painter, Rect::new(x, 300.0, 250.0, 375.0), art, 12.0, false, 1.0, 0.0);
+            }
+        }
         if matches!(self.arg, FixtureArg::Page(_)) {
             // a page that always shows a placeholder, for the held-image debt test
             crate::placeholder::note(f.painter, crate::placeholder::Reason::DetailSpinner, "fixture");
