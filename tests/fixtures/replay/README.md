@@ -638,3 +638,14 @@ and anchor flag kept, and the alphabet did not move. A release simulator records
 `state_fp` (14932426646651267467 against 4453049476616702048), so only a debug build can record.
 `tests/focusfp.sh --targets` and `--resolve` replay it `verdict=SAME` with every difference counter
 at zero.
+
+Home's hero now draws its length as its own run and a Resume pill with the time left, which all three
+anchors measure at boot. The shape did not move, but all three were refused on the first measurement
+they had never taken (`replay: REFUSED — replay measurement table miss`, both modes). Only the three
+recording segments were replaced (`tests/focusfp.sh --rec --only 1,6,12` on a debug simulator,
+`tools/plxnative-rec check`), the manifests and anchor flags kept; the closed alphabet admits the
+hero's length run (`([0-9]+h )?[0-9]+m`). A decoded recording above roughly 0.95 MB is refused as over
+the replay memory budget, and a simulator on a Linux virtual display ticks faster than the 120 Hz
+Mac, so the recordings use a 200–250 ms key interval and shorter idle gaps (Flow 6 also shorter sleeps
+between its keys) to land near the earlier frame counts. `tests/focusfp.sh --targets` and `--resolve`
+replay all three `verdict=SAME` with every difference counter at zero.
