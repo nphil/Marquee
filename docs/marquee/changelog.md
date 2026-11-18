@@ -73,6 +73,7 @@
 - Home's backdrop (the colour wash, the hero picture and the shade over them) is drawn once while the hero stands still, instead of being re-shaded every frame, which saves graphics work. It is drawn live again whenever anything moves.
 - Home's hero names up to two genres, and a show whose server gives no runtime shows its number of seasons instead.
 - Home's Resume pill shows a rail for how far in the title is, and the time left, in place of the word Resume; the facts line beneath keeps the whole runtime.
+- The Settings list starts with the settings used most: Home rows and Top bar under a Home heading, then Video & playback, Subtitles and Audio & subtitles, then Requests, Bazarr and SpeechDock. Language and the switches, Favorite libraries and Under posters, and Privacy, Diagnostics and About follow. From the first row, Home rows is 1 press (a press is one Down plus the final OK), Top bar 2, Video & playback 3, Subtitles 4, Audio & subtitles 5 and Requests 6; they were 3, 4, 5, 6, 7 and 13.
 
 ## 0.10.0
 

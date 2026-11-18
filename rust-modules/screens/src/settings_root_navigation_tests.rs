@@ -872,9 +872,10 @@ fn a_rebuild_keeps_the_row_by_id_and_a_vanished_row_falls_to_its_neighbour() {
     assert_eq!(page.state.sel, RootId::Language.key());
 
     for (from, lands) in [
+        (RootId::HomeRows, RootId::Playback),
         (RootId::AudioSubtitles, RootId::Language),
         (RootId::TrailerAutoplay, RootId::Privacy),
-        (RootId::Favourites, RootId::Playback),
+        (RootId::Favourites, RootId::Privacy),
         (RootId::About, RootId::About),
     ] {
         select_root(&mut page, from.clone());
@@ -884,6 +885,24 @@ fn a_rebuild_keeps_the_row_by_id_and_a_vanished_row_falls_to_its_neighbour() {
         assert_eq!(page.form.selected_id(), Some(&lands), "{from:?} left: focus falls to {lands:?}");
         page.form.set(root_form(&inputs_for(true)), None);
     }
+}
+
+/// **The common settings are the first rows of the root.** Home rows, Top bar, Video & playback,
+/// Subtitles, Audio & subtitles and the plugins (Requests, Bazarr, SpeechDock) come before every
+/// switch and every rarely-changed row, so each is a handful of presses from the first row (one DOWN
+/// per row passed, then OK).
+#[test]
+fn the_common_settings_are_the_first_rows_of_the_root() {
+    let mut real = FormTable::<RootId, Action, SettingsPage>::new(super::super::registry::BAND);
+    real.set(root_form(&inputs_for(true)), None);
+    let first: Vec<RootId> = [
+        RootId::HomeRows, RootId::TopBar, RootId::Playback, RootId::Subtitles, RootId::AudioSubtitles,
+        RootId::Seerr, RootId::Bazarr, RootId::SpeechDock,
+    ].into();
+    for (at, id) in first.iter().enumerate() {
+        assert_eq!(real.index_of(id), Some(at), "{id:?} is row {at}, so {} presses from the first row", at + 1);
+    }
+    assert_eq!(real.selected_id(), Some(&RootId::HomeRows), "the root opens on its first row");
 }
 
 #[test]

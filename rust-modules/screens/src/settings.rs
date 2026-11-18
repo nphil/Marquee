@@ -1260,9 +1260,29 @@ fn trace_label(status: plx_platform::playback_trace::Status) -> &'static str {
 
 fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
     let signed_in = inputs.signed_in;
-    // Order: Libraries, Playback (player experience only), System (Language, Automatically Sign
-    // In, Trailer autoplay), Unencrypted connections, Privacy, Diagnostics, then About alone at the very end.
-    //
+    // Order, most-used first so the common settings sit a few presses from the top: Home (Home rows,
+    // Top bar), Playback (Video & playback, Subtitles, Audio & subtitles), Integrations (Requests,
+    // Bazarr, SpeechDock), System (Language and the switches), Libraries (Favorite libraries,
+    // Under posters), Unencrypted connections, Privacy, Diagnostics, then About at the very end.
+    // Signed out, only the sign-in path's own short list remains.
+    let home = FormSection::new(plx_platform::i18n::msg::browse_chrome_home())
+        .visible(signed_in)
+        .item(
+            RootId::HomeRows,
+            RowKind::Nav(SettingsPage::HomeRows),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::home_rows_title())
+                .detail(plx_platform::i18n::msg::home_rows_detail())
+                .chevron(true),
+        )
+        .item(
+            RootId::TopBar,
+            RowKind::Nav(SettingsPage::TopBar),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::top_bar_title())
+                .detail(plx_platform::i18n::msg::top_bar_detail())
+                .chevron(true),
+        );
     // The Libraries section is Libraries and the row is Favorite libraries: the switch governs
     // the whole app — Home's shelves, the top tab strip and the Library's Sources picker.
     let libraries = FormSection::new(plx_platform::i18n::msg::settings_libraries_section())
@@ -1283,22 +1303,6 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::under_posters_title())
                 .detail(plx_platform::i18n::msg::under_posters_detail())
                 .value(under_posters::summary(inputs.under_posters))
-                .chevron(true),
-        )
-        .item(
-            RootId::HomeRows,
-            RowKind::Nav(SettingsPage::HomeRows),
-            Action::Door,
-            Row::new(plx_platform::i18n::msg::home_rows_title())
-                .detail(plx_platform::i18n::msg::home_rows_detail())
-                .chevron(true),
-        )
-        .item(
-            RootId::TopBar,
-            RowKind::Nav(SettingsPage::TopBar),
-            Action::Door,
-            Row::new(plx_platform::i18n::msg::top_bar_title())
-                .detail(plx_platform::i18n::msg::top_bar_detail())
                 .chevron(true),
         );
     let playback = FormSection::new(plx_platform::i18n::msg::settings_playback_section())
@@ -1383,6 +1387,15 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
     let integrations = FormSection::new(plx_platform::i18n::msg::bazarr_section())
         .visible(signed_in)
         .item(
+            RootId::Seerr,
+            RowKind::Nav(SettingsPage::Seerr),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::seerr_title())
+                .detail(plx_platform::i18n::msg::seerr_root_detail())
+                .value(seerr::summary(&inputs.seerr))
+                .chevron(true),
+        )
+        .item(
             RootId::Bazarr,
             RowKind::Nav(SettingsPage::Bazarr),
             Action::Door,
@@ -1397,15 +1410,6 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Action::Door,
             Row::new(plx_platform::i18n::msg::speechdock_title())
                 .detail(plx_platform::i18n::msg::speechdock_root_detail())
-                .chevron(true),
-        )
-        .item(
-            RootId::Seerr,
-            RowKind::Nav(SettingsPage::Seerr),
-            Action::Door,
-            Row::new(plx_platform::i18n::msg::seerr_title())
-                .detail(plx_platform::i18n::msg::seerr_root_detail())
-                .value(seerr::summary(&inputs.seerr))
                 .chevron(true),
         );
     let has_plaintext = signed_in && !inputs.plaintext.is_empty();
@@ -1471,10 +1475,11 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             .chevron(true),
     );
     Form::new()
-        .section(libraries)
+        .section(home)
         .section(playback)
-        .section(system)
         .section(integrations)
+        .section(system)
+        .section(libraries)
         .section(plaintext)
         .section(privacy)
         .section(trace)
