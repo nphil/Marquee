@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Player menus over a film no longer add their black dimming layer to the colour-conversion work, so they open and close with less graphics work. Adapted from plx-native 233a94839.
 - A Library opens on the Recommended or Collections page it was last left on, kept per profile and library. Closing the page clears it. Adapted from plx-native 095f74ca9.
 - Library grid cards ease down from their lift when focus leaves them, and Back to the top raises the first-row card and closes its caption band over frames instead of snapping. Adapted from plx-native 612fc8cf0, 583722c8c and 0aaf63f2e.
 - Turning on an image subtitle track (the picture kind on discs) while a film plays shows the lines already read ahead at once, instead of nothing for the next ten seconds or so. Adapted from plx-native 5570be823.
