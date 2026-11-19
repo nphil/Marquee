@@ -393,13 +393,13 @@ pub fn hold_return(held: bool, pin: impl FnMut(PosterKey, Pins)) {
     CACHE.with(|cache| cache.borrow_mut().hold_return(held, pin));
 }
 
-/// The art drawn on the last frame resolved so far is the viewport [`hold_away`] keeps. Called
-/// on each frame the page to come back to is on screen, drawn live and settled.
-pub fn mark_away_viewport() {
-    CACHE.with(|cache| cache.borrow_mut().mark_away_viewport());
+/// Once per loop, before the frame's draw: `settled` says that draw is the page to come back to,
+/// live and at rest. The viewport [`hold_away`] keeps is the art of the last draw made so.
+pub fn away_viewport(settled: bool) {
+    CACHE.with(|cache| cache.borrow_mut().away_viewport(settled));
 }
 
-/// Keep the first [`AWAY_PIN_MAX`] textures of the [`mark_away_viewport`] viewport while `held`,
+/// Keep the first [`AWAY_PIN_MAX`] textures of the [`away_viewport`] viewport while `held`,
 /// mirrored into the source as [`hold_return`] is.
 pub fn hold_away(held: bool, pin: impl FnMut(PosterKey, Pins)) {
     CACHE.with(|cache| cache.borrow_mut().hold_away(held, pin));
@@ -552,8 +552,11 @@ pub struct TexCache<K> {
     frame: u64,
     /// Cached route images can present for many frames without resolving their artwork.
     last_draw_frame: u64,
-    /// The frame [`TexCache::hold_away`] keeps the art of ([`mark_away_viewport`]).
+    /// The frame [`TexCache::hold_away`] keeps the art of ([`away_viewport`]).
     away_frame: u64,
+    /// The frame before the first draw of the current settled run ([`away_viewport`]): later
+    /// draws are the viewport's, earlier ones are not.
+    settled_from: Option<u64>,
     held: Pins,
 }
 
@@ -577,6 +580,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
             frame: 0,
             last_draw_frame: 0,
             away_frame: 0,
+            settled_from: None,
             held: 0,
         }
     }
@@ -587,11 +591,18 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         self.hold(PIN_RETURN, held, self.last_draw_frame, usize::MAX, pin);
     }
 
-    pub fn mark_away_viewport(&mut self) {
-        self.away_frame = self.last_draw_frame;
+    /// The loop decides `settled` before its draw, and a press can leave the page in the same
+    /// loop, so the frame that belongs to the viewport is only known one loop later: the last draw
+    /// stamped while settled. Called before [`hold_away`](Self::hold_away) on that loop, it hands
+    /// the hold the draw before the one that left.
+    pub fn away_viewport(&mut self, settled: bool) {
+        if self.settled_from.is_some_and(|from| self.last_draw_frame > from) {
+            self.away_frame = self.last_draw_frame;
+        }
+        self.settled_from = if settled { self.settled_from.or(Some(self.frame)) } else { None };
     }
 
-    /// [`hold_return`](Self::hold_return) for the [`mark_away_viewport`](Self::mark_away_viewport)
+    /// [`hold_return`](Self::hold_return) for the [`away_viewport`](Self::away_viewport)
     /// viewport, at most [`AWAY_PIN_MAX`] of it, earliest drawn first: the grid draws its rows top
     /// down, so the cut drops the rows furthest down.
     pub fn hold_away(&mut self, held: bool, pin: impl FnMut(K, Pins)) {
@@ -774,6 +785,7 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         self.held = 0;
         self.last_draw_frame = 0;
         self.away_frame = 0;
+        self.settled_from = None;
     }
 
     /// The only place victim eligibility is decided: `k` (currently `e`) may be evicted unless it

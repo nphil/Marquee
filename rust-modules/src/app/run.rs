@@ -550,10 +550,8 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
         || matches!(pending, Some(AppArg::Player)), in_flight);
     let library = |arg: &AppArg| matches!(arg, AppArg::Library | AppArg::LibraryCollections { .. } | AppArg::LibraryRecommended { .. });
     let away = !library(&app.route()) || pending.is_some_and(|dest| !library(dest));
-    if !away && pending.is_none() && !in_flight && app.pages.held_page_image().is_none() {
-        // the Library drawn live and settled on the frame just past: that is the screen it reopens on
-        plx_ui::tex::mark_away_viewport();
-    }
+    // this loop's draw, if any, is the Library live and at rest: the screen it reopens on
+    plx_ui::tex::away_viewport(!away && pending.is_none() && !in_flight && app.pages.held_page_image().is_none());
     super::adapters::poster::hold_away(away, in_flight);
     super::adapters::poster::begin_frame();
     super::adapters::poster::drain_decoded();

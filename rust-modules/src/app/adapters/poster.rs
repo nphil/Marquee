@@ -2835,8 +2835,12 @@ mod tests {
         tex::reset_for_test(tex::TEX_RESIDENT_BYTES_MAX);
     }
 
+    /// The TV sequence (2026-11-18): the Library at rest, a press that leaves it for Home, then
+    /// Requests and a title page, each drawing posters of its own, and back to the Library. The
+    /// press is handled before that loop's hold and draw, as in `run`, so the Library's own draw
+    /// on the way out is not the one the hold may key on.
     #[test]
-    fn the_library_viewport_stays_resident_while_other_pages_are_browsed() {
+    fn the_library_reopens_on_resident_posters_after_home_requests_and_a_title() {
         struct Up;
         impl Uploader for Up {
             fn upload(&mut self, d: &Decoded) -> Tex { Tex { id: 1, w: d.w, h: d.h } }
@@ -2845,72 +2849,62 @@ mod tests {
         }
         let (_fresh, sid, _) = one_server();
         tex::install(&SOURCE);
-        // The Library's screenful plus two more posters, and room for four of another page's.
-        let library = tex::AWAY_PIN_MAX + 2;
-        tex::reset_for_test((library + 4) * 16);
-        let paths: Vec<String> = (0..library).map(|i| format!("/library/metadata/away-{i}/thumb")).collect();
-        {
-            let client = plx_plex::plex::client_for(sid).unwrap();
-            let mut g = store();
-            g.slots = [Pslot::ZERO; PT_CAP];
-            g.frame = 1;
-            for (i, path) in paths.iter().enumerate() {
-                let slot = &mut g.slots[i];
-                slot.srv = sid;
-                slot.cache_gen = plx_platform::imgcache::generation();
-                slot.token_gen = client.token_gen();
-                slot.grant_epoch = client.grant_epoch();
-                slot.state = P_READY;
-                set_key(slot, &key_for(sid, path, 2, 2, 0));
-            }
-        }
+        tex::reset_for_test(PT_CAP * 16);
+        store().slots = [Pslot::ZERO; PT_CAP];
+        let page = |name: &str, n: usize| -> Vec<String> {
+            (0..n).map(|i| format!("/library/metadata/{name}-{i}/thumb")).collect()
+        };
+        // A screenful past the cap, so the cut shows; each other page fits beside the kept part.
+        let library = page("library", tex::AWAY_PIN_MAX + 2);
+        let (home, requests, title) = (page("home", 36), page("requests", 36), page("title", 16));
         let decoded = |key| tex::PosterReady {
             key: PosterKey(key), result: Ok(Decoded { w: 2, h: 2, rgba: vec![0; 16].into_boxed_slice() })
         };
-        let mut budget = plx_ui::frame::Budget::new();
-        let mut present = plx_machine::present::Present::new();
-        let mut up = Up;
-        let mut prepare = |now: u64, budget: &mut plx_ui::frame::Budget, up: &mut Up| {
+        let kept = || store().slots.iter().filter(|s| s.pins == tex::PIN_AWAY).count();
+        let (mut budget, mut present, mut up, mut now) =
+            (plx_ui::frame::Budget::new(), plx_machine::present::Present::new(), Up, 0u64);
+        // One `run` loop after its input: the holds, the draw-frame age, the decodes that landed
+        // (every request a draw left), the uploads, then the draw. Returns how many art it hit.
+        let mut iteration = |settled: bool, away: bool, in_flight: bool, draw: &[&[String]]| -> usize {
+            tex::away_viewport(settled);
+            hold_away(away, in_flight);
+            let landed: Vec<u32> = {
+                let mut g = store();
+                g.frame += 1;
+                let want: Vec<u32> = (0..PT_CAP as u32).filter(|&i| g.slots[i as usize].state == P_WANT).collect();
+                for &i in &want { g.slots[i as usize].state = P_READY; }
+                want
+            };
+            for key in landed { tex::accept(decoded(key)); }
+            now += 8_333;
             budget.begin_frame(now);
-            tex::prepare(budget, up, &mut plx_machine::machine::PresentHandle::of(&mut present), || now);
+            tex::prepare(&mut budget, &mut up, &mut plx_machine::machine::PresentHandle::of(&mut present), || now);
+            draw.iter().flat_map(|p| p.iter()).filter(|p| tex::resolve_on(sid.raw(), p, 2, 2, false) != 0).count()
         };
-        for key in 0..library as u32 {
-            tex::accept(decoded(key));
-            prepare(u64::from(key) * 16_000, &mut budget, &mut up);
+        let lib: &[&[String]] = &[&library];
+        for _ in 0..60 { iteration(true, false, false, lib); }
+        assert_eq!(iteration(true, false, false, lib), library.len(), "the Library settles with every poster drawn");
+        // The press for Home: the Library draws once more under its dip, beside Home's prewarm.
+        iteration(false, true, true, &[&library, &home]);
+        assert_eq!(kept(), tex::AWAY_PIN_MAX, "the screen left is kept, up to the cap");
+        for p in [&home, &requests, &title] {
+            iteration(false, true, true, &[p]);
+            for _ in 0..60 { iteration(false, true, false, &[p]); }
+            assert_eq!(kept(), tex::AWAY_PIN_MAX, "other pages recycle none of it");
         }
-        // The Library at rest: its screen drawn top row first, then left.
-        for path in &paths { assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0); }
-        tex::mark_away_viewport();
-        hold_away(true, true);
-        {
-            let g = store();
-            assert!(g.slots[..tex::AWAY_PIN_MAX].iter().all(|s| s.pins == tex::PIN_AWAY), "the screenful is kept");
-            assert!(g.slots[tex::AWAY_PIN_MAX..library].iter().all(|s| s.pins == 0), "at most AWAY_PIN_MAX of it");
-        }
-        // Five minutes on other pages, a new poster each second: count and byte pressure both.
-        for second in 1..=300u32 {
-            store().frame = second * 60;
-            tex::accept(decoded(library as u32 + second % (PT_CAP - library) as u32));
-            prepare(1_000_000 + u64::from(second) * 1_000_000, &mut budget, &mut up);
-            let g = store();
-            assert!(g.slots[..tex::AWAY_PIN_MAX].iter().all(|s| s.state == P_READY && !is_settled_victim(s, g.frame)));
-        }
-        hold_away(false, true);
-        assert_eq!(store().slots[0].pins, tex::PIN_AWAY, "the way back has not drawn the Library yet");
-        hold_away(false, false);
-        assert!(store().slots.iter().all(|s| s.pins == 0));
-        for path in &paths[..tex::AWAY_PIN_MAX] {
-            assert_ne!(tex::resolve_on(sid.raw(), path, 2, 2, false), 0, "reopening is a resident hit, not a re-decode");
-        }
-        // Short memory lets the hold go.
-        tex::mark_away_viewport();
-        hold_away(true, false);
-        assert_eq!(store().slots[0].pins, tex::PIN_AWAY);
+        // Back: the dip shows a held image, then the first live draw finds every kept poster.
+        iteration(false, false, true, &[]);
+        assert_eq!(iteration(true, false, false, &[&library[..tex::AWAY_PIN_MAX]]), tex::AWAY_PIN_MAX,
+            "reopening is a resident hit, not a re-decode");
+        assert_eq!(kept(), 0, "the hold ends once the Library is back");
+        // Left again, then memory runs short: the hold lets go.
+        iteration(true, false, false, lib);
+        iteration(false, true, true, &[&home]);
+        assert_eq!(kept(), tex::AWAY_PIN_MAX);
         store().warms_resting = true;
-        hold_away(true, false);
-        assert_eq!(store().slots[0].pins, 0, "memory pressure releases the kept viewport");
+        iteration(false, true, false, &[&home]);
+        assert_eq!(kept(), 0, "memory pressure releases the kept viewport");
         store().warms_resting = false;
-        hold_away(false, false);
         tex::shutdown(&mut up);
         tex::reset_for_test(tex::TEX_RESIDENT_BYTES_MAX);
     }
