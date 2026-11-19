@@ -1078,6 +1078,8 @@ fn ahead_victim(slots: &[Pslot; PT_CAP], frame: c_uint) -> Option<usize> {
 /// either number moves past the other.
 const AHEAD_PROTECT: usize = 32;
 const _: () = assert!(AHEAD_PROTECT >= tex::ON_SCREEN_ART_MAX);
+// the Library kept while away still leaves a full screen of slots to the page shown
+const _: () = assert!(tex::AWAY_PIN_MAX + tex::ON_SCREEN_ART_MAX <= PT_CAP);
 /// The most slots lookahead entries may hold. `AHEAD_PROTECT + AHEAD_MAX == PT_CAP`, and
 /// [`tex::AHEAD_SET_MAX`] (what a screen may ask for at once) stays below it.
 const AHEAD_MAX: usize = PT_CAP - AHEAD_PROTECT;
@@ -2854,9 +2856,11 @@ mod tests {
         let page = |name: &str, n: usize| -> Vec<String> {
             (0..n).map(|i| format!("/library/metadata/{name}-{i}/thumb")).collect()
         };
-        // A screenful past the cap, so the cut shows; each other page fits beside the kept part.
-        let library = page("library", tex::AWAY_PIN_MAX + 2);
-        let (home, requests, title) = (page("home", 36), page("requests", 36), page("title", 16));
+        // The densest first screen the Library paints; each other page fills the slots left.
+        let library = page("library", tex::ON_SCREEN_ART_MAX);
+        let other = PT_CAP - tex::AWAY_PIN_MAX;
+        let (home, requests, title) = (page("home", other), page("requests", other), page("title", 16));
+        let wants = || store().slots.iter().filter(|s| s.state == P_WANT).count();
         let decoded = |key| tex::PosterReady {
             key: PosterKey(key), result: Ok(Decoded { w: 2, h: 2, rgba: vec![0; 16].into_boxed_slice() })
         };
@@ -2886,21 +2890,21 @@ mod tests {
         assert_eq!(iteration(true, false, false, lib), library.len(), "the Library settles with every poster drawn");
         // The press for Home: the Library draws once more under its dip, beside Home's prewarm.
         iteration(false, true, true, &[&library, &home]);
-        assert_eq!(kept(), tex::AWAY_PIN_MAX, "the screen left is kept, up to the cap");
+        assert_eq!(kept(), library.len(), "the whole screen left is kept");
         for p in [&home, &requests, &title] {
             iteration(false, true, true, &[p]);
             for _ in 0..60 { iteration(false, true, false, &[p]); }
-            assert_eq!(kept(), tex::AWAY_PIN_MAX, "other pages recycle none of it");
+            assert_eq!(kept(), library.len(), "other pages recycle none of it");
         }
         // Back: the dip shows a held image, then the first live draw finds every kept poster.
         iteration(false, false, true, &[]);
-        assert_eq!(iteration(true, false, false, &[&library[..tex::AWAY_PIN_MAX]]), tex::AWAY_PIN_MAX,
-            "reopening is a resident hit, not a re-decode");
+        assert_eq!(iteration(true, false, false, lib), library.len(), "reopening is a resident hit");
+        assert_eq!(wants(), 0, "and decodes none of the screen again");
         assert_eq!(kept(), 0, "the hold ends once the Library is back");
         // Left again, then memory runs short: the hold lets go.
         iteration(true, false, false, lib);
         iteration(false, true, true, &[&home]);
-        assert_eq!(kept(), tex::AWAY_PIN_MAX);
+        assert_eq!(kept(), library.len());
         store().warms_resting = true;
         iteration(false, true, false, &[&home]);
         assert_eq!(kept(), 0, "memory pressure releases the kept viewport");

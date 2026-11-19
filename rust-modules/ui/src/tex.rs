@@ -412,10 +412,11 @@ pub const PIN_RETURN: Pins = 1;
 /// The page kept while others are browsed ([`hold_away`]).
 pub const PIN_AWAY: Pins = 2;
 
-/// The most textures [`hold_away`] keeps: four rows of the Library's six-column grid, the
-/// screenful it reopens on. With the source's 64 slots that leaves 40 for the pages browsed
-/// meanwhile, more than [`ON_SCREEN_ART_MAX`].
-pub const AWAY_PIN_MAX: usize = 24;
+/// The most textures [`hold_away`] keeps: every card the Library's densest screenful paints, so
+/// its reopen decodes none of them (24 left part of the screen to re-decode on the TV).
+/// About 11 MB of 250x375 posters; the source's 64 slots keep another full screen
+/// ([`ON_SCREEN_ART_MAX`]) free for the pages browsed meanwhile.
+pub const AWAY_PIN_MAX: usize = ON_SCREEN_ART_MAX;
 
 pub fn prioritize_pending<R: Ord>(rank: impl FnMut(PosterKey) -> R) {
     CACHE.with(|cache| cache.borrow_mut().prioritize_pending(rank));
