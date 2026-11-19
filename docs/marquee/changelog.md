@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A show watched again from the start stays on Continue Watching. Plex drops it once an episode ends, because every next episode is already watched; Marquee now reads the profile's last 16 weeks of viewing and shows the episode after the last one watched (no progress bar, plays from the start), unless Plex's own entry is newer. Remove from Continue Watching hides that entry on this TV, per profile, until the show is watched again; nothing is written to the server. A fully watched show's page offers that episode on Play instead of episode 1.
 - A page's on-screen posters start loading when it is opened, while its transition plays. They were first asked for once the page was already showing, so on Requests they all landed on its first frames, a run of 16–34 ms frames on the TV.
 - The Library keeps the posters of the screen it was left on (up to 24) loaded while other pages are browsed, so it reopens with them. After a few minutes on Requests or Home every one of them had been unloaded to make room, and the tiles stayed empty for 270 ms or more while they were read back from disk. Short memory still releases them.
 - Releasing an arrow key no longer redraws the screen. At the end of a row the press moves nothing, and the release drew the same screen again a remote's hold later, which the TV's frame log counted as a 76–92 ms late frame. A screen that acts on a release (the player's scrub) still redraws for it.

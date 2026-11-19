@@ -424,6 +424,8 @@ pub(crate) struct Bridge {
     /// that decides from it (`adapters::stores::refill_client_keys`), in the same call. ONE value
     /// kept for the life of the Bridge, so a pump that runs every frame allocates nothing for it.
     client_keys: plx_plex::plex::ClientKeys,
+    /// Whose removed next-episode entries the hubs store holds ([`super::adapters::stores::RewatchSeat`]).
+    rewatch_seat: super::adapters::stores::RewatchSeat,
     stores: plx_data::stores::Stores,
     mounter: AppMounter,
     /// This frame's publication of the playback session — see `AppViews::session`. Refreshed by
@@ -693,6 +695,7 @@ impl Bridge {
             store_runner,
             late_store_jobs: 0,
             client_keys: Default::default(),
+            rewatch_seat: Default::default(),
             delete_media: Default::default(),
             stores,
             mounter: AppMounter::default(),
@@ -2066,6 +2069,7 @@ impl Bridge {
     /// callers outside the per-frame dispatch (server activation, boot).
     pub(crate) fn hubs_run(&mut self, cmd: plx_data::stores::hubs::HubsCmd) -> plx_data::stores::StoreOutcome {
         super::adapters::stores::refill_client_keys(&mut self.client_keys);
+        self.rewatch_seat.seat(&mut self.stores.hubs, self.directory.view(), &self.client_keys);
         let directory = self.directory.view();
         let out = self.stores.hubs.run_with_directory(cmd, directory, &self.client_keys);
         self.start_store_jobs_of(StoreId::Hubs);
@@ -2467,6 +2471,7 @@ impl Bridge {
             }
             AppMsg::Store(StoreCmd::Hubs(c)) => {
                 super::adapters::stores::refill_client_keys(&mut self.client_keys);
+                self.rewatch_seat.seat(&mut self.stores.hubs, self.directory.view(), &self.client_keys);
                 let directory = self.directory.view();
                 let due = self.stores.hubs.run_with_directory(c.clone(), directory, &self.client_keys).endpoints;
                 self.start_store_jobs_of(StoreId::Hubs);
@@ -2482,6 +2487,7 @@ impl Bridge {
             }
             AppMsg::StoreWork(plx_data::stores::StoreWork::Hubs) => {
                 super::adapters::stores::refill_client_keys(&mut self.client_keys);
+                self.rewatch_seat.seat(&mut self.stores.hubs, self.directory.view(), &self.client_keys);
                 let directory = self.directory.view();
                 let due = self.stores.hubs.tick_with_directory(parts.tick.dt(), directory, &self.client_keys).endpoints;
                 self.start_store_jobs_of(StoreId::Hubs);

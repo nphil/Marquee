@@ -99,6 +99,54 @@ pub(crate) fn refill_client_keys(keys: &mut ClientKeys) {
     }));
 }
 
+/// Which profile's removed next-episode entries (`plx_data::stores::rewatch`) the hubs store holds.
+/// Read from the session record the moment a different profile is seated, never per frame.
+#[derive(Default)]
+pub(crate) struct RewatchSeat {
+    seated: Option<std::sync::Arc<plx_plex::plex::session::CurrentProfile>>,
+}
+
+impl RewatchSeat {
+    /// The seated profile's hides when the profile in use is not the one last asked about.
+    pub(crate) fn changed(&mut self) -> Option<Vec<plx_data::stores::rewatch::Hide>> {
+        use plx_plex::plex::session::{current_seat, current_snapshot, peek, rewatch_hidden, Seat};
+        // nobody seated: nothing to remember a removal for, so no next-episode entries either
+        let seat = current_seat();
+        if matches!(seat, Seat::Unseated) { self.seated = None; return None; }
+        let now = current_snapshot();
+        if let Some(held) = &self.seated {
+            if std::sync::Arc::ptr_eq(held, &now) { return None; }
+            // a republication of the same profile (a token refresh) is not a new profile
+            let same = held.stamp == now.stamp && held.user.as_ref().map(|u| &u.uuid) == now.user.as_ref().map(|u| &u.uuid);
+            if same { self.seated = Some(now); return None; }
+        }
+        self.seated = Some(now);
+        let hides = rewatch_hidden(&peek(), &seat);
+        Some(hides.iter().filter_map(|h| plx_data::stores::rewatch::Hide::from_stored(&h.guid, h.viewed_at)).collect())
+    }
+
+    /// Seats the profile's hides on `hubs` when the profile changed, before the step that follows.
+    pub(crate) fn seat(&mut self, hubs: &mut plx_data::stores::hubs::HubsStore,
+        directory: plx_data::stores::browse::DirectoryView<'_>, keys: &ClientKeys) {
+        if let Some(hides) = self.changed() {
+            let _ = hubs.run_with_directory(plx_data::stores::hubs::HubsCmd::SeatRewatch { hides }, directory, keys);
+        }
+    }
+}
+
+/// Remember on the seated profile's record that it removed a next-episode entry, off the frame
+/// thread. A show without a catalog id is hidden for this run only; a refused write likewise.
+pub(crate) fn persist_rewatch_hide(hide: &plx_data::stores::rewatch::Hide) {
+    use plx_plex::plex::session::{persist_profile_rewatch_hide, ProfileWrite, RewatchHide};
+    let Some((guid, viewed_at)) = hide.stored() else { return };
+    let Some(write) = ProfileWrite::capture() else { return };
+    let _ = plx_base::storage_worker::submit_retained(move || {
+        if !persist_profile_rewatch_hide(&write, &RewatchHide { guid, viewed_at }) {
+            plx_base::eventlog::log("rewatch: removal not saved: the write was refused");
+        }
+    });
+}
+
 /// The client a job's step decided on, if the registry still holds it: `client_for(sid)` accepted
 /// only when it is the very client (and credential) the step's [`ClientKeys`] named. A job the
 /// registry has moved on from (a sign-out, a re-registration, a retoken) is not started.

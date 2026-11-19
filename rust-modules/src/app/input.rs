@@ -998,6 +998,16 @@ pub(super) unsafe fn apply_item_action<R: super::playback::PlaybackResources>(
             super::bridge::execute_endpoint_outcomes(pages, outcome.endpoints);
         }
         Action::RemoveFromDeck(rk) => {
+            // A next-episode entry is this app's own (`plx_data::stores::rewatch`): the server holds
+            // nothing to hide, so the removal stays on this device, per profile, and lasts until the
+            // show is viewed again. Nothing is written to the server.
+            if let Some(own) = item.as_ref().filter(|m| m.rk == rk && m.rewatch_e != 0) {
+                let hide = plx_data::stores::rewatch::Hide::of(own);
+                super::adapters::stores::persist_rewatch_hide(&hide);
+                let outcome = bridge.hubs_run(plx_data::stores::hubs::HubsCmd::HideRewatch { hide });
+                super::bridge::execute_endpoint_outcomes(pages, outcome.endpoints);
+                return;
+            }
             // A HIDE, not a reset: the server keeps the item's `viewOffset`, so the card leaves
             // the shelf while the resume point survives and playing it again picks up where it
             // left off. That is why this is NOT `unscrobble`, which would throw the position
