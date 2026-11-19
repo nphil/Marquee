@@ -68,7 +68,7 @@ pub use subtitle_look::{
 
 pub use prefs::{IntroSkipDelayPref, CreditsSkipDelayPref, DolbyVisionModePref, InstantDpadSeekingPref, RememberAudioChoicesPref, SpoilerProtectionPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, persist_profile_tour_seen, put_own, stored_effective, stored_effective_hud, tenure, tour_seen as profile_tour_seen, HudSelectionPref, AudioEnhancementsPref,
     DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsPref,
-    ProfilePrefsRecord, ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipIntervalPref,
+    ProfilePrefsRecord, ProfileSetting, ProfileWrite, persist_profile_rewatch_hide, rewatch_hidden, RewatchHide, QualityPref, Row, Setting, SkipIntervalPref,
     SubtitleLookPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};
 use prefs::ProfileMemory;
 use serde::de::DeserializeOwned;

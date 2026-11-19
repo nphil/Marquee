@@ -69,10 +69,12 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         trailer_autoplay: Some(false),
         hud_selection: Some("com.example.hud".into()),
         tour_seen: Some(true),
+        rewatch_hidden: Some(vec![RewatchHide { guid: "5d776831151a1a001f4d2a1b".into(), viewed_at: 1 }]),
     };
     let mut fields: BTreeSet<String> = serde_json::to_value(&full).unwrap().as_object().unwrap().keys().cloned().collect();
-    // Not a setting: no legacy install key to fall back to, so no descriptor row.
+    // Not settings: no legacy install key to fall back to, so no descriptor row.
     assert!(fields.remove("tour_seen"));
+    assert!(fields.remove("rewatch_hidden"));
     let rows: BTreeSet<String> = DESCRIPTORS
         .iter()
         .filter(|d| d.fallback == Fallback::LegacyInstallKey)
@@ -639,4 +641,18 @@ fn two_profiles_each_keep_their_own_tour_seen() {
     assert_eq!(own_prefs(&records, "a", STAMP).and_then(|p| p.tour_seen), Some(true));
     assert_eq!(own_prefs(&records, "b", STAMP).and_then(|p| p.tour_seen), None);
     assert!(!put_own_tour_seen(&mut records, "b", ""), "an empty stamp records nothing");
+}
+
+/// A profile's removed next-episode entries are its own: a show's later hide replaces the earlier
+/// one, and the same hide twice writes nothing.
+#[test]
+fn a_profile_keeps_one_rewatch_hide_per_show() {
+    let hide = |guid: &str, viewed_at| RewatchHide { guid: guid.into(), viewed_at };
+    let mut records = Vec::new();
+    assert!(put_own_rewatch_hidden(&mut records, "a", STAMP, &hide("aa", 1)));
+    assert!(!put_own_rewatch_hidden(&mut records, "a", STAMP, &hide("aa", 1)), "already held");
+    assert!(put_own_rewatch_hidden(&mut records, "a", STAMP, &hide("aa", 2)));
+    assert_eq!(own_prefs(&records, "a", STAMP).and_then(|p| p.rewatch_hidden.clone()), Some(vec![hide("aa", 2)]));
+    assert_eq!(own_prefs(&records, "b", STAMP).and_then(|p| p.rewatch_hidden.clone()), None);
+    assert!(!put_own_rewatch_hidden(&mut records, "a", "", &hide("bb", 1)), "an empty stamp records nothing");
 }

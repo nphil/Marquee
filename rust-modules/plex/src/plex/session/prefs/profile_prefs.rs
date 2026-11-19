@@ -95,7 +95,22 @@ pub struct ProfilePrefs {
     /// legacy install-wide key to fall back to, and absent reads as "not seen".
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub tour_seen: Option<bool>,
+    /// Next-episode entries of Continue Watching this profile removed, newest last. Not a
+    /// [`Setting`]: no legacy key, and absent reads as none.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub rewatch_hidden: Option<Vec<RewatchHide>>,
 }
+
+/// A show whose next-episode entry the profile removed: the show's catalog id (24 hex digits) and
+/// the `lastViewedAt` of the episode the entry followed. The entry stays away until a newer view.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewatchHide {
+    pub guid: String,
+    pub viewed_at: i64,
+}
+
+/// Most hides one profile keeps; the oldest go first.
+pub const REWATCH_HIDDEN_MAX: usize = 64;
 
 impl ProfilePrefs {
     /// No setting has an own value.
@@ -214,6 +229,39 @@ pub fn put_own_tour_seen(records: &mut Vec<ProfilePrefsRecord>, user: &str, stam
     });
     records[at].prefs.tour_seen = Some(true);
     records.prune_empty();
+    true
+}
+
+/// The next-episode entries the profile `seat` names removed. Nobody seated: none.
+pub fn rewatch_hidden(session: &Session, seat: &Seat) -> Vec<RewatchHide> {
+    match seat {
+        Seat::Seated { user, stamp } => {
+            own_prefs(&session.prefs.profile_prefs, user, stamp).and_then(|p| p.rewatch_hidden.clone()).unwrap_or_default()
+        }
+        Seat::Unseated => Vec::new(),
+    }
+}
+
+/// [`put_own_tour_seen`] for one removed next-episode entry: a show's earlier hide is replaced, the
+/// list is capped at [`REWATCH_HIDDEN_MAX`], and a hide the profile already holds writes nothing.
+pub fn put_own_rewatch_hidden(records: &mut Vec<ProfilePrefsRecord>, user: &str, stamp: &str, hide: &RewatchHide) -> bool {
+    if stamp.is_empty() {
+        return false;
+    }
+    let held = own_prefs(records, user, stamp).and_then(|p| p.rewatch_hidden.as_deref());
+    if held.is_some_and(|list| list.last() == Some(hide)) {
+        return false;
+    }
+    records.prune_foreign(stamp);
+    let at = records.position_of(user, stamp).unwrap_or_else(|| {
+        records.push(ProfilePrefsRecord { user: user.to_string(), account: stamp.to_string(), ..Default::default() });
+        records.len() - 1
+    });
+    let list = records[at].prefs.rewatch_hidden.get_or_insert_with(Vec::new);
+    list.retain(|h| h.guid != hide.guid);
+    list.push(hide.clone());
+    let extra = list.len().saturating_sub(REWATCH_HIDDEN_MAX);
+    list.drain(..extra);
     true
 }
 
@@ -358,6 +406,11 @@ pub fn persist_profile_hud(w: &ProfileWrite, id: &str) -> bool {
 /// [`persist_profile_hud`] for the tour's seen flag, under the same guards.
 pub fn persist_profile_tour_seen(w: &ProfileWrite) -> bool {
     persist_profile_with(w, |records| put_own_tour_seen(records, &w.user, &w.stamp))
+}
+
+/// [`persist_profile_tour_seen`] for one removed next-episode entry, under the same guards.
+pub fn persist_profile_rewatch_hide(w: &ProfileWrite, hide: &RewatchHide) -> bool {
+    persist_profile_with(w, |records| put_own_rewatch_hidden(records, &w.user, &w.stamp, hide))
 }
 
 /// The read-modify-write both doors share: `put` edits the record list and says whether it changed.
