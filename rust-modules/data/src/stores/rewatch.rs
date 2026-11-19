@@ -201,10 +201,6 @@ pub(crate) fn overlay<'a>(cards: &mut Vec<(&'a str, &'a CwItem)>, entries: &[(&'
     }
 }
 
-fn now_secs() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
-}
-
 /// The profile's episodes viewed since `since` in one TV library, newest first.
 fn viewed_in(client: &Client, sec: i64, since: i64) -> Option<Vec<Viewed>> {
     let filters = [("type".to_string(), "4".to_string()), ("lastViewedAt>".to_string(), since.to_string())];
@@ -246,8 +242,8 @@ fn entry_for(client: &Client, sid: ServerId, e: &Viewed) -> Option<CwItem> {
 
 /// What Home's read of one server brings: the next-episode entries for the shows the profile
 /// watched lately, `known` being the server's own Continue Watching cards. `None` is a failed read.
-pub(crate) fn read(client: &'static Client, sid: ServerId, hidden: &[i64], known: &[CwItem]) -> Option<Vec<CwItem>> {
-    let since = now_secs() - WINDOW_WEEKS * 7 * 86_400;
+pub(crate) fn read(client: &'static Client, sid: ServerId, hidden: &[i64], known: &[CwItem], now: i64) -> Option<Vec<CwItem>> {
+    let since = now - WINDOW_WEEKS * 7 * 86_400;
     let mut rows = Vec::new();
     for dir in client.sections()?.directory.iter().filter(|d| d.kind == "show") {
         let Ok(sec) = dir.key.parse::<i64>() else { continue };

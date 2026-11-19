@@ -3102,7 +3102,8 @@ impl HubRequest {
         match &self.page {
             Some(page) if page.id == REWATCH_ID => {
                 // The answer rides in `cw`: the one list of entries a read brings.
-                let cw = rewatch::read(client, self.sid, &page.hidden, &self.known)?;
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+                let cw = rewatch::read(client, self.sid, &page.hidden, &self.known, now)?;
                 Some(SourceBuild { cw, ..SourceBuild::default() })
             }
             Some(page) if page.id == DECK_ID => {
