@@ -23,7 +23,7 @@
 //! sibling modules. `ci/allow/mutators.txt`'s `# count: 0` already proves no PRODUCTION line
 //! outside `pms`/`stores::hubs` spells the old direct-call form; this is the part that
 //! keyword-level `pub(super)` genuinely cannot add on top of that count.
-use crate::stores::{deck, paging};
+use crate::stores::{deck, paging, rewatch};
 use crate::viewstate::{DeletedRow, ViewAt, ViewEdit};
 use plx_machine::job::{Job, Port};
 use plx_machine::machine::{Addr, MachineId, RequestId};
@@ -189,6 +189,10 @@ pub struct PmsMovie {
     /// to caption a library grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_info: Option<SortInfo>,
+    /// A next-episode entry added by `stores::rewatch` for a show watched again: `lastViewedAt` of
+    /// the episode it follows. 0 on every other row, which Plex itself listed.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub rewatch_e: i64,
 }
 
 // Remote derive keeps the field rules in one place while allowing non-inlined trait entry
@@ -242,6 +246,8 @@ impl SortInfo {
 }
 
 fn is_false(b: &bool) -> bool { !*b }
+
+fn is_zero_i64(n: &i64) -> bool { *n == 0 }
 
 /// **One version of an item, as the version picker describes it**: the facts a listing carries
 /// for each `Media[]` entry, keyed by the identity a play is asked for by
@@ -383,6 +389,12 @@ pub struct PmsState {
     hold: (usize, usize),
     /// Moves whenever a quiet read stages an answer, so a held verdict is keyed on what it judged.
     staged_gen: u32,
+    /// What the profile removed from Continue Watching that Plex does not hold: the next-episode
+    /// entries of `stores::rewatch`. Seated by the app for the profile in use.
+    rewatch_hides: Vec<rewatch::Hide>,
+    /// Set by the first [`HubsCmd::SeatRewatch`]: the application has a profile seated and wants
+    /// next-episode entries. Until then no such read is asked for.
+    rewatch_on: bool,
     /// The last [`HubsCmd::Publish`] verdict that was to WAIT, and what it was a verdict on: the
     /// same question asked again next frame is answered from this, not by merging again.
     publish_memo: Option<PublishKey>,
@@ -410,6 +422,11 @@ struct PublishKey {
 
 /// The id of the merged Continue Watching row, which a page ask names instead of one server's hub.
 const DECK_ID: &str = "home.continue";
+
+/// The id of the read that brings a show's next-episode entries ([`rewatch`]): carried by a
+/// [`PageQuery`], so it shares the page read's single flight, retry and admission, but it lands in
+/// [`Src::rewatch`] and touches no shelf.
+const REWATCH_ID: &str = "home.rewatch";
 
 /// A Home row's name in this run, as the profile's layout keeps it: its server's slot (`None` for
 /// the merged Continue Watching row, which is every server's), its hub family and its library
@@ -465,6 +482,8 @@ impl Default for PmsState {
             deck_ask: None,
             hold: (0, HOLD_ROWS - 1),
             staged_gen: 0,
+            rewatch_hides: Vec::new(),
+            rewatch_on: false,
             publish_memo: None,
             jobs: Vec::new(),
             offered: (None, Arc::from(Vec::new())),
@@ -1309,6 +1328,7 @@ fn request_page(state: &mut PmsState, adapter: &PmsAdapter, sid: ServerId,
     id: &str, key: &str, before: bool, scope: &BrowseScope, launch: &mut dyn FnMut(HubRequest)) -> Option<crate::stores::EndpointRefresh> {
     let Some(source) = state.srcs.iter_mut().find(|source| source.sid == sid) else { return None };
     if refresh_src_lifecycle(source, &scope.clients) { return None; }
+    yield_rewatch(source);
     if source.adoptable && !source.fetching && source.page.is_none() && source.abandoned.last()
         .is_some_and(|a| a.page.id == id && a.page.key == key && a.page.before == before) {
         // The read the user walked away from is still out and is the one being asked for again.
@@ -1540,6 +1560,7 @@ fn ask_deck(state: &mut PmsState, adapter: &PmsAdapter, before: bool, mut pages:
         let mut waiting = Vec::new();
         for &i in &short {
             let s = &mut srcs[i];
+            yield_rewatch(s);
             if refresh_src_lifecycle(s, &scope.clients) || s.fetching || s.page.is_some() || s.state != HubState::Ready
                 || s.abandoned.iter().any(|a| a.page.id == DECK_ID) { continue; }
             s.retry_n = 0;
@@ -1823,6 +1844,7 @@ fn pump_reloads(state: &mut PmsState, adapter: &PmsAdapter, scope: &BrowseScope,
                 source.deferred = false;
             }
         }
+        if !want.is_empty() { yield_rewatch(source); }
         if source.page.is_some() || source.fetching || source.state != HubState::Ready { continue; }
         let Some((id, key)) = want.first() else { continue };
         let start = source.last.as_ref().and_then(|build| find_shelf(&build.shelves, id, key)).map_or(0, |shelf| shelf.offset);
@@ -1862,7 +1884,7 @@ pub fn source_ids(state: &PmsState) -> Vec<ServerId> { state.srcs.iter().map(|s|
 
 /// Is a quiet read's answer waiting to land? Cheap enough to ask every frame, before anything is
 /// built to judge it.
-pub fn has_staged(state: &PmsState) -> bool { state.srcs.iter().any(|s| s.staged.is_some()) }
+pub fn has_staged(state: &PmsState) -> bool { state.srcs.iter().any(|s| s.staged.is_some() || s.rewatch_staged.is_some()) }
 
 /// Drops what a quiet read holds for `s`. A quiet read still out is superseded rather than left to
 /// land as an ordinary full read, which would publish at its own time.
@@ -1889,6 +1911,70 @@ fn quiet_failed(s: &mut Src) {
     s.deferred = false;
     s.quiet_fails = s.quiet_fails.saturating_add(1);
     s.quiet_after = QUIET_SPACING_S.max(backoff_secs(s.quiet_fails));
+}
+
+/// A user-driven read (a page, the deck, a row coming back) outranks the next-episode read: that
+/// one is dropped (its landing is stale by `seq`) and asked again once the source is idle.
+fn yield_rewatch(s: &mut Src) {
+    if !s.page.as_ref().is_some_and(|page| page.id == REWATCH_ID) { return; }
+    s.page = None;
+    if std::mem::take(&mut s.fetching) { s.seq = s.seq.wrapping_add(1); }
+    s.retry_n = 0;
+    s.retry_s = 0.0;
+    s.rewatch_due = true;
+}
+
+/// Asks for the next-episode read once the source is idle: the tick that follows launches it.
+fn schedule_rewatch(s: &mut Src, scope: &BrowseScope) {
+    if !s.rewatch_due || s.page.is_some() || s.fetching || s.deferred || s.quiet
+        || s.state != HubState::Ready || s.key.is_none() { return; }
+    s.rewatch_due = false;
+    s.retry_n = 0;
+    s.page = Some(PageQuery { id: REWATCH_ID.into(), key: String::new(), start: 0, before: false,
+        hidden: hidden_sections(scope, s.sid), reload: false });
+}
+
+/// A next-episode read's landing: what it brought waits in [`Src::rewatch_staged`] for
+/// [`publish_staged`], unless it is what the source already holds.
+fn land_rewatch(s: &mut Src, cw: Vec<CwItem>, hides: &[rewatch::Hide], staged_gen: &mut u32) {
+    let mut entries: Vec<rewatch::Entry> = cw.into_iter().map(|item| rewatch::Entry { item, hidden: false }).collect();
+    rewatch::mark_hidden(&mut entries, hides);
+    let key = |e: &rewatch::Entry| (e.item.m.sid, e.item.m.rk.clone(), e.item.m.rewatch_e, e.hidden);
+    let held = s.rewatch_staged.as_deref().unwrap_or(&s.rewatch);
+    if held.iter().map(key).eq(entries.iter().map(key)) { return; }
+    s.rewatch_staged = Some(entries);
+    *staged_gen = staged_gen.wrapping_add(1);
+}
+
+/// `HubsCmd::SeatRewatch`: the hides of the profile now in use. True when the catalog changed.
+fn seat_rewatch(state: &mut PmsState, scope: &BrowseScope, hides: Vec<rewatch::Hide>) -> bool {
+    state.rewatch_on = true;
+    if state.rewatch_hides == hides { return false; }
+    state.rewatch_hides = hides;
+    rehide(state, scope)
+}
+
+/// `HubsCmd::HideRewatch`: the profile removed a next-episode entry from Continue Watching. The
+/// card leaves at once and stays away until the show is viewed again.
+fn hide_rewatch(state: &mut PmsState, scope: &BrowseScope, hide: rewatch::Hide) -> bool {
+    hide.add_to(&mut state.rewatch_hides);
+    rehide(state, scope)
+}
+
+/// Applies the hides to every entry held (staged ones too) and publishes the deck without them.
+fn rehide(state: &mut PmsState, scope: &BrowseScope) -> bool {
+    let mut any = false;
+    for s in &mut state.srcs {
+        for list in [Some(&mut s.rewatch), s.rewatch_staged.as_mut()].into_iter().flatten() {
+            rewatch::mark_hidden(list, &state.rewatch_hides);
+            any |= !list.is_empty();
+        }
+    }
+    if !any { return false; }
+    let mut build = merge_with_scope(&state.srcs, scope);
+    preserve_heroes(state, &mut build);
+    commit(state, build);
+    true
 }
 
 /// `HubsCmd::RefetchSourceQuiet`: read ONE source's hubs again without publishing. Never bumps
@@ -1994,6 +2080,10 @@ fn publish_staged(state: &mut PmsState, scope: &BrowseScope, home_top_visible: b
         s.copies.clear(); // a fresh answer, as `landed_ok` takes one
         s.deck_read = DeckRead::Answered;
     }
+    let mut rewatch_olds: Vec<(usize, Vec<rewatch::Entry>)> = Vec::new();
+    for (i, s) in srcs.iter_mut().enumerate() {
+        if let Some(new) = s.rewatch_staged.take() { rewatch_olds.push((i, std::mem::replace(&mut s.rewatch, new))); }
+    }
     settle_deck(&mut srcs, true);
     let candidate = merge_with_scope(&srcs, scope);
     let change = shift(published_home(state), &candidate);
@@ -2012,6 +2102,9 @@ fn publish_staged(state: &mut PmsState, scope: &BrowseScope, home_top_visible: b
     if waits {
         for (i, old) in olds {
             srcs[i].staged = std::mem::replace(&mut srcs[i].last, old);
+        }
+        for (i, old) in rewatch_olds {
+            srcs[i].rewatch_staged = Some(std::mem::replace(&mut srcs[i].rewatch, old));
         }
         for (s, lane) in srcs.iter_mut().zip(lanes) {
             if let (Some(build), Some(lane)) = (s.last.as_mut(), lane) { build.lane = lane; }
@@ -2468,6 +2561,13 @@ fn merged_deck<'a>(srcs: &'a [Src], pins: &[(ServerId, i64, bool)]) -> (Vec<(&'a
             cw.sort_by(|a, b| b.1.last_viewed_at.cmp(&a.1.last_viewed_at));
             (crate::stores::deck_group::present(cw, &roster, pins), 0, false)
         };
+    if offset == 0 {
+        // Only the head of the deck: a window further along holds older cards than any entry.
+        let entries: Vec<(&str, &rewatch::Entry)> = srcs.iter().filter(|s| s.last.is_some())
+            .flat_map(|s| s.rewatch.iter().map(move |e| (s.handle.as_str(), e)))
+            .filter(|(_, e)| item_pinned(pins, &e.item.m)).collect();
+        rewatch::overlay(&mut cw, &entries);
+    }
     cw.truncate(MAX_SHELF_ITEMS);
     (cw, offset, more)
 }
@@ -2764,6 +2864,15 @@ struct Src {
     /// back-off after a failed one.
     quiet_after: f32,
     quiet_fails: u32,
+    /// The show next-episode entries this server's history gives ([`rewatch`]), merged into the
+    /// deck by [`merged_deck`].
+    rewatch: Vec<rewatch::Entry>,
+    /// A newer read's entries, held back like [`Src::staged`] until [`publish_staged`] lets them
+    /// land, so an entry never appears under the cursor.
+    rewatch_staged: Option<Vec<rewatch::Entry>>,
+    /// The entries are to be read again: set by every full or quiet landing, cleared when the read
+    /// is scheduled.
+    rewatch_due: bool,
 }
 
 /// What the process knows of one source's Continue Watching deck.
@@ -2814,6 +2923,10 @@ impl Src {
                 .filter(|shelf| pages(&shelf.key) && !shelf.released()
                     && (shelf.offset > 0 || shelf.end > HUB_FETCH_COUNT as usize))
                 .map(|shelf| (PageQuery { id: shelf.hub_id.clone(), key: shelf.key.clone(), start: shelf.offset, before: false, hidden: Vec::new(), reload: false }, shelf.end, shelf.clone())).collect()),
+            known: match (&self.page, &self.last) {
+                (Some(page), Some(build)) if page.id == REWATCH_ID => build.cw.clone(),
+                _ => Vec::new(),
+            },
         };
         self.key = Some(key);
         self.fetching = true;
@@ -2866,6 +2979,9 @@ impl Src {
             quiet_owed: false,
             quiet_after: 0.0,
             quiet_fails: 0,
+            rewatch: Vec::new(),
+            rewatch_staged: None,
+            rewatch_due: false,
         }
     }
 }
@@ -2891,6 +3007,9 @@ fn refresh_src_lifecycle(s: &mut Src, clients: &ClientKeys) -> bool {
     s.staged = None;
     s.quiet = false;
     s.quiet_owed = false;
+    s.rewatch.clear();
+    s.rewatch_staged = None;
+    s.rewatch_due = false;
     // Retained cards may still paint during the new profile's fetch, but its request must
     // start at the preview rather than reuse the previous profile's listing positions.
     if let Some(build) = s.last.as_mut() {
@@ -2951,6 +3070,9 @@ pub struct HubRequest {
     /// The Continue Watching lane this source holds once the deck is placed on it, and the sections
     /// the user hid: a deck page reads from it, a refresh reloads it at its own offsets.
     lane: Option<(deck::Lane, Vec<i64>)>,
+    /// What this server's own Continue Watching listed, for the next-episode read: a show Plex's
+    /// entry already covers needs no lookup.
+    known: Vec<CwItem>,
 }
 
 impl HubRequest {
@@ -2978,6 +3100,11 @@ impl HubRequest {
     /// [`HubRequest::server`]'s key. `None` is a failed read, never "the server returned nothing".
     fn fetch(&self, client: &'static plx_plex::plex::Client) -> Option<SourceBuild> {
         match &self.page {
+            Some(page) if page.id == REWATCH_ID => {
+                // The answer rides in `cw`: the one list of entries a read brings.
+                let cw = rewatch::read(client, self.sid, &page.hidden, &self.known)?;
+                Some(SourceBuild { cw, ..SourceBuild::default() })
+            }
             Some(page) if page.id == DECK_ID => {
                 let (mut lane, hidden) = self.lane.clone()?;
                 let list = |start: usize, size: usize| client.continue_watching_page(start as i64, size as i64);
@@ -3488,6 +3615,7 @@ fn landed_ok(s: &mut Src, b: SourceBuild) {
     s.state = HubState::Ready;
     s.retry_n = 0;
     s.retry_s = 0.0;
+    s.rewatch_due = true;
 }
 
 /// Record one source's failure: keep whatever it last answered with and arm ITS next attempt.
@@ -3919,6 +4047,8 @@ fn run_settled(
             changed: false,
             endpoints: refetch_source_quiet(state, adapter, scope, sid, launch),
         },
+        HubsCmd::SeatRewatch { hides } => crate::stores::StoreOutcome::changed(seat_rewatch(state, scope, hides)),
+        HubsCmd::HideRewatch { hide } => crate::stores::StoreOutcome::changed(hide_rewatch(state, scope, hide)),
         HubsCmd::Publish { home_top_visible, focused_hub, press_live } => {
             let before = state.catalog_gen;
             publish_staged(state, scope, home_top_visible, focused_hub, press_live);
@@ -4024,6 +4154,7 @@ fn step_landings_with_scope(state: &mut PmsState, adapter: &PmsAdapter, dt: Opti
                     if let Some(old) = s.last.as_ref() { carry_descriptors(old, &mut b); }
                     s.staged = Some(b);
                     s.quiet_fails = 0;
+                    s.rewatch_due = true;
                     state.staged_gen = state.staged_gen.wrapping_add(1);
                 }
                 // no rediscovery: it is for the person's own reads; this one backs off and the
@@ -4034,6 +4165,13 @@ fn step_landings_with_scope(state: &mut PmsState, adapter: &PmsAdapter, dt: Opti
         }
         match l.build {
             Some(mut b) => {
+                if s.page.as_ref().is_some_and(|page| page.id == REWATCH_ID) {
+                    s.page = None;
+                    s.retry_n = 0;
+                    s.retry_s = 0.0;
+                    land_rewatch(s, b.cw, &state.rewatch_hides, &mut state.staged_gen);
+                    continue;
+                }
                 replay_since_request(s, &mut b);
                 if let Some(page) = s.page.take() {
                     drop_staging(s); // the window moved under it
@@ -4067,6 +4205,7 @@ fn step_landings_with_scope(state: &mut PmsState, adapter: &PmsAdapter, dt: Opti
     // nothing, so it re-kicks on the spot rather than wedging that source on a spinner forever.
     if let Some(dt) = dt {
         for s in srcs.iter_mut() { s.quiet_after = (s.quiet_after - dt).max(0.0); }
+        if state.rewatch_on { for s in srcs.iter_mut() { schedule_rewatch(s, scope); } }
         let mut turn = fanout_turn(&mut state.fanout, &srcs, |s| source_waiting(s) && s.retry_s - dt <= 0.0);
         for s in srcs.iter_mut() {
             if source_waiting(s) && retry_due(s, dt) {

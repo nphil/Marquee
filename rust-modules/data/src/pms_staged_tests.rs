@@ -669,3 +669,33 @@ fn a_trial_merge_that_waits_leaves_nothing_behind() {
     assert_eq!(r.rows(), published);
     assert_eq!(held(&r), [vec!["a-e".to_string()], vec!["b-e".to_string()]], "the trial left no feed behind");
 }
+
+/// A show's next episode (`stores::rewatch`) rides a read of its own: asked once a profile is
+/// seated, held on the source, and landed by the same publish gate as a quiet read; removing it
+/// takes it out at once.
+#[test]
+fn a_next_episode_entry_lands_through_the_publish_gate_and_a_removal_takes_it_out() {
+    let _g = plx_base::testlock::serial();
+    let mut r = rig(1);
+    assert!(r.run(None, 0.1).1.is_empty(), "no profile seated: no next-episode read");
+    let _ = r.run(Some(HubsCmd::SeatRewatch { hides: Vec::new() }), 0.0);
+    let (_, mut asked) = r.run(None, 0.1);
+    assert_eq!(asked.len(), 1, "seated: one next-episode read");
+    assert!(asked[0].page.as_ref().is_some_and(|page| page.id == REWATCH_ID));
+    let mut next = row(r.slots[0], "n1");
+    let m = Arc::make_mut(&mut next);
+    (m.show_rk, m.rewatch_e) = ("show".into(), 50);
+    let build = SourceBuild { cw: vec![CwItem { last_viewed_at: 50, m: next, position: 0 }], ..Default::default() };
+    let landing = asked.remove(0).complete_for_test(Some(build));
+    let published = r.rows();
+    let _ = r.apply(&landing);
+    assert!(has_staged(&r.o.state) && r.rows() == published, "held back until the gate lets it land");
+    // the focus is on the deck: the row would move under it
+    let _ = r.publish(true, Some(0), false);
+    assert_eq!(r.rows(), published, "the focused deck waits");
+    let _ = r.publish(true, Some(1), false);
+    assert_eq!(rks(&r.o.state, 0), ["n1", "c1", "c2", "c3"], "newest activity first");
+    let entry = r.o.state.srcs[0].rewatch[0].item.m.clone();
+    let _ = r.run(Some(HubsCmd::HideRewatch { hide: rewatch::Hide::of(&entry) }), 0.0);
+    assert_eq!(rks(&r.o.state, 0), ["c1", "c2", "c3"], "removed at once");
+}

@@ -123,6 +123,7 @@ mod tests {
                 id: plx_plex::plex::MediaId(3082), kbps: 25_200, resolution: "4k".into(),
                 vcodec: "hevc".into(), size: i64::MAX, hdr: true, ..Default::default()
             }],
+            rewatch_e: i64::MAX,
         };
         Landing { gen: 7, seq: 19, sid: m.sid, client: None, token_gen: 5,
             build: Some(SourceBuild {

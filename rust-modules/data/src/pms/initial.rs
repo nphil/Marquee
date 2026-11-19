@@ -113,6 +113,8 @@ impl Initial {
             deck_ask: None,
             hold: (0, super::HOLD_ROWS - 1),
             staged_gen: 0,
+            rewatch_hides: Vec::new(),
+            rewatch_on: false,
             publish_memo: None,
             jobs: Vec::new(),
             offered: (None, Arc::from(Vec::new())),
@@ -127,7 +129,9 @@ impl Initial {
     #[cfg(any(test, feature = "test-support"))]
     pub fn capture(state: &PmsState, adapter: &PmsAdapter) -> Self {
         let sources = state.srcs.iter().map(|s| {
-            let Src { sid, key, handle, state, fetching, seq, retry_s, retry_n, last, page, deferred: _, abandoned: _, adoptable: _, stalled: _, ledger: _, stamp: _, staged: _, quiet: _, quiet_owed: _, quiet_after: _, quiet_fails: _, copies: _, deck_read: _ } = s;
+            let Src { sid, key, handle, state, fetching, seq, retry_s, retry_n, last, page, deferred: _, abandoned: _, adoptable: _, stalled: _, ledger: _, stamp: _, staged: _, quiet: _, quiet_owed: _, quiet_after: _, quiet_fails: _, copies: _, deck_read: _,
+                // next-episode entries are derived after a boot, never part of a captured start
+                rewatch: _, rewatch_staged: _, rewatch_due: _ } = s;
             Source { sid: *sid, client: key.map(|k| k.instance), token_gen: key.map_or(0, |k| k.token),
                 handle: handle.clone(), state: match state { HubState::Loading => 0, HubState::Ready => 1, HubState::Failed => 2 },
                 fetching: *fetching, seq: *seq, retry_bits: retry_s.to_bits(), retry_n: *retry_n, last: last.clone(), page: page.clone() }
@@ -202,7 +206,9 @@ fn movie(m: &PmsMovie, w: &mut impl Sink) {
         subtype: _, smart: _, genre: _, secondary_genre: _, video_resolution: _, hdr: _, audience_rating: _,
         leaf_count: _, viewed_leaf_count: _, added_at: _,
         // a listing's versions only feed the item menu's row, which the menu captures at open
-        versions: _, edition: _, sort_info: _ } = m;
+        versions: _, edition: _, sort_info: _,
+        // only on a next-episode entry, which is never part of a recorded hub read
+        rewatch_e: _ } = m;
     w.u32(sid.raw().into()); w.u64(*sec as u64); w.text(title); w.u32(*year as u32);
     w.text(rating); w.u64(*dur_ns as u64);
     for text in [part, thumb, still, art, summary, rk, vcodec, acodec] { w.text(text); }

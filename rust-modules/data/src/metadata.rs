@@ -2710,10 +2710,48 @@ fn fetch_detail(client: &'static plx_plex::plex::Client, sid: plx_plex::plex::Se
         versions: if it.kind == "movie" || it.kind == "episode" { crate::pms::versions_of(&it) } else { Vec::new() },
         version_parts: Vec::new(),
     };
+    if wants_rewatch_next(&d) {
+        d.on_deck = crate::stores::rewatch::show_next(client, it.library_section_id, rk).as_ref().map(convert_episode);
+    }
     // audio/subtitle streams (movies carry Media/Part/Stream; a show does not — its
     // episodes do, so load_detail backfills a show's streams from its hero episode).
     parse_streams(&it, &mut d);
     Some((d, it.primary_extra_key.clone()))
+}
+
+/// A show watched to the end has no on-deck episode on the server, so Play would start over at the
+/// first episode. For a rewatched show the next episode is the one after the last one viewed
+/// (`stores::rewatch`); a show the server does have an on-deck episode for keeps it.
+fn wants_rewatch_next(d: &Detail) -> bool {
+    d.is_show && d.watched && d.on_deck.is_none()
+}
+
+#[cfg(test)]
+mod rewatch_next_tests {
+    use super::*;
+
+    fn episode(rk: &str, season: i64, index: i64) -> Episode {
+        Episode { rk: rk.into(), season, index, watched: true, ..Default::default() }
+    }
+
+    #[test]
+    fn only_a_finished_show_without_an_on_deck_episode_asks_for_the_next_one() {
+        let show = Detail { is_show: true, watched: true, ..Default::default() };
+        assert!(wants_rewatch_next(&show));
+        assert!(!wants_rewatch_next(&Detail { on_deck: Some(episode("9", 1, 9)), ..show.clone() }));
+        assert!(!wants_rewatch_next(&Detail { watched: false, ..show.clone() }));
+        assert!(!wants_rewatch_next(&Detail { is_show: false, ..show }));
+    }
+
+    #[test]
+    fn play_on_a_finished_show_starts_the_next_episode_not_the_first() {
+        let mut show = Detail { is_show: true, watched: true, ..Default::default() };
+        show.episodes = EpisodeList::with_total(2);
+        show.episodes.set_page(0, vec![episode("1", 1, 1), episode("2", 1, 2)]);
+        assert_eq!(show.play_episode().map(|e| e.rk.as_str()), Some("1"), "nothing on deck: the season's first");
+        show.on_deck = Some(episode("22", 3, 2));
+        assert_eq!(show.play_episode().map(|e| e.rk.as_str()), Some("22"));
+    }
 }
 
 /// The crew jobs we surface, in the order they appear on the shelf. PMS names the job by the

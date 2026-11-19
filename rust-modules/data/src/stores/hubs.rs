@@ -42,6 +42,13 @@ pub enum HubsCmd {
     /// no row added, removed or reordered, and every row that changed is outside the held window
     /// or is Continue Watching with the focus elsewhere.
     Publish { home_top_visible: bool, focused_hub: Option<usize>, press_live: bool },
+    /// The next-episode entries the profile removed from Continue Watching (`stores::rewatch`),
+    /// seated whenever the profile in use changes. Sent by the application, which reads them from
+    /// the profile's own record.
+    SeatRewatch { hides: Vec<crate::stores::rewatch::Hide> },
+    /// The profile removed a next-episode entry from Continue Watching: it leaves the deck at once
+    /// and stays away until the show is viewed again.
+    HideRewatch { hide: crate::stores::rewatch::Hide },
 }
 
 impl HubsCmd {
@@ -51,7 +58,7 @@ impl HubsCmd {
     /// Commands the application sends on no one's behalf (a quiet read, the per-frame publish
     /// check): they raise the notice only through what they changed, never because they ran.
     pub fn is_background(&self) -> bool {
-        matches!(self, HubsCmd::RefetchSourceQuiet { .. } | HubsCmd::Publish { .. })
+        matches!(self, HubsCmd::RefetchSourceQuiet { .. } | HubsCmd::Publish { .. } | HubsCmd::SeatRewatch { .. })
     }
 
     /// Does this command raise the notice whatever it changed? Paging does not (see above), and a
