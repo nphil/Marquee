@@ -112,32 +112,9 @@ pub(crate) unsafe fn run(app: &mut App) {
     let watchdog = plx_base::task::watchdog::LoopWatch::start();
     let mut clock_notice = super::clock_notice::ClockNotice::new();
     let mut hint_taught = super::hint_taught::HintTaught::new();
-    let mut memory_guard = super::memory_guard::MemoryGuard::new();
-    let mut park = super::park::Park::default();
+    let (mut memory_guard, mut park) = (super::memory_guard::MemoryGuard::new(), super::park::Park::default());
     while app.running {
-        watchdog.advance();
-        plx_telemetry::telemetry::session::tick(matches!(app.route(), AppArg::Player));
-        // A recording, a replay or a controlled run is driven frame by frame and never parks.
-        let background = !app.window_activity.allow_present(true)
-            && matches!(app.rec, super::recorder::Recplay::Off) && app.boot_initial.is_none();
-        match park.turn(background) {
-            super::park::Turn::Frame => {}
-            super::park::Turn::Resume => {
-                log("foreground: resumed");
-                super::adapters::poster::park(false);
-            }
-            turn => {
-                if turn == super::park::Turn::Enter {
-                    log(&format!("background: parked ({} timers paused)", app.pages.pending_timers()));
-                    super::adapters::poster::park(true);
-                }
-                parked_turn(app);
-                if app.running && !app.window_activity.allow_present(true) {
-                    watchdog.parked(|| plx_platform::tv::window::wait_events(super::park::PARK_WAIT_MS));
-                }
-                continue;
-            }
-        }
+        if begin_iteration(app, &mut park, &watchdog) { continue; }
         let _frame_scope = plx_base::task::FrameScope::enter();
         #[cfg(all(feature = "hostsim", target_os = "linux"))]
         let wslg_frame_budget = app.wslg_frame_pacing.then(super::window_activity::WslgFrameBudget::begin);
@@ -329,6 +306,36 @@ pub(crate) unsafe fn run(app: &mut App) {
         if fr.present { watchdog.presented(); }
         end_frame(app, fr, &mut memory_guard);
     }
+}
+
+/// The top of every iteration: progress for the watchdog, the session clock, and the background
+/// park (`app::park`). True when the iteration was a parked turn, so no frame runs.
+unsafe fn begin_iteration(app: &mut App, park: &mut super::park::Park,
+    watchdog: &plx_base::task::watchdog::LoopWatch) -> bool {
+    use super::park::Turn;
+    watchdog.advance();
+    plx_telemetry::telemetry::session::tick(matches!(app.route(), AppArg::Player));
+    // A recording, a replay or a controlled run is driven frame by frame and never parks.
+    let background = !app.window_activity.allow_present(true)
+        && matches!(app.rec, super::recorder::Recplay::Off) && app.boot_initial.is_none();
+    match park.turn(background) {
+        Turn::Frame => return false,
+        Turn::Resume => {
+            log("foreground: resumed");
+            super::adapters::poster::park(false);
+            return false;
+        }
+        Turn::Enter => {
+            log(&format!("background: parked ({} timers paused)", app.pages.pending_timers()));
+            super::adapters::poster::park(true);
+        }
+        Turn::Park => {}
+    }
+    parked_turn(app);
+    if app.running && !app.window_activity.allow_present(true) {
+        watchdog.parked(|| plx_platform::tv::window::wait_events(super::park::PARK_WAIT_MS));
+    }
+    true
 }
 
 /// **One iteration while the app is in the background** (`app::park`): the events that arrived
