@@ -382,6 +382,19 @@ impl Hub {
         g.gen += 1;
     }
 
+    /// Drop the held answers but keep the key and listeners (the app went to the background): the
+    /// next open reads the copy on disk again. Only answers the disk copy matches go; a running
+    /// worker would refill them anyway.
+    pub fn release(&self) {
+        let mut g = self.lock();
+        if g.running || g.snap.as_ref().is_none_or(|s| s.stale) {
+            return;
+        }
+        g.snap = None;
+        g.disk_read = false;
+        g.gen += 1;
+    }
+
     /// The poster paths a page shows first: the first `per_row` of each of the first `rows` rows.
     pub fn first_posters(&self, rows: usize, per_row: usize) -> Vec<String> {
         let g = self.lock();
@@ -665,6 +678,24 @@ mod tests {
         assert_eq!(hub.open(&key(), None, NOW + 1), Work::Start, "so the next open reads Seerr");
         hub.requested(Kind::Movie, 10);
         assert_eq!(ear.heard().len(), before + 2, "a title already shown as requested changes nothing");
+    }
+
+    #[test]
+    fn released_answers_are_read_from_disk_again_and_unsaved_ones_are_kept() {
+        let hub = Hub::new();
+        hub.open(&key(), None, NOW);
+        hub.disk_read(Some(whole()), NOW);
+        hub.finish(&key(), true, NOW);
+        hub.release();
+        assert!(hub.snapshot().is_none(), "the disk copy holds them");
+        let ear = Ear::default();
+        assert_eq!(hub.open(&key(), Some(Box::new(ear.clone())), NOW + 1), Work::Start, "the file is read again");
+        hub.disk_read(Some(whole()), NOW + 1);
+        assert_eq!(ear.heard().len(), 6);
+        hub.finish(&key(), true, NOW + 1);
+        hub.requested(Kind::Movie, 10);
+        hub.release();
+        assert!(hub.snapshot().is_some(), "a request not yet on disk stays held");
     }
 
     #[test]

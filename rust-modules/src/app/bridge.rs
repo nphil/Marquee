@@ -4910,7 +4910,7 @@ pub(crate) use watchlist::{hex_of_guid, open_catalog, open_watchlist_menu};
 
 #[path = "requests.rs"]
 mod requests;
-pub(crate) use requests::{forget_held_answers, test_seerr};
+pub(crate) use requests::{forget_held_answers, release_held_answers, test_seerr};
 
 #[cfg(test)]
 #[path = "watchlist_press_tests.rs"]

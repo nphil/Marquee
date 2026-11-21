@@ -604,6 +604,12 @@ pub fn rest_for_memory(short: bool) {
     g.short = short;
 }
 
+/// The app went to the background: stop the running batch and drop every still. The next
+/// [`pump`] of a playback makes them again.
+pub fn release() {
+    lock().reset();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

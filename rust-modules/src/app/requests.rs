@@ -182,6 +182,11 @@ pub(crate) fn forget_held_answers() {
     let _ = plx_base::storage_worker::submit_retained(move || seerr_cache::purge(&paths));
 }
 
+/// The app went to the background: drop the held answers the copy on disk still matches.
+pub(crate) fn release_held_answers() {
+    HUB.release();
+}
+
 /// Not before this, so the warm-up never competes with starting the app.
 const WARM_AFTER_MS: u32 = 8_000;
 /// How often the warm-up looks for its moment.

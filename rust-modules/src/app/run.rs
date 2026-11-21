@@ -328,6 +328,7 @@ unsafe fn begin_iteration(app: &mut App, park: &mut super::park::Park,
         Turn::Enter => {
             log(&format!("background: parked ({} timers paused)", app.pages.pending_timers()));
             super::adapters::poster::park(true);
+            super::park::release();
         }
         Turn::Park => {}
     }

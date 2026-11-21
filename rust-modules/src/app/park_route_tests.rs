@@ -30,6 +30,7 @@ fn ten_seconds(w: &mut World, park: &mut Park, background: bool, turns: &mut Vec
         let turn = park.turn(background);
         if turns.last() != Some(&turn) { turns.push(turn); }
         if matches!(turn, Turn::Enter | Turn::Park) {
+            if turn == Turn::Enter { crate::app::park::release(); }
             clock += PARK_WAIT_MS;
             continue;
         }
@@ -59,6 +60,8 @@ fn a_backgrounded_home_waits_and_turns_no_hero_until_the_foreground() {
     let after = ten_seconds(&mut w, &mut park, false, &mut turns);
     assert!(after.wakes >= 600 && after.frames == after.wakes, "frames resume at the foreground cadence");
     assert!(after.heroes.len() > 1, "and the carousel turns again ({:?})", after.heroes);
+    let words: Vec<String> = w.drawn().words.into_iter().map(|(s, _)| s).collect();
+    assert!(["Home", "Play"].iter().all(|s| words.iter().any(|w| w == s)), "Home and its hero draw after the release: {words:?}");
     assert_eq!(turns, [Turn::Frame, Turn::Enter, Turn::Park, Turn::Resume, Turn::Frame],
         "each edge is one turn, where the loop logs it");
 }

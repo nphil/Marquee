@@ -909,6 +909,22 @@ pub fn take_evicted_hot() -> u32 {
     }
 }
 
+/// **The app went to the background**: free every string texture the last drawn frame did not
+/// draw. A freed string is rasterised again the next time it is drawn. Returns how many went.
+pub fn release_hidden() -> usize {
+    unsafe { release_hidden_in(&mut *addr_of_mut!(TCACHE_A), *addr_of!(TFRAME)) }
+}
+
+fn release_hidden_in(cache: &mut [TCacheEntry; TCACHE], frame: c_uint) -> usize {
+    let mut n = 0;
+    for e in cache.iter_mut().filter(|e| e.tex != 0 && e.last_frame != frame) {
+        crate::gfx::delete_tex(e.tex);
+        *e = TCacheEntry::ZERO;
+        n += 1;
+    }
+    n
+}
+
 /// Mark an entry as drawn on this frame, counting it once per frame for [`live_this_frame`].
 fn touch(e: &mut TCacheEntry) {
     unsafe {
@@ -3768,6 +3784,17 @@ mod cache_policy_tests {
         }
         c[7].use_ = 1;
         assert_eq!(evict_slot(&c, 100, true).0, 7, "full: the least recently used");
+    }
+
+    /// The background edge frees every string the last drawn frame did not draw.
+    #[test]
+    fn a_background_release_keeps_only_the_last_frames_strings() {
+        let mut c = full_cache();
+        c[3].last_frame = 99;
+        c[5].last_frame = 0;
+        assert_eq!(release_hidden_in(&mut c, 100), 2);
+        assert!(c[3].tex == 0 && c[5].tex == 0 && c[4].tex != 0);
+        assert_eq!(evict_slot(&c, 100, true).0, 3, "a released slot is free");
     }
 
     /// **An entry drawn within the last eight frames is not evictable** (§8.1's occupancy rule).

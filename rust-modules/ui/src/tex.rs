@@ -458,6 +458,20 @@ pub fn squeeze(bytes: Option<usize>, up: &mut dyn Uploader) {
     }
 }
 
+/// The app went to the background: free what the last drawn frame did not use (see
+/// [`TexCache::release_hidden`]). Held art under 8 MiB a 1080p frame stays. Returns the bytes
+/// freed. GL thread.
+pub fn release_hidden(up: &mut dyn Uploader) -> usize {
+    let (freed, unresident) = mutate_cache(|c| {
+        let freed = c.release_hidden((8 << 20) * render_area(), up);
+        (freed, c.take_unresident().collect::<Vec<_>>())
+    });
+    for (key, refused) in unresident {
+        with_source(|s| s.unresident(key, refused), ());
+    }
+    freed
+}
+
 /// Free every resident texture (app exit, GL thread).
 pub fn shutdown(up: &mut dyn Uploader) {
     mutate_cache(|c| c.drain_all(up));
@@ -893,6 +907,27 @@ impl<K: Copy + Eq + Hash> TexCache<K> {
         }
     }
 
+    /// **The app went to the background**: free every texture the last drawn frame did not use,
+    /// leaving `bytes_max` as it is. Pinned art ([`Pins`]) stays while it totals at most
+    /// `keep_held` bytes. Released keys join [`TexCache::unresident`]; returns the bytes freed.
+    pub fn release_hidden(&mut self, keep_held: usize, up: &mut dyn Uploader) -> usize {
+        let frame = self.frame;
+        let drawn = |e: &Entry| e.drawn_frame != 0 && e.drawn_frame + 1 >= frame;
+        let held: usize = self.resident.values().filter(|e| e.pins != 0 && !drawn(e)).map(|e| e.bytes).sum();
+        let keep_pins = held <= keep_held;
+        let gone: Vec<K> =
+            self.resident.iter().filter(|(_, e)| !drawn(e) && (e.pins == 0 || !keep_pins)).map(|(&k, _)| k).collect();
+        let before = self.bytes;
+        for k in gone {
+            if let Some(e) = self.resident.remove(&k) {
+                self.bytes = self.bytes.saturating_sub(e.bytes);
+                up.free(e.tex);
+                self.unresident.push_back((k, false));
+            }
+        }
+        before - self.bytes
+    }
+
     /// The renderer's question. A hit is a use (LRU) AND a draw (stamps [`Entry::drawn_frame`]
     /// with the current [`TexCache::frame`], protecting it from [`TexCache::evict_for`] on the
     /// next `prepare`); a miss is the absent-resource rule's cue (§8.2): draw the placeholder at
@@ -1279,6 +1314,37 @@ mod tests {
         assert_eq!((c.resident_bytes(), gl.freed.len()), (LIGHT, 3), "lifting it releases nothing");
         c.accept(sized(5, LIGHT));
         assert_eq!(frame(&mut c, 100_000), 1, "the ordinary ceiling admits it again");
+    }
+
+    /// The background edge frees what the last drawn frame did not use, keeps a small held
+    /// viewport, and leaves the ceiling alone.
+    #[test]
+    fn a_background_release_keeps_the_last_frame_and_a_small_hold() {
+        const LIGHT: usize = 900_000;
+        let mut c: TexCache<u32> = TexCache::with_budget(8, 8_000_000);
+        let mut up = StubUp { next: 0, freed: vec![], warmed: vec![] };
+        let mut present = Present::new();
+        let mut b = Budget::new();
+        let mut frame = |c: &mut TexCache<u32>, at: u64| {
+            b.begin_frame(at);
+            c.prepare(&mut b, &mut up, &mut PresentHandle(&mut present), || at)
+        };
+        for (at, key) in [(0, 1), (20_000, 2), (40_000, 3), (60_000, 4)] {
+            c.accept(sized(key, LIGHT));
+            assert_eq!(frame(&mut c, at), 1, "key {key} lands");
+        }
+        assert!(c.resolve(2).is_some());
+        c.hold_return(true, |_, _| {});
+        frame(&mut c, 80_000);
+        frame(&mut c, 100_000);
+        assert!(c.resolve(4).is_some(), "key 4 is on screen");
+        let mut gl = StubUp { next: 0, freed: vec![], warmed: vec![] };
+        assert_eq!(c.release_hidden(LIGHT, &mut gl), 2 * LIGHT);
+        let mut gone: Vec<_> = c.take_unresident().collect();
+        gone.sort_unstable();
+        assert_eq!(gone, vec![(1, false), (3, false)], "the held viewport and the screen stay");
+        assert_eq!(c.release_hidden(LIGHT - 1, &mut gl), LIGHT, "a hold over the limit goes too");
+        assert_eq!((c.resident_bytes(), c.bytes_max), (LIGHT, 8_000_000));
     }
 
     /// F2: an image bigger than the whole byte budget, with nothing on screen blocking it, is

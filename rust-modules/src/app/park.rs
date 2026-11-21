@@ -45,3 +45,32 @@ impl Park {
         }
     }
 }
+
+/// **What the background edge gives back** (GL thread, on [`Turn::Enter`]): the art and strings
+/// the last frame did not draw, the Requests answers kept on disk, the seek stills and their
+/// decoder, and the freed heap. A game streamed over the app wants the memory: a parked Home held
+/// 206 MB resident with 167 MB of the TV in swap (2026-11-20). Each comes back as it is drawn or
+/// opened again; a parked playback's own state is left alone.
+pub(crate) fn release() {
+    use plx_gfx::gfx::tex_ledger;
+    let (rss, gpu) = (rss_kib(), tex_ledger::totals().1);
+    plx_ui::tex::release_hidden(&mut super::adapters::poster::GfxUploader);
+    plx_gfx::text::release_hidden();
+    super::bridge::release_held_answers();
+    plx_media::seekprev::release();
+    // SAFETY: glibc's malloc_trim only returns free heap pages to the system.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
+    let textures = gpu.saturating_sub(tex_ledger::totals().1) >> 20;
+    let freed = rss.saturating_sub(rss_kib()) >> 10;
+    plx_base::eventlog::log(&format!("background: released ~{freed} MB (textures {textures} MB)"));
+}
+
+fn rss_kib() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| super::adapters::poster::proc_kib(&s, "VmRSS:"))
+        .unwrap_or(0)
+}
