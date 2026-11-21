@@ -536,6 +536,14 @@ impl World {
         w.mount_home()
     }
 
+    /// Home over `n` seeded titles (`seed_for_test`), so its hero carousel has more than one to
+    /// turn to, settled.
+    pub(super) fn home_heroes(name: &str, n: usize) -> World {
+        let mut w = Self::scripted(name);
+        w.bridge.stores.hubs.seed_for_test(n, plx_data::pms::HubState::Ready);
+        w.mount_home()
+    }
+
     /// Home shown over the seeded hubs and settled.
     fn mount_home(mut self) -> World {
         super::show_page(&mut self.d, AppArg::Home);

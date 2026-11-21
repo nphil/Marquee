@@ -3058,6 +3058,11 @@ impl HomeScreen {
             disc: self.disc.of.map(|hex| (hex, self.disc.flip.membership())),
         }
     }
+
+    /// The rating key of the hero the carousel shows.
+    pub fn hero_for_test(&self) -> Option<&str> {
+        self.carousel.as_ref().map(|(_, rk)| rk.as_str())
+    }
 }
 
 impl HomeScreen {

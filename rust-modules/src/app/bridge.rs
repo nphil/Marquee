@@ -5042,6 +5042,9 @@ mod home_chrome_route_tests;
 #[path = "home_hero_route_tests.rs"]
 mod home_hero_route_tests;
 #[cfg(test)]
+#[path = "park_route_tests.rs"]
+mod park_route_tests;
+#[cfg(test)]
 #[path = "watchlist_disc_route_tests.rs"]
 mod watchlist_disc_route_tests;
 #[cfg(test)]

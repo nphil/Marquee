@@ -653,6 +653,11 @@ where
         self.parked_life.extend(life);
     }
 
+    /// The page timers armed and not yet fired (the background park's log line).
+    pub fn pending_timers(&self) -> usize {
+        self.timers.len()
+    }
+
     /// `NavEvent::ResetForProfile`: every entry dropped at the next commit.
     pub fn reset_for_profile(&mut self) {
         let life = self.nav.reset_for_profile();

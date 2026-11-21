@@ -113,9 +113,31 @@ pub(crate) unsafe fn run(app: &mut App) {
     let mut clock_notice = super::clock_notice::ClockNotice::new();
     let mut hint_taught = super::hint_taught::HintTaught::new();
     let mut memory_guard = super::memory_guard::MemoryGuard::new();
+    let mut park = super::park::Park::default();
     while app.running {
         watchdog.advance();
         plx_telemetry::telemetry::session::tick(matches!(app.route(), AppArg::Player));
+        // A recording, a replay or a controlled run is driven frame by frame and never parks.
+        let background = !app.window_activity.allow_present(true)
+            && matches!(app.rec, super::recorder::Recplay::Off) && app.boot_initial.is_none();
+        match park.turn(background) {
+            super::park::Turn::Frame => {}
+            super::park::Turn::Resume => {
+                log("foreground: resumed");
+                super::adapters::poster::park(false);
+            }
+            turn => {
+                if turn == super::park::Turn::Enter {
+                    log(&format!("background: parked ({} timers paused)", app.pages.pending_timers()));
+                    super::adapters::poster::park(true);
+                }
+                parked_turn(app);
+                if app.running && !app.window_activity.allow_present(true) {
+                    watchdog.parked(|| plx_platform::tv::window::wait_events(super::park::PARK_WAIT_MS));
+                }
+                continue;
+            }
+        }
         let _frame_scope = plx_base::task::FrameScope::enter();
         #[cfg(all(feature = "hostsim", target_os = "linux"))]
         let wslg_frame_budget = app.wslg_frame_pacing.then(super::window_activity::WslgFrameBudget::begin);
@@ -307,6 +329,25 @@ pub(crate) unsafe fn run(app: &mut App) {
         if fr.present { watchdog.presented(); }
         end_frame(app, fr, &mut memory_guard);
     }
+}
+
+/// **One iteration while the app is in the background** (`app::park`): the events that arrived
+/// and the main-thread work the background edge left owed, and nothing periodic. The audio
+/// beacon is told nothing plays, so it withdraws its entry once instead of keeping it alive.
+unsafe fn parked_turn(app: &mut App) {
+    let _frame_scope = plx_base::task::FrameScope::enter();
+    plx_platform::tv::window::pump_bus();
+    plx_platform::tv::home::poll();
+    let mut fr = Frame::begin(&app.player.session, app.bridge.metadata_view());
+    fr.now = clock::now();
+    ingest(app, &mut fr);
+    if !app.running || app.window_activity.allow_present(true) { return; }
+    park_on_decoder_release(app);
+    plx_media::player::engine::reap_abandoned_load(&mut app.adapters.player);
+    plx_media::player::engine::poll_release_frame(&mut app.player.session, &mut app.adapters.player);
+    plx_media::route::discard_stale_flight_landing();
+    plx_media::player::report::tick(&mut app.player.session);
+    app.audio_beacon.tick(fr.now, || None);
 }
 
 /// The iteration's tail, after the present: the frame's report, the heartbeat, and the memory
