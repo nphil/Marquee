@@ -46,6 +46,12 @@ pub fn pump_bus() {
     (super::port().pump_bus)()
 }
 
+/// Block until an event may be waiting, at most `timeout_ms`: the parked loop's wait while the
+/// window is in the background (`app::park`).
+pub fn wait_events(timeout_ms: u32) {
+    (super::port().wait_events)(timeout_ms)
+}
+
 /// Ask for this frame's presentation callback. Call on a PRESENTING frame, before the swap.
 pub fn frame_probe_request() {
     (super::port().frame_probe_request)()

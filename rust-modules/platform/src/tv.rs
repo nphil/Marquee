@@ -39,6 +39,8 @@ pub struct Port {
     pub opaque_route: fn(bool),
     pub clear_opaque_region: fn(),
     pub pump_bus: fn(),
+    /// Block the backgrounded loop until an event may be waiting, at most the given ms.
+    pub wait_events: fn(u32),
     pub frame_probe_request: fn(),
     pub frame_probe_prepare_begin: fn(),
     pub frame_probe_prepare_end: fn(),
@@ -78,6 +80,7 @@ static ABSENT: Port = Port {
     opaque_route: |_| {},
     clear_opaque_region: nothing,
     pump_bus: nothing,
+    wait_events: |ms| std::thread::sleep(std::time::Duration::from_millis(ms.into())),
     frame_probe_request: nothing,
     frame_probe_prepare_begin: nothing,
     frame_probe_prepare_end: nothing,

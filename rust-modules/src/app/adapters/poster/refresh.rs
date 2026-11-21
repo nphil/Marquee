@@ -27,6 +27,8 @@ struct Queue {
     order: VecDeque<DiskKey>,
     epoch: u64,
     running: bool,
+    /// The app is in the background (`app::park`): queued refreshes wait for the foreground.
+    parked: bool,
 }
 impl Queue {
     fn push(&mut self, job: Job) -> bool {
@@ -46,6 +48,12 @@ impl Queue {
         self.jobs.push_back(job);
         true
     }
+
+    /// The next refresh to run, when the app is in the foreground and the demand side is `idle`.
+    fn take(&mut self, idle: bool) -> Option<Job> {
+        if self.parked || !idle { return None; }
+        self.jobs.pop_front()
+    }
 }
 
 static QUEUE: Mutex<Option<Queue>> = Mutex::new(None);
@@ -58,6 +66,12 @@ pub(super) fn enqueue(client: &'static plx_plex::plex::Client, path: String, key
     if q.as_mut().is_some_and(|q| q.push(Job { client, path, key, epoch, token_gen })) {
         READY.notify_one();
     }
+}
+
+/// Hold queued refreshes while the app is in the background and release them on the foreground.
+pub(super) fn set_parked(parked: bool) {
+    if let Some(q) = QUEUE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() { q.parked = parked; }
+    READY.notify_all();
 }
 
 pub(super) fn init() {
@@ -87,11 +101,17 @@ fn run() {
             loop {
                 let Some(q) = guard.as_mut() else { return; };
                 if !q.running { return; }
-                if !q.jobs.is_empty() && super::store_idle() && plx_ui::tex::pending_bytes() == 0 {
-                    break q.jobs.pop_front().unwrap();
+                if !q.jobs.is_empty() {
+                    if let Some(job) = q.take(super::store_idle() && plx_ui::tex::pending_bytes() == 0) { break job; }
                 }
-                guard = READY.wait_timeout(guard, Duration::from_millis(250))
-                    .map(|(g, _)| g).unwrap_or_else(|e| e.into_inner().0);
+                // Nothing to run until an enqueue, the foreground or shutdown notifies; only work
+                // held for a busy demand side polls, since nothing signals the store going idle.
+                guard = if q.jobs.is_empty() || q.parked {
+                    READY.wait(guard).unwrap_or_else(|e| e.into_inner())
+                } else {
+                    READY.wait_timeout(guard, Duration::from_millis(250))
+                        .map(|(g, _)| g).unwrap_or_else(|e| e.into_inner().0)
+                };
             }
         };
         if job.epoch != plx_platform::imgcache::generation() || !grant_is_current(&job) { continue; }
@@ -151,6 +171,21 @@ mod tests {
         assert!(!q.push(job(1, 2)));
         plx_plex::plex::register_for_test("refresh-fixture", "127.0.0.1", 1, "changed-grant", "fixture");
         assert!(!grant_is_current(&old_grant), "queued old-profile credentials must never refresh");
+        plx_plex::plex::reset_servers_for_test();
+    }
+
+    #[test]
+    fn a_parked_queue_hands_out_nothing_until_the_foreground() {
+        let _guard = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let sid = plx_plex::plex::register_for_test("refresh-fixture", "127.0.0.1", 1, "fixture", "fixture");
+        let client = plx_plex::plex::client_for(sid).unwrap();
+        let mut q = Queue { running: true, parked: true, ..Default::default() };
+        assert!(q.push(job(client, 0, 1)), "work found in the background is kept");
+        assert!(q.take(true).is_none());
+        q.parked = false;
+        assert!(q.take(false).is_none(), "still behind a busy demand side");
+        assert!(q.take(true).is_some());
         plx_plex::plex::reset_servers_for_test();
     }
 }

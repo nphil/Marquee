@@ -27,16 +27,29 @@ extern "C" {
     fn glGetIntegerv(pname: c_uint, params: *mut c_int);
 }
 
-// The three symbols that exist only on a television: wayland's proxy marshaller and glib's main
+// The symbols that exist only on a television: wayland's client library and glib's main
 // context. The desktop simulator links neither — SDL owns its own event loop there, and there is
 // no luna bus to pump — so they are declared apart rather than in the block above, which would
 // otherwise fail the host link.
 #[cfg(not(feature = "hostsim"))]
 extern "C" {
     fn wl_proxy_marshal(proxy: *mut c_void, opcode: c_uint, ...);
+    #[cfg_attr(test, allow(dead_code))] // read at the grab, which a host test never links
+    fn wl_display_get_fd(display: *mut c_void) -> c_int;
     fn g_main_context_pending(ctx: *mut c_void) -> c_int;
     fn g_main_context_iteration(ctx: *mut c_void, may_block: c_int) -> c_int;
 }
+
+#[cfg(feature = "hostsim")]
+extern "C" {
+    fn SDL_WaitEventTimeout(event: *mut c_void, timeout: c_int) -> c_int;
+}
+
+/// The Wayland connection's fd, for [`wait_events`]. Not revoked with the surface borrow
+/// (`sys_release_wayland`): the connection belongs to SDL's video driver and lives until
+/// `SDL_Quit`, and the background edge that drops the surface is exactly when the loop waits.
+#[cfg(not(feature = "hostsim"))]
+static PARK_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 static mut G_WL_SURFACE: *mut c_void = std::ptr::null_mut();
 static mut G_WL_DISPLAY: *mut c_void = std::ptr::null_mut();
@@ -100,6 +113,58 @@ pub(crate) fn ls2_pump() {
             g_main_context_iteration(std::ptr::null_mut(), 0);
             guard -= 1;
         }
+    }
+}
+
+/// Block the backgrounded loop until an event may be waiting, at most `timeout_ms`.
+///
+/// Not `SDL_WaitEventTimeout` on the television: before SDL 2.0.16 it is `SDL_PumpEvents` plus
+/// `SDL_Delay(1)` in a loop, a thousand wake-ups a second, and webOS 10 ships 2.0.14. The events
+/// a backgrounded window waits for (its foreground state, a key) arrive on the Wayland
+/// connection, so a `poll` on that fd wakes for them; the next turn's `SDL_PollEvent` reads them.
+pub(crate) fn wait_events(timeout_ms: u32) {
+    #[cfg(feature = "hostsim")]
+    // SAFETY: a NULL event only peeks, so nothing is taken from the queue the loop polls.
+    unsafe {
+        SDL_WaitEventTimeout(std::ptr::null_mut(), timeout_ms as c_int);
+    }
+    #[cfg(not(feature = "hostsim"))]
+    wayland_wait(timeout_ms);
+}
+
+/// [`wait_events`] on the television. A connection that reads ready again and again with no
+/// event behind it would spin the parked loop, so past `READY_MAX` ready wakes inside one
+/// `timeout_ms` span the rest of the span is slept; without the fd the wait is a plain sleep.
+#[cfg(not(feature = "hostsim"))]
+fn wayland_wait(timeout_ms: u32) {
+    use std::cell::Cell;
+    use std::sync::atomic::Ordering::Relaxed;
+    use std::time::{Duration, Instant};
+    const READY_MAX: u32 = 8;
+    thread_local! {
+        /// When the current span began and how many ready wakes it has had.
+        static SPAN: Cell<Option<(Instant, u32)>> = const { Cell::new(None) };
+    }
+    let span = Duration::from_millis(timeout_ms.into());
+    let now = Instant::now();
+    let (start, ready) = SPAN.get().filter(|&(s, _)| now.duration_since(s) < span).unwrap_or((now, 0));
+    let fd = PARK_FD.load(Relaxed);
+    if fd < 0 || ready >= READY_MAX {
+        SPAN.set(None);
+        std::thread::sleep(if fd < 0 { span } else { span.saturating_sub(now.duration_since(start)) });
+        return;
+    }
+    let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    // SAFETY: one valid pollfd for the duration of the call.
+    let n = unsafe { libc::poll(&mut p, 1, timeout_ms.min(i32::MAX as u32) as c_int) };
+    if n > 0 && p.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        PARK_FD.store(-1, Relaxed);
+        SPAN.set(None);
+        std::thread::sleep(span);
+    } else if n != 0 {
+        SPAN.set(Some((start, ready + 1)));
+    } else {
+        SPAN.set(None);
     }
 }
 
@@ -780,6 +845,8 @@ unsafe fn update_wayland_info(ok: c_int, info: &[u8; 512]) {
         if display_present && surface_present {
             G_WL_DISPLAY = display;
             G_WL_SURFACE = surface;
+            #[cfg(all(not(feature = "hostsim"), not(test)))]
+            PARK_FD.store(wl_display_get_fd(display), std::sync::atomic::Ordering::Relaxed);
         }
     }
     use plx_telemetry::telemetry::window::{Observation, Stage};

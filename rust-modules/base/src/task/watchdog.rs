@@ -19,6 +19,9 @@ use std::{
 /// A loop iteration over this long is a main-thread hang (also `heartbeat::health`'s stall edge).
 pub const HANG_THRESHOLD_MS: u64 = 250;
 const POLL_MS: u64 = 100;
+/// The observer's poll while the loop waits parked in the background (`LoopWatch::parked`): there
+/// is no frame to watch, so it need not wake ten times a second.
+const PARKED_POLL_MS: u64 = 1000;
 /// A late observer cannot tell a stopped process, a system suspend, a debugger stop or its own
 /// scheduling starvation from a main-thread stall, so an interval longer than this is discarded.
 const MAX_POLL_GAP_MS: u64 = 4 * POLL_MS;
@@ -177,6 +180,8 @@ struct Signals {
     /// may legitimately idle or block for as long as the system keeps it there.
     foreground: AtomicBool,
     progress: AtomicUsize,
+    /// The loop is in its background wait (`LoopWatch::parked`): a wait by design, not a hang.
+    parked: AtomicBool,
     label: AtomicPtr<BlockingLabel>,
 }
 
@@ -187,12 +192,14 @@ impl Signals {
             presented: AtomicBool::new(false),
             foreground: AtomicBool::new(true),
             progress: AtomicUsize::new(0),
+            parked: AtomicBool::new(false),
             label: AtomicPtr::new(&UNLABELED as *const BlockingLabel as *mut BlockingLabel),
         }
     }
 
     fn progress(&self) -> Option<usize> {
-        (self.active.load(Ordering::Acquire) && self.presented.load(Ordering::Acquire))
+        (self.active.load(Ordering::Acquire) && self.presented.load(Ordering::Acquire)
+            && !self.parked.load(Ordering::Acquire))
             .then(|| self.progress.load(Ordering::Acquire))
     }
 
@@ -424,6 +431,17 @@ impl LoopWatch {
     #[inline]
     pub fn advance(&self) {
         if let Some(signals) = self.signals { signals.progress.fetch_add(1, Ordering::Release); }
+    }
+
+    /// Run the backgrounded loop's blocking `wait`, which the hang and freeze detectors do not
+    /// count; progress is marked when it returns.
+    pub fn parked(&self, wait: impl FnOnce()) {
+        if let Some(signals) = self.signals { signals.parked.store(true, Ordering::Release); }
+        wait();
+        if let Some(signals) = self.signals {
+            signals.parked.store(false, Ordering::Release);
+            signals.progress.fetch_add(1, Ordering::Release);
+        }
     }
 }
 
@@ -679,7 +697,8 @@ fn observe_loop(main_thread: usize, #[cfg(feature = "threadcheck")] log_only: bo
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(POLL_MS));
+        let parked = SIGNALS.parked.load(Ordering::Acquire);
+        std::thread::sleep(Duration::from_millis(if parked { PARKED_POLL_MS } else { POLL_MS }));
     }
 }
 
@@ -716,6 +735,17 @@ mod tests {
         drop(watch);
         assert_eq!(signals.progress(), None);
         assert_eq!(signals.label(), "unlabeled");
+    }
+
+    #[test]
+    fn a_parked_wait_is_not_a_hang() {
+        let signals = signals();
+        let watch = LoopWatch::attach(signals);
+        watch.presented();
+        let mut seen = Some(0);
+        watch.parked(|| seen = signals.progress());
+        assert_eq!(seen, None, "the background wait publishes no progress to time");
+        assert_eq!(signals.progress(), Some(2), "and counts as progress once it returns");
     }
 
     #[test]

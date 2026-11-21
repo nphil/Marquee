@@ -1606,6 +1606,11 @@ pub(crate) fn hold_away(away: bool, transitioning: bool) {
     tex::hold_away(away, |key, pins| mirror_pins(&mut g.slots, key, pins, frame));
 }
 
+/// The app went to the background (`true`) or came back: background art refreshes wait for it.
+pub(crate) fn park(parked: bool) {
+    refresh::set_parked(parked);
+}
+
 fn mirror_pins(slots: &mut [Pslot], key: PosterKey, pins: tex::Pins, frame: c_uint) {
     if let Some(slot) = slots.get_mut(key.0 as usize) {
         // a released hold leaves the art as recently drawn, not as the LRU's oldest
