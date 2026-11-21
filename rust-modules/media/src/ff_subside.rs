@@ -388,7 +388,8 @@ pub(crate) enum RunEnd {
     /// A transport or demux error: worth reopening.
     Failed,
     /// Retrying cannot help: the Part has no such track, no video stream, or the open was refused.
-    Unusable,
+    /// Carries why, for the line that announces the server's burn.
+    Unusable(&'static str),
     /// A [`ReadCfg::clock_only`] pass finished its scan (matched or not): nothing is left to read.
     Measured,
 }
@@ -439,7 +440,7 @@ unsafe fn open_side(cfg: &ReadCfg, stop: &Arc<SideStop>) -> Result<(SideDemux, c
     // wait would be wrong: the flag is not set until the demuxer has registered FFmpeg.)
     // `Unusable` raises the failure (a rebuild as the server burn).
     if !ABI_OK.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(RunEnd::Unusable);
+        return Err(RunEnd::Unusable("the device's FFmpeg is not the build the reader reads"));
     }
     let io = Box::into_raw(io);
     let mut d = SideDemux { fmt: std::ptr::null_mut(), avio: std::ptr::null_mut(), io, pkt: std::ptr::null_mut(), subs: None };
@@ -479,7 +480,7 @@ unsafe fn open_side(cfg: &ReadCfg, stop: &Arc<SideStop>) -> Result<(SideDemux, c
         }
     }
     if vi < 0 {
-        return Err(RunEnd::Unusable);
+        return Err(RunEnd::Unusable("the Part has no video stream"));
     }
     if cfg.clock_only {
         release_attachments(d.fmt);
@@ -494,7 +495,7 @@ unsafe fn open_side(cfg: &ReadCfg, stop: &Arc<SideStop>) -> Result<(SideDemux, c
     d.subs = Some(subs);
     plx_base::eventlog::log(&format!("subside: open tracks={tracks} ordinal={} kbps={}", cfg.ordinal, cfg.kbps));
     if cfg.ordinal >= tracks {
-        return Err(RunEnd::Unusable);
+        return Err(RunEnd::Unusable("the Part has no such subtitle track"));
     }
     Ok((d, vi, generation))
 }

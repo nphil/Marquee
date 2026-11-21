@@ -622,6 +622,43 @@ fn cold_start_plan_lands_as_client_over_remux_with_a_reader_target() {
     plx_plex::plex::reset_servers_for_test();
 }
 
+/// **In-video captions take no reader ordinal.** The 2026-11-20 burn: an enhanced remux of a part
+/// whose EIA-608 captions (carried inside the video, index 0) sit beside its SRT track. Counted as a
+/// container track, the captions pushed the SRT to ordinal 1, past the one subtitle track FFmpeg
+/// lists; the reader refused it and the server burned the subtitle instead.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn in_video_captions_leave_the_text_track_to_the_reader_over_an_enhanced_remux() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let r = resolve(&mut ps, MDE_DIRECTPLAY, EnhMode::Honor("ac3"), 0, MKV, "truehd",
+        |sid| {
+            let mut item = truehd_with_ac3_sibling_and_embedded_sub(sid, 7_400);
+            let captions = plx_data::metadata::Stream { in_video: true, selected: false, ..selected_sub(8, "eia_608") };
+            item.subs = vec![captions, plx_data::metadata::Stream { index: 2, ..selected_sub(9, "srt") }];
+            item
+        },
+        |_, _| {});
+    assert!(r.plan.contract.remux, "{}", r.plan.url);
+    assert_eq!(r.plan.sub_render_ordinal, Some(0));
+    apply_plan(&mut ps, r.plan, "rk-enh");
+    ps.request = Some(PlaybackRequest {
+        sid: ps.cur_sid,
+        rk: "rk-enh".into(),
+        part: MKV.into(),
+        vcodec: "hevc".into(),
+        acodec: "truehd".into(),
+        title: String::new(),
+        ctx: String::new(),
+        preview: false,
+        version: None,
+        show_rk: String::new(),
+    });
+    assert_eq!(side_reader_target(&ps).map(|t| t.ordinal), Some(0));
+    assert!(!subtitles_burned(&ps));
+    plx_plex::plex::reset_servers_for_test();
+}
+
 #[test]
 #[cfg(feature = "devtriggers")]
 fn cold_start_over_the_bound_keeps_the_stand_in() {

@@ -881,6 +881,12 @@ pub struct Stream {
     /// it names a DIFFERENT stream, and never as a reason to transcode. Read its doc before using
     /// this flag anywhere else.
     pub selected: bool,
+    /// Closed captions carried inside the VIDEO stream (PMS `embeddedInVideo`: EIA-608/708), not
+    /// a container track: the demuxer lists no subtitle stream for them, so they take no container
+    /// ordinal ([`sub_render_ordinal`]) and only a server burn can show them. Same round-trip rule
+    /// as `language_tag`: absent stays absent.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub in_video: bool,
     /// Audio track only: PMS 1.43.4+ with Plex Pass says the server can honor
     /// `boostDialog=1`/`normalizeLoudness=1` for this track on the transcoder (issue #266). Same
     /// round-trip concern as `language_tag`: a `Detail` recorded before this field existed carries
@@ -2879,6 +2885,7 @@ fn convert_streams(streams: &[plx_plex::plex::Stream]) -> Streams {
             key: s.key.clone(),
             // the server's current pick for this part (a track chosen on another client)
             selected: s.selected != 0,
+            in_video: s.stream_type == 3 && s.embedded_in_video,
             can_normalize_loudness: s.can_normalize_loudness,
         };
         match s.stream_type {
@@ -2962,6 +2969,22 @@ mod convert_streams_tests {
         assert!(s.audio[0].can_normalize_loudness);
         assert!(!s.audio[1].can_normalize_loudness);
         assert!(!s.video.expect("video track").can_normalize_loudness);
+    }
+
+    /// Captions inside the video (`embeddedInVideo`, rk 23195's streams) are no container track:
+    /// the SRT is the demuxer's subtitle 0 in either list order, and the captions have no ordinal.
+    #[test]
+    fn captions_in_the_video_take_no_container_ordinal() {
+        let wire: Vec<plx_plex::plex::Stream> = serde_json::from_str(
+            r#"[{"id":177289,"streamType":3,"codec":"eia_608","index":0,"embeddedInVideo":"1"},
+                {"id":177291,"streamType":3,"codec":"srt","index":2}]"#,
+        )
+        .unwrap();
+        let mut subs = convert_streams(&wire).subs;
+        assert!(subs[0].in_video && !subs[1].in_video);
+        assert_eq!((sub_render_ordinal(&subs, 0), sub_render_ordinal(&subs, 1)), (-1, 0));
+        subs.reverse();
+        assert_eq!((sub_render_ordinal(&subs, 0), sub_render_ordinal(&subs, 1)), (0, -1));
     }
 
     #[test]
@@ -3446,18 +3469,20 @@ pub fn server_selected_sidecar(item: &PlayingItem) -> Option<&Stream> {
     item.subs.iter().find(|s| s.selected && s.sidecar_renderable())
 }
 
-/// Container ordinal of `subs[i]` among the EMBEDDED subtitle streams (all ff.rs enumerates —
-/// sidecars are not in the container), or -1 when `subs[i]` is itself external (nothing to
-/// client-render on direct-play; only a server transcode can burn it).
+/// Container ordinal of `subs[i]` among the subtitle streams the CONTAINER carries (all ff.rs
+/// enumerates), or -1 when `subs[i]` is not one: an external sidecar, or captions inside the video
+/// stream (`in_video`), which the demuxer lists no track for. Neither has anything to
+/// client-render on direct play; only a server transcode can burn it.
 pub fn sub_render_ordinal(subs: &[Stream], i: usize) -> i32 {
+    let in_container = |s: &Stream| !s.external && !s.in_video;
     let s0 = match subs.get(i) {
-        Some(s) if !s.external => s,
+        Some(s) if in_container(s) => s,
         _ => return -1,
     };
     let me = (s0.index, i);
     subs.iter()
         .enumerate()
-        .filter(|(j, s)| !s.external && (s.index, *j) < me)
+        .filter(|(j, s)| in_container(s) && (s.index, *j) < me)
         .count() as i32
 }
 

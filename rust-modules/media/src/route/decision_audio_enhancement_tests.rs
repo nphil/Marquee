@@ -4143,17 +4143,17 @@ fn transcode_spec_never_names_a_subtitle_on_a_remux() {
     let caps = plx_platform::devcaps::caps();
     let remux = enhanced_remux_contract(NONE, false);
     let spec = crate::route::plan::transcode_spec(
-        &caps, "5", 0, "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 78, remux,
+        &caps, "5", 0, plx_plex::plex::SourceVideo::default(), "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 78, remux,
     );
     assert_eq!(spec.subtitle_stream_id, 0, "no subtitle id rides a remux");
     assert!(spec.client_subtitles, "the app draws it, and the query says so");
     let none = crate::route::plan::transcode_spec(
-        &caps, "5", 0, "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 0, remux,
+        &caps, "5", 0, plx_plex::plex::SourceVideo::default(), "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 0, remux,
     );
     assert!(!none.client_subtitles, "no subtitle, nothing to say");
     // Every burn is a `remux: false` contract and keeps its id.
     let burn = crate::route::plan::transcode_spec(
-        &caps, "5", 0, "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 77, enhanced_remux_contract(NONE, true),
+        &caps, "5", 0, plx_plex::plex::SourceVideo::default(), "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 77, enhanced_remux_contract(NONE, true),
     );
     assert_eq!((burn.subtitle_stream_id, burn.client_subtitles), (77, false));
 }
@@ -4168,7 +4168,7 @@ fn video_conversion_leaves_a_drawable_sidecar_to_the_app() {
     let live = Live::start(EnhMode::Honor("ac3"));
     install_truehd_remux(&mut ps, &live);
     let caps = plx_platform::devcaps::caps();
-    let spec = |c| crate::route::plan::transcode_spec(&caps, "5", 0, "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 78, c);
+    let spec = |c| crate::route::plan::transcode_spec(&caps, "5", 0, plx_plex::plex::SourceVideo::default(), "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 14, 78, c);
     pick_sidecar(&mut ps);
     let contract = video_encode_contract(&ps, true);
     assert!(!contract.remux && contract.no_video_copy);
@@ -4656,7 +4656,7 @@ fn reader_failure_rebuilds_as_burn_with_audio_conversion_reason() {
     admit_side_reader(&mut ps);
     pick_embedded(&mut ps);
     assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ClientOverRemux);
-    side_subtitles_failed(&mut ps);
+    side_subtitles_failed(&mut ps, "every reopen failed");
     assert!(ps.side_subs_refused);
     assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ServerBurn(BurnReason::AudioConversion));
     assert!(pending_user_route_intent(UserRouteIntent::Retranscode), "the burn is a rebuild");
@@ -4667,7 +4667,7 @@ fn reader_failure_rebuilds_as_burn_with_audio_conversion_reason() {
     assert!(side_reader_target(&ps).is_none(), "no reader for a burn");
     // A second failure report (the flag is polled) does nothing more.
     reset_player_control_for_test(&ps);
-    side_subtitles_failed(&mut ps);
+    side_subtitles_failed(&mut ps, "every reopen failed");
     assert!(!pending_user_route_intent(UserRouteIntent::Retranscode));
     let requests = live.finish();
     let d = decisions(&requests);
@@ -4737,7 +4737,7 @@ fn a_rejected_burn_after_a_reader_failure_leaves_the_app_drawing() {
     install_truehd_remux(&mut ps, &live);
     admit_side_reader(&mut ps);
     pick_embedded(&mut ps);
-    side_subtitles_failed(&mut ps);
+    side_subtitles_failed(&mut ps, "every reopen failed");
     assert!(ps.side_subs_refused);
     let (action, tail) = claim(&mut ps);
     assert!(matches!(tail, ClaimTail::Rejected(_)), "{tail:?}");
@@ -4763,7 +4763,7 @@ fn a_stale_reader_failure_does_not_refuse_a_sidecar() {
     admit_side_reader(&mut ps);
     commit_subtitle_selection(&mut ps, -1, 79, true);
     assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ClientOverRemux);
-    side_subtitles_failed(&mut ps);
+    side_subtitles_failed(&mut ps, "every reopen failed");
     assert!(!ps.side_subs_refused);
     assert!(!pending_user_route_intent(UserRouteIntent::Retranscode));
     live.finish();
@@ -4805,7 +4805,7 @@ fn a_failure_with_no_subtitle_drawn_by_the_reader_changes_nothing() {
     install_truehd_remux(&mut ps, &live);
     admit_side_reader(&mut ps);
     // The dev trigger's run: nothing selected in the route.
-    side_subtitles_failed(&mut ps);
+    side_subtitles_failed(&mut ps, "every reopen failed");
     assert!(!ps.side_subs_refused);
     assert!(!pending_user_route_intent(UserRouteIntent::Retranscode));
     live.finish();

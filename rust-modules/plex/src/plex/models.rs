@@ -851,6 +851,11 @@ pub struct Stream {
     pub is_default: i64,
     #[serde(default, deserialize_with = "de_i64")]
     pub selected: i64,
+    /// Subtitle stream only: `embeddedInVideo` — closed captions carried INSIDE the video
+    /// bitstream (EIA-608/708), not a container track. Sent as `"1"` on a 1080p H.264 episode's
+    /// `eia_608` stream (2026-11-20) and absent on the same file's container tracks.
+    #[serde(rename = "embeddedInVideo", default, deserialize_with = "de_bool")]
+    pub embedded_in_video: bool,
     /// Audio stream only: PMS 1.43.4+ with Plex Pass says this track's loudness was analyzed and
     /// the server can honor `normalizeLoudness=1` (and, paired with it, `boostDialog=1`) on the
     /// universal transcoder for it (issue #266). `de_bool` because it arrives as `"1"` on some

@@ -802,7 +802,8 @@ impl Caps {
     /// expressions they could drift — a Load payload naming a codec the profile never requested
     /// is exactly the payload/output mismatch of docs/plex-pass-audit.md row 1 (issue #22).
     /// `transcoder.rs::profile_for` builds the target list's head from this, and its test pins
-    /// the agreement.
+    /// the agreement. One request overrides it: an Original burn keeps an H.264 source within
+    /// Full HD in H.264 (`plx_plex::plex::TranscodeSpec::encode_target`, which the guesses read).
     pub fn encode_vcodec(&self) -> &'static str {
         if self.hevc {
             "hevc"

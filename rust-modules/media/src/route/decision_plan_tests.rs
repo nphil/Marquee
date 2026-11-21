@@ -252,7 +252,7 @@ fn remux_review_http_200_refusal_never_gets_media() {
     assert!(plx_net::net::global_init() && crate::curlio::available());
     let (port, done, server) = selection_probe_pms(true, 0);
     let sid = plx_plex::plex::register_for_test("refused-probe", "127.0.0.1", port, "token", "refused-probe-client");
-    let sample = measure_remote_remux(&plx_base::task::OffFrame::for_test(), plx_plex::plex::client_for(sid).unwrap(), &plx_platform::devcaps::caps(), "rk", 0, "refused-session", 2, 0, false, 320, plx_plex::plex::AudioEnhancements::NONE).sample;
+    let sample = measure_remote_remux(&plx_base::task::OffFrame::for_test(), plx_plex::plex::client_for(sid).unwrap(), &plx_platform::devcaps::caps(), "rk", 0, plx_plex::plex::SourceVideo::default(), "refused-session", 2, 0, false, 320, plx_plex::plex::AudioEnhancements::NONE).sample;
     done.send(()).unwrap();
     let requests = server.join().unwrap();
     assert!(sample.is_none());
@@ -1771,7 +1771,7 @@ fn a_transcode_profile_names_the_codecs_of_the_attempts_own_caps() {
     let url = |caps: &Caps| {
         let contract = plx_plex::plex::EncodeContract::original(false, plx_plex::plex::AudioEnhancements::NONE);
         assert_eq!(contract.delivery, plx_plex::plex::TranscodeDelivery::ProgressiveMkv);
-        let spec = crate::route::plan::transcode_spec(caps, "5", 0, "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 0, 0, contract);
+        let spec = crate::route::plan::transcode_spec(caps, "5", 0, plx_plex::plex::SourceVideo::default(), "s", "s", plx_plex::plex::TranscodeOffset::Fresh, 0, 0, contract);
         client.transcode_start_url(&spec).to_url()
     };
     let (with_dts, without_dts) = (url(&a), url(&b));

@@ -219,20 +219,24 @@ pub fn direct_play_video_codecs(caps: &plx_platform::devcaps::Caps) -> Vec<&'sta
 ///
 /// The Load payload cannot drift whatever PMS chooses: `route.rs` reads the OUTPUT codecs off
 /// the /decision response (`decision_codecs`) and describes those, not the profile's wish.
-fn profile_for_delivery(caps: &plx_platform::devcaps::Caps, delivery: TranscodeDelivery) -> String {
+fn profile_for_delivery(caps: &plx_platform::devcaps::Caps, delivery: TranscodeDelivery, head: &str) -> String {
     let dp_video = direct_play_video_codecs(caps).join(",");
     // The table-gated copy codecs, in list order. Each one is advertised only when the table
     // carries ITS row, and each brings the row's own bound (see `row_limits`).
     let copy_codecs: [(&str, bool); 2] = [("vp9", caps.vp9), ("av1", caps.av1)];
-    // The chain's head is the ONE encode-target definition, `Caps::encode_vcodec` — the same
-    // accessor route.rs's /decision-unreachable Load-payload guess and retranscode read, so the
-    // payload can never name a codec this profile did not ask the server to produce — with h264
-    // appended as the subscription-free fallback (see below; when the head IS h264 the chain is
-    // just h264).
-    let mut target_video = match caps.encode_vcodec() {
-        "h264" => "h264".to_string(),
-        head => format!("{head},h264"),
-    };
+    // The chain's head is the encode target the request chose ([`TranscodeSpec::encode_target`]:
+    // `Caps::encode_vcodec` unless an Original burn keeps an H.264 source's own codec) — the same
+    // answer route.rs's /decision-unreachable Load-payload guesses read, so the payload can never
+    // name a codec this profile did not ask the server to produce — then the set's other encode
+    // codec, with h264 always in the chain as the subscription-free fallback (see below; on a set
+    // without HEVC the chain is just h264).
+    let mut target_video = head.to_string();
+    for codec in [caps.encode_vcodec(), "h264"] {
+        if !target_video.split(',').any(|c| c == codec) {
+            target_video.push(',');
+            target_video.push_str(codec);
+        }
+    }
     // The copy codecs sit LAST so PMS can COPY a VP9 / AV1 source into the ProgressiveMkv remux (a
     // direct stream needs the source codec in the target list) but never chooses one as the
     // encode target.
@@ -344,7 +348,40 @@ fn profile_for_delivery(caps: &plx_platform::devcaps::Caps, delivery: TranscodeD
 }
 
 fn profile_for(caps: &plx_platform::devcaps::Caps) -> String {
-    profile_for_delivery(caps, TranscodeDelivery::ProgressiveMkv)
+    profile_for_delivery(caps, TranscodeDelivery::ProgressiveMkv, caps.encode_vcodec())
+}
+
+impl TranscodeSpec<'_> {
+    /// **What the encoder is asked for**: the bound the re-encode branch sends as
+    /// `videoResolution`/`maxVideoBitrate`, and the head of the profile's video target list (PMS
+    /// encodes to the first codec it can, [`profile_for_delivery`]).
+    ///
+    /// A ceiling is spent as given. Without one (Original), a burn that leaves the server free to
+    /// copy the video re-encodes only to draw the subtitle, so it reproduces the source instead of
+    /// the panel: a source within Full HD (1088 coded rows included) is bounded at 1920x1080, and an
+    /// H.264 one stays H.264 where this attempt decodes it at that size. The server already keeps
+    /// the source's size and rate under a larger bound (a 1080p 23.976 burn under 3840x2160 came
+    /// back 1920x1080 at 23.976); the bound says so instead of asking for 4K. A 4K H.264
+    /// burn stays HEVC: its Load is declared at 4K60, which webOS 10.3.1 refuses for H.264
+    /// (`player::engine::sink_envelope`). Everything else asks for [`Ceiling::NATIVE_4K`] in
+    /// `Caps::encode_vcodec`, as before.
+    pub fn encode_target(&self) -> (Ceiling, &'static str) {
+        let c = &self.contract;
+        let src = self.source;
+        let burn_only = self.subtitle_stream_id > 0
+            && c.ceiling.is_none()
+            && !c.no_video_copy
+            && matches!(c.delivery, TranscodeDelivery::ProgressiveMkv);
+        if !burn_only || !(1..=1920).contains(&src.width) || !(1..=1088).contains(&src.height) {
+            return (c.ceiling.unwrap_or(Ceiling::NATIVE_4K), self.caps.encode_vcodec());
+        }
+        let (bw, bh) = self.caps.raster_bound("h264");
+        let keeps_h264 = src.codec == "h264" && src.width <= i64::from(bw) && src.height <= i64::from(bh);
+        (
+            Ceiling { max_w: 1920, max_h: 1080, ..Ceiling::NATIVE_4K },
+            if keeps_h264 { "h264" } else { self.caps.encode_vcodec() },
+        )
+    }
 }
 
 /// The forced-direct-play profile: the engine's own formats, no device limits, no transcode
@@ -448,22 +485,23 @@ impl Client {
         // playback is bound by, so an undecodable source goes to the profile's HEVC target
         // instead of downscaled H264.
         //
-        // **The ceiling is the PARAMETER half of a decision already taken.** `None` is Original
-        // and resolves to [`Ceiling::NATIVE_4K`] — the literal pair this line has always sent, so
-        // that migration-safe path is byte-identical to yesterday's. A `Some` is the user's fixed
-        // pick or Auto controller rung, and it can only be spent here because `route::quality_policy`
-        // has already denied direct play and the remux for this source: a number is meaningless on
-        // a flavor where no encoder runs to read it (`TranscodeSpec`'s own doc, and `link_policy`'s
-        // for the relay case that first established the shape).
+        // **The ceiling is the PARAMETER half of a decision already taken.** `None` is Original and
+        // resolves through [`TranscodeSpec::encode_target`]: the source's own frame for a burn that
+        // only draws a subtitle, else [`Ceiling::NATIVE_4K`], the literal pair this line has always
+        // sent. A `Some` is the user's fixed pick or Auto controller rung, and it can only be spent
+        // here because `route::quality_policy` has already denied direct play and the remux for this
+        // source: a number is meaningless on a flavor where no encoder runs to read it
+        // (`TranscodeSpec`'s own doc, and `link_policy`'s for the relay case that first established
+        // the shape).
         //
         // The remux branch still sends no cap, WITH a ceiling set, and that stays correct rather
         // than becoming a hole: `quality_policy` admits a remux only for a source it measured
         // under the ceiling, so those bytes are already inside the bound. A cap here would do the
         // one thing the remux exists to avoid — force the re-encode.
+        let (c, head) = s.encode_target();
         q = if s.contract.remux && !hls {
             q.int("directStreamAudio", 1)
         } else {
-            let c = s.contract.ceiling.unwrap_or(Ceiling::NATIVE_4K);
             let q = q
                 .str("videoResolution", &c.resolution())
                 .int("maxVideoBitrate", c.max_kbps);
@@ -516,7 +554,7 @@ impl Client {
         q = self
             .playback_identity(q)
             .str("X-Plex-Client-Profile-Name", "Generic")
-            .str("X-Plex-Client-Profile-Extra", &profile_for_delivery(s.caps, s.contract.delivery));
+            .str("X-Plex-Client-Profile-Extra", &profile_for_delivery(s.caps, s.contract.delivery, head));
         if let Some(offset) = s.offset.wire_seconds() {
             q = q.str("offset", &offset);
         }
@@ -751,7 +789,7 @@ mod tests {
         link_policy, Ceiling, Client, LinkPolicy, Location, TranscodeDelivery, TranscodeSpec,
     };
     use plx_platform::devcaps::Caps;
-    use crate::plex::{AudioEnhancements, EncodeContract, Origin, ServerId};
+    use crate::plex::{AudioEnhancements, EncodeContract, Origin, ServerId, SourceVideo};
 
     // ---- the universal-transcoder query: who is allowed to COPY ---------------------------
 
@@ -795,6 +833,7 @@ mod tests {
                 client_sidecar: false,
             },
             caps: assumed_caps(),
+            source: SourceVideo::default(),
             audio_stream_id: 0,
             subtitle_stream_id: 0,
             client_subtitles: false,
@@ -1147,6 +1186,37 @@ mod tests {
         );
     }
 
+    /// **An Original burn reproduces the source.** On 2026-11-20 a 1080p H.264 episode whose
+    /// subtitle the app could not draw was burned under a 3840x2160 bound as HEVC, and the Load was
+    /// declared at 4K60. A Full HD H.264 source keeps its frame and codec; a 4K H.264 source, an
+    /// unknown one, a re-encode with no burn and a picked rung keep their old ask.
+    #[test]
+    fn an_original_burn_keeps_the_source_frame_and_codec() {
+        let fhd = Ceiling { max_w: 1920, max_h: 1080, ..Ceiling::NATIVE_4K };
+        let mut s = spec(false, false);
+        s.subtitle_stream_id = 177_291;
+        s.source = SourceVideo { codec: "h264", width: 1920, height: 1080 };
+        assert_eq!(s.encode_target(), (fhd, "h264"));
+        let q = a_client().transcode_query(&s);
+        assert!(q.contains("videoResolution=1920x1080") && !q.contains("3840x2160"), "{q}");
+        let profile = super::profile_for_delivery(s.caps, TranscodeDelivery::ProgressiveMkv, "h264");
+        assert!(target_of(&profile).contains("videoCodec=h264,hevc&"), "{profile}");
+
+        s.source.codec = "hevc";
+        assert_eq!(s.encode_target(), (fhd, "hevc"));
+        s.source = SourceVideo { codec: "h264", width: 3840, height: 2160 };
+        assert_eq!(s.encode_target(), (Ceiling::NATIVE_4K, "hevc"));
+        s.source = SourceVideo::default();
+        assert_eq!(s.encode_target(), (Ceiling::NATIVE_4K, "hevc"));
+        s.source = SourceVideo { codec: "h264", width: 1920, height: 1080 };
+        let no_burn = TranscodeSpec { subtitle_stream_id: 0, ..s };
+        assert_eq!(no_burn.encode_target(), (Ceiling::NATIVE_4K, "hevc"));
+        let rung = Ceiling { max_kbps: 4000, max_w: 1280, max_h: 720 };
+        let mut capped = s;
+        capped.contract.ceiling = Some(rung);
+        assert_eq!(capped.encode_target(), (rung, "hevc"));
+    }
+
     /// The four coupled HLS choices are one typed delivery: protocol, fixed-session controls,
     /// capability target and start endpoint. A half-converted request is worse than a refusal —
     /// PMS can answer it with a valid container the selected demux path cannot consume.
@@ -1199,6 +1269,7 @@ mod tests {
             app_lossy_in_force: Default::default(),
             },
             s.contract.delivery,
+            "hevc",
         );
         let target = target_of(&profile);
         assert!(target.contains("protocol=hls"), "{target}");
@@ -1322,7 +1393,7 @@ mod tests {
             .expect("profile declares a transcode target")
     }
     fn hls_profile_for(caps: &Caps) -> String {
-        super::profile_for_delivery(caps, super::TranscodeDelivery::FixedHls { seconds_per_segment: 2 })
+        super::profile_for_delivery(caps, super::TranscodeDelivery::FixedHls { seconds_per_segment: 2 }, caps.encode_vcodec())
     }
 
     /// Issue #22: with `videoCodec=hevc` alone, a server without Plex Pass has no legal video
@@ -1738,7 +1809,7 @@ mod tests {
         });
         for p in [
             super::profile_for(&narrowed),
-            super::profile_for_delivery(&narrowed, TranscodeDelivery::FixedHls { seconds_per_segment: 2 }),
+            super::profile_for_delivery(&narrowed, TranscodeDelivery::FixedHls { seconds_per_segment: 2 }, narrowed.encode_vcodec()),
         ] {
             assert!(p.contains("scope=videoCodec&scopeName=h264&type=upperBound&name=video.width&value=1920&replace=true"), "{p}");
             assert!(p.contains("scope=videoCodec&scopeName=h264&type=upperBound&name=video.height&value=1088&replace=true"), "{p}");
@@ -1818,6 +1889,7 @@ mod tests {
         let p = super::profile_for_delivery(
             &caps,
             TranscodeDelivery::FixedHls { seconds_per_segment: 2 },
+            caps.encode_vcodec(),
         );
         assert!(
             p.contains("protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac"),
@@ -1933,6 +2005,7 @@ mod tests {
         let p = super::profile_for_delivery(
             &caps,
             TranscodeDelivery::FixedHls { seconds_per_segment: 2 },
+            caps.encode_vcodec(),
         );
         assert!(!target_of(&p).contains("vp9"), "{p}");
     }

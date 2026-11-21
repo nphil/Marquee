@@ -2741,7 +2741,7 @@ fn start_side_reader(target: &crate::route::SideReaderTarget) {
         // One place decides the label and the burn, so the two roles can never drift: a
         // clock-only reader that cannot start — no client for the running server, or a refused
         // thread — never raises the failure that rebuilds the stream.
-        super::subside::failed_reading(clock_only, "subside: could not start the reader thread");
+        super::subside::failed_reading(clock_only, "subside: could not start the reader thread", "its thread could not start");
         if clock_only {
             // The app fetches that subtitle itself and no reader owns it: the sidecar is drawn on
             // the remux's clock, as it was before the reader measured it.

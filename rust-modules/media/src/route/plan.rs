@@ -397,10 +397,13 @@ pub(super) fn classify_prime_decision(
 /// `caps` is the attempt's capability value ([`PlaybackSession::attempt_caps`], through [`ResolveEnv`] or
 /// the claim's inputs), for the same reason: the profile PMS reads is built from it, so it is the
 /// value the plan chose its tracks from and no function here consults the process-wide answer.
+/// `source` is the played version's own video, which an Original burn reproduces
+/// ([`plx_plex::plex::TranscodeSpec::encode_target`]).
 pub(super) fn transcode_spec<'a>(
     caps: &'a plx_platform::devcaps::Caps,
     rk: &'a str,
     media_index: usize,
+    source: plx_plex::plex::SourceVideo<'a>,
     session: &'a str,
     encoder_session: &'a str,
     offset: plx_plex::plex::TranscodeOffset,
@@ -415,7 +418,7 @@ pub(super) fn transcode_spec<'a>(
     // selection. Every burn is a `remux: false` contract and keeps its id. (A cold start that
     // CARRIES a burn into a remux-shaped plan asks for it explicitly: [`transcode_spec_carrying_burn`].)
     let (sub, client_subtitles) = if contract.remux || contract.client_sidecar { (0, sub != 0) } else { (sub, false) };
-    transcode_spec_carrying_burn(caps, rk, media_index, session, encoder_session, offset, aud, sub, client_subtitles, contract)
+    transcode_spec_carrying_burn(caps, rk, media_index, source, session, encoder_session, offset, aud, sub, client_subtitles, contract)
 }
 
 /// [`transcode_spec`] without the remux rule: the subtitle id is sent as given. The cold start's
@@ -425,6 +428,7 @@ pub(super) fn transcode_spec_carrying_burn<'a>(
     caps: &'a plx_platform::devcaps::Caps,
     rk: &'a str,
     media_index: usize,
+    source: plx_plex::plex::SourceVideo<'a>,
     session: &'a str,
     encoder_session: &'a str,
     offset: plx_plex::plex::TranscodeOffset,
@@ -436,6 +440,7 @@ pub(super) fn transcode_spec_carrying_burn<'a>(
     plx_plex::plex::TranscodeSpec {
         rating_key: rk,
         media_index,
+        source,
         session,
         encoder_session,
         contract,
@@ -1832,6 +1837,8 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 .as_ref()
                 .map(|p| (p.width, p.height))
                 .unwrap_or((0, 0));
+            // What an Original burn of this version reproduces (`TranscodeSpec::encode_target`).
+            let source = plx_plex::plex::SourceVideo { codec: vcodec, width: src_w, height: src_h };
             // The DV layering rides the same playing-item store as the frame size, for the same reason:
             // it is the PLAYED LEAF's, not the detail page's (a show page's Detail describes whichever
             // episode backfilled it). Absent store → default `Dovi`, which is all-zero and refuses
@@ -2461,6 +2468,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                                     &env.caps,
                                     rk,
                                     media_index,
+                                    source,
                                     &session,
                                     probe_audio,
                                     if drawn { 0 } else { env.sub_sid },
@@ -2738,7 +2746,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 plan.vcodec = "h264".into();
                 plan.acodec = "aac".into();
             } else {
-                plan.vcodec = env.caps.encode_vcodec().into();
+                // `plan.vcodec` is the head this request's final spec asks for, set below.
                 plan.acodec = "ac3".into();
             }
             // Carry the SOURCE track this path will PUT and name on start.mkv. The demuxer is NOT
@@ -2784,6 +2792,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 &env.caps,
                 rk,
                 media_index,
+                source,
                 &session,
                 &session,
                 plx_plex::plex::TranscodeOffset::Fresh,
@@ -2823,6 +2832,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     &env.caps,
                     rk,
                     media_index,
+                    source,
                     &session,
                     &session,
                     plx_plex::plex::TranscodeOffset::Fresh,
@@ -2854,6 +2864,10 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     plan.enhancement,
                     audio,
                 );
+            }
+            if !remux && !matches!(plan.contract.delivery, plx_plex::plex::TranscodeDelivery::FixedHls { .. }) {
+                // The re-encode's guess for an unreadable answer; `decision_codecs` replaces it.
+                plan.vcodec = sp.encode_target().1.into();
             }
             if let Some(mc) = &decision {
                 // The server has already answered, and it is allowed to answer NO. Stop here rather than

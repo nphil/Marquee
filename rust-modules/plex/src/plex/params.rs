@@ -201,6 +201,8 @@ pub struct TranscodeSpec<'a> {
     /// The played version's position in `Media[]` (`mediaIndex`), resolved from its id
     /// (`Metadata::media_version`); 0 is the default version.
     pub media_index: usize,
+    /// That version's own video: what an Original burn reproduces ([`TranscodeSpec::encode_target`]).
+    pub source: SourceVideo<'a>,
     /// The active encoder's PMS playback/timeline wire id.
     pub session: &'a str,
     /// Physical universal-transcoder identity. Production keeps it equal to `session`; the two
@@ -274,6 +276,15 @@ impl Ceiling {
     pub fn admits(&self, kbps: i64, w: i64, h: i64) -> bool {
         kbps > 0 && w > 0 && h > 0 && kbps <= self.max_kbps && w <= self.max_w && h <= self.max_h
     }
+}
+
+/// A played version's own video as the library describes it: the codec (PMS's name) and the frame.
+/// Empty and `0` where nobody said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SourceVideo<'a> {
+    pub codec: &'a str,
+    pub width: i64,
+    pub height: i64,
 }
 
 /// One paged section-listing query (the Library browse grid). Built per fetch by the browse

@@ -3676,6 +3676,8 @@ impl HlsAbrControl {
             &self.caps,
             &self.rating_key,
             self.media_index,
+            // A rung bounds this encode, not the source.
+            plx_plex::plex::SourceVideo::default(),
             &encoder_session,
             &encoder_session,
             plx_plex::plex::TranscodeOffset::from_micros(offset_micros),
@@ -4805,6 +4807,9 @@ pub(super) struct OriginalRecoveryPlan {
     sid: ServerId,
     rk: String,
     media_index: usize,
+    /// The played version's frame (`cur_src`); with the candidate's codec, what a burned Original
+    /// reproduces.
+    src_raster: (i64, i64),
     part_id: i64,
     subtitle_sid: i64,
     /// The namespace the replacement encoder's session id is minted under.
@@ -4924,6 +4929,7 @@ fn plan_original_recovery(
         sid: cur_sid(ps),
         rk: cur_rk(ps),
         media_index: cur_media_index(ps),
+        src_raster: (ps.cur_src.1, ps.cur_src.2),
         part_id: cur_part_id(ps),
             subtitle_sid: cur_sub_sid(ps),
         namespace,
@@ -7294,6 +7300,9 @@ pub(super) struct RebasePlan {
     caps: std::sync::Arc<plx_platform::devcaps::Caps>,
     rk: String,
     media_index: usize,
+    /// The played version's codec and frame: a rebuilt burn reproduces them, as the one it replaces did.
+    src_vcodec: String,
+    src_raster: (i64, i64),
     /// The route generation the rebuild was planned against. The commit is gated on it.
     expected: WorkerTicket,
     /// The encoder the route plays now; stopped once the replacement is the route's.
@@ -7473,6 +7482,8 @@ pub(super) fn plan_rebase(
         caps: ps.attempt_caps(),
         rk,
         media_index: cur_media_index(ps),
+        src_vcodec: ps.src_vcodec.clone(),
+        src_raster: (ps.cur_src.1, ps.cur_src.2),
         expected,
         previous,
         replacement,
@@ -7496,6 +7507,7 @@ pub(super) fn run_rebase(off: &plx_base::task::OffFrame, plan: &RebasePlan) -> R
         &plan.caps,
         &plan.rk,
         plan.media_index,
+        plx_plex::plex::SourceVideo { codec: &plan.src_vcodec, width: plan.src_raster.0, height: plan.src_raster.1 },
         &plan.replacement,
         &plan.replacement,
         plx_plex::plex::TranscodeOffset::from_seconds(plan.offset_secs.max(0)),
@@ -8119,6 +8131,8 @@ pub(super) fn measure_remote_remux(
     caps: &plx_platform::devcaps::Caps,
     rk: &str,
     media_index: usize,
+    // The played version's video: a sample that carries an active burn asks for what the play will.
+    source: plx_plex::plex::SourceVideo,
     session: &str,
     audio_stream_id: i64,
     subtitle_stream_id: i64,
@@ -8137,6 +8151,7 @@ pub(super) fn measure_remote_remux(
             caps,
             rk,
             media_index,
+            source,
             session,
             session,
             plx_plex::plex::TranscodeOffset::Fresh,
@@ -9922,6 +9937,7 @@ fn prepare_original_remux(
             &plan.caps,
             rk,
             plan.media_index,
+            plx_plex::plex::SourceVideo { codec: &candidate.vcodec, width: plan.src_raster.0, height: plan.src_raster.1 },
             &replacement,
             &replacement,
             plx_plex::plex::TranscodeOffset::from_seconds(plan.offset_secs.max(0)),
@@ -9973,7 +9989,7 @@ fn prepare_original_remux(
     );
     let (vcodec, acodec) = decision.as_ref().and_then(decision_codecs).unwrap_or_else(|| {
         (
-            candidate.vcodec.clone(),
+            if force_burn { spec.encode_target().1.to_owned() } else { candidate.vcodec.clone() },
             remux_output_acodec(&plan.caps, audio.any(), candidate.audio.as_ref(), &plan.src_acodec),
         )
     });
@@ -10282,6 +10298,8 @@ pub(super) struct RetranscodeClaimInputs {
     offset_secs: i64,
     expected: WorkerTicket,
     src_vcodec: String,
+    /// The played version's frame (`cur_src`): with `src_vcodec`, what a burn reproduces.
+    src_raster: (i64, i64),
     src_acodec: String,
     src_dovi: plx_data::metadata::Dovi,
     src_dv_decision: plx_data::metadata::DvDecision,
@@ -10342,13 +10360,14 @@ fn remux_output_acodec(
 }
 
 /// The fallback codecs a retranscode attempt falls back to, as a pure function of the owned
-/// inputs plus whichever contract this attempt is building — needed twice now (a primary attempt
-/// and, on refusal, a Legacy fallback attempt may build a different contract), so it is a function
-/// rather than a one-shot local.
+/// inputs plus the spec this attempt sends — needed twice now (a primary attempt and, on refusal,
+/// a Legacy fallback attempt may build a different contract), so it is a function rather than a
+/// one-shot local. A re-encode names the head its spec asked for ([`plx_plex::plex::TranscodeSpec::encode_target`]).
 fn retranscode_fallback_codecs(
     inputs: &RetranscodeClaimInputs,
-    contract: &plx_plex::plex::EncodeContract,
+    sp: &plx_plex::plex::TranscodeSpec,
 ) -> (String, String) {
+    let contract = &sp.contract;
     if contract.remux {
         (
             inputs.src_vcodec.clone(),
@@ -10357,10 +10376,7 @@ fn retranscode_fallback_codecs(
     } else if matches!(contract.delivery, plx_plex::plex::TranscodeDelivery::FixedHls { .. }) {
         ("h264".to_owned(), "aac".to_owned())
     } else {
-        (
-            inputs.caps.encode_vcodec().to_owned(),
-            "ac3".to_owned(),
-        )
+        (sp.encode_target().1.to_owned(), "ac3".to_owned())
     }
 }
 
@@ -10406,12 +10422,12 @@ pub(super) fn request_retranscode(
         return None;
     }
     let plx_plex::plex::EncodeContract { audio, .. } = contract;
-    let (fallback_vcodec, fallback_acodec) = retranscode_fallback_codecs(inputs, &contract);
     let qsess = next_encoder_session(&inputs.namespace);
     let sp = transcode_spec(
         &inputs.caps,
         &inputs.rk,
         inputs.media_index,
+        plx_plex::plex::SourceVideo { codec: &inputs.src_vcodec, width: inputs.src_raster.0, height: inputs.src_raster.1 },
         &qsess,
         &qsess,
         plx_plex::plex::TranscodeOffset::from_seconds(inputs.offset_secs.max(0)),
@@ -10419,6 +10435,7 @@ pub(super) fn request_retranscode(
         inputs.subtitle_sid,
         contract,
     );
+    let (fallback_vcodec, fallback_acodec) = retranscode_fallback_codecs(inputs, &sp);
     let Some(decision) = inputs.client.transcode_decision(off, &sp) else {
         let _ = inputs.client.transcode_stop(&qsess);
         return None;
@@ -10568,6 +10585,7 @@ fn prepare_retranscode_inputs(
         offset_secs,
         expected: expected.clone(),
         src_vcodec: ps.src_vcodec.clone(),
+        src_raster: (ps.cur_src.1, ps.cur_src.2),
         src_acodec: ps.src_acodec.clone(),
         src_dovi: ps.src_dovi,
         src_dv_decision: ps.src_dv_decision,
@@ -10941,8 +10959,9 @@ fn sync_side_reader(ps: &PlaybackSession) {
 /// start): the app's own drawing of this playback's subtitle is refused for the rest of the item
 /// and the server's burn is all that is left, so the stream is rebuilt as the burn. The presenter
 /// then reads `ServerBurn(AudioConversion)` and the menu's dimmed Style/Timing rows say why. Does
-/// nothing when the reader was not drawing the selected subtitle (the dev trigger's run).
-pub fn side_subtitles_failed(ps: &mut PlaybackSession) {
+/// nothing when the reader was not drawing the selected subtitle (the dev trigger's run). `why` is
+/// the reader's own account (`player::subside::failure_reason`), named on the burn's log line.
+pub fn side_subtitles_failed(ps: &mut PlaybackSession, why: &str) {
     // Only the reader's own track: a sidecar the app fetches itself is not what failed, so a
     // failure raised for the reader the viewer has since left says nothing about it.
     if ps.side_subs_refused
@@ -10951,7 +10970,7 @@ pub fn side_subtitles_failed(ps: &mut PlaybackSession) {
     {
         return;
     }
-    crate::player::log("subtitles: the side reader failed; the server burns the subtitle");
+    crate::player::log(&format!("subtitles: the side reader failed ({why}); the server burns the subtitle"));
     let _edit = begin_user_contract_boundary();
     ps.side_subs_refused = true;
     if reconcile_enhancement(ps, true) {
@@ -12155,10 +12174,11 @@ fn commit_subtitle_selection_inner(
     crate::player::request_subtitle(sub_idx);
     set_subtitle(ps, stream_id);
     ps.selection_known = true;
-    // `sub_idx` is `metadata::sub_render_ordinal`'s own convention: negative for an external
-    // sidecar (and for Off, where `stream_id == 0` disambiguates), non-negative for an embedded
-    // track. Issue #266 I6 reads this back through `facts` to tell a sidecar (unaffected by the
-    // audio enhancement) apart from an embedded pick (needs a forced burn, M7).
+    // `sub_idx` is `metadata::sub_render_ordinal`'s own convention: negative for a pick with no
+    // container track (an external sidecar, or captions inside the video; for Off `stream_id == 0`
+    // disambiguates), non-negative for an embedded track. Issue #266 I6 reads this back through
+    // `facts` to tell a sidecar (unaffected by the audio enhancement) apart from an embedded pick
+    // (needs a forced burn, M7); `cur_sub_client_drawable` tells a drawable sidecar from a burn.
     ps.cur_sub_sidecar = stream_id != 0 && sub_idx < 0;
     ps.cur_sub_client_drawable = stream_id != 0 && client_renderable;
     ps.cur_sub_ordinal = if stream_id != 0 { sub_idx } else { -1 };

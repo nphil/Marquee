@@ -78,6 +78,8 @@ struct Running {
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static FAILED: AtomicBool = AtomicBool::new(false);
+/// Why the last give-up happened, for the line that announces the burn ([`failure_reason`]).
+static FAILED_WHY: Mutex<&'static str> = Mutex::new("");
 /// Serialises every start and stop (the engine's, and the worker `sync` hands its change to).
 static LIFECYCLE: Mutex<()> = Mutex::new(());
 /// Bumped by every engine-level `start`/`stop`: a `sync` queued before one is stale after it.
@@ -122,13 +124,19 @@ pub fn active() -> bool {
 }
 
 /// Did the reader give up (every reopen failed, or the Part has no such track)? Reads and clears the
-/// flag, so a failure is reported once.
+/// flag, so a failure is reported once; [`failure_reason`] says why.
 pub fn take_failure() -> bool {
     FAILED.swap(false, Ordering::AcqRel)
 }
 
+/// Why the reader last gave up, in words for the log line that announces the server's burn.
+pub fn failure_reason() -> &'static str {
+    *FAILED_WHY.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Raise the failure flag from outside the reader thread: the reader could not even be started.
 pub fn raise_failure() {
+    *FAILED_WHY.lock().unwrap_or_else(|e| e.into_inner()) = "it could not start";
     FAILED.store(true, Ordering::Release);
 }
 
@@ -324,7 +332,7 @@ fn apply(epoch: u64, desired: Option<Spec>) {
                 spec.delta = delta;
                 *LAST_DELTA.lock().unwrap_or_else(|e| e.into_inner()) = delta;
                 if !start_locked(spec) {
-                    failed_reading(clock_only, "subside: could not start the reader thread");
+                    failed_reading(clock_only, "subside: could not start the reader thread", "its thread could not start");
                 }
             }
         }
@@ -356,16 +364,18 @@ fn playpos() -> i64 {
 }
 
 /// The reader cannot go on, or could not start: one log line, and the failure the route answers
-/// with the server's burn. `embedded_label` is the line a TRACK reader leaves.
+/// with the server's burn. `embedded_label` is the line a TRACK reader leaves (the harness grades
+/// it verbatim); `why` rides to the route's burn line instead.
 ///
 /// A clock-only run has no track to lose: its failure is delta 0 (the sidecar keeps the remux's
 /// clock, as before the reader existed), it gets its own label, and it never raises the burn,
 /// which would re-encode the picture for a subtitle the app fetches itself.
-pub(crate) fn failed_reading(clock_only: bool, embedded_label: &'static str) {
+pub(crate) fn failed_reading(clock_only: bool, embedded_label: &'static str, why: &'static str) {
     if clock_only {
         plx_base::eventlog::log("subside: clock-only failed");
     } else {
         plx_base::eventlog::log(embedded_label);
+        *FAILED_WHY.lock().unwrap_or_else(|e| e.into_inner()) = why;
         FAILED.store(true, Ordering::Release);
     }
 }
@@ -410,14 +420,14 @@ fn run(spec: Spec, stop: Arc<SideStop>) {
         save(delta);
         match end {
             RunEnd::Stopped | RunEnd::Measured => return,
-            RunEnd::Unusable => {
-                failed_reading(clock_only, "subside: failed");
+            RunEnd::Unusable(why) => {
+                failed_reading(clock_only, "subside: failed", why);
                 return;
             }
             RunEnd::Failed => {
                 reopens += 1;
                 if reopens > MAX_REOPENS {
-                    failed_reading(clock_only, "subside: failed");
+                    failed_reading(clock_only, "subside: failed", "every reopen failed");
                     return;
                 }
                 plx_base::eventlog::log(&format!("subside: reopen n={reopens}"));
@@ -493,13 +503,14 @@ mod tests {
         let _g = plx_base::testlock::serial();
         plx_base::eventlog::with_private_log(|| {
             let _ = take_failure();
-            failed_reading(true, "subside: failed");
+            failed_reading(true, "subside: failed", "every reopen failed");
             assert!(!take_failure(), "a sidecar's clock reader must never end in the server burn");
             assert_eq!(exact_delta_ns(), None, "delta stays 0: the sidecar keeps the remux's clock");
             let log = std::fs::read_to_string(plx_base::eventlog::events_log()).unwrap_or_default();
             assert!(log.contains("subside: clock-only failed"), "{log}");
             assert!(!log.contains("subside: failed"), "a clock-only failure must not read as the track reader's: {log}");
-            failed_reading(false, "subside: failed");
+            failed_reading(false, "subside: failed", "every reopen failed");
+            assert_eq!(failure_reason(), "every reopen failed");
             assert!(take_failure(), "fixture: a track reader that gives up IS the burn");
             let log = std::fs::read_to_string(plx_base::eventlog::events_log()).unwrap_or_default();
             assert_eq!(log.matches("subside: failed").count(), 1, "one line per give-up: {log}");
@@ -515,12 +526,12 @@ mod tests {
         let _g = plx_base::testlock::serial();
         plx_base::eventlog::with_private_log(|| {
             let _ = take_failure();
-            failed_reading(true, "subside: could not start the reader thread");
+            failed_reading(true, "subside: could not start the reader thread", "its thread could not start");
             assert!(!take_failure(), "a sidecar's clock reader must never end in the server burn");
             let log = std::fs::read_to_string(plx_base::eventlog::events_log()).unwrap_or_default();
             assert!(log.contains("subside: clock-only failed"), "{log}");
             assert!(!log.contains("subside: could not start"), "a clock-only failure must not read as the track reader's: {log}");
-            failed_reading(false, "subside: could not start the reader thread");
+            failed_reading(false, "subside: could not start the reader thread", "its thread could not start");
             assert!(take_failure(), "fixture: a track reader's refused thread IS the burn");
         });
     }
