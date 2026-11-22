@@ -68,7 +68,8 @@ missing or mismatched alignment must retain estimated reveal rather than apply a
 
 ## Text handling
 
-- **Fonts**: Inter (Default), Noto Serif, Noto Sans Mono and Atkinson Hyperlegible (Regular and Bold each),
+- **Fonts**: Inter (Default), Atkinson Hyperlegible (Easy to read), Nunito (Rounded), IBM Plex Sans Condensed
+  (Narrow), Noto Serif and Noto Sans Mono (Regular and Bold each; Rounded and Narrow add 0.37 MB),
   all SIL OFL 1.1 (`THIRD-PARTY-NOTICES.md`), cut by `tools/cut-sub-families.py` into `pkg/fonts/subs/`.
   Every family falls back to the default family, which has the Noto script faces, the CJK face and the
   emoji fallback: no family draws a box where Default would draw a glyph.

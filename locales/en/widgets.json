@@ -817,8 +817,8 @@
     "description": "Style page of the player's subtitle menu. Row label and page title for where the caption sits on screen; its value reads out the chosen height (Low, Middle, High)."
   },
   "widgets.tracks.style_image_note": {
-    "value": "Image subtitles keep their own size and position.",
-    "description": "Note under the Style rows when the subtitle on screen is a picture (PGS, VobSub): the Size and Position rows are dimmed because the picture carries its own geometry. No jargon."
+    "value": "Picture subtitles: only color and brightness change.",
+    "description": "Note under the Style rows when the subtitle on screen is a picture (PGS, VobSub): only its color and brightness can change, so the other rows are dimmed. Plain words, no jargon."
   },
   "widgets.tracks.style_styled_note": {
     "value": "Styled subtitles keep their own size and position.",
@@ -1294,6 +1294,14 @@
   "widgets.tracks.look_font_legible": {
     "value": "Easy to read",
     "description": "A caption typeface on the player's Style > Font page. A face designed to be easy to read."
+  },
+  "widgets.tracks.look_font_rounded": {
+    "value": "Rounded",
+    "description": "A caption typeface on the player's Style > Font page. A face with soft, round-ended letters."
+  },
+  "widgets.tracks.look_font_narrow": {
+    "value": "Narrow",
+    "description": "A caption typeface on the player's Style > Font page. A face with narrow letters, so a long line stays short."
   },
   "widgets.tracks.look_edge_none": {
     "value": "None",
