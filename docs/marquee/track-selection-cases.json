@@ -3,7 +3,7 @@
  "language": "en",
  "notes": [
   "Shared by Marquee (rust-modules/data/src/metadata/auto_tracks.rs checks every case) and the phone apps.",
-  "audio[].original is the title's original-language track, dub any track in another language. Marquee marks the original from the Plex Country tags (first country whose language the file has; anime falls back to Japanese).",
+  "audio[].original is the title's original-language track, dub any track in another language. Marquee marks the original from the Plex Country tags (first country whose language the file has; anime falls back to Japanese; any other title with a country falls back to the file's default audio track, else its first, never a commentary or a track titled as a dub).",
   "anime is Plex genre Anime, or genres Animation + country Japan.",
   "Sidecars are SRT. Anime: .en.srt matches the original audio; .en.cc.srt (hearingImpaired) matches the English dub. Films and non-anime TV: exactly one .en.srt; .en.cc.srt stands in when .en.srt is missing.",
   "Sidecar order of preference: matching external, then any external, then an embedded text track (same variant order). Never a picture track, never forced or signs-only, never a server burn.",
@@ -1230,6 +1230,185 @@
    "expect": {
     "audio": null,
     "subtitle": 10
+   }
+  },
+  {
+   "name": "movie, Korean original with an English dub: the original audio, the sidecar over the embedded tracks",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ko",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 20,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 21,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    },
+    {
+     "id": 22,
+     "language": "fr",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 23,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 23
+   }
+  },
+  {
+   "name": "anime with the dub playing, picture signs and dialogue inside the file: the dub-matched sidecar",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Signs / Songs"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Dialogue"
+    },
+    {
+     "id": 12,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 13,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 13
+   }
+  },
+  {
+   "name": "anime switched to the original audio, picture signs and dialogue inside the file: the original-matched sidecar",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Signs / Songs"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Dialogue"
+    },
+    {
+     "id": 12,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 13,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": 1,
+    "subtitle": null
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": 12
    }
   }
  ]

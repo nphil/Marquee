@@ -62,10 +62,10 @@ fn country_language(country: &str) -> Option<&'static str> {
         "spain" | "mexico" | "argentina" | "colombia" | "chile" | "peru" => "es",
         "portugal" | "brazil" => "pt",
         "japan" => "ja",
-        "south korea" | "korea" => "ko",
-        "china" | "hong kong" | "taiwan" => "zh",
+        "south korea" | "korea" | "republic of korea" => "ko",
+        "china" | "hong kong" | "taiwan" | "taiwan, province of china" => "zh",
         "india" => "hi",
-        "russia" | "soviet union" => "ru",
+        "russia" | "russian federation" | "soviet union" => "ru",
         "sweden" => "sv",
         "norway" => "no",
         "denmark" => "da",
@@ -87,9 +87,11 @@ fn country_language(country: &str) -> Option<&'static str> {
 
 /// The title's original-language audio track: the first country, in the library's order, whose
 /// language has a track (the file's default-flagged one among several); anime falls back to
-/// Japanese. A commentary or description track is never the original. `None` when the countries
-/// name no language the file has, which leaves the choice to the server's and the file's own
-/// defaults.
+/// Japanese. A title the library gives countries for, but none of them names a language the file
+/// has, falls back to the file's own default track, else its first (never a commentary, a
+/// description or a track titled as a dub), as the phone apps do for every title. A commentary or
+/// description track is never the original. `None` for a title with no country that is not anime,
+/// which leaves the choice to the server's and the file's own defaults.
 pub fn original_audio(audio: &[Stream], anime: bool, countries: &[String]) -> Option<usize> {
     let usable = |s: &Stream| !s.ad && !super::track_label::is_commentary(&s.title);
     let in_language = |lang: &str| {
@@ -98,11 +100,16 @@ pub fn original_audio(audio: &[Stream], anime: bool, countries: &[String]) -> Op
         };
         hits().find(|(_, s)| s.default).or_else(|| hits().next()).map(|(i, _)| i)
     };
+    let from_file = || {
+        let hits = || audio.iter().enumerate().filter(|(_, s)| usable(s) && !super::track_label::names_dub(&s.title));
+        hits().find(|(_, s)| s.default).or_else(|| hits().next()).map(|(i, _)| i)
+    };
     countries
         .iter()
         .filter_map(|c| country_language(c))
         .find_map(in_language)
         .or_else(|| anime.then(|| in_language("ja")).flatten())
+        .or_else(|| (!countries.is_empty()).then(from_file).flatten())
 }
 
 /// [`AudioIn`] for each track of `audio`, with the original marked by [`original_audio`].
@@ -284,8 +291,32 @@ mod tests {
         assert_eq!(original_audio(&tracks, false, &countries(&["France", "United States of America"])), Some(1));
         let dubbed = [track(1, "eng", true, ""), track(2, "fre", false, "")];
         assert_eq!(original_audio(&dubbed, false, &countries(&["France"])), Some(1));
-        assert_eq!(original_audio(&dubbed, false, &countries(&["Japan"])), None, "no track in the country's language");
         assert_eq!(original_audio(&dubbed, false, &[]), None, "no country, no opinion");
+    }
+
+    /// Exhuma (Plex Country "Republic of Korea"): the Korean track, not the English dub the account's
+    /// language would otherwise pick.
+    #[test]
+    fn plex_country_spellings_name_their_language() {
+        let tracks = [track(1, "eng", true, ""), track(2, "kor", false, "")];
+        assert_eq!(original_audio(&tracks, false, &countries(&["Republic of Korea"])), Some(1));
+        let tracks = [track(1, "eng", true, ""), track(2, "zho", false, "")];
+        assert_eq!(original_audio(&tracks, false, &countries(&["Taiwan, Province of China"])), Some(1));
+    }
+
+    /// A country the table does not know, or whose language the file lacks: the file's own default
+    /// (else first) track, never a dub-titled, commentary or description track.
+    #[test]
+    fn a_country_without_a_usable_language_falls_back_to_the_files_default_track() {
+        let latvia = countries(&["Latvia"]);
+        let tracks = [track(1, "eng", false, "English Dub"), track(2, "lav", true, ""), track(3, "eng", false, "")];
+        assert_eq!(original_audio(&tracks, false, &latvia), Some(1));
+        let tracks = [track(1, "eng", false, "Commentary"), track(2, "lav", false, ""), track(3, "eng", false, "")];
+        assert_eq!(original_audio(&tracks, false, &latvia), Some(1), "the first when none is default");
+        let only_dub = [track(1, "eng", true, "English Dub")];
+        assert_eq!(original_audio(&only_dub, false, &latvia), None, "a dub is not the original");
+        let dubbed = [track(1, "eng", true, ""), track(2, "fre", false, "")];
+        assert_eq!(original_audio(&dubbed, false, &countries(&["Japan"])), Some(0), "no Japanese track in the file");
     }
 
     #[test]
