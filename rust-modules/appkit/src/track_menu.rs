@@ -287,6 +287,18 @@ impl StyleField {
             Self::Brightness => BRIGHTNESS_LABELS[i.min(BRIGHTNESS_LABELS.len() - 1)],
         }
     }
+
+    /// [`Self::rung_label`] as a row draws it: a Font rung is set in its own face, so the page shows
+    /// what each choice looks like (`plx_gfx::text::faced`).
+    fn rung_text(self, i: usize) -> String {
+        match self {
+            Self::Font => {
+                let stem = plx_media::player::text_style::font_info(SubFont::ALL[i]).regular;
+                plx_gfx::text::faced(stem, self.rung_label(i))
+            }
+            _ => self.rung_label(i).to_string(),
+        }
+    }
 }
 
 /// The Brightness picker's rungs, [`BRIGHTNESS_STEPS`] as the Settings page writes a percentage.
@@ -1539,26 +1551,29 @@ impl TrackMenuState {
         let commit = match field {
             StyleField::Size => {
                 let size = SubtitleSize::from_index(rung as u8);
-                if size == self.size {
+                if size == self.size && self.look.following_size() == self.look {
                     return TrackOk::Inert;
                 }
                 self.size = size;
+                self.look = self.look.following_size();
                 TrackCommit::SubtitleSize(size)
             }
             StyleField::Position => {
                 let position = SubtitlePosition::from_index(rung as u8);
-                if position == self.position {
+                if position == self.position && self.look.following_position() == self.look {
                     return TrackOk::Inert;
                 }
                 self.position = position;
+                self.look = self.look.following_position();
                 TrackCommit::SubtitlePosition(position)
             }
             StyleField::Color => {
                 let tone = SubtitleTone::from_index(rung as u8);
-                if tone == self.tone {
+                if tone == self.tone && self.look.following_color() == self.look {
                     return TrackOk::Inert;
                 }
                 self.tone = tone;
+                self.look = self.look.following_color();
                 TrackCommit::SubtitleTone(tone)
             }
             StyleField::Preset => {
@@ -1607,6 +1622,19 @@ impl TrackMenuState {
             StyleField::Brightness => BRIGHTNESS_STEPS.iter().position(|b| *b == self.look.brightness).unwrap_or(0),
         };
         rung as usize
+    }
+
+    /// What the Size, Position or Color row reads out while the Subtitles page's exact value is in
+    /// force over the ladder (which then decides nothing): the exact size, or "Custom". `None` when
+    /// the ladder's rung is what the caption follows.
+    fn exact_readout(&self, field: StyleField) -> Option<String> {
+        let look = self.look;
+        match field {
+            StyleField::Size if look.following_size() != look => Some(format!("{}%", look.size_pct)),
+            StyleField::Position if look.following_position() != look => Some(preset_label(LookPreset::Custom).to_string()),
+            StyleField::Color if look.following_color() != look => Some(preset_label(LookPreset::Custom).to_string()),
+            _ => None,
+        }
     }
 
     /// One hand edit of the look: the preset label turns to Custom, the change is committed live, the
@@ -2044,7 +2072,8 @@ impl TrackMenuState {
     /// Brightness opens from the Color page ([`Self::picker_form`]): this page is at `NEED_H`.
     fn style_form(&self) -> TrackForm {
         let field_row = |field: StyleField| {
-            Row::new(field.label()).value(field.rung_label(self.current_rung(field)))
+            Row::new(field.label())
+                .value(self.exact_readout(field).unwrap_or_else(|| field.rung_text(self.current_rung(field))))
         };
         let reaches = self.renderer == SubRenderer::Text;
         let mut sec = FormSection::new("")
@@ -2091,9 +2120,10 @@ impl TrackMenuState {
     /// A picker page: one choice per rung of `field`'s ladder, the current one checked. The Color
     /// page ends with the Brightness drill-in, which dims whichever colour the look draws in.
     fn picker_form(&self, field: StyleField) -> TrackForm {
-        let current = TrackRow::Choice(field, self.current_rung(field));
+        // while an exact value rules, no rung is the caption's: the nearest is only where focus lands
+        let current = TrackRow::Choice(field, if self.exact_readout(field).is_some() { usize::MAX } else { self.current_rung(field) });
         let sec = (0..field.rungs()).fold(FormSection::new(""), |sec, rung| {
-            sec.choice(TrackRow::Choice(field, rung), (), Row::new(field.rung_label(rung)), |id| *id == current)
+            sec.choice(TrackRow::Choice(field, rung), (), Row::new(field.rung_text(rung)), |id| *id == current)
         });
         let form = Form::new().section(sec);
         if field != StyleField::Color {
@@ -2850,6 +2880,8 @@ pub fn font_label(font: SubFont) -> &'static str {
         SubFont::Serif => msg::widgets_tracks_look_font_serif(),
         SubFont::Mono => msg::widgets_tracks_look_font_mono(),
         SubFont::Legible => msg::widgets_tracks_look_font_legible(),
+        SubFont::Rounded => msg::widgets_tracks_look_font_rounded(),
+        SubFont::Narrow => msg::widgets_tracks_look_font_narrow(),
     }
 }
 
@@ -6535,6 +6567,32 @@ mod style_page_tests {
         assert!(row_of(&menu, TrackRow::Choice(StyleField::Size, other)).checked);
         assert!(!row_of(&menu, TrackRow::Choice(StyleField::Size, current)).checked);
         teardown(&ps);
+    }
+
+    /// An exact size, colour or place (a preset's, or the Settings page's) rules the caption over
+    /// the ladders, so a rung pick has to replace it, and no rung may be checked while it rules.
+    #[test]
+    fn a_ladder_pick_replaces_the_exact_value_that_ruled() {
+        let _g = plx_base::testlock::serial();
+        for (field, look) in [
+            (StyleField::Size, LookPreset::LargePrint.look()),
+            (StyleField::Color, SubtitleLook { color: Some(0xFFE680), ..SubtitleLook::DEFAULT }),
+            (StyleField::Position, SubtitleLook { nudge: 40, ..SubtitleLook::DEFAULT }),
+        ] {
+            let (mut menu, ps, store) = open_text();
+            menu.look = look;
+            focus_id(&mut menu, TrackRow::Style);
+            assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
+            assert!(menu.exact_readout(field).is_some(), "{field:?}: the page says an exact value rules");
+            focus_id(&mut menu, TrackRow::OpenField(field));
+            assert_eq!(menu.on_ok(store.view()), TrackOk::Navigated);
+            let rung = menu.current_rung(field);
+            assert!(!row_of(&menu, TrackRow::Choice(field, rung)).checked, "{field:?}: no rung while an exact value rules");
+            assert!(matches!(menu.on_ok(store.view()), TrackOk::Commit { .. }), "{field:?}: the nearest rung is a pick, not inert");
+            assert!(menu.exact_readout(field).is_none() && menu.look.preset == LookPreset::Custom, "{field:?}");
+            assert!(row_of(&menu, TrackRow::Choice(field, rung)).checked, "{field:?}");
+            teardown(&ps);
+        }
     }
 
     /// The Style page reads the current value of each field on its Nav row; Brightness reads its

@@ -381,10 +381,10 @@ impl PlayerScreen {
             plx_appkit::player_hud::draw_subtitle_message(&message, subs_lift, band, &self.model, measure);
         }
         self.draw_subtitle_bitmap(subs_lift, band); // PGS/VobSub image subs
-        // a style picker is open and nothing is on screen to judge it by: a sample line, in the
-        // plain caption's size, position and ink, which a pick moves as it would the real caption
+        // a style picker is open and nothing is on screen to judge it by: a sample line in the
+        // viewer's look (face, size, ink, edge, box, place), which a pick changes as it would the caption
         if self.hud_policy == HudPolicy::Preview && self.render.subtitle_bounds.is_none() && !message_drawn {
-            plx_appkit::player_hud::draw_subtitle_message(
+            plx_appkit::player_hud::draw_style_sample(
                 plx_platform::i18n::msg::widgets_tracks_style_sample(), subs_lift, band, &self.model, measure,
             );
         }

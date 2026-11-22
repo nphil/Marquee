@@ -33,6 +33,7 @@ pub mod model;
 pub mod motion;
 pub mod render;
 pub mod seek_jump;
+mod sample;
 mod sections;
 pub mod state;
 pub mod strip;
@@ -46,6 +47,7 @@ use plx_media::player::text_style::{
     position_lift, size_scale, wrap_width, CAPTION_ANCHOR_LINES, CAPTION_FACE, CAPTION_FLOOR_Y,
     CAPTION_INK_CLEARANCE, CAPTION_LINE_PITCH, CAPTION_TEXT_INSET, SUB_BASE_Y,
 };
+pub use sample::draw_style_sample;
 pub use state::*;
 use model::HudModel;
 use plx_ui::consts::{SAFE, SCR_H, SCR_W};

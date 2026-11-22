@@ -1090,6 +1090,73 @@ static FACES_HEBREW_B: [AtomicPtr<c_void>; FONT_SLOTS] =
 static COV: [std::sync::OnceLock<Option<plx_base::fontcov::Coverage>>; 6] =
     [const { std::sync::OnceLock::new() }; 6];
 
+/// The subtitle families a string can be drawn in, by file stem (`fonts/subs/<stem>-Regular.ttf`
+/// and `-Bold`), so a font picker can show each name in its own face. The index is the tag's offset.
+pub const FACES: [&str; 5] = ["PlxLegible", "PlxRounded", "PlxNarrow", "PlxSerif", "PlxMono"];
+/// The private-use character a faced string opens with; `FACES[i]` is `FACE_TAG + i`. Private-use,
+/// so no real text carries it, and a string is faced by its own bytes: every cache, width and wrap
+/// that keys on the string tells a faced one from a plain one with no new parameter.
+const FACE_TAG: u32 = 0xF8F0;
+
+/// `s` opened by `stem`'s tag (see [`FACES`]); `s` as it is for any other stem, Inter included.
+pub fn faced(stem: &str, s: &str) -> String {
+    match FACES.iter().position(|f| *f == stem).and_then(|i| char::from_u32(FACE_TAG + i as u32)) {
+        Some(tag) => format!("{tag}{s}"),
+        None => s.to_owned(),
+    }
+}
+
+/// The family a string is tagged with and the text after the tag. A tag naming no family is text.
+fn split_face(bytes: &[u8]) -> (Option<usize>, &[u8]) {
+    // U+F8F0.. is EF A3 B0..
+    if let [0xEF, 0xA3, b @ 0xB0..=0xBF, rest @ ..] = bytes {
+        let i = usize::from(*b - 0xB0);
+        if i < FACES.len() {
+            return (Some(i), rest);
+        }
+    }
+    (None, bytes)
+}
+
+/// Each family's open faces: slot `2 * family + bold`, by size, like [`FONTS`].
+static FACE_FONTS: [[AtomicPtr<TtfFont>; FONT_SLOTS]; 2 * FACES.len()] =
+    [const { [const { AtomicPtr::new(std::ptr::null_mut()) }; FONT_SLOTS] }; 2 * FACES.len()];
+/// Each family's coverage, read once from its regular face; `None` when the file is absent.
+static FACE_COV: [std::sync::OnceLock<Option<plx_base::fontcov::Coverage>>; FACES.len()] =
+    [const { std::sync::OnceLock::new() }; FACES.len()];
+
+fn face_file(family: usize, bold: bool) -> std::path::PathBuf {
+    plx_base::paths::in_app_dir(&format!("fonts/subs/{}-{}.ttf", FACES[family], if bold { "Bold" } else { "Regular" }))
+}
+
+/// The open face of `family` at `sz`; null when its file will not open.
+unsafe fn face_font(family: usize, sz: c_int, bold: c_int) -> *mut TtfFont {
+    let sz = sz.clamp(8, FONT_SLOTS as c_int - 1) as usize;
+    let slot = &FACE_FONTS[2 * family + usize::from(bold != 0)][sz];
+    let mut f = slot.load(Ordering::Relaxed);
+    if f.is_null() {
+        let Ok(path) = CString::new(face_file(family, bold != 0).into_os_string().into_encoded_bytes()) else {
+            return std::ptr::null_mut();
+        };
+        f = TTF_OpenFont(path.as_ptr(), sz as c_int);
+        if !f.is_null() {
+            TTF_SetFontHinting(f, TTF_HINTING_LIGHT);
+            slot.store(f, Ordering::Relaxed);
+        }
+    }
+    f
+}
+
+/// `family`'s face when it has every character of `text`; null otherwise, and the chain draws it.
+unsafe fn usable_face(family: usize, text: &[u8], sz: c_int, bold: c_int) -> *mut TtfFont {
+    let Ok(text) = std::str::from_utf8(text) else { return std::ptr::null_mut() };
+    let cov = FACE_COV[family].get_or_init(|| plx_base::fontcov::of_file(&face_file(family, false)).ok());
+    match cov {
+        Some(c) if text.chars().all(|ch| c.contains(ch as u32)) => face_font(family, sz, bold),
+        _ => std::ptr::null_mut(),
+    }
+}
+
 /// The ONE place a link's file is named — both the coverage read and the `TTF_OpenFont` go
 /// through it, so the two can never disagree about which file a link is.
 fn link_file(link: Link) -> std::path::PathBuf {
@@ -1944,13 +2011,21 @@ unsafe fn text_tex_miss(
     bold: c_int,
     hash: u64,
 ) -> (c_uint, c_int, c_int, c_int, c_int, c_int) {
+    // A string opened by a family tag (`faced`) is drawn whole in that family's face when the face
+    // has every character; otherwise the tag is dropped and the chain below draws it. Its baseline
+    // is put where Inter's is (`face_rise`), so a row in any family sits on the row's line.
+    let (face, plain) = split_face(s_bytes);
+    let plain_c = face.and_then(|_| CString::new(plain).ok());
+    let s_c = plain_c.as_ref().map_or(s_c, |c| c.as_ptr());
+    let face_f = face.map_or(std::ptr::null_mut(), |i| usable_face(i, plain, sz, bold));
     // A string the base face cannot draw on its own, or one with right-to-left text, goes through
     // the run compositor; everything else — every ASCII string, and every string Inter fully
     // covers — takes the single `TTF_RenderUTF8_Blended` it always did, byte for byte. A
     // compositor FAILURE also falls through to that path, which renders the base face's .notdef
     // boxes: the pre-chain result, which is a worse picture but never a missing one.
-    let composed = std::str::from_utf8(s_bytes)
+    let composed = std::str::from_utf8(plain)
         .ok()
+        .filter(|_| face_f.is_null())
         .and_then(|st| Some((st, layout(st)?)))
         .and_then(|(st, l)| render_runs(st, &l, sz, bold));
     if let Some((px, w, h, rise)) = composed {
@@ -1959,7 +2034,12 @@ unsafe fn text_tex_miss(
         return cache_store(s_bytes, hash, sz, bold, tex, w, h, ink_t, ink_b, rise);
     }
 
-    let f = font_at(sz, bold);
+    let base = font_at(sz, bold);
+    let (f, face_rise) = if face_f.is_null() {
+        (base, 0)
+    } else {
+        (face_f, if base.is_null() { 0 } else { TTF_FontAscent(face_f) - TTF_FontAscent(base) })
+    };
     if f.is_null() {
         return (0, 0, 0, 0, 0, 0);
     }
@@ -1996,7 +2076,7 @@ unsafe fn text_tex_miss(
         crate::gfx::upload_rgba(0, sw, sh, packed.as_ptr())
     };
     SDL_FreeSurface(surf);
-    cache_store(s_bytes, hash, sz, bold, tex, sw, sh, ink_t, ink_b, 0)
+    cache_store(s_bytes, hash, sz, bold, tex, sw, sh, ink_t, ink_b, face_rise)
 }
 
 /// **Which slot a new entry takes**, and the whole of the eviction policy — pure, over the array,
@@ -2199,6 +2279,21 @@ pub fn text_bounds(s: *const c_char, sz: c_int, bold: c_int) -> (f32,f32) {
 /// The second result says every run was measured successfully, including mixed-script labels.
 fn measure_native_bounds(s: &CStr, sz: c_int, bold: c_int) -> ((f32, f32), bool) {
     unsafe {
+        let (face, plain) = split_face(s.to_bytes());
+        if let Some(i) = face {
+            // the width the draw advances by: the family's own, or the chain's when it lacks a character
+            let Ok(c) = CString::new(plain) else { return ((0.0, 0.0), false) };
+            let f = usable_face(i, plain, sz, bold);
+            if f.is_null() {
+                return measure_native_bounds(&c, sz, bold);
+            }
+            let (mut w, mut h): (c_int, c_int) = (0, 0);
+            return if TTF_SizeUTF8(f, c.as_ptr(), &mut w, &mut h) == 0 {
+                ((w as f32, h as f32), true)
+            } else {
+                ((0.0, 0.0), false)
+            };
+        }
         let bytes = s.to_bytes();
         if let Some((st, l)) = std::str::from_utf8(bytes)
             .ok()
@@ -3460,6 +3555,19 @@ mod tests {
         let err = unreadable_face(&[pkg.to_path_buf()]).unwrap_err();
         assert_eq!(err, format!("{}: not a file", pkg.display()));
         assert_eq!(unreadable_face(&[]), Ok(()));
+    }
+
+    #[test]
+    fn a_faced_string_carries_its_family_and_a_plain_one_none() {
+        for (i, stem) in FACES.iter().enumerate() {
+            let tagged = faced(stem, "Rounded ñ");
+            assert_eq!(split_face(tagged.as_bytes()), (Some(i), "Rounded ñ".as_bytes()), "{stem}");
+        }
+        assert_eq!(faced("Inter", "Default"), "Default", "the base face needs no tag");
+        assert_eq!(split_face(b"Default"), (None, &b"Default"[..]));
+        // a private-use character past the families is text, not a tag
+        let other = char::from_u32(FACE_TAG + FACES.len() as u32).unwrap().to_string();
+        assert_eq!(split_face(other.as_bytes()).0, None);
     }
 }
 
