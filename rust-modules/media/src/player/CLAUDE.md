@@ -102,7 +102,11 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   `try_prime` Play), with its own release (`reserve::hold_releases`): the read-ahead rebuilt to what
   the link delivered during the hold calls for (`reason=reserve`: 3 s when it outran the film, up to
   12 s as it falls short), a full video or audio queue (`reason=full`), the end of the stream
-  (`reason=eof`), or 15 s held with 1.5 s read ahead (`reason=deadline`). **Its queues read ahead by
+  (`reason=eof`), or 15 s held with 1.5 s read ahead (`reason=deadline`). A viewer Pause inside a
+  hold does not prolong it: `try_prime` runs behind a feed gate a paused viewer shuts, so
+  `engine::settle_paused_stall_hold` ends a releasable hold as the viewer's own pause
+  (`Shared::hand_stall_hold_to_user`: no Play, Buffering drops, Resume primes like any other; the
+  resume line ends `-> viewer pause`). **Its queues read ahead by
   time, not to 10 MiB**: `pump::apply_read_ahead` lets both lanes hold up to 60 s of media within
   `reserve::allowance` (half of MemAvailable above 224 MiB, at most 192 MiB, an eighth of it audio;
   nothing while the memory guard reads short), worked out again on each guard sample

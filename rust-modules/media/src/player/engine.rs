@@ -4167,25 +4167,11 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
     };
     // A PROGRESSIVE stall hold (the `ProgressiveRebuffer` hold `maybe_begin_rebuffer` takes on a
     // direct-play stream that ran out of media) has no segments to credit, so `recovery` never
-    // becomes ready for it: its certificate is the read-ahead reserve (`reserve::hold_releases`).
+    // becomes ready for it: its certificate is the read-ahead reserve (`stall_hold_release`).
     // Everything else about the Play (the token, the refusal and the stale paths) is the HLS
     // hold's, unchanged.
-    let vq = crate::aq::queue_ptr(&mut eng.aq_video);
     let progressive_release = match prime_kind {
-        HlsPrimeKind::ProgressiveRebuffer { since_ms } => {
-            let aq = crate::aq::queue_ptr(&mut eng.aq_audio);
-            let video = LaneTail { fed_ns: eng.max_fed_video_pts, queued_ns: crate::aq::aq_span_ns(vq) };
-            let audio = LaneTail { fed_ns: eng.max_fed_audio_pts, queued_ns: crate::aq::aq_span_ns(aq) };
-            let hold = super::reserve::Hold {
-                queue_full: crate::aq::aq_would_park(vq) || crate::aq::aq_would_park(aq),
-                producer_done: crate::aq::aq_producer_done(vq),
-                reserve_ns: progressive_reserve_ns(SHARED.pres_fed.load(Ordering::Relaxed), video, Some(audio))
-                    .unwrap_or(0),
-                reserve_at_start_ns: eng.progressive_hold.reserve_at_hold_ns,
-                held_ms: super::vclock_ms().wrapping_sub(since_ms),
-            };
-            super::reserve::hold_releases(hold).map(|release| (release, hold))
-        }
+        HlsPrimeKind::ProgressiveRebuffer { since_ms } => stall_hold_release(eng, since_ms),
         _ => None,
     };
     let ready = match prime_kind {
@@ -4220,13 +4206,7 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
                     None => SHARED.seeking.store(false, Ordering::Relaxed), // playback resumed at the new position → HUD spinner off
                 }
                 if let Some((release, hold)) = progressive_release {
-                    log(&format!(
-                        "progressive rebuffer resume n={} reason={} held={}ms reserve={}ms",
-                        eng.progressive_hold.holds,
-                        release.name(),
-                        hold.held_ms,
-                        hold.reserve_ns / 1_000_000,
-                    ));
+                    log_stall_hold_end(eng, release, hold, "");
                 } else if prime_kind == HlsPrimeKind::Rebuffer {
                     log(&format!(
                         "primed: v={}ms a={}ms recovery_n={} debt={}ms runway={}ms -> Play",
@@ -4253,6 +4233,57 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
             }
         }
     }
+}
+
+/// What releases the progressive stall hold begun at `since_ms`, if anything does yet
+/// (`reserve::hold_releases`), with the measurements it was judged on.
+fn stall_hold_release(eng: &mut Engine, since_ms: u32) -> Option<(super::reserve::Release, super::reserve::Hold)> {
+    let vq = crate::aq::queue_ptr(&mut eng.aq_video);
+    let aq = crate::aq::queue_ptr(&mut eng.aq_audio);
+    let video = LaneTail { fed_ns: eng.max_fed_video_pts, queued_ns: crate::aq::aq_span_ns(vq) };
+    let audio = LaneTail { fed_ns: eng.max_fed_audio_pts, queued_ns: crate::aq::aq_span_ns(aq) };
+    let hold = super::reserve::Hold {
+        queue_full: crate::aq::aq_would_park(vq) || crate::aq::aq_would_park(aq),
+        producer_done: crate::aq::aq_producer_done(vq),
+        reserve_ns: progressive_reserve_ns(SHARED.pres_fed.load(Ordering::Relaxed), video, Some(audio)).unwrap_or(0),
+        reserve_at_start_ns: eng.progressive_hold.reserve_at_hold_ns,
+        held_ms: super::vclock_ms().wrapping_sub(since_ms),
+    };
+    super::reserve::hold_releases(hold).map(|release| (release, hold))
+}
+
+fn log_stall_hold_end(eng: &Engine, release: super::reserve::Release, hold: super::reserve::Hold, to: &str) {
+    log(&format!(
+        "progressive rebuffer resume n={} reason={} held={}ms reserve={}ms{to}",
+        eng.progressive_hold.holds,
+        release.name(),
+        hold.held_ms,
+        hold.reserve_ns / 1_000_000,
+    ));
+}
+
+/// End a progressive stall hold the viewer paused inside, once it could release.
+///
+/// [`try_prime`] ends a hold with its Play, behind a feed gate a paused viewer shuts, so the hold
+/// used to last as long as the pause: the screen read Buffering throughout and the resume line
+/// charged the pause to the link (`held=40753ms` for a stall that refilled in 3 s, 2026-11-21).
+/// The clock stays physically paused and becomes the viewer's
+/// (`Shared::hand_stall_hold_to_user`), so their Resume primes like any other.
+pub fn settle_paused_stall_hold(eng: &mut Engine) {
+    if !eng.prime_play {
+        return;
+    }
+    let Some(HlsPrimeKind::ProgressiveRebuffer { since_ms }) = SHARED.hls_prime_kind() else {
+        return;
+    };
+    let Some((release, hold)) = stall_hold_release(eng, since_ms) else {
+        return;
+    };
+    if !SHARED.hand_stall_hold_to_user(since_ms) {
+        return;
+    }
+    eng.prime_play = false;
+    log_stall_hold_end(eng, release, hold, " -> viewer pause");
 }
 
 /// **One tick's feeding, as a unit: video lane, audio lane, then the prime attempt.**

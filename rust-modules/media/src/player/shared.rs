@@ -118,9 +118,10 @@ enum ClockHold {
     /// Every site that decides what a `Rebuffer` hold is must decide this one too, and the
     /// compiler cannot make it: most are `matches!` / `==`. The decisions are: it clears the
     /// Buffering mirror on its Play (`complete_hls_prime_play`), converts to a seek hold
-    /// (`prepare_seek_pause`, `hand_hold_to_seek_prime`), and is deliberately NOT one of the holds
-    /// an ABR quality-down transition or a candidate settlement may join (they are HLS-only: a
-    /// progressive stream publishes no rungs).
+    /// (`prepare_seek_pause`, `hand_hold_to_seek_prime`), becomes the viewer's own hold if they
+    /// paused inside it and it could release (`hand_stall_hold_to_user`), and is deliberately NOT
+    /// one of the holds an ABR quality-down transition or a candidate settlement may join (they
+    /// are HLS-only: a progressive stream publishes no rungs).
     ProgressiveRebuffer { since_ms: u32 },
     /// The viewer explicitly paused a running clock.
     User,
@@ -2305,6 +2306,28 @@ impl Shared {
         true
     }
 
+    /// A viewer Pause that landed inside the progressive stall hold begun at `since_ms` outlives
+    /// it. Once that hold could release, the clock is the viewer's alone: it stays physically
+    /// paused, the Buffering mirror drops, and their Resume primes like any other. `false` when
+    /// the viewer is not paused or the clock has moved on from that hold.
+    pub fn hand_stall_hold_to_user(&self, since_ms: u32) -> bool {
+        let mut clock = self.hls_clock.lock().unwrap_or_else(|e| e.into_inner());
+        if !clock.user_held
+            || clock.phase
+                != (HlsClockPhase::Held {
+                    hold: ClockHold::ProgressiveRebuffer { since_ms },
+                })
+        {
+            return false;
+        }
+        clock.phase = HlsClockPhase::Held {
+            hold: ClockHold::User,
+        };
+        self.hls_rebuffering.store(false, Ordering::Release);
+        self.hls_clock_changed.notify_all();
+        true
+    }
+
     pub fn complete_seek_pause(&self, token: u64, accepted: bool) -> HlsPauseCompletion {
         let mut clock = self.hls_clock.lock().unwrap_or_else(|e| e.into_inner());
         if clock.phase
@@ -3501,6 +3524,25 @@ mod tests {
         );
         assert!(!s.hls_rebuffering.load(Ordering::Acquire), "Buffering ends with the Play");
         assert_eq!(s.hls_prime_kind(), None, "the clock is running again");
+    }
+
+    /// A hold the viewer paused inside ends without a Play once it could release: the clock is a
+    /// plain viewer pause from there, and Resume primes it like one.
+    #[test]
+    fn progressive_rebuffer_a_releasable_hold_becomes_the_viewers_pause() {
+        let s = Shared::new();
+        let token = s.prepare_progressive_rebuffer_pause(7).expect("running");
+        s.complete_hls_rebuffer_pause(token, true);
+        assert!(!s.hand_stall_hold_to_user(7), "nobody paused: the hold's own Play ends it");
+        assert_eq!(s.prepare_hls_user_pause(), Some(HlsUserPause::AlreadyHeld));
+        assert!(!s.hand_stall_hold_to_user(8), "a different hold was judged");
+        assert!(s.hls_rebuffering.load(Ordering::Acquire));
+
+        assert!(s.hand_stall_hold_to_user(7));
+        assert!(!s.hls_rebuffering.load(Ordering::Acquire), "the screen reads paused, not Buffering");
+        assert_eq!(s.hls_prime_kind(), None, "no certificate is owed until the viewer resumes");
+        assert_eq!(s.prepare_hls_user_resume(true), Some(HlsUserResume::Prime));
+        assert_eq!(s.hls_prime_kind(), Some(HlsPrimeKind::Resume));
     }
 
     #[test]

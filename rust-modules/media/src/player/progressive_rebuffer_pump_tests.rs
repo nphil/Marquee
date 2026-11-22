@@ -409,6 +409,40 @@ fn a_user_pause_and_resume_inside_a_hold_stay_held_until_the_hold_releases() {
     assert!(!TX.paused.load(Relaxed), "the viewer asked for Play");
 }
 
+/// **A hold the viewer paused inside ends on its reserve, not on their Resume.** On 2026-11-21 a
+/// Pause three seconds into a stall and a menu left the screen reading Buffering for 40 s over a
+/// queue that had refilled long before. Thirteen seconds of film arrive under the pause: Buffering
+/// comes down with no Play, the clock is the viewer's, and their Resume plays.
+#[test]
+fn a_hold_the_viewer_paused_inside_ends_on_its_reserve_and_reads_paused() {
+    let _serial = plx_base::testlock::serial();
+    let ((), text) = logged(|| {
+        let mut rig = Rig::with_media(6 * S, 6 * S).with_virtual_wall();
+        run_until_held(&mut rig);
+        let plays = ffi_host::play_calls_for_test();
+        assert!(crate::player::pause(&mut rig.pa), "the viewer's Pause is accepted inside the hold");
+
+        deliver(&mut rig, 6 * S, 19 * S);
+        rig.step();
+        assert!(!SHARED.hls_rebuffering.load(Relaxed), "the hold outlasted its reserve: {}", rig.facts());
+        assert_ne!(crate::player::state(&rig.ps), PlaybackState::Buffering, "a paused viewer still reads Buffering");
+        assert!(TX.paused.load(Relaxed), "the viewer's Pause was dropped with the hold");
+        assert_eq!(ffi_host::play_calls_for_test(), plays, "the clock started under the viewer's Pause");
+
+        assert!(crate::player::resume(&mut rig.pa), "the viewer's Resume is accepted");
+        assert!(
+            rig.run_until(|_| ffi_host::play_calls_for_test() == plays + 1),
+            "Resume did not play: {}",
+            rig.facts()
+        );
+        assert_eq!(pauses(), 1, "the Resume was held again over a full reserve: {}", rig.facts());
+    });
+    assert!(
+        text.lines().any(|l| l.contains("progressive rebuffer resume n=1 reason=reserve") && l.ends_with("-> viewer pause")),
+        "no line for a hold ended under the viewer's pause: {text}"
+    );
+}
+
 /// **One component decides "buffering"; the freeze net only reports it.** A standing hold is a wait
 /// the freeze net (`stall_watch`) times for its notice and its offer of a lower quality, and it is
 /// neither the viewer's Pause nor a seek, which are the states the net and the Auto watchdog

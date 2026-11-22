@@ -3,8 +3,8 @@
 //! feed dispatch. All ACB/Starfish control calls happen here on the main thread.
 use super::clock_debt::{DebtParams, DebtSample};
 use super::engine::{
-    arm_live_clock_prime, feed_both_lanes, feed_sample, progressive_reserve_ns, publish_seek, Engine, LaneTail,
-    Source,
+    arm_live_clock_prime, feed_both_lanes, feed_sample, progressive_reserve_ns, publish_seek, settle_paused_stall_hold,
+    Engine, LaneTail, Source,
 };
 use super::shared::{HlsPauseCompletion, HlsPrimeKind, HlsSeekPause, Stage};
 use super::{seek_mode, SeekMode, ACB_OK, SHARED, TX};
@@ -2836,8 +2836,13 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         apply_read_ahead(ps, eng);
     }
     maybe_begin_rebuffer(ps, mt, eng);
-    if eng.stage >= Stage::Playing && TX.feed_allowed() && TX.seek_to_ns.load(Relaxed) < 0 {
-        if stream {
+    if eng.stage >= Stage::Playing && TX.seek_to_ns.load(Relaxed) < 0 {
+        if !TX.feed_allowed() {
+            // The viewer is paused, which shuts the gate `try_prime` runs behind.
+            if stream {
+                settle_paused_stall_hold(eng);
+            }
+        } else if stream {
             // Two-lane feed, then the prime attempt — the ordering and the reason both live in
             // `feed_both_lanes`, so this call site cannot drift from them.
             plx_base::diag::spans::span("feed", || feed_both_lanes(mt, eng));
