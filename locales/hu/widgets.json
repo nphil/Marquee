@@ -223,6 +223,8 @@
   "widgets.badge.captions": "Felirat siketeknek",
   "widgets.badge.audio_description": "Audionarráció",
   "widgets.tracks.other_languages": "Más nyelvek",
+  "widgets.tracks.sub_on": "Be",
+  "widgets.tracks.advanced": "Speciális",
   "widgets.tracks.search.open": "Feliratok keresése",
   "widgets.tracks.search.plex": "Keresés a Plex-szel",
   "widgets.tracks.search.language": "Nyelv",

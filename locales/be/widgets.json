@@ -231,6 +231,8 @@
   "widgets.badge.captions": "Субцітры для глухіх",
   "widgets.badge.audio_description": "Аўдыяапісанне",
   "widgets.tracks.other_languages": "Іншыя мовы",
+  "widgets.tracks.sub_on": "Укл.",
+  "widgets.tracks.advanced": "Дадаткова",
   "widgets.tracks.search.open": "Шукаць субцітры",
   "widgets.tracks.search.plex": "Шукаць праз Plex",
   "widgets.tracks.search.language": "Мова",

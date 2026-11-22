@@ -223,6 +223,8 @@
   "widgets.badge.captions": "Untertitel für Hörgeschädigte",
   "widgets.badge.audio_description": "Audiodeskription",
   "widgets.tracks.other_languages": "Andere Sprachen",
+  "widgets.tracks.sub_on": "An",
+  "widgets.tracks.advanced": "Erweitert",
   "widgets.tracks.search.open": "Untertitel suchen",
   "widgets.tracks.search.plex": "Mit Plex suchen",
   "widgets.tracks.search.language": "Sprache",

@@ -227,6 +227,8 @@
   "widgets.badge.captions": "Subtítulos para sordos",
   "widgets.badge.audio_description": "Audiodescripción",
   "widgets.tracks.other_languages": "Otros idiomas",
+  "widgets.tracks.sub_on": "Activados",
+  "widgets.tracks.advanced": "Avanzado",
   "widgets.tracks.search.open": "Buscar subtítulos",
   "widgets.tracks.search.plex": "Buscar con Plex",
   "widgets.tracks.search.language": "Idioma",

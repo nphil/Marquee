@@ -1004,6 +1004,14 @@
     "value": "Other languages",
     "description": "Subtitles panel of the player's track selector. Row that opens the page of subtitle languages that are not the viewer's own, and that page's title."
   },
+  "widgets.tracks.sub_on": {
+    "value": "On",
+    "description": "Subtitles panel of the player's track selector. Row that turns the automatic subtitle on, beside Off."
+  },
+  "widgets.tracks.advanced": {
+    "value": "Advanced",
+    "description": "Row of the player's Audio and Subtitles panels that opens the page of every other track and option; also that page's title."
+  },
   "widgets.tracks.search.open": {
     "value": "Search for subtitles",
     "description": "Subtitles panel of the player's track selector, the Search for subtitles page (an agent search on the Plex server, e.g. OpenSubtitles). Row on the Subtitles tab that opens the page, and that page's title. With Bazarr linked, the row near the top of the Subtitles tab that opens the Bazarr search."

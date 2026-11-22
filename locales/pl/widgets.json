@@ -231,6 +231,8 @@
   "widgets.badge.captions": "Napisy dla niesłyszących",
   "widgets.badge.audio_description": "Audiodeskrypcja",
   "widgets.tracks.other_languages": "Inne języki",
+  "widgets.tracks.sub_on": "Włączone",
+  "widgets.tracks.advanced": "Zaawansowane",
   "widgets.tracks.search.open": "Szukaj napisów",
   "widgets.tracks.search.plex": "Szukaj w Plex",
   "widgets.tracks.search.language": "Język",

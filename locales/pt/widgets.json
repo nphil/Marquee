@@ -227,6 +227,8 @@
   "widgets.badge.captions": "Legendas para surdos",
   "widgets.badge.audio_description": "Audiodescrição",
   "widgets.tracks.other_languages": "Outros idiomas",
+  "widgets.tracks.sub_on": "Ativadas",
+  "widgets.tracks.advanced": "Avançado",
   "widgets.tracks.search.open": "Procurar legendas",
   "widgets.tracks.search.plex": "Procurar com o Plex",
   "widgets.tracks.search.language": "Idioma",

@@ -223,6 +223,8 @@
   "widgets.badge.captions": "Ondertitels voor doven",
   "widgets.badge.audio_description": "Audiodescriptie",
   "widgets.tracks.other_languages": "Andere talen",
+  "widgets.tracks.sub_on": "Aan",
+  "widgets.tracks.advanced": "Geavanceerd",
   "widgets.tracks.search.open": "Ondertitels zoeken",
   "widgets.tracks.search.plex": "Zoeken met Plex",
   "widgets.tracks.search.language": "Taal",
