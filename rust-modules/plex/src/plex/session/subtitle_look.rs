@@ -524,8 +524,8 @@ mod tests {
 
     #[test]
     fn enums_step_and_wrap() {
-        assert_eq!(SubFont::Default.step(-1), SubFont::Legible);
-        assert_eq!(SubFont::Legible.step(1), SubFont::Default);
+        assert_eq!(SubFont::Default.step(-1), SubFont::Mono);
+        assert_eq!(SubFont::Mono.step(1), SubFont::Default);
         assert_eq!(SubEdge::ALL.len(), 6);
         for e in SubEdge::ALL {
             assert_eq!(SubEdge::from_spelling(e.spelling()), Some(*e));

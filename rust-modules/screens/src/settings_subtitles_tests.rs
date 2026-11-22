@@ -213,7 +213,7 @@ fn a_pick_goes_through_the_write_door_and_shows_at_once() {
     let before = page.state.hash();
     let out = run(&mut page, |p, fx| p.adjust_row(Field::Font.key().0, 1, false, fx));
     let (asked, reply) = write_request(out).expect("a look write");
-    assert_eq!(asked.font, SubFont::Serif);
+    assert_eq!(asked.font, SubFont::Legible);
     assert_eq!(asked.preset, LookPreset::Custom);
     assert_eq!(page.state.look, asked, "the row shows the pick before the write answers");
     assert_ne!(page.state.hash(), before, "the look belongs to replay state");

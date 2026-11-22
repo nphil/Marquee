@@ -183,7 +183,7 @@ fn each_family_is_one_name_with_two_weights_and_only_the_fallback_wears_the_defa
         assert_eq!(records, [family.clone()], "{}: one family record", f["file"]);
         by_family.entry(family).or_default().push(f["bold"].as_bool().unwrap());
     }
-    assert_eq!(by_family.len(), 3, "{by_family:?}");
+    assert_eq!(by_family.len(), 5, "{by_family:?}");
     assert!(by_family.values().all(|w| w.as_slice() == [false, true]), "regular then bold: {by_family:?}");
     let emoji = &m["fallbacks"][0];
     let names: Vec<String> = family_records(&read_sub(emoji), 1).into_iter().map(|(_, n)| n).collect();

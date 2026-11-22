@@ -1643,15 +1643,15 @@ check("Noto Sans Thai" in _subs_notices and "pkg/fonts/subs" in _subs_notices,
 # rule, whole and attributed, with the family each file really carries.
 _subs_families = json.loads((SUBS_DIR / "families.json").read_text(encoding="utf-8"))
 _subs_extra = _subs_families["families"] + _subs_families["fallbacks"]
-check(len(_subs_families["families"]) == 6 and len(_subs_families["fallbacks"]) == 1,
-      "families.json names the six family faces and the emoji fallback")
+check(len(_subs_families["families"]) == 10 and len(_subs_families["fallbacks"]) == 1,
+      "families.json names the ten family faces (five families, two weights each) and the emoji fallback")
 for _face in _subs_extra:
     _path = SUBS_DIR / _face["file"]
     check(_path.is_file() and _hashlib.sha256(_path.read_bytes()).hexdigest() == _face["sha256"],
           f"pkg/fonts/subs/{_face['file']} is the families manifest's face (same SHA-256)")
     check(font_family(_path) == _face["family"],
           f"{_face['file']} family={font_family(_path)!r} is {_face['family']!r}")
-check(all(name in _subs_notices for name in ("Noto Serif", "Noto Sans Mono", "Atkinson Hyperlegible", "tools/cut-sub-families.py")),
+check(all(name in _subs_notices for name in ("Noto Serif", "Noto Sans Mono", "Atkinson Hyperlegible", "Nunito", "IBM Plex Sans Condensed", "tools/cut-sub-families.py")),
       "THIRD-PARTY-NOTICES.md attributes the Font row's families (OFL 1.1 §2)")
 
 print("== shipped roots bundle ==")
