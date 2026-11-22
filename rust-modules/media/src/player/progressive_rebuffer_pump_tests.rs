@@ -78,8 +78,8 @@ fn a_starved_progressive_stream_pauses_the_sink_and_reads_buffering() {
     // tail the clock will clamp at (otherwise the hold could never begin in this plant).
     assert!(!crate::route::is_segmented_hls(&rig.ps), "PRECONDITION FAILED, not the defect: the route is HLS");
     assert!(
-        crate::route::is_progressive_original(&rig.ps),
-        "PRECONDITION FAILED, not the defect: the rig is not a Quality=Original stream"
+        crate::route::takes_progressive_hold(&rig.ps),
+        "PRECONDITION FAILED, not the defect: the rig is not a stream the progressive hold takes"
     );
     let video_tail = last_pts(6 * S, V_STEP_NS);
     let audio_tail = last_pts(6 * S, A_STEP_NS);
@@ -173,6 +173,19 @@ fn run_until_held(rig: &mut Rig) {
         rig.facts()
     );
     assert_eq!(pauses(), 1, "the hold is exactly one Pause");
+}
+
+/// **A fixed quality's progressive re-encode is held the same way.** Its supply is the server's
+/// conversion as well as the link: a 4K source converted with a subtitle burned in arrived at
+/// 0.84x of real time and played in slow motion. The same starved six seconds under a 1080p
+/// ceiling: one Pause and the Buffering read-out.
+#[test]
+fn a_starved_fixed_quality_re_encode_is_held_and_reads_buffering() {
+    let _serial = plx_base::testlock::serial();
+    let mut rig = Rig::with_media(6 * S, 6 * S).with_virtual_wall();
+    crate::route::mark_fixed_quality_ceiling_for_test(&mut rig.ps);
+    run_until_held(&mut rig);
+    assert_eq!(crate::player::state(&rig.ps), PlaybackState::Buffering, "{}", rig.facts());
 }
 
 /// **A link slower than the file: one hold, not slow motion (the conservation rate).** After a healthy
@@ -579,23 +592,6 @@ mod never_held {
             rig.facts()
         );
         assert!(!SHARED.hls_rebuffering.load(Relaxed), "an Auto-watched stream reads Buffering");
-    }
-
-    /// A progressive re-encode under a fixed quality ceiling is not Quality=Original: it is never held.
-    #[test]
-    fn a_progressive_re_encode_under_a_fixed_quality_is_never_held() {
-        let _serial = plx_base::testlock::serial();
-        let mut rig = Rig::with_media(6 * S, 6 * S).with_virtual_wall();
-        crate::route::mark_fixed_quality_ceiling_for_test(&mut rig.ps);
-        assert!(!crate::route::is_progressive_original(&rig.ps), "PRECONDITION FAILED, not the defect");
-        ffi_host::reset_volume_probe_for_test();
-        assert_eq!(pauses_over(&mut rig, 60), 0, "a fixed-quality re-encode was held");
-        assert!(
-            ffi_host::clock_state_for_test().0 >= 5 * S,
-            "PRECONDITION FAILED, not the defect: the clock never reached the tail: {}",
-            rig.facts()
-        );
-        assert!(!SHARED.hls_rebuffering.load(Relaxed), "a fixed-quality re-encode reads Buffering");
     }
 
     /// The viewer's own Pause is the only Pause a paused clock gets: running dry under it is not a

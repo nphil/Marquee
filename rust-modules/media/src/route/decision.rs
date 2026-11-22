@@ -8891,16 +8891,17 @@ pub fn is_preview(ps: &PlaybackSession) -> bool {
     ps.preview
 }
 
-/// **Is this a progressive stream at Quality=Original?** The player holds such a stream's clock and
-/// shows Buffering when its link stops keeping up (`player::pump`'s progressive hold). Progressive
-/// delivery with no quality ceiling: direct play and remux, where Original and forced direct play
-/// carry no ceiling. Three cases that are progressive are NOT it. Segmented HLS has its own hold. A
-/// fixed quality's progressive re-encode carries a ceiling. And a playback Quality=Auto's Original
-/// supervisor watches (`cur_auto_original_watched`) keeps Auto's own Original -> HLS exit
-/// (`auto_original_watch`) as the answer to a starved link, which a hold would stand in front of.
-/// A trailer preview is the caller's to exclude.
-pub fn is_progressive_original(ps: &PlaybackSession) -> bool {
-    !is_segmented_hls(ps) && cur_ceiling(ps).is_none() && !ps.cur_auto_original_watched
+/// **Is this a progressive stream whose starvation the player answers?** The player holds such a
+/// stream's clock and shows Buffering when its supply stops keeping up (`player::pump`'s
+/// progressive hold), and lets it read ahead by time. Direct play and remux, whose supply is the
+/// link, and a fixed quality's progressive re-encode, whose supply is also the server's conversion
+/// speed: a 4K source converted to 1080p with a subtitle burned in arrived at 0.84x of real time
+/// and played in slow motion for a minute. Two cases are NOT it. Segmented HLS has its own hold.
+/// And a playback Quality=Auto's Original supervisor watches (`cur_auto_original_watched`) keeps
+/// Auto's own Original -> HLS exit (`auto_original_watch`) as the answer to a starved link, which
+/// a hold would stand in front of. A trailer preview is the caller's to exclude.
+pub fn takes_progressive_hold(ps: &PlaybackSession) -> bool {
+    !is_segmented_hls(ps) && !ps.cur_auto_original_watched
 }
 
 pub fn clear_preview(ps: &mut PlaybackSession) {

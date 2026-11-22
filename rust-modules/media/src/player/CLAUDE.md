@@ -94,10 +94,12 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   made or was refused (`export_epoch`, `export_refused`), reopens quietly at the playhead the way a
   stall restart does; a refusal is retried once per playback. No signal inside the app says "frames
   shown but no video signal" (that is the TV's capture service), so the freeze watch does not guess.
-- **A starved direct-play (progressive) stream at Quality=Original is HELD and reads Buffering, like
-  a starved HLS one** (`pump::maybe_begin_rebuffer`, `clock_debt.rs`). Direct play has no rungs to
-  drop, so a link slower than the file used to play on in slow motion at the delivered rate and
-  then drop frames to catch up. The hold is the HLS hold's own machine (`ClockHold::ProgressiveRebuffer`:
+- **A starved progressive stream is HELD and reads Buffering, like a starved HLS one**
+  (`pump::maybe_begin_rebuffer`, `clock_debt.rs`): direct play and remux at Quality=Original, and a
+  fixed quality's progressive re-encode (`route::takes_progressive_hold`). None has rungs to drop,
+  so a supply slower than the film (the link, or for a re-encode the server's conversion: 0.84x on a
+  4K source with a burned subtitle) used to play on in slow motion at the delivered rate and then
+  drop frames to catch up. The hold is the HLS hold's own machine (`ClockHold::ProgressiveRebuffer`:
   one Pause, the `hls_rebuffering` mirror that `player::state` reads as Buffering, then the
   `try_prime` Play), with its own release (`reserve::hold_releases`): the read-ahead rebuilt to what
   the link delivered during the hold calls for (`reason=reserve`: 3 s when it outran the film, up to
@@ -122,8 +124,8 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   restarter of a source parked on a full lane; a progressive hold never begins while a queue is at
   its cap, so restart and hold cannot both act on one stall. Not judged while a prime owns the
   clock, during a seek, before the first picture, under the viewer's Pause or once the demuxer is
-  done. Never held: a trailer preview, the looped sample, a progressive re-encode under a fixed
-  quality ceiling, and an Original that Auto quality supervises (`route::is_progressive_original`).
+  done. Never held: a trailer preview, the looped sample, and an Original that Auto quality
+  supervises.
   The log reads `feed: read-ahead allowance video= audio= span=`, `feed: progressive rebuffer hold
   n= arm= S= debt= ...` and `... resume n= reason= held= reserve=`. The constants
   (`DebtParams::PROGRESSIVE`) are upstream's, measured on its television; the

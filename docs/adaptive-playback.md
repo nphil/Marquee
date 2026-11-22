@@ -542,7 +542,8 @@ the model to resume on media that did not exist.
 A direct-play (progressive) stream has no rungs and no segments, so none of the above can credit
 it, but a link slower than the file starves it the same way: once its queues are empty the picture
 plays in slow motion at the delivered rate, and when the link recovers the sink catches up by
-dropping frames. At Quality=Original the stream takes the same internal hold (one Pause, the
+dropping frames. A fixed quality's progressive re-encode starves the same way when the server
+converts slower than real time. Both take the same internal hold (one Pause, the
 Buffering read-out, the `try_prime` Play) with a release of its own. The hold begins when the clock
 debt fires (the native position callback has fallen behind the wall by more than 100 ms, net of a
 5 % drift allowance, counted only while the app's video queue holds under 1 MiB) or when the native
@@ -559,9 +560,8 @@ every 2 s from the memory guard's sample and withdrawn while memory is short. A 
 bitrate crosses the link's rate only in places plays those stretches from what the calmer ones left
 over.
 
-A trailer preview, the looped sample, a viewer Pause, a seek, a progressive re-encode under a fixed
-quality ceiling and an Original that Auto quality supervises (section 7) are never held: Auto keeps
-its own exit.
+A trailer preview, the looped sample, a viewer Pause, a seek and an Original that Auto quality
+supervises (section 7) are never held: Auto keeps its own exit.
 
 ## 6. Original is a mode, not the top HLS rung
 

@@ -279,10 +279,10 @@ fn rebuffer_request_is_current(
 enum RebufferRule {
     /// Segmented HLS: the demuxer's published tails and the worker's requests decide.
     SegmentedHls,
-    /// A stream read as one progressive file at Quality=Original (direct play, or a remux): the
-    /// native clock's own debt, or its silence over a spent reserve, decides. Without this hold a
-    /// link slower than the file starves the sink, which plays on in slow motion with no sign of
-    /// why and then catches up by dropping frames.
+    /// A stream read as one progressive file (direct play, a remux, or a fixed quality's re-encode):
+    /// the native clock's own debt, or its silence over a spent reserve, decides. Without this hold
+    /// a supply slower than the film (the link, or the server's conversion) starves the sink, which
+    /// plays on in slow motion with no sign of why and then catches up by dropping frames.
     Progressive,
 }
 
@@ -294,7 +294,7 @@ fn rebuffer_rule(ps: &crate::route::PlaybackSession, source_is_stream: bool) -> 
         Some(RebufferRule::SegmentedHls)
     } else if source_is_stream
         && !crate::route::preview_request(ps)
-        && crate::route::is_progressive_original(ps)
+        && crate::route::takes_progressive_hold(ps)
     {
         Some(RebufferRule::Progressive)
     } else {
@@ -460,7 +460,7 @@ fn should_begin_progressive_rebuffer(debt_fired: bool, native_clock_stopped: boo
     debt_fired || native_clock_stopped
 }
 
-/// Give a direct-play stream's lane queues the read-ahead the TV's memory allows
+/// Give a progressive stream's lane queues the read-ahead the TV's memory allows
 /// (`reserve::allowance`), worked out again on each memory sample. Every other route keeps the
 /// base caps: a segmented stream's reserve is its ladder's.
 fn apply_read_ahead(ps: &crate::route::PlaybackSession, eng: &mut Engine) {
@@ -492,7 +492,7 @@ fn apply_read_ahead(ps: &crate::route::PlaybackSession, eng: &mut Engine) {
     ));
 }
 
-/// Hold a direct-play stream whose link has stopped keeping up: pause the native clock and show
+/// Hold a progressive stream whose supply has stopped keeping up: pause the native clock and show
 /// Buffering, instead of letting it play on in slow motion and then drop frames to catch up. Demux
 /// and feeding stay alive; `try_prime` releases the hold on its read-ahead reserve
 /// (`reserve::hold_releases`).
@@ -7253,15 +7253,16 @@ mod progressive_begin_tests {
     }
 
     /// The progressive hold is for a stream with no quality ladder of its own: segmented HLS keeps
-    /// its hold, and a re-encode, an Auto-supervised Original, a preview or a sample-mode playback
-    /// take none.
+    /// its hold, and an Auto-supervised Original, a preview or a sample-mode playback take none.
     #[test]
-    fn only_a_progressive_original_stream_takes_the_progressive_hold() {
+    fn a_progressive_stream_takes_the_progressive_hold_unless_something_else_answers_for_it() {
         use crate::route as r;
         use RebufferRule::{Progressive, SegmentedHls};
         assert_eq!(rebuffer_rule(&session(|_| {}), true), Some(Progressive), "direct play at Original");
         let remux = session(|ps| r::install_transcode_for_test(ps, true, false));
         assert_eq!(rebuffer_rule(&remux, true), Some(Progressive), "a remux is the same progressive file");
+        let re_encode = session(r::mark_fixed_quality_ceiling_for_test);
+        assert_eq!(rebuffer_rule(&re_encode, true), Some(Progressive), "a fixed quality's progressive re-encode");
         let hls = session(|ps| r::install_transcode_for_test(ps, false, true));
         assert!(r::is_segmented_hls(&hls), "PRECONDITION FAILED, not the defect: the session is not HLS");
         assert_eq!(rebuffer_rule(&hls, true), Some(SegmentedHls), "HLS keeps its own hold");
@@ -7269,7 +7270,6 @@ mod progressive_begin_tests {
         for (what, ps) in [
             ("a trailer preview", session(r::mark_preview_for_test)),
             ("a playback resolved as a preview", session(r::resolve_as_preview_for_test)),
-            ("a fixed quality's progressive re-encode", session(r::mark_fixed_quality_ceiling_for_test)),
             ("an Original that Auto quality supervises", session(r::mark_auto_original_watched_for_test)),
         ] {
             assert_eq!(rebuffer_rule(&ps, true), None, "{what}");
