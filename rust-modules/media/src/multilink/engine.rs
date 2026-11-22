@@ -22,6 +22,10 @@
 //! * **Doubt.** An answer that is not the object ends ranges for the file. A link that stalls
 //!   loses its range to another and must be proven again. No usable helper state, or no proven
 //!   link, hands the stream back to the default reader.
+//! * **What counts against a link.** Only what its connections bring while the transport is
+//!   moved. A deadline or a rate is held against the clock on a [`Event::Tick`], a range against
+//!   its plan from its head on, and a stretch the driver left the transport alone against
+//!   nothing. A link nothing is asked of is not failing.
 
 use std::collections::VecDeque;
 use std::net::Ipv4Addr;
@@ -80,6 +84,11 @@ const REFILLS_PERCENT: u64 = 400;
 /// A range in flight is judged against its link's rate every this long, and a range without a
 /// link is forced onto a busy one this long before [`REPLACE_BY`].
 const JUDGED_AFTER: Micros = 100 * MS;
+/// A driver waiting on its transport steps the machine at least every [`JUDGED_AFTER`] while a
+/// request is out. A longer gap is the reader's own time, away from the transport.
+const UNWATCHED: Micros = 2 * JUDGED_AFTER;
+/// A fill shorter than this gets no line: a seek that another follows.
+const FILL_TOLD: Micros = SECOND;
 
 /// One range to fetch over a connection bound to `source`. It names no URL: a transport is built
 /// for one object, so a request cannot be sent anywhere else.
@@ -150,7 +159,8 @@ pub enum Event<'a> {
     Body { id: ReqId, bytes: Vec<u8> },
     Done { id: ReqId },
     Failed { id: ReqId, fault: Fault },
-    /// Time passed.
+    /// Time passed, and everything the transport had received is in: the one event at which a
+    /// deadline or a rate is held against the clock.
     Tick,
     /// The reader is closing: nothing is asked again.
     Stop,
@@ -245,8 +255,11 @@ struct Link {
     carried_until: Micros,
     /// When its next range may start, while its share is limited.
     next_at: Micros,
-    /// A range was taken from it for being slow: it has failed unless a byte comes by then.
-    doubted: Option<Micros>,
+    /// A range was taken from it while it brought nothing, and that request is still out to be
+    /// heard: the link has failed unless it brings a byte by then.
+    doubted: Option<(ReqId, Micros)>,
+    /// Body bytes it brought during the fill under way.
+    filled: u64,
 }
 
 impl Link {
@@ -267,18 +280,21 @@ struct Fetch {
     progress_at: Micros,
     /// How much of the slot was in hand when this was asked: it fetches the rest.
     from: u64,
-    headed: bool,
+    /// When its head came.
+    headed: Option<Micros>,
     /// How long the range was to take at its link's rate when it was asked.
     planned: Micros,
     /// When its link's rate was last held against what this range shows, and how much of the
     /// slot was in hand then.
     judged_at: Micros,
     judged_got: u64,
+    /// The transport was moved all the while it was out: its time is a measure of its link.
+    watched: bool,
 }
 
 impl Fetch {
     fn deadline(&self) -> Micros {
-        if self.headed {
+        if self.headed.is_some() {
             self.progress_at + STALL
         } else {
             self.since + FIRST_BYTE
@@ -298,6 +314,15 @@ struct Slot {
     fetch: Option<Fetch>,
     /// When its bytes last arrived, or it was made: what a range without a link is replaced by.
     progress_at: Micros,
+}
+
+/// The reserve being restored, from when that began.
+struct Fill {
+    since: Micros,
+    /// The least media queued during it: a seek empties the queues a moment after it begins.
+    low_ms: u32,
+    /// Body bytes of ranges received during it.
+    bytes: u64,
 }
 
 pub struct Engine {
@@ -331,6 +356,10 @@ pub struct Engine {
     /// The links, the sharing, the fail-overs and how many links had shown their rate when the
     /// last `using` line was written.
     told: (Vec<u16>, bool, u32, usize),
+    /// The fill under way, while the reserve is being restored.
+    fill: Option<Fill>,
+    /// When the machine was last stepped.
+    stepped_at: Micros,
 }
 
 impl Engine {
@@ -357,10 +386,20 @@ impl Engine {
             next_key: 1,
             failovers: 0,
             told: (Vec::new(), false, 0, 0),
+            fill: None,
+            stepped_at: 0,
         }
     }
 
     pub fn step(&mut self, now: Micros, event: Event<'_>, fx: &mut Vec<Fx>) {
+        let gap = now.saturating_sub(self.stepped_at);
+        if gap > UNWATCHED {
+            self.unwatched(gap);
+        }
+        self.stepped_at = now;
+        // Before a `Tick` a connection's bytes may be waiting unread: the clock says nothing of
+        // a link yet.
+        let moved = matches!(event, Event::Tick);
         match event {
             Event::Links { boot, offered } => self.on_links(now, boot, offered, fx),
             Event::Demand(demand) => self.demand = demand,
@@ -378,6 +417,7 @@ impl Engine {
             Event::Failed { id, fault } => self.on_failed(now, id, fault, fx),
             Event::Tick => {}
             Event::Stop => {
+                self.filled(now, fx);
                 self.spoiled = true;
                 self.cancel_fetches(fx);
                 self.abandon_proofs(now, fx);
@@ -386,7 +426,7 @@ impl Engine {
                 self.mode = Mode::Standby;
             }
         }
-        self.settle(now, fx);
+        self.settle(now, moved, fx);
     }
 
     /// Copy what is in hand at the read position into `dst` and move past it.
@@ -457,7 +497,7 @@ impl Engine {
     /// Requests out now.
     pub fn in_flight(&self) -> usize {
         self.slots.iter().filter(|s| s.fetch.is_some()).count()
-            + self.links.iter().filter(|l| matches!(&l.proof, Proof::Probing(p) if !p.done)).count()
+            + self.links.iter().filter(|l| l.doubted.is_some() || matches!(&l.proof, Proof::Probing(p) if !p.done)).count()
     }
 
     /// What this reader holds or has asked for: the window from the read position, and proofs.
@@ -491,7 +531,7 @@ impl Engine {
             match &slot.fetch {
                 Some(fetch) => {
                     at(fetch.deadline());
-                    if fetch.headed {
+                    if fetch.headed.is_some() {
                         at(fetch.judged_at + JUDGED_AFTER);
                     }
                 }
@@ -510,7 +550,7 @@ impl Engine {
             if self.mode == Mode::Carrying && self.limited(link) {
                 at(link.next_at);
             }
-            if let Some(by) = link.doubted {
+            if let Some((_, by)) = link.doubted {
                 at(by);
             }
         }
@@ -550,6 +590,7 @@ impl Engine {
                         carried_until: 0,
                         next_at: 0,
                         doubted: None,
+                        filled: 0,
                     });
                     self.next_key += 1;
                 }
@@ -600,6 +641,8 @@ impl Engine {
             }
             return;
         }
+        // What is fetched from here on fills other queues: the demuxer flushes on a seek.
+        self.filled(now, fx);
         self.cancel_fetches(fx);
         self.slots.clear();
         self.generation += 1;
@@ -613,7 +656,7 @@ impl Engine {
             let (first, last) = (slot.first + fetch.from, slot.first + slot.len - 1);
             match self.identity.as_ref().map(|identity| identity.accepts(head, first, last)) {
                 Some(Ok(())) => {
-                    fetch.headed = true;
+                    fetch.headed = Some(now);
                     fetch.progress_at = now;
                     (fetch.judged_at, fetch.judged_got) = (now, slot.got);
                 }
@@ -640,17 +683,19 @@ impl Engine {
         if let Some(at) = self.slot_of(id) {
             let slot = &mut self.slots[at];
             let Some(fetch) = slot.fetch.as_mut() else { return };
-            if !fetch.headed || slot.got + bytes.len() as u64 > slot.len {
-                let link = fetch.link;
-                self.spoil(now, &format!("{} on {}", Fault::Overrun.name(), self.name(link)), fx);
-            } else if !bytes.is_empty() {
-                slot.got += bytes.len() as u64;
+            let (key, n) = (fetch.link, bytes.len() as u64);
+            if fetch.headed.is_none() || slot.got + n > slot.len {
+                self.spoil(now, &format!("{} on {}", Fault::Overrun.name(), self.name(key)), fx);
+            } else if n > 0 {
+                slot.got += n;
                 slot.chunks.push_back(bytes);
                 slot.progress_at = now;
                 fetch.progress_at = now;
-                let key = fetch.link;
-                if let Some(link) = self.links.iter_mut().find(|l| l.key == key) {
-                    link.doubted = None;
+                if let Some(fill) = &mut self.fill {
+                    fill.bytes += n;
+                    if let Some(link) = self.links.iter_mut().find(|l| l.key == key) {
+                        link.filled += n;
+                    }
                 }
             }
         } else if let Some(at) = self.probing(id) {
@@ -661,6 +706,13 @@ impl Engine {
                 probe.got.extend_from_slice(&bytes);
                 probe.progress_at = now;
             }
+        } else if let Some(at) = self.doubting(id) {
+            // The request a range was taken from brings bytes again: its link stands. The bytes
+            // themselves are another link's to fetch by now.
+            if !bytes.is_empty() {
+                self.links[at].doubted = None;
+                fx.push(Fx::Cancel(id));
+            }
         }
     }
 
@@ -668,9 +720,9 @@ impl Engine {
         if let Some(at) = self.slot_of(id) {
             let slot = &mut self.slots[at];
             let Some(fetch) = slot.fetch.take() else { return };
-            if fetch.headed && slot.got == slot.len {
-                let bytes = slot.len - fetch.from;
-                self.measured(now, fetch.link, bytes, now - fetch.since);
+            if fetch.headed.is_some() && slot.got == slot.len {
+                let sample = fetch.watched.then(|| (slot.len - fetch.from, now - fetch.since));
+                self.measured(now, fetch.link, sample);
             } else {
                 self.lapse(now, fetch.link, Fault::Cut.name(), fx);
             }
@@ -698,22 +750,27 @@ impl Engine {
             } else {
                 self.unproven(now, at, fault.name(), fx);
             }
+        } else if let Some(at) = self.doubting(id) {
+            let key = self.links[at].key;
+            self.lapse(now, key, fault.name(), fx);
         }
     }
 
     // ---- what follows every event ------------------------------------------------------------
 
-    fn settle(&mut self, now: Micros, fx: &mut Vec<Fx>) {
-        // A fetch past its deadline takes its link with it, and with the link every fetch it had.
-        while let Some((link, headed)) = self.slots.iter().filter_map(|s| s.fetch.as_ref()).find(|f| now >= f.deadline()).map(|f| (f.link, f.headed)) {
-            self.lapse(now, link, if headed { "stalled" } else { "no answer" }, fx);
-        }
-        while let Some(key) = self.links.iter().find(|l| l.proven() && l.doubted.is_some_and(|by| now >= by)).map(|l| l.key) {
-            self.lapse(now, key, "stalled", fx);
+    fn settle(&mut self, now: Micros, moved: bool, fx: &mut Vec<Fx>) {
+        if moved {
+            // A fetch past its deadline takes its link with it, and with the link every fetch it had.
+            while let Some((link, headed)) = self.slots.iter().filter_map(|s| s.fetch.as_ref()).find(|f| now >= f.deadline()).map(|f| (f.link, f.headed.is_some())) {
+                self.lapse(now, link, if headed { "stalled" } else { "no answer" }, fx);
+            }
+            while let Some(key) = self.links.iter().find(|l| l.doubted.is_some_and(|(_, by)| now >= by)).map(|l| l.key) {
+                self.lapse(now, key, "stalled", fx);
+            }
         }
         for at in 0..self.links.len() {
             let verdict = match &self.links[at].proof {
-                Proof::Probing(p) if !p.done && now >= p.deadline() => Some(Err(p.id)),
+                Proof::Probing(p) if moved && !p.done && now >= p.deadline() => Some(Err(p.id)),
                 Proof::Probing(p) if p.done && p.trusted.len() == p.len => Some(Ok(p.got == p.trusted)),
                 _ => None,
             };
@@ -752,9 +809,13 @@ impl Engine {
         if !self.links.iter().any(Link::proven) {
             self.retire(now, "no proven link", true, fx);
         } else {
-            self.judge(now);
+            if moved {
+                self.judge(now);
+            }
             self.choose(now, fx);
-            self.relieve(now, fx);
+            if moved {
+                self.relieve(now, fx);
+            }
             self.dispatch(now, fx);
             self.tell(fx);
         }
@@ -831,7 +892,7 @@ impl Engine {
         let link = &mut self.links[at];
         link.proof = if link.lapsed { Proof::Watched { until: now + WATCH } } else { Proof::Proven };
         // Its rate is measured afresh: what it carried before a failure says nothing of it now.
-        (link.samples, link.rate, link.doubted) = (0, 0, None);
+        (link.samples, link.rate) = (0, 0);
         fx.push(Fx::Log(format!("multilink: {} proven", link.who.interface)));
     }
 
@@ -861,10 +922,12 @@ impl Engine {
             }
         }
         let link = self.links.iter_mut().find(|l| l.key == key)?;
+        if let Some((id, _)) = link.doubted.take() {
+            fx.push(Fx::Cancel(id));
+        }
         link.proof = Proof::Waiting { from: now + link.retry };
         link.retry = (link.retry * 2).min(RETRY_LONGEST);
         link.lapsed = true;
-        link.doubted = None;
         Some(link)
     }
 
@@ -878,10 +941,13 @@ impl Engine {
         }
     }
 
-    /// One range fetched whole over link `key`. Its rate rises fast and falls slowly, so one slow
-    /// range does not halve the next.
-    fn measured(&mut self, now: Micros, key: u16, bytes: u64, took: Micros) {
+    /// One range fetched whole over link `key`, and what it measured: its bytes and how long it
+    /// took, unless the transport stood unmoved for some of that. The rate rises fast and falls
+    /// slowly, so one slow range does not halve the next.
+    fn measured(&mut self, now: Micros, key: u16, sample: Option<(u64, Micros)>) {
         let Some(link) = self.links.iter_mut().find(|l| l.key == key) else { return };
+        link.carried_until = now + SHARE_HOLD;
+        let Some((bytes, took)) = sample else { return };
         let rate = bytes * SECOND / took.max(MS);
         link.rate = if link.rate == 0 {
             rate
@@ -891,7 +957,6 @@ impl Engine {
             (link.rate * 3 + rate) / 4
         };
         link.samples += 1;
-        link.carried_until = now + SHARE_HOLD;
         if link.samples == 2 * TRIAL_RANGES {
             // It outlasted its trial: the next failure is a first one again.
             link.retry = RETRY_FIRST;
@@ -905,6 +970,16 @@ impl Engine {
             self.refilling = true;
         } else if demand.full || demand.reserve_ms >= RESTORED_MS {
             self.refilling = false;
+        }
+        if !self.refilling {
+            self.filled(now, fx);
+        } else if let Some(fill) = &mut self.fill {
+            fill.low_ms = fill.low_ms.min(demand.reserve_ms);
+        } else {
+            self.fill = Some(Fill { since: now, low_ms: demand.reserve_ms, bytes: 0 });
+            for link in &mut self.links {
+                link.filled = 0;
+            }
         }
         let mut fastest: Option<usize> = None;
         for (at, link) in self.links.iter().enumerate() {
@@ -960,52 +1035,62 @@ impl Engine {
             }
         }
         self.sharing = self.links.iter().any(|l| l.wire() && self.using.contains(&l.key))
-            && self.links.iter().any(|l| !l.wire() && self.using.contains(&l.key) && (now < l.carried_until || !self.idle(l.key)));
+            && self.links.iter().any(|l| !l.wire() && l.doubted.is_none() && self.using.contains(&l.key) && (now < l.carried_until || !self.idle(l.key)));
     }
 
     /// Lower a link's rate to what its range in flight shows, by no more than half a time: a
-    /// link that slows is planned for at once, and a pause is not taken for a collapse.
+    /// link that slows is planned for at once, and a pause is not taken for a collapse. A stretch
+    /// that brought nothing shows no rate: it is a stall, which has its own deadline.
     fn judge(&mut self, now: Micros) {
         for slot in &mut self.slots {
             let Some(fetch) = slot.fetch.as_mut() else { continue };
-            if !fetch.headed || now < fetch.judged_at + JUDGED_AFTER {
+            if fetch.headed.is_none() || now < fetch.judged_at + JUDGED_AFTER {
                 continue;
             }
             let seen = (slot.got - fetch.judged_got) * SECOND / (now - fetch.judged_at);
             (fetch.judged_at, fetch.judged_got) = (now, slot.got);
             if let Some(link) = self.links.iter_mut().find(|l| l.key == fetch.link) {
-                if seen < link.rate {
-                    link.rate = seen.max(link.rate / 2).max(1);
+                if seen > 0 && seen < link.rate {
+                    link.rate = seen.max(link.rate / 2);
                 }
             }
         }
     }
 
-    /// Take a range that is taking over twice as long as planned from a link that will not
-    /// finish it before the demuxer needs it, when another would in half the time.
+    /// Take a range from a link that will not finish it before the demuxer needs it, when it is
+    /// taking over twice as long as planned from its head on and another link would finish it in
+    /// half the time. The wait for an answer is not counted: a connection made anew owes that to
+    /// its handshake, not to its link. A link still bringing bytes is planned at what the range
+    /// showed. One that has gone quiet keeps the request, to be heard by: it has failed unless a
+    /// byte comes within [`STALL`] of its last.
     fn relieve(&mut self, now: Micros, fx: &mut Vec<Fx>) {
         for at in 0..self.slots.len() {
             let slot = &self.slots[at];
             let Some(fetch) = &slot.fetch else { continue };
-            if !fetch.headed || now < fetch.since + JUDGED_AFTER {
-                continue;
-            }
+            let Some(headed) = fetch.headed.filter(|&since| now >= since + JUDGED_AFTER) else { continue };
             let (id, key, left, heard) = (fetch.id, fetch.link, slot.len - slot.got, fetch.progress_at);
-            let seen = (slot.got - fetch.from) * SECOND / (now - fetch.since);
+            let seen = (slot.got - fetch.from) * SECOND / (now - headed);
             let finishes = now + left * SECOND / seen.max(1);
-            if finishes <= fetch.since + 2 * fetch.planned + JUDGED_AFTER || finishes <= self.needed_at(now, slot.first + slot.got) {
+            if finishes <= headed + 2 * fetch.planned + JUDGED_AFTER || finishes <= self.needed_at(now, slot.first + slot.got) {
                 continue;
             }
             let sooner = self.using.iter().any(|&other| other != key && (self.finish(now, other, left) - now) * 2 < finishes - now);
             if !sooner {
                 continue;
             }
-            fx.push(Fx::Cancel(id));
             self.slots[at].fetch = None;
+            let mut heard_out = false;
             if let Some(link) = self.links.iter_mut().find(|l| l.key == key) {
-                link.rate = link.rate.min(seen).max(1);
-                link.doubted = Some(heard + STALL);
+                if now < heard + JUDGED_AFTER {
+                    link.rate = link.rate.min(seen).max(1);
+                } else if link.doubted.is_none() {
+                    link.doubted = Some((id, heard + STALL));
+                    heard_out = true;
+                }
                 fx.push(Fx::Log(format!("multilink: {} is slow, its range goes to another link", link.who.interface)));
+            }
+            if !heard_out {
+                fx.push(Fx::Cancel(id));
             }
         }
     }
@@ -1029,6 +1114,10 @@ impl Engine {
             for &key in &self.using {
                 let Some(at) = self.links.iter().position(|l| l.key == key) else { continue };
                 let link = &self.links[at];
+                // Nothing more is asked of a link while the request it is heard by is out.
+                if link.doubted.is_some() {
+                    continue;
+                }
                 let size = if orphan.is_some() { left } else { self.range_size(link).min(left) };
                 let done = self.finish(now, key, size);
                 soonest = soonest.min(done);
@@ -1054,7 +1143,7 @@ impl Engine {
             let planned = (self.slots[slot_at].len - self.slots[slot_at].got) * SECOND / self.pace(&self.links[at]).max(1);
             let link = &mut self.links[at];
             let slot = &mut self.slots[slot_at];
-            slot.fetch = Some(Fetch { id, link: link.key, since: now, progress_at: now, from: slot.got, headed: false, planned, judged_at: now, judged_got: slot.got });
+            slot.fetch = Some(Fetch { id, link: link.key, since: now, progress_at: now, from: slot.got, headed: None, planned, judged_at: now, judged_got: slot.got, watched: true });
             link.carried_until = now + SHARE_HOLD;
             if limited {
                 // The share is a rate over time: the next range waits out what this one takes.
@@ -1087,6 +1176,28 @@ impl Engine {
             .collect();
         fx.push(Fx::Log(format!("multilink: using {}; failovers {}", links.join(" + "), self.failovers)));
         self.told = (self.using.clone(), self.sharing, self.failovers, shown);
+    }
+
+    /// The fill under way is over: one line of what it brought, each link's part in interface
+    /// order. A fill shorter than [`FILL_TOLD`] gets none.
+    fn filled(&mut self, now: Micros, fx: &mut Vec<Fx>) {
+        let Some(fill) = self.fill.take() else { return };
+        let took = now - fill.since;
+        if took < FILL_TOLD || fill.bytes == 0 {
+            return;
+        }
+        // Bits a microsecond are megabits a second.
+        let mut links: Vec<(&str, u64)> = self.links.iter().map(|l| (l.who.interface.as_str(), l.filled * 8 / took)).collect();
+        links.sort_unstable();
+        let links: Vec<String> = links.iter().map(|(name, mbps)| format!("{name} {mbps}")).collect();
+        fx.push(Fx::Log(format!(
+            "multilink: fill {} Mbit/s ({}) reserve {}→{} ms in {} ms",
+            fill.bytes * 8 / took,
+            links.join(", "),
+            fill.low_ms,
+            self.demand.reserve_ms,
+            took / MS
+        )));
     }
 
     // ---- small things ------------------------------------------------------------------------
@@ -1123,9 +1234,9 @@ impl Engine {
     }
 
     /// When link `key` would have `bytes` more fetched: after what it is fetching now, and after
-    /// its share comes free.
+    /// its share comes free. Never, while it is heard out.
     fn finish(&self, now: Micros, key: u16, bytes: u64) -> Micros {
-        let Some(link) = self.links.iter().find(|l| l.key == key) else { return Micros::MAX / 4 };
+        let Some(link) = self.links.iter().find(|l| l.key == key && l.doubted.is_none()) else { return Micros::MAX / 4 };
         let rate = self.pace(link);
         let mut free = now;
         for slot in &self.slots {
@@ -1159,10 +1270,21 @@ impl Engine {
         self.links.iter().position(|l| matches!(&l.proof, Proof::Probing(p) if p.id == id))
     }
 
+    /// The link heard out by request `id`.
+    fn doubting(&self, id: ReqId) -> Option<usize> {
+        self.links.iter().position(|l| l.doubted.is_some_and(|(asked, _)| asked == id))
+    }
+
+    /// Cancel every range asked for, and every request a link is heard out by.
     fn cancel_fetches(&mut self, fx: &mut Vec<Fx>) {
         for slot in &mut self.slots {
             if let Some(fetch) = slot.fetch.take() {
                 fx.push(Fx::Cancel(fetch.id));
+            }
+        }
+        for link in &mut self.links {
+            if let Some((id, _)) = link.doubted.take() {
+                fx.push(Fx::Cancel(id));
             }
         }
     }
@@ -1187,6 +1309,28 @@ impl Engine {
         self.tail = to;
     }
 
+    /// The machine was not stepped for `gap`, longer than a driver waiting on its transport
+    /// leaves it: the reader was elsewhere, and what a connection held back or let pile up
+    /// meanwhile is not its link's doing. No request's clock ran, and a range that was out is no
+    /// measure of its link's rate.
+    fn unwatched(&mut self, gap: Micros) {
+        for slot in &mut self.slots {
+            let Some(fetch) = &mut slot.fetch else { continue };
+            fetch.watched = false;
+            fetch.since += gap;
+            fetch.progress_at += gap;
+            fetch.judged_at += gap;
+            fetch.headed = fetch.headed.map(|at| at + gap);
+        }
+        for link in &mut self.links {
+            if let Proof::Probing(probe) = &mut link.proof {
+                probe.since += gap;
+                probe.progress_at += gap;
+            }
+            link.doubted = link.doubted.map(|(id, by)| (id, by + gap));
+        }
+    }
+
     /// Drop the links `gone` names, with what they were doing.
     fn forget(&mut self, gone: impl Fn(&Link) -> bool, fx: &mut Vec<Fx>) {
         for at in (0..self.links.len()).rev() {
@@ -1198,6 +1342,9 @@ impl Engine {
                 if !probe.done {
                     fx.push(Fx::Cancel(probe.id));
                 }
+            }
+            if let Some((id, _)) = link.doubted {
+                fx.push(Fx::Cancel(id));
             }
             for slot in &mut self.slots {
                 if let Some(fetch) = slot.fetch.take_if(|f| f.link == link.key) {
@@ -1212,6 +1359,7 @@ impl Engine {
     /// Stop carrying: nothing more is asked, and the default reader resumes after what is still
     /// read out, which is what is in hand in order when `keep`, and nothing otherwise.
     fn retire(&mut self, now: Micros, why: &str, keep: bool, fx: &mut Vec<Fx>) {
+        self.filled(now, fx);
         self.cancel_fetches(fx);
         self.abandon_proofs(now, fx);
         if !keep {

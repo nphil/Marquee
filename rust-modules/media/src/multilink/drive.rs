@@ -31,10 +31,13 @@ pub struct Driver {
 }
 
 impl Driver {
-    /// Put one event to the machine and carry out what it asks.
+    /// Put one event to the machine and carry out what it asks. A request it starts is moved at
+    /// once: it goes onto the wire now, not when the caller next takes a turn.
     pub fn step<T: Transport>(&mut self, engine: &mut Engine, net: &mut T, now: Micros, event: Event<'_>, log: &mut dyn FnMut(&str)) {
         engine.step(now, event, &mut self.fx);
-        self.act(engine, net, now, log);
+        if self.act(engine, net, now, log) {
+            self.turn(engine, net, now, log);
+        }
     }
 
     /// One turn at `now`: what the transport received goes in, time passes, what the machine

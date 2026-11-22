@@ -44,6 +44,10 @@ const CONNECT_S: c_long = 3;
 /// than this on its way, so what queues at the switch ahead of the TV's own traffic stays in the
 /// low tens of milliseconds of the wire's 100 Mbit/s.
 const WIRE_RECEIVE: c_int = 128 << 10;
+/// How many times one poll goes round its connections. libcurl 7.53 hands over one TLS record
+/// of a connection a call, 16 KiB at most: a single call a turn holds a link to what the turns
+/// bring, not to what it carries. The bound keeps one turn to half a megabyte a connection.
+const READS_A_POLL: u32 = 32;
 
 /// One request in flight. Boxed: libcurl holds its address for the two callbacks.
 struct Flight {
@@ -298,18 +302,26 @@ impl Transport for Ranges {
         if self.flights.is_empty() {
             return;
         }
-        let mut running = 0;
-        if self.broken || unsafe { curl_multi_perform(self.multi, &mut running) } != CURLM_OK {
-            self.fail_all(arrived);
-            return;
-        }
-        for flight in &mut self.flights {
-            if flight.headed && !flight.reported {
-                flight.reported = true;
-                arrived.push(Arrival::Head(flight.id, std::mem::take(&mut flight.head)));
+        for _ in 0..READS_A_POLL {
+            let mut running = 0;
+            if self.broken || unsafe { curl_multi_perform(self.multi, &mut running) } != CURLM_OK {
+                self.fail_all(arrived);
+                return;
             }
-            if !flight.body.is_empty() {
-                arrived.push(Arrival::Body(flight.id, std::mem::take(&mut flight.body)));
+            let mut brought = false;
+            for flight in &mut self.flights {
+                if flight.headed && !flight.reported {
+                    flight.reported = true;
+                    arrived.push(Arrival::Head(flight.id, std::mem::take(&mut flight.head)));
+                    brought = true;
+                }
+                if !flight.body.is_empty() {
+                    arrived.push(Arrival::Body(flight.id, std::mem::take(&mut flight.body)));
+                    brought = true;
+                }
+            }
+            if !brought {
+                break;
             }
         }
         loop {

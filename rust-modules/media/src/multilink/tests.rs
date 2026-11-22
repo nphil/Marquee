@@ -241,6 +241,89 @@ fn work_moves_to_the_wire_as_wifi_slows_and_the_reserve_runs_down() {
 }
 
 #[test]
+fn an_answer_that_is_slow_to_begin_is_not_a_slow_link() {
+    let mut sim = wire_and_wifi(64 << 20);
+    // A seek cancels what is in flight, and what is asked next has a connection to make first.
+    sim.net.path(WIRE).connect = 150 * MS;
+    sim.net.path(WIFI).connect = 150 * MS;
+    sim.film = Some(Film::new(90, 2_000));
+    carrying_both(&mut sim);
+    sim.run_ms(300);
+    let sought = sim.now;
+    sim.seek(24 << 20);
+    sim.run_ms(1_200);
+
+    assert!(!sim.logs.iter().any(|l| l.contains("is slow") || l.contains("failed") || l.contains("set aside")), "{}", sim.logs.join("\n"));
+    let (from, to) = (sought + 400 * MS, sim.now);
+    let (wire, wifi) = (bps(sim.net.bytes(WIRE, from, to), to - from), bps(sim.net.bytes(WIFI, from, to), to - from));
+    assert!(wifi > 150_000_000 && wire > 60_000_000, "after the seek the links carried {wifi} and {wire} bit/s\n{}", sim.logs.join("\n"));
+    assert_eq!(sim.handbacks, 0);
+    sim.assert_exact();
+}
+
+#[test]
+fn a_link_that_pauses_for_less_than_a_stall_carries_on() {
+    let mut sim = wire_and_wifi(64 << 20);
+    sim.film = Some(Film::new(90, 400));
+    let paused = carrying_both(&mut sim);
+    // Little is queued: a range that stops is soon in the film's way.
+    sim.film.as_mut().expect("a film").queued = 150 * MS;
+    sim.net.path(WIFI).rates.extend([(paused, 0), (paused + 300 * MS, mbit(180))]);
+    sim.run_ms(1_200);
+
+    assert!(!sim.logs.iter().any(|l| l.contains("failed") || l.contains("set aside")), "{}", sim.logs.join("\n"));
+    let (from, to) = (paused + 600 * MS, sim.now);
+    let wifi = bps(sim.net.bytes(WIFI, from, to), to - from);
+    assert!(wifi > 150_000_000, "Wi-Fi carries again: {wifi} bit/s\n{}", sim.logs.join("\n"));
+    assert_eq!(sim.handbacks, 0);
+    sim.assert_exact();
+}
+
+#[test]
+fn a_reader_that_was_elsewhere_holds_its_absence_against_no_link() {
+    let mut sim = wire_and_wifi(48 << 20);
+    sim.film = Some(Film::new(90, 5_000));
+    carrying_both(&mut sim);
+    sim.run_ms(200);
+    // The demux thread is held up for longer than a stall, with every connection sound.
+    sim.away(700);
+    let back = sim.now + 100 * MS;
+    sim.run_ms(700);
+
+    assert!(!sim.logs.iter().any(|l| l.contains("is slow") || l.contains("failed") || l.contains("set aside")), "{}", sim.logs.join("\n"));
+    let carried = bps(sim.net.bytes(WIRE, back, sim.now) + sim.net.bytes(WIFI, back, sim.now), sim.now - back);
+    assert!(carried > 200_000_000, "both links carry on: {carried} bit/s\n{}", sim.logs.join("\n"));
+    assert_eq!((sim.handbacks, sim.engine.phase()), (0, Phase::Carrying));
+    sim.assert_exact();
+}
+
+#[test]
+fn a_fill_is_logged_with_what_each_link_brought() {
+    let mut sim = wire_and_wifi(64 << 20);
+    // The queues are full at two seconds of film, and all but empty when the links take over.
+    sim.film = Some(Film { full_ms: 2_000, ..Film::new(90, 500) });
+    assert!(sim.run_until(5_000, |s| s.logged("multilink: fill ")), "a fill is logged\n{}", sim.logs.join("\n"));
+    let line = sim.logs.iter().find(|l| l.contains("multilink: fill ")).expect("a fill line").clone();
+    let field = |after: &str| -> u64 {
+        let rest = line.split(after).nth(1).unwrap_or_else(|| panic!("{after:?} in {line:?}"));
+        rest.split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse().ok()).unwrap_or_else(|| panic!("a number after {after:?} in {line:?}"))
+    };
+    let (all, wire, wifi) = (field("fill "), field("eth0 "), field("wlan0 "));
+    let (low, high, took) = (field("reserve "), field("→"), field(" in "));
+
+    // The line says what the links delivered between the take-over and the full queues.
+    let (from, to) = (sim.now - took * MS, sim.now);
+    assert_eq!(sim.logged_at("carrying from byte"), Some(from / MS), "{line}");
+    let delivered = |source| bps(sim.net.bytes(source, from, to), to - from) / 1_000_000;
+    assert!(wire.abs_diff(delivered(WIRE)) <= 1 && wifi.abs_diff(delivered(WIFI)) <= 1 && all.abs_diff(wire + wifi) <= 1, "{line}");
+    assert!(wire > 60 && wifi > 160 && wifi <= 180, "both links at what they may carry: {line}");
+    // Its share over the fill, one range it was given before Wi-Fi carried, and the pacing's credit.
+    assert!(sim.net.bytes(WIRE, from, to) <= mbit(70) * took / 1_000 + (2 << 20), "the wire is held to its share: {line}");
+    assert!(low < 250 && (2_000..2_250).contains(&high), "{line}");
+    assert_eq!(sim.logs.iter().filter(|l| l.contains("multilink: fill ")).count(), 1);
+}
+
+#[test]
 fn a_link_whose_address_or_carrier_changed_is_retired_and_proven_anew() {
     const MOVED: Ipv4Addr = Ipv4Addr::new(192, 168, 5, 32);
     for moved in [true, false] {

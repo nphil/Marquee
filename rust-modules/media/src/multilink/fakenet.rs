@@ -46,15 +46,20 @@ pub struct Path {
     /// Bytes a second from each moment on, in time order.
     pub rates: Vec<(Micros, u64)>,
     pub delay: Micros,
+    /// What a connection made anew adds to its first answer. A request finds one open only where
+    /// an earlier request ended whole: a cancelled request takes its connection with it.
+    pub connect: Micros,
     pub answer: Answer,
     /// This many requests are answered well before `answer` applies.
     pub good_first: u32,
     seen: u32,
+    /// Connections that requests which ended whole left open.
+    open: u32,
 }
 
 impl Path {
     pub fn new(source: Ipv4Addr, rate: u64) -> Path {
-        Path { source, rates: vec![(0, rate)], delay: 2 * MS, answer: Answer::Good, good_first: 0, seen: 0 }
+        Path { source, rates: vec![(0, rate)], delay: 2 * MS, connect: 0, answer: Answer::Good, good_first: 0, seen: 0, open: 0 }
     }
 
     pub fn answering(mut self, answer: Answer, good_first: u32) -> Path {
@@ -71,7 +76,8 @@ struct Live {
     request: Request,
     path: usize,
     answer: Answer,
-    since: Micros,
+    /// When its answer begins.
+    answers_at: Micros,
     /// Up to when its bytes are accounted.
     at: Micros,
     sent: u64,
@@ -176,7 +182,14 @@ impl Transport for FakeNet {
         let Some(path) = self.paths.iter().position(|p| p.source == request.source) else { return false };
         let answer = if self.paths[path].seen < self.paths[path].good_first { Answer::Good } else { self.paths[path].answer };
         self.paths[path].seen += 1;
-        self.live.push(Live { request: request.clone(), path, answer, since: self.now, at: self.now, sent: 0, headed: false, credit: 0 });
+        let made = if self.paths[path].open > 0 {
+            self.paths[path].open -= 1;
+            0
+        } else {
+            self.paths[path].connect
+        };
+        let answers_at = self.now + self.paths[path].delay + made;
+        self.live.push(Live { request: request.clone(), path, answer, answers_at, at: self.now, sent: 0, headed: false, credit: 0 });
         true
     }
 
@@ -199,7 +212,7 @@ impl Transport for FakeNet {
             let path = &self.paths[live.path];
             let id = live.request.id;
             if let Some(head) = head {
-                if live.answer == Answer::Silent || now < live.since + path.delay {
+                if live.answer == Answer::Silent || now < live.answers_at {
                     at += 1;
                     continue;
                 }
@@ -209,7 +222,7 @@ impl Transport for FakeNet {
                     continue;
                 }
                 live.headed = true;
-                live.at = live.since + path.delay;
+                live.at = live.answers_at;
                 arrived.push(Arrival::Head(id, head));
                 if live.answer == Answer::Redirects {
                     arrived.push(Arrival::Done(id));
@@ -246,6 +259,9 @@ impl Transport for FakeNet {
             if live.sent == len {
                 arrived.push(Arrival::Done(id));
                 let live = self.live.remove(at);
+                if len == asked {
+                    self.paths[live.path].open += 1;
+                }
                 self.ended.push((live.request.clone(), live.sent));
                 self.finished.push((now, live.request));
             } else {
@@ -386,6 +402,16 @@ impl Sim {
         self.pos = to;
         self.read.push((to, Vec::new()));
         self.put(Event::Seek { to });
+    }
+
+    /// The demux thread is elsewhere for `ms`: nothing is read, the transport is not moved, and
+    /// the film plays on.
+    pub fn away(&mut self, ms: u64) {
+        self.now += ms * MS;
+        self.net.now = self.now;
+        if let Some(film) = &mut self.film {
+            film.queued = film.queued.saturating_sub(ms * MS);
+        }
     }
 
     /// One millisecond of everything.
