@@ -87,6 +87,8 @@ const JUDGED_AFTER: Micros = 100 * MS;
 /// A driver waiting on its transport steps the machine at least every [`JUDGED_AFTER`] while a
 /// request is out. A longer gap is the reader's own time, away from the transport.
 const UNWATCHED: Micros = 2 * JUDGED_AFTER;
+/// A gap this long between two steps is told, with the reader's own time in it.
+const AWAY_LOGGED: Micros = 400 * MS;
 /// A fill shorter than this gets no line: a seek that another follows.
 const FILL_TOLD: Micros = SECOND;
 
@@ -292,6 +294,13 @@ struct Fetch {
     watched: bool,
 }
 
+/// How far the first ranges after a seek have come: 1 answered, 2 bringing bytes.
+#[derive(Clone, Copy)]
+struct Landing {
+    since: Micros,
+    stage: u8,
+}
+
 impl Fetch {
     fn deadline(&self) -> Micros {
         if self.headed.is_some() {
@@ -360,6 +369,8 @@ pub struct Engine {
     fill: Option<Fill>,
     /// When the machine was last stepped.
     stepped_at: Micros,
+    /// The first ranges after the last seek, until one is whole: what each stage cost.
+    landing: Option<Landing>,
 }
 
 impl Engine {
@@ -388,15 +399,22 @@ impl Engine {
             told: (Vec::new(), false, 0, 0),
             fill: None,
             stepped_at: 0,
+            landing: None,
         }
     }
 
     pub fn step(&mut self, now: Micros, event: Event<'_>, fx: &mut Vec<Fx>) {
         let gap = now.saturating_sub(self.stepped_at);
         if gap > UNWATCHED {
+            if self.stepped_at != 0 && gap >= AWAY_LOGGED {
+                fx.push(Fx::Log(format!("multilink: the reader left the transport for {} ms", gap / MS)));
+            }
             self.unwatched(gap);
         }
         self.stepped_at = now;
+        if self.landing.is_some() {
+            self.land(now, &event, fx);
+        }
         // Before a `Tick` a connection's bytes may be waiting unread: the clock says nothing of
         // a link yet.
         let moved = matches!(event, Event::Tick);
@@ -647,6 +665,34 @@ impl Engine {
         self.slots.clear();
         self.generation += 1;
         self.jump(now, to, fx);
+        if self.mode == Mode::Carrying {
+            self.landing = Some(Landing { since: now, stage: 0 });
+        }
+    }
+
+    /// Tell, once each, when the first range after a seek was answered, brought bytes and was
+    /// whole: where the time between a seek and the first frame goes.
+    fn land(&mut self, now: Micros, event: &Event<'_>, fx: &mut Vec<Fx>) {
+        let Some(Landing { since, stage }) = self.landing else { return };
+        let (id, reached, what) = match event {
+            Event::Head { id, .. } => (*id, 1, "was answered"),
+            Event::Body { id, bytes } if !bytes.is_empty() => (*id, 2, "brought bytes"),
+            Event::Done { id } => (*id, 3, "was whole"),
+            _ => return,
+        };
+        if reached <= stage {
+            return;
+        }
+        let Some((key, asked, len)) = self.slots.iter().find_map(|s| s.fetch.as_ref().filter(|f| f.id == id).map(|f| (f.link, f.since, s.len))) else {
+            return;
+        };
+        fx.push(Fx::Log(format!(
+            "multilink: seek landing: a range of {len} bytes on {} {what} {} ms after the seek (asked at +{} ms)",
+            self.name(key),
+            (now - since) / MS,
+            asked.saturating_sub(since) / MS,
+        )));
+        self.landing = (reached < 3).then_some(Landing { since, stage: reached });
     }
 
     fn on_head(&mut self, now: Micros, id: ReqId, head: &Head, fx: &mut Vec<Fx>) {

@@ -2008,6 +2008,8 @@ pub(crate) mod lossless;
 pub(crate) mod subside;
 #[path = "ff_seekprev.rs"]
 pub(crate) mod seekprev;
+#[path = "ff_seektrace.rs"]
+mod seektrace;
 use subs::{SubKind, SubTracks};
 #[cfg(test)]
 use subs::{decode_bitmap_cue, open_sub_decoder, sub_kind};
@@ -10069,6 +10071,8 @@ pub fn demux(
                 // Restarted (and the lane's grant withdrawn) by every seek and at loop exit.
                 let mut headroom = PreAudioHeadroom::default();
                 SHARED.first_audio_pts.store(i64::MIN, Ordering::Release);
+                // Where the time to the first keyframe goes, once per start and per seek.
+                let mut seek_trace = Some(seektrace::SeekTrace::begin("start", state.off));
                 // INNER read loop
                 loop {
                     // Direct-play seek (and the armed resume, which is just a seek published before
@@ -10125,7 +10129,10 @@ pub fn demux(
                         sub_tracks.discard_held();
                         crate::player::log(&format!("ff: seek begin {}s", seek_ns / 1_000_000_000));
                         let seek_began = std::time::Instant::now();
+                        let mut trace = seektrace::SeekTrace::begin("seek", state.off);
                         let sr = av_seek_frame(fmt, vi, ts, AVSEEK_FLAG_BACKWARD);
+                        trace.sought(state.off);
+                        seek_trace = Some(trace);
                         crate::player::log(&format!(
                             "ff: seek {}s rv={sr} ms={}",
                             seek_ns / 1_000_000_000,
@@ -10142,6 +10149,9 @@ pub fn demux(
                         SHARED.first_audio_pts.store(i64::MIN, Ordering::Release);
                     }
                     let r = av_read_frame(fmt, pkt);
+                    if let Some(trace) = seek_trace.as_mut() {
+                        trace.packet();
+                    }
                     if frame_read_failed(&mut state, r) {
                         // Genuine end of stream, teardown, or an unrecovered I/O error published by
                         // `frame_read_failed`. NOT an app seek — that is serviced at the top of this
@@ -10293,6 +10303,12 @@ pub fn demux(
                                 break;
                             }
                         }
+                        if is_key {
+                            if let Some(trace) = seek_trace.as_mut() {
+                                trace.key();
+                            }
+                        }
+                        let push_began = seek_trace.is_some().then(std::time::Instant::now);
                         let pushed = crate::aq::aq_push_with_drain(
                             aq_p,
                             aubuf.as_ptr(),
@@ -10305,6 +10321,11 @@ pub fn demux(
                         av_packet_unref(pkt);
                         if pushed != 0 {
                             break;
+                        }
+                        if let (true, Some(began)) = (is_key, push_began) {
+                            if let Some(trace) = seek_trace.take() {
+                                trace.finish(began.elapsed(), state.off);
+                            }
                         }
                         PUSHED_ANY.store(true, Ordering::Relaxed);
                         SHARED.hls_video_tail_ns.store(pts, Ordering::Release);

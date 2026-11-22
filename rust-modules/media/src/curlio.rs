@@ -1634,6 +1634,8 @@ impl CurlSource {
             self.stop();
             e
         })?;
+        // One line per open, reopen and seek: where the wait for the first byte went.
+        crate::player::log(&format!("curlio: open at {at}: {}", plx_net::net::connect_timing(self.easy).1));
         if deadline.is_some() {
             // `CURLOPT_TIMEOUT_MS` is a TOTAL request timeout. We use it above only to make the
             // DNS/TLS/header phase obey the caller's open snapshot; leaving it armed would let

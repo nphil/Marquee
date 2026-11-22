@@ -105,6 +105,7 @@ plx_base::dynlib! {
     fn curl_easy_setopt_long = "curl_easy_setopt"(handle: *mut CURL, option: c_int, ..., v: c_long) -> c_int;
     fn curl_easy_getinfo_long = "curl_easy_getinfo"(handle: *mut CURL, info: c_int, ..., out: *mut c_long) -> c_int;
     fn curl_easy_getinfo_ptr = "curl_easy_getinfo"(handle: *mut CURL, info: c_int, ..., out: *mut *const c_void) -> c_int;
+    fn curl_easy_getinfo_f64 = "curl_easy_getinfo"(handle: *mut CURL, info: c_int, ..., out: *mut f64) -> c_int;
 }}
 
 // curl.h option ids (CURLOPTTYPE_LONG=0, OBJECTPOINT=10000, FUNCTIONPOINT=20000).
@@ -2810,6 +2811,43 @@ pub fn verify_result(easy: *mut CURL) -> Option<c_long> {
     let got = !easy.is_null()
         && unsafe { curl_easy_getinfo_long(easy, CURLINFO_SSL_VERIFYRESULT, &mut verify as *mut c_long) } == 0;
     got.then_some(verify)
+}
+
+/// Where a response's time went, for a log line: libcurl's own clock off a handle whose headers
+/// have arrived, each stage counted from the transfer's start, in milliseconds, and how many
+/// connections the request dialled (0 for a reused one, which has no handshake stages; -1 when
+/// libcurl would not say).
+pub fn connect_timing(easy: *mut CURL) -> (c_long, String) {
+    // CURLINFO_DOUBLE = 0x300000: NAMELOOKUP +4, CONNECT +5, PRETRANSFER +6, STARTTRANSFER +17,
+    // APPCONNECT +33. CURLINFO_NUM_CONNECTS = CURLINFO_LONG + 26. All since libcurl 7.x.
+    const NAMELOOKUP: c_int = 0x30_0004;
+    const CONNECT: c_int = 0x30_0005;
+    const APPCONNECT: c_int = 0x30_0021;
+    const PRETRANSFER: c_int = 0x30_0006;
+    const STARTTRANSFER: c_int = 0x30_0011;
+    const NUM_CONNECTS: c_int = 0x20_001A;
+    if easy.is_null() {
+        return (-1, String::new());
+    }
+    let ms = |info: c_int| {
+        let mut seconds = 0f64;
+        // SAFETY: `easy` is a live handle; the out pointer is a local `double`, which is what a
+        // `CURLINFO_DOUBLE` id writes.
+        let rc = unsafe { curl_easy_getinfo_f64(easy, info, &mut seconds as *mut f64) };
+        if rc == 0 { (seconds * 1000.0).round() as i64 } else { -1 }
+    };
+    let mut dialled: c_long = -1;
+    // SAFETY: as above, with a `long` out parameter.
+    let _ = unsafe { curl_easy_getinfo_long(easy, NUM_CONNECTS, &mut dialled as *mut c_long) };
+    let line = format!(
+        "dialled={dialled} dns={} connect={} tls={} sent={} first_byte={} ms",
+        ms(NAMELOOKUP),
+        ms(CONNECT),
+        ms(APPCONNECT),
+        ms(PRETRANSFER),
+        ms(STARTTRANSFER)
+    );
+    (dialled, line)
 }
 
 /// Option-projected blocking HTTPS GET on the [`API`] deadlines.

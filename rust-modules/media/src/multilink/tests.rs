@@ -498,6 +498,19 @@ fn a_seek_cancels_every_range_in_flight_and_nothing_of_them_is_read() {
 }
 
 #[test]
+fn the_first_range_after_a_seek_tells_when_it_was_answered_brought_bytes_and_was_whole() {
+    let mut sim = wire_and_wifi(24 << 20);
+    carrying_both(&mut sim);
+    sim.logs.clear();
+    sim.seek((17 << 20) + 12_345);
+    sim.finish(3_000);
+    for stage in ["was answered", "brought bytes", "was whole"] {
+        let told = sim.logs.iter().filter(|l| l.contains("multilink: seek landing: ") && l.contains(stage)).count();
+        assert_eq!(told, 1, "{stage} is told once\n{}", sim.logs.join("\n"));
+    }
+}
+
+#[test]
 fn a_stop_while_a_link_waits_to_be_tried_again_leaves_nothing_behind() {
     let paths = vec![Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180)).answering(Answer::Truncates(100_000), 2)];
     let mut sim = Sim::new(8 << 20, paths, vec![wire(), wifi()]);

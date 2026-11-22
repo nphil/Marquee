@@ -48,6 +48,8 @@ const WIRE_RECEIVE: c_int = 128 << 10;
 /// of a connection a call, 16 KiB at most: a single call a turn holds a link to what the turns
 /// bring, not to what it carries. The bound keeps one turn to half a megabyte a connection.
 const READS_A_POLL: u32 = 32;
+/// Dialled requests are told at most this often.
+const DIAL_TOLD_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// One request in flight. Boxed: libcurl holds its address for the two callbacks.
 struct Flight {
@@ -117,6 +119,9 @@ pub struct Ranges {
     flights: Vec<Box<Flight>>,
     /// libcurl refused its own bookkeeping: nothing more is sent on this multi.
     broken: bool,
+    /// When a dialled request was last told, and how many were left unlogged since.
+    dial_told: Option<std::time::Instant>,
+    dials_unlogged: u32,
 }
 
 impl Ranges {
@@ -156,7 +161,7 @@ impl Ranges {
         if multi.is_null() {
             return Err("no multi handle");
         }
-        Ok(Ranges { multi, abort, url, resolve, roots, flights: Vec::new(), broken: false })
+        Ok(Ranges { multi, abort, url, resolve, roots, flights: Vec::new(), broken: false, dial_told: None, dials_unlogged: 0 })
     }
 
     /// Give `flight`'s handle everything a request needs. False when libcurl refused an option
@@ -312,6 +317,20 @@ impl Transport for Ranges {
             for flight in &mut self.flights {
                 if flight.headed && !flight.reported {
                     flight.reported = true;
+                    // A request that had to dial: where its wait for an answer went. A reused
+                    // connection says nothing, and a burst of dials is told once a quarter second.
+                    let (dialled, timing) = net::connect_timing(flight.easy);
+                    if dialled > 0 {
+                        if self.dial_told.is_none_or(|at| at.elapsed() >= DIAL_TOLD_EVERY) {
+                            crate::player::log(&format!(
+                                "multilink: a request dialled: {timing} ({} more dials unlogged)",
+                                self.dials_unlogged
+                            ));
+                            (self.dial_told, self.dials_unlogged) = (Some(std::time::Instant::now()), 0);
+                        } else {
+                            self.dials_unlogged += 1;
+                        }
+                    }
                     arrived.push(Arrival::Head(flight.id, std::mem::take(&mut flight.head)));
                     brought = true;
                 }
