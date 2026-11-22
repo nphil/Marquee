@@ -153,6 +153,24 @@ a single request: once that rung has put DTS in force for a track of one or two 
 app for the rest of that request, so a later pick in the audio menu of a surround DTS track switches without asking
 the server first and plays as stereo, labelled the same way. The next request starts from the set's own decoder again.
 
+### DTS-HD to a receiver
+
+When the television's sound chain is proven to carry the bitstream to a receiver (output is the
+HDMI ARC/eARC receiver, Digital Sound Out is pass-through, the link is eARC and the receiver
+advertises DTS-HD, read from `soundOutput`/`soundOutputDigital` and `arccontroller`'s `getARCState`;
+the log line is `sound: chain`), a DTS track is fed to the pipeline as the file holds it, extension
+substreams included, and the television passes them on. Otherwise the demuxer cuts each packet to
+its core, as before. The same chain turns on a lossless-first track order (`route/audio_rank.rs`):
+DTS-HD Master Audio, High Resolution and DTS:X, then E-AC3 Atmos, DTS, E-AC3, AC3, within the
+picked track's language and kind; a viewer's explicit pick is never replaced. A DTS-HD track with
+more channels than the DTS ceiling (7.1) is not admitted by this change and converts as before.
+A refused open before the first picture takes the core back for the rest of that request and
+reloads at the same position (`open recovery: core audio`). TrueHD, with or without Atmos, cannot
+reach the receiver: the pipeline's Load has no TrueHD or MAT input, so such a file plays its AC3 or
+E-AC3 sibling. Boost dialogue and Even out loudness are done by the server and so end the
+untouched path; the Audio menu says so. Unmeasured on the set; acceptance needs the receiver's own
+display to read DTS-HD.
+
 ### Implementation verification — 2026-09-27
 
 - `make check` passed: default and hostsim Rust suites, feature checks, native helpers and the
