@@ -361,6 +361,12 @@ impl Engine {
     }
 
     pub fn step(&mut self, now: Micros, event: Event<'_>, fx: &mut Vec<Fx>) {
+        self.receive(now, event, fx);
+        self.settle(now, fx);
+    }
+
+    /// Apply arrivals from one transport poll before judging any request's progress.
+    pub(super) fn receive(&mut self, now: Micros, event: Event<'_>, fx: &mut Vec<Fx>) {
         match event {
             Event::Links { boot, offered } => self.on_links(now, boot, offered, fx),
             Event::Demand(demand) => self.demand = demand,
@@ -386,7 +392,6 @@ impl Engine {
                 self.mode = Mode::Standby;
             }
         }
-        self.settle(now, fx);
     }
 
     /// Copy what is in hand at the read position into `dst` and move past it.

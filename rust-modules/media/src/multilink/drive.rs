@@ -33,6 +33,9 @@ pub struct Driver {
 impl Driver {
     /// Put one event to the machine and carry out what it asks.
     pub fn step<T: Transport>(&mut self, engine: &mut Engine, net: &mut T, now: Micros, event: Event<'_>, log: &mut dyn FnMut(&str)) {
+        if !matches!(event, Event::Seek { .. } | Event::Resumed { .. } | Event::Stop) {
+            self.receive(engine, net, now);
+        }
         engine.step(now, event, &mut self.fx);
         self.act(engine, net, now, log);
     }
@@ -42,20 +45,26 @@ impl Driver {
     /// caller waits.
     pub fn turn<T: Transport>(&mut self, engine: &mut Engine, net: &mut T, now: Micros, log: &mut dyn FnMut(&str)) {
         for _ in 0..2 {
-            net.poll(&mut self.arrived);
-            for arrival in self.arrived.drain(..) {
-                let event = match arrival {
-                    Arrival::Head(id, head) => Event::Head { id, head },
-                    Arrival::Body(id, bytes) => Event::Body { id, bytes },
-                    Arrival::Done(id) => Event::Done { id },
-                    Arrival::Failed(id, fault) => Event::Failed { id, fault },
-                };
-                engine.step(now, event, &mut self.fx);
-            }
+            self.receive(engine, net, now);
             engine.step(now, Event::Tick, &mut self.fx);
             if !self.act(engine, net, now, log) {
                 break;
             }
+        }
+    }
+
+    fn receive<T: Transport>(&mut self, engine: &mut Engine, net: &mut T, now: Micros) {
+        net.poll(&mut self.arrived);
+        // A header and its body, or two links' progress, can arrive in the same poll. Judging
+        // between them cancels bytes already received, especially after a slow seek response.
+        for arrival in self.arrived.drain(..) {
+            let event = match arrival {
+                Arrival::Head(id, head) => Event::Head { id, head },
+                Arrival::Body(id, bytes) => Event::Body { id, bytes },
+                Arrival::Done(id) => Event::Done { id },
+                Arrival::Failed(id, fault) => Event::Failed { id, fault },
+            };
+            engine.receive(now, event, &mut self.fx);
         }
     }
 

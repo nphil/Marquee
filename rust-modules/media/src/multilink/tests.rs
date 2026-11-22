@@ -81,6 +81,55 @@ fn two_links_join_ranges_that_arrive_out_of_order_into_the_exact_file() {
 }
 
 #[test]
+fn ready_ranges_are_received_before_judging_a_delayed_poll() {
+    for update_demand in [false, true] {
+        let mut sim = wire_and_wifi(4 << 20);
+        carrying_both(&mut sim);
+        let before = sim.net.live();
+        let cancelled = sim.net.cancelled.len();
+        // The demuxer was busy, but both sockets have finished their ranges in the meantime.
+        sim.now += 600 * MS;
+        sim.net.now = sim.now;
+        if update_demand {
+            sim.put(Event::Demand(super::engine::Demand { room: sim.room, ..Default::default() }));
+        } else {
+            let logs = &mut sim.logs;
+            sim.driver.turn(&mut sim.engine, &mut sim.net, sim.now, &mut |line| logs.push(line.to_owned()));
+        }
+        assert_eq!(sim.net.cancelled.len(), cancelled, "ready ranges must not fail or be reassigned\n{}", sim.logs.join("\n"));
+        for request in before {
+            assert!(sim.net.finished.iter().any(|(_, r)| r.id == request.id));
+        }
+        assert!(!sim.logged("failed") && !sim.logged("is slow"), "{}", sim.logs.join("\n"));
+        sim.finish(3_000);
+        assert_whole(&sim);
+        assert_no_byte_twice(&sim);
+    }
+}
+
+#[test]
+fn a_delayed_header_does_not_discard_the_body_in_the_same_poll() {
+    let mut sim = wire_and_wifi(4 << 20);
+    carrying_both(&mut sim);
+    sim.net.path(WIRE).delay = 200 * MS;
+    sim.net.path(WIFI).delay = 200 * MS;
+    let cancelled = sim.net.cancelled.len();
+    sim.seek(2 << 20);
+    let sought = sim.net.cancelled.len();
+    assert!(sought > cancelled);
+    sim.now += 250 * MS;
+    sim.net.now = sim.now;
+    let logs = &mut sim.logs;
+    sim.driver.turn(&mut sim.engine, &mut sim.net, sim.now, &mut |line| logs.push(line.to_owned()));
+    assert_eq!(sim.net.cancelled.len(), sought, "the arriving bodies are not slow ranges\n{}", sim.logs.join("\n"));
+    sim.net.path(WIRE).delay = 2 * MS;
+    sim.net.path(WIFI).delay = 2 * MS;
+    sim.finish(3_000);
+    sim.assert_exact();
+    assert_no_byte_twice(&sim);
+}
+
+#[test]
 fn a_link_whose_proof_is_not_plainly_the_asked_range_never_carries() {
     for (answer, logged) in [
         (Answer::IgnoresRange, "wlan0 rejected: range ignored"),
