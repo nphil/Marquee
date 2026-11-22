@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Cut the shipped subtitle FAMILIES `pkg/fonts/subs/Plx{Serif,Mono,Legible}-{Regular,Bold}.ttf`
+"""Cut the shipped subtitle FAMILIES `pkg/fonts/subs/Plx{Serif,Mono,Legible,Rounded,Narrow}-{Regular,Bold}.ttf`
 (and their manifest `pkg/fonts/subs/families.json`) from pinned upstream OFL fonts.
 
 These are the faces behind the Font row of Settings > Subtitles. Each family has a regular and a
-bold face that answer to ONE family name ("PlxSerif", "PlxMono", "PlxLegible"), so the style's
+bold face that answer to ONE family name ("PlxSerif", "PlxMono", "PlxLegible", "PlxRounded", "PlxNarrow"), so the style's
 `Bold` flag picks the weight. They cover Latin, Latin Extended, Greek, Cyrillic and the common
 punctuation; every other script, and every symbol they lack, falls through libass's fallback chain
 to the Default family ("Inter": Inter Bold, the Noto script faces, then the CJK default), set in
 `src/ass.c` as `ass_set_fonts`'s default family, so none of them can draw a box where the Default
 face would have drawn a glyph.
 
-Inputs (google/fonts at the pinned commit, all SIL OFL 1.1, none declares a Reserved Font Name):
+Inputs (google/fonts at the pinned commit, all SIL OFL 1.1; only IBM Plex Sans Condensed declares a Reserved
+Font Name ("Plex"), and `cut` rewrites every name ID that carries the font's name, so the cut is "PlxNarrow"):
   ofl/notoserif/NotoSerif[wdth,wght].ttf        -> PlxSerif    (instanced at wght 400 and 700, wdth 100)
   ofl/notosansmono/NotoSansMono[wdth,wght].ttf  -> PlxMono     (same)
   ofl/atkinsonhyperlegible/AtkinsonHyperlegible-{Regular,Bold}.ttf -> PlxLegible (static)
+  ofl/nunito/Nunito[wght].ttf                   -> PlxRounded  (instanced at wght 400 and 700; no wdth axis)
+  ofl/ibmplexsanscondensed/IBMPlexSansCondensed-{Regular,Bold}.ttf -> PlxNarrow (static)
 
 Usage:  python3 tools/cut-sub-families.py [--fetch DIR]   (fonttools >= 4.60 required)
 Without --fetch it reads the inputs from $FONT_SRC (default /tmp/fonts-src) and verifies their
@@ -40,6 +43,9 @@ SOURCES = [
     ("PlxMono", "notosansmono", "NotoSansMono[wdth,wght].ttf", "NotoSansMono-VF.ttf", None, True),
     ("PlxLegible", "atkinsonhyperlegible", "AtkinsonHyperlegible-Regular.ttf", "AtkinsonHyperlegible-Regular.ttf", None, False),
     ("PlxLegible", "atkinsonhyperlegible", "AtkinsonHyperlegible-Bold.ttf", "AtkinsonHyperlegible-Bold.ttf", None, False),
+    ("PlxRounded", "nunito", "Nunito[wght].ttf", "Nunito-VF.ttf", None, True),
+    ("PlxNarrow", "ibmplexsanscondensed", "IBMPlexSansCondensed-Regular.ttf", "IBMPlexSansCondensed-Regular.ttf", None, False),
+    ("PlxNarrow", "ibmplexsanscondensed", "IBMPlexSansCondensed-Bold.ttf", "IBMPlexSansCondensed-Bold.ttf", None, False),
 ]
 
 # Latin, Latin-1, Latin Extended A/B/Additional, IPA, modifiers, combining marks, Greek, Cyrillic,
@@ -51,7 +57,10 @@ RANGES = [
     (0x2669, 0x266F), (0x25A0, 0x25CF), (0x2605, 0x2606), (0xFB00, 0xFB06),
 ]
 
-FAMILY_NAMES = {"PlxSerif": "Noto Serif", "PlxMono": "Noto Sans Mono", "PlxLegible": "Atkinson Hyperlegible"}
+FAMILY_NAMES = {
+    "PlxSerif": "Noto Serif", "PlxMono": "Noto Sans Mono", "PlxLegible": "Atkinson Hyperlegible",
+    "PlxRounded": "Nunito", "PlxNarrow": "IBM Plex Sans Condensed",
+}
 
 
 def sha256(path):
@@ -154,7 +163,8 @@ def main():
         for weight, bold in weights:
             font = TTFont(path)
             if variable:
-                font = instancer.instantiateVariableFont(font, {"wght": weight, "wdth": 100}, inplace=False)
+                axes = {a.axisTag for a in font["fvar"].axes}
+                font = instancer.instantiateVariableFont(font, {"wght": weight, **({"wdth": 100} if "wdth" in axes else {})}, inplace=False)
             font = cut(font, family, bold)
             style = "Bold" if bold else "Regular"
             out = OUT / f"{family}-{style}.ttf"

@@ -232,6 +232,10 @@ pub const SERIF_WIN_EM: f64 = 1.458;
 pub const MONO_WIN_EM: f64 = 1.618;
 /// Atkinson Hyperlegible's win ratio, (950 + 290) / 1000.
 pub const LEGIBLE_WIN_EM: f64 = 1.24;
+/// Nunito's win ratio (`families.json`).
+pub const ROUNDED_WIN_EM: f64 = 1.377;
+/// IBM Plex Sans Condensed's win ratio (`families.json`).
+pub const NARROW_WIN_EM: f64 = 1.3;
 
 pub fn font_info(font: SubFont) -> FontInfo {
     match font {
@@ -239,6 +243,8 @@ pub fn font_info(font: SubFont) -> FontInfo {
         SubFont::Serif => FontInfo { regular: "PlxSerif", bold: "PlxSerif", bold_by_flag: true, win_em: SERIF_WIN_EM },
         SubFont::Mono => FontInfo { regular: "PlxMono", bold: "PlxMono", bold_by_flag: true, win_em: MONO_WIN_EM },
         SubFont::Legible => FontInfo { regular: "PlxLegible", bold: "PlxLegible", bold_by_flag: true, win_em: LEGIBLE_WIN_EM },
+        SubFont::Rounded => FontInfo { regular: "PlxRounded", bold: "PlxRounded", bold_by_flag: true, win_em: ROUNDED_WIN_EM },
+        SubFont::Narrow => FontInfo { regular: "PlxNarrow", bold: "PlxNarrow", bold_by_flag: true, win_em: NARROW_WIN_EM },
     }
 }
 
@@ -751,13 +757,17 @@ mod tests {
             ("PlxMono-Bold.ttf", MONO_WIN_EM),
             ("PlxLegible-Regular.ttf", LEGIBLE_WIN_EM),
             ("PlxLegible-Bold.ttf", LEGIBLE_WIN_EM),
+            ("PlxRounded-Regular.ttf", ROUNDED_WIN_EM),
+            ("PlxRounded-Bold.ttf", ROUNDED_WIN_EM),
+            ("PlxNarrow-Regular.ttf", NARROW_WIN_EM),
+            ("PlxNarrow-Bold.ttf", NARROW_WIN_EM),
         ] {
             let font = std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
             let (upem, ascent, descent) = win_metrics(&font);
             let measured = (ascent + descent) as f64 / upem as f64;
             assert!((measured - ratio).abs() < 1e-9, "{file}: {measured} != {ratio}");
         }
-        for font in [SubFont::Default, SubFont::Serif, SubFont::Mono, SubFont::Legible] {
+        for font in SubFont::ALL.iter().copied() {
             // an em of 36 px at Medium draws the same in every family
             assert!((font_size_for(font, 1.0) / font_info(font).win_em - 36.0).abs() < 1e-9);
         }

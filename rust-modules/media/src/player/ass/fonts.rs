@@ -16,7 +16,7 @@
 //! both Inter faces go in before every Noto face: Latin, digits and punctuation can never be drawn
 //! by a Noto face. The Noto faces follow in manifest order.
 //!
-//!   * `fonts/subs/Plx{Serif,Mono,Legible}-{Regular,Bold}.ttf` - the Font row's families of
+//!   * `fonts/subs/Plx{Serif,Mono,Legible,Rounded,Narrow}-{Regular,Bold}.ttf` - the Font row's families of
 //!     Settings > Subtitles, cut by `tools/cut-sub-families.py` and listed in
 //!     `fonts/subs/families.json`. Each family's two faces share ONE family name ("PlxSerif", ...) so
 //!     the style's `Bold` flag picks the weight. They answer to no other name: a glyph one of them

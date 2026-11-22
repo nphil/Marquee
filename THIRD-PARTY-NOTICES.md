@@ -253,21 +253,30 @@ added (family and full name "PlxSubs" and "Inter", under non-English language ID
 selects them as fallbacks. The recipe is `tools/cut-noto-subs.py`; the manifest
 `fonts/subs/manifest.json` records every input and output hash.
 
-**Noto Serif, Noto Sans Mono, Atkinson Hyperlegible** — `fonts/subs/Plx{Serif,Mono,Legible}-{Regular,Bold}.ttf`
-(source: `pkg/fonts/subs/`), 6 faces under the family names "PlxSerif", "PlxMono" and "PlxLegible".
+**Noto Serif, Noto Sans Mono, Atkinson Hyperlegible, Nunito, IBM Plex Sans Condensed** —
+`fonts/subs/Plx{Serif,Mono,Legible,Rounded,Narrow}-{Regular,Bold}.ttf` (source: `pkg/fonts/subs/`),
+10 faces under the family names "PlxSerif", "PlxMono", "PlxLegible", "PlxRounded" and "PlxNarrow".
 They are the faces the subtitle renderer (libass) draws with when the Font row of Settings >
 Subtitles is not Default; the application's own UI text chain does not use them.
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic) for Noto
-Serif (version 2.015) and Noto Sans Mono (version 2.014), and Copyright 2020 Braille Institute of
-America, Inc. for Atkinson Hyperlegible (version 1.006), per each font's own name table (ID 0).
-Sources: `ofl/notoserif/NotoSerif[wdth,wght].ttf`, `ofl/notosansmono/NotoSansMono[wdth,wght].ttf` and
-`ofl/atkinsonhyperlegible/AtkinsonHyperlegible-{Regular,Bold}.ttf` of `github.com/google/fonts` at
+Serif (version 2.015) and Noto Sans Mono (version 2.014), Copyright 2020 Braille Institute of
+America, Inc. for Atkinson Hyperlegible (version 1.006), Copyright 2014 The Nunito Project Authors
+(https://github.com/googlefonts/nunito) for Nunito (version 3.602), and Copyright 2019 IBM Corp. for
+IBM Plex Sans Condensed (version 1.3), per each font's own name table (ID 0).
+Sources: `ofl/notoserif/NotoSerif[wdth,wght].ttf`, `ofl/notosansmono/NotoSansMono[wdth,wght].ttf`,
+`ofl/atkinsonhyperlegible/AtkinsonHyperlegible-{Regular,Bold}.ttf`, `ofl/nunito/Nunito[wght].ttf` and
+`ofl/ibmplexsanscondensed/IBMPlexSansCondensed-{Regular,Bold}.ttf` of `github.com/google/fonts` at
 commit `6157dfaa640ca5738b4d1a7070fe389c3036d7fc`, each pinned by sha256 in
 `fonts/subs/families.json`.
 Licence: **SIL Open Font License 1.1** — the same text that ships in this package as `OFL.txt`.
-None of the three declares a **Reserved Font Name**, so OFL §3 imposes no rename; the families are
-renamed anyway so that the regular and the bold face of one family answer to one name.
-*Modified*: the two variable fonts are instanced at weights 400 and 700 (width 100); every face is
+The upstream licence file of IBM Plex Sans Condensed (`ofl/ibmplexsanscondensed/OFL.txt`) reads
+"Copyright © 2017 IBM Corp. with Reserved Font Name "Plex""; the other four declare no **Reserved
+Font Name**. OFL §3 forbids a modified version from using a Reserved Font Name, so the IBM Plex cut
+is renamed "PlxNarrow" and no name record of it carries "Plex" as a font name (the trademark notice,
+name ID 7, is kept unchanged). The other families are renamed anyway so that the regular and the
+bold face of one family answer to one name.
+*Modified*: the two variable fonts of Noto (width 100) and the Nunito variable font (no width axis)
+are instanced at weights 400 and 700; every face is
 subset to Latin, Latin Extended, Greek, Cyrillic and general punctuation (anything else falls to
 the default family's faces), hinting is dropped, and the family, style, full and PostScript names
 are rewritten. The recipe is `tools/cut-sub-families.py`.

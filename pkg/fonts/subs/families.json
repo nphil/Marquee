@@ -105,6 +105,74 @@
     "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Bold.ttf",
     "sha256": "5a3b0c8cc8ca545155150b4512a1fa248298df121c50d6557e651e61fbdab92f"
    }
+  },
+  {
+   "file": "PlxRounded-Regular.ttf",
+   "family": "PlxRounded",
+   "bold": false,
+   "upstream_family": "Nunito",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2014 The Nunito Project Authors (https://github.com/googlefonts/nunito)",
+   "win_em": 1.377,
+   "upem": 1000,
+   "codepoints": 909,
+   "bytes": 120508,
+   "sha256": "7647d0c162bca1b3e61c086bfacf8502c687b2f7dcbc0fbbd82b29f6d5c9bd88",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/nunito/Nunito[wght].ttf",
+    "sha256": "bb55a5ca5c2042335b3991af27c4d0705d0ef41cac6164ac737fd8f2a1e85207"
+   }
+  },
+  {
+   "file": "PlxRounded-Bold.ttf",
+   "family": "PlxRounded",
+   "bold": true,
+   "upstream_family": "Nunito",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2014 The Nunito Project Authors (https://github.com/googlefonts/nunito)",
+   "win_em": 1.377,
+   "upem": 1000,
+   "codepoints": 909,
+   "bytes": 120448,
+   "sha256": "a732c11a61807bb8763fa6e68074429f087c9ab0101abeca9bfb7906c06ef817",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/nunito/Nunito[wght].ttf",
+    "sha256": "bb55a5ca5c2042335b3991af27c4d0705d0ef41cac6164ac737fd8f2a1e85207"
+   }
+  },
+  {
+   "file": "PlxNarrow-Regular.ttf",
+   "family": "PlxNarrow",
+   "bold": false,
+   "upstream_family": "IBM Plex Sans Condensed",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2019 IBM Corp. All rights reserved.",
+   "win_em": 1.3,
+   "upem": 1000,
+   "codepoints": 568,
+   "bytes": 64376,
+   "sha256": "89b468dc8c776c84d14c592d77c88b04d3a7bb04e0cbed963022df796614d6bc",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/ibmplexsanscondensed/IBMPlexSansCondensed-Regular.ttf",
+    "sha256": "e7437c072eef2ef592ae6f2beb0000446287385907abb57ac1cf07bcbaa2aa33"
+   }
+  },
+  {
+   "file": "PlxNarrow-Bold.ttf",
+   "family": "PlxNarrow",
+   "bold": true,
+   "upstream_family": "IBM Plex Sans Condensed",
+   "license": "OFL-1.1",
+   "copyright": "Copyright 2019 IBM Corp. All rights reserved.",
+   "win_em": 1.3,
+   "upem": 1000,
+   "codepoints": 568,
+   "bytes": 63840,
+   "sha256": "abfefd3c1f9fb24988b182f67c78b1f65b4b16f92778bc9f0f1ea49a436b4447",
+   "upstream": {
+    "url": "https://raw.githubusercontent.com/google/fonts/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/ibmplexsanscondensed/IBMPlexSansCondensed-Bold.ttf",
+    "sha256": "b65492d86cdd5cd9d43d2671b55d5d36fec36859fc8b08bc6aba78e441d6c849"
+   }
   }
  ],
  "fallbacks": [

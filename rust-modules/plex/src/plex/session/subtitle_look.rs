@@ -81,12 +81,16 @@ lenient_enum! {
     SubFont {
         /// Inter.
         Default = "default",
+        /// Atkinson Hyperlegible: shapes drawn to keep similar letters apart.
+        Legible = "legible",
+        /// Nunito: soft, round-ended letters.
+        Rounded = "rounded",
+        /// IBM Plex Sans Condensed: narrow letters, so a long line stays short.
+        Narrow = "narrow",
         /// Noto Serif.
         Serif = "serif",
         /// Noto Sans Mono.
         Mono = "mono",
-        /// Atkinson Hyperlegible: shapes drawn to keep similar letters apart.
-        Legible = "legible",
     } default Default
 }
 
@@ -271,6 +275,28 @@ impl SubtitleLook {
         next.clamped()
     }
 
+    /// A Size rung was picked: the ladder, not an exact size, now decides. The same look when none was set.
+    pub fn following_size(self) -> Self {
+        self.following(|l| l.size_pct = 0)
+    }
+
+    /// A Color rung was picked: the ladder, not an exact colour, now decides.
+    pub fn following_color(self) -> Self {
+        self.following(|l| l.color = None)
+    }
+
+    /// A Position rung was picked: the ladder, from the bottom edge, now decides.
+    pub fn following_position(self) -> Self {
+        self.following(|l| (l.anchor, l.nudge) = (SubAnchor::Bottom, 0))
+    }
+
+    /// `clear` applied; the preset label turns to `Custom` only when something changed.
+    fn following(self, clear: impl FnOnce(&mut Self)) -> Self {
+        let mut next = self;
+        clear(&mut next);
+        if next == self { self } else { next.edited(|_| {}) }
+    }
+
     /// A number that differs for every distinct look, so a frame loop that redraws only on change
     /// can notice a colour, opacity, box, shadow or nudge changing (a 64-bit FNV-1a over every field).
     pub fn stamp(&self) -> u64 {
@@ -397,6 +423,25 @@ impl LookPreset {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ladder_pick_clears_only_its_own_exact_value() {
+        let big = LookPreset::LargePrint.look();
+        let cleared = big.following_size();
+        assert_eq!((cleared.size_pct, cleared.preset), (0, LookPreset::Custom));
+        assert_eq!(SubtitleLook { size_pct: 150, preset: LookPreset::Custom, ..cleared }, SubtitleLook { preset: LookPreset::Custom, ..big });
+
+        let yellow = LookPreset::HighContrast.look().following_color();
+        assert!(yellow.color.is_none() && yellow.back == SubBack::Line, "the box and edge stay");
+
+        let high = SubtitleLook { anchor: SubAnchor::Top, nudge: 30, ..SubtitleLook::DEFAULT }.following_position();
+        assert_eq!((high.anchor, high.nudge), (SubAnchor::Bottom, 0));
+
+        let plain = SubtitleLook::DEFAULT;
+        assert_eq!(plain.following_size(), plain, "nothing to clear: the preset label stays");
+        assert_eq!(plain.following_color(), plain);
+        assert_eq!(plain.following_position(), plain);
+    }
 
     #[test]
     fn the_default_is_the_marquee_preset_and_the_look_before_this_page() {
