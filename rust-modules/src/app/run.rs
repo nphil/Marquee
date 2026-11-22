@@ -6300,6 +6300,10 @@ mod lifecycle_regression_tests {
         fn pick_forced_only(&mut self) {
             let meta = self.app.bridge.metadata_view();
             let mut menu = plx_appkit::track_menu::TrackMenuState::new(&self.app.player.session, meta, 1, Vec::new());
+            if !menu.focus_id(plx_appkit::track_menu::TrackRow::SubForcedOnly) {
+                assert!(menu.focus_id(plx_appkit::track_menu::TrackRow::OpenAdvanced), "the Advanced row is on the root");
+                menu.on_ok(meta);
+            }
             assert!(menu.focus_id(plx_appkit::track_menu::TrackRow::SubForcedOnly), "the Forced only row is on the page");
             let plx_appkit::track_menu::TrackOk::Commit { commit, .. } = menu.on_ok(meta) else {
                 panic!("the menu committed nothing for Forced only");
@@ -6313,6 +6317,10 @@ mod lifecycle_regression_tests {
             let playing = meta.playing().expect("the item is installed");
             let index = playing.audio.iter().position(|s| s.id == id).unwrap_or_else(|| panic!("no audio {id}"));
             let mut menu = plx_appkit::track_menu::TrackMenuState::new(&self.app.player.session, meta, 0, Vec::new());
+            if !menu.focus_id(plx_appkit::track_menu::TrackRow::Audio(index)) {
+                assert!(menu.focus_id(plx_appkit::track_menu::TrackRow::OpenAdvanced), "the Advanced row is on the root");
+                menu.on_ok(meta);
+            }
             assert!(menu.focus_id(plx_appkit::track_menu::TrackRow::Audio(index)), "the audio row is on the page");
             let plx_appkit::track_menu::TrackOk::Commit { commit, .. } = menu.on_ok(meta) else {
                 panic!("the menu committed nothing for audio {id}");
