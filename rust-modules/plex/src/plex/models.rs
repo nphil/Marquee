@@ -734,6 +734,10 @@ pub struct Stream {
     /// [`MediaPart::video_forbids_copy`] is the playback reader; a library metadata body omits it.
     #[serde(default)]
     pub decision: String,
+    /// `/decision` only, on a subtitle lane: where the track ends up — `"embedded"` when it rides
+    /// the transcode as a stream of its own, `"direct"` when it is burned or left out.
+    #[serde(default)]
+    pub location: String,
     #[serde(default)]
     pub language: String,
     #[serde(rename = "languageCode", default)]

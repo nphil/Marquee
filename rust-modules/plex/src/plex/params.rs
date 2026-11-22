@@ -143,6 +143,13 @@ pub struct EncodeContract {
     /// (the video-conversion contracts of open recovery). The wire then says `subtitles=none`, as a
     /// remux's does, and the presenter reads `ClientOverRemux`. Meaningful only with `remux == false`.
     pub client_sidecar: bool,
+    /// **The selected embedded TEXT subtitle rides this re-encode as a stream of its own**, for the
+    /// app's demuxer to draw as on direct play, instead of being burned. The wire names it with
+    /// `subtitles=embedded` and a transcode target that declares subtitle codecs, and PMS copies it
+    /// into the progressive MKV (docs/pms-api.md M10: 0.93x of real time where the burn of the same
+    /// request ran at 0.50x). Meaningful only on a progressive re-encode (`remux == false`,
+    /// [`TranscodeDelivery::ProgressiveMkv`]) with a subtitle selected: fixed HLS carries none.
+    pub carried_text: bool,
 }
 
 impl EncodeContract {
@@ -157,6 +164,7 @@ impl EncodeContract {
             ceiling: None,
             audio,
             client_sidecar: false,
+            carried_text: false,
         }
     }
 }
@@ -221,8 +229,9 @@ pub struct TranscodeSpec<'a> {
     pub caps: &'a plx_platform::devcaps::Caps,
     /// Source audio stream id to select (0 = server default).
     pub audio_stream_id: i64,
-    /// Subtitle stream id to BURN (0 = none). Burn is Plex's decision for our profile —
-    /// it advertises no soft-sub support (direct-play subs are client-rendered instead).
+    /// Subtitle stream id the server acts on (0 = none): BURNED into the picture, Plex's decision
+    /// for our profile, unless the contract carries it as a stream
+    /// ([`EncodeContract::carried_text`]). Direct-play subs are client-rendered instead.
     pub subtitle_stream_id: i64,
     /// The app draws the selected subtitle itself over this REMUX, so the query says
     /// `subtitles=none` (the client-rendered mode the MDE handshake already uses) instead of

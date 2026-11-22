@@ -268,8 +268,9 @@ pub use timeline::{queue_index_of, QueueRow};
 // and omitted from the other.
 // `is_dp_audio_track_with` checks normal codec/channel eligibility, while `link_policy` constrains
 // the connection. Forced mode retains software feed limits and uses a separate PMS profile.
+// `is_carried_subtitle` names the text codecs a re-encode hands over as a stream of its own.
 #[allow(unused_imports)]
 pub use transcoder::{
-    DP_AUDIO_CODECS, DP_SUBTITLE_CODECS, LinkPolicy, direct_play_video_codecs, is_dp_audio_track_with,
-    is_dp_subtitle, link_policy,
+    DP_AUDIO_CODECS, DP_SUBTITLE_CODECS, LinkPolicy, direct_play_video_codecs, is_carried_subtitle,
+    is_dp_audio_track_with, is_dp_subtitle, link_policy,
 };

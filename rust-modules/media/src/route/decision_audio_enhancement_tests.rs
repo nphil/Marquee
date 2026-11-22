@@ -3893,6 +3893,231 @@ fn presenter_on_other_burns_names_quality_unless_it_is_the_original_burn() {
     restore_quality(Quality::Auto);
 }
 
+// ---- a text subtitle on a re-encode: the app draws it, the server burns nothing --------------
+
+/// The item's subtitles as a landing parks them: 77 an embedded SRT, 78 an embedded PGS, 79 an
+/// external SRT, and `UNCARRIED_SUB` an embedded SRT the fixture server puts in no stream.
+fn park_subtitles(ps: &mut PlaybackSession) {
+    let sub = |id: i64, codec: &str, external: bool| plx_data::metadata::Stream {
+        id,
+        codec: codec.into(),
+        external,
+        key: if external { format!("/library/streams/{id}") } else { String::new() },
+        ..Default::default()
+    };
+    ps.track_ctx = Some(TrackContext {
+        subs: vec![sub(77, "srt", false), sub(78, "pgs", false), sub(79, "srt", true), sub(UNCARRIED_SUB, "srt", false)],
+        ..Default::default()
+    });
+}
+
+/// A 1080p re-encode of the fixture item (a picked rung, so no Original candidate), subtitles off.
+fn install_capped_re_encode(ps: &mut PlaybackSession, live: &Live) {
+    restore_quality(Quality::P1080);
+    reset_player_control_for_test(ps);
+    crate::player::restore_audio_enhancements(NONE);
+    install(ps, live, Delivery::Burn(NONE), a1(), None, 0);
+    ps.cur_contract.ceiling = Quality::P1080.ceiling();
+    park_subtitles(ps);
+}
+
+/// The subtitle half of every transcode decision the fixture saw: `(subtitleStreamID, subtitles)`.
+fn subtitle_asks(requests: &[String]) -> Vec<(Option<&str>, Option<&str>)> {
+    decisions(requests)
+        .into_iter()
+        .map(|r| (query_param(r, "subtitleStreamID"), query_param(r, "subtitles")))
+        .collect()
+}
+
+/// A text track picked on a rung rides the re-encode as a stream of its own: the request names it
+/// `embedded`, nothing is burned, and the app draws it from the stream as on direct play. A
+/// change of rung asks for it the same way, so it stays on screen.
+#[test]
+fn a_text_subtitle_on_a_rung_is_carried_and_stays_across_a_quality_switch() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install_capped_re_encode(&mut ps, &live);
+    pick_subtitle_and_land(&mut ps, 2, 77);
+    assert!(ps.cur_contract.carried_text);
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::Client);
+    assert!(!subtitles_burned(&ps));
+    assert_eq!(crate::player::desired_sub_idx(), 0, "the stream's only subtitle track, whatever its ordinal in the Part");
+
+    set_quality(&mut ps, Quality::P720);
+    let (action, tail) = claim(&mut ps);
+    assert_eq!(tail, ClaimTail::Retranscode);
+    land(&mut ps, &action, tail);
+    assert_eq!(ps.cur_contract.ceiling, Quality::P720.ceiling());
+    assert!(ps.cur_contract.carried_text, "the new rung carries it too");
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::Client);
+    assert_eq!(crate::player::desired_sub_idx(), 0);
+
+    let requests = live.finish();
+    assert_eq!(subtitle_asks(&requests), [(Some("77"), Some("embedded")); 2], "{requests:?}");
+    assert!(decisions(&requests).iter().all(|r| query_param(r, "subtitleSize").is_none()), "{requests:?}");
+    cleanup(&mut ps);
+}
+
+/// An image track is still the server's to burn, on the request it always was; so is a text track
+/// on a playback whose own drawing was retired (`side_subs_refused`).
+#[test]
+fn an_image_subtitle_and_a_refused_playback_keep_the_burn() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install_capped_re_encode(&mut ps, &live);
+    pick_subtitle_and_land(&mut ps, 3, 78);
+    assert!(!ps.cur_contract.carried_text);
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ServerBurn(BurnReason::Quality));
+    assert!(subtitles_burned(&ps));
+
+    ps.side_subs_refused = true;
+    pick_subtitle_and_land(&mut ps, 2, 77);
+    assert!(!ps.cur_contract.carried_text);
+    assert!(subtitles_burned(&ps));
+
+    let requests = live.finish();
+    assert_eq!(subtitle_asks(&requests), [(Some("78"), Some("burn")), (Some("77"), Some("burn"))], "{requests:?}");
+    assert!(decisions(&requests).iter().all(|r| query_param(r, "subtitleSize") == Some("100")), "{requests:?}");
+    cleanup(&mut ps);
+}
+
+/// A text track the server answers without is burned on a second request, and the encoder the
+/// first one registered is stopped.
+#[test]
+fn a_text_subtitle_the_server_does_not_carry_is_burned_instead() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install_capped_re_encode(&mut ps, &live);
+    pick_subtitle_and_land(&mut ps, 4, UNCARRIED_SUB);
+    assert!(!ps.cur_contract.carried_text, "what plays is the burn");
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ServerBurn(BurnReason::Quality));
+
+    let requests = live.finish();
+    let id = UNCARRIED_SUB.to_string();
+    assert_eq!(subtitle_asks(&requests), [(Some(id.as_str()), Some("embedded")), (Some(id.as_str()), Some("burn"))]);
+    let first = query_param(decisions(&requests)[0], "session").expect("the carried attempt's session");
+    assert!(stop_seen_in(&requests, first), "{requests:?}");
+    assert_ne!(ps.tsession, first, "the burn plays on a session of its own");
+    cleanup(&mut ps);
+}
+
+/// At Original quality the subtitle is the route's only reason to re-encode: that request stays
+/// the Original burn.
+#[test]
+fn a_text_subtitle_at_original_quality_keeps_the_original_burn() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install_truehd_remux(&mut ps, &live);
+    park_subtitles(&mut ps);
+    pick_embedded_subtitle_and_land(&mut ps);
+    assert_eq!(ps.cur_contract, enhanced_remux_contract(NONE, true));
+    assert!(subtitles_burned(&ps));
+    let requests = live.finish();
+    assert_eq!(subtitle_asks(&requests), [(Some("77"), Some("burn"))], "{requests:?}");
+    cleanup(&mut ps);
+}
+
+/// An external text subtitle on a rung is the app's to fetch and draw: the request names none.
+#[test]
+fn an_external_text_subtitle_on_a_rung_is_left_to_the_app() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let live = Live::start(EnhMode::Honor("ac3"));
+    install_capped_re_encode(&mut ps, &live);
+    pick_subtitle_and_land(&mut ps, -1, 79);
+    assert!(ps.cur_contract.client_sidecar && !ps.cur_contract.carried_text);
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::ClientOverRemux);
+    assert!(!subtitles_burned(&ps));
+    let requests = live.finish();
+    assert_eq!(subtitle_asks(&requests), [(Some("0"), Some("none"))], "{requests:?}");
+    cleanup(&mut ps);
+}
+
+/// A resolve that brings a text subtitle onto a rung asks for it as a stream too, reads the answer
+/// back, and burns the one the server left out.
+#[test]
+fn a_resolve_onto_a_rung_carries_the_text_subtitle_or_burns_what_the_server_left_out() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    restore_quality(Quality::P1080);
+    reset_player_control_for_test(&ps);
+    crate::player::restore_audio_enhancements(NONE);
+    let (port, done, server) = enhancement_pms(MDE_DIRECTPLAY, EnhMode::Honor("ac3"), 0);
+    let sid = plx_plex::plex::register_for_test("carry-cold", "127.0.0.1", port, "token", "enh-client");
+    plx_plex::plex::client_for(sid).unwrap().set_link(plx_plex::plex::probe::Location::Local);
+    plx_plex::plex::serverinfo::store_for_test(sid, Subscription::Yes, "1.43.4");
+    let audio = plx_data::metadata::Stream {
+        id: 10976,
+        index: 1,
+        lang_code: "eng".into(),
+        codec: "ac3".into(),
+        channels: 2,
+        default: true,
+        selected: true,
+        ..Default::default()
+    };
+    let resolve = |sub: i64| {
+        let mut env = ResolveEnv::snapshot(&ps, plx_data::stores::metadata::MetadataStore::default().view(), sid, "1804");
+        env.quality = Quality::P1080;
+        env.pass = Subscription::Yes;
+        env.sub_sid = sub;
+        env.cached_item = Some(fourk_item_with_subs(sid, vec![audio.clone()], vec![selected_sub(sub, "srt")]));
+        build_stream(&plx_base::task::OffFrame::for_test(), "1804", "/library/parts/3058/1/file.mkv", "hevc", "ac3", &env)
+    };
+    let carried = resolve(10980);
+    assert!(carried.contract.carried_text);
+    assert_eq!(query_param(&carried.url, "subtitles"), Some("embedded"), "{}", carried.url);
+    assert_eq!(carried.sub_sid, 10980);
+    let burned = resolve(UNCARRIED_SUB);
+    assert!(!burned.contract.carried_text);
+    assert_eq!(query_param(&burned.url, "subtitles"), Some("burn"), "{}", burned.url);
+
+    apply_plan(&mut ps, carried, "1804");
+    assert_eq!(subtitle_presenter(&ps), SubtitlePresenter::Client);
+    done.send(()).unwrap();
+    let _ = server.join().unwrap();
+    cleanup(&mut ps);
+    plx_plex::plex::reset_servers_for_test();
+}
+
+/// What the carry rule reads: a contract that re-encodes for a reason of its own, an embedded text
+/// track, and an answer that puts the track in the stream.
+#[test]
+fn the_carry_rule_reads_the_contract_the_track_and_the_answer() {
+    use plx_plex::plex::{EncodeContract, TranscodeDelivery};
+    let burn = enhanced_remux_contract(NONE, true);
+    let rung = EncodeContract { ceiling: Quality::P1080.ceiling(), ..burn };
+    assert!(contract_carries_text(&rung));
+    assert!(contract_carries_text(&EncodeContract { no_video_copy: true, ..burn }));
+    assert!(!contract_carries_text(&burn), "the Original burn");
+    assert!(!contract_carries_text(&EncodeContract { remux: true, ..rung }));
+    assert!(!contract_carries_text(&EncodeContract { delivery: TranscodeDelivery::FixedHls { seconds_per_segment: 2 }, ..rung }));
+
+    let track = |codec: &str| plx_data::metadata::Stream { codec: codec.into(), ..Default::default() };
+    for text in ["srt", "ass", "mov_text", "webvtt"] {
+        assert!(carried_as_text(&track(text)), "{text}");
+    }
+    for image in ["pgs", "vobsub", "dvb_subtitle"] {
+        assert!(!carried_as_text(&track(image)), "{image}");
+    }
+    assert!(!carried_as_text(&plx_data::metadata::Stream { external: true, ..track("srt") }), "a sidecar");
+
+    let answer = |lane: &str| -> plx_plex::plex::MediaContainer {
+        serde_json::from_str(&format!(
+            r#"{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":1,"decision":"transcode"}}{lane}]}}]}}]}}]}}"#
+        ))
+        .expect("a decision body")
+    };
+    assert!(decision_carries_subtitle(&answer(r#",{"streamType":3,"decision":"copy","location":"embedded"}"#)));
+    assert!(!decision_carries_subtitle(&answer(r#",{"streamType":3,"decision":"burn","location":"direct"}"#)));
+    assert!(!decision_carries_subtitle(&answer(r#",{"streamType":3,"decision":"unavailable","location":"direct"}"#)));
+    assert!(!decision_carries_subtitle(&answer("")), "no subtitle lane");
+}
+
 // ---- the Original burn through the real commits: TrueHD, subtitle Off, picks while burning ----
 //
 // The tests above install the plain burn directly and use the AC3 track, which grades `Applied`.
@@ -3938,12 +4163,18 @@ fn land(ps: &mut PlaybackSession, action: &ClaimedRouteAction, tail: ClaimTail) 
     PLAYER_CONTROL.lock().unwrap_or_else(|e| e.into_inner()).phase = ControlPhase::Stable;
 }
 
-/// Pick the embedded subtitle 77 through the real commit and land the rebuild it queues.
-fn pick_embedded_subtitle_and_land(ps: &mut PlaybackSession) {
-    commit_subtitle_selection(ps, 2, 77, true);
+/// Pick a subtitle through the real commit and land the rebuild it queues. `ordinal` is the
+/// track's render ordinal, negative for a sidecar.
+fn pick_subtitle_and_land(ps: &mut PlaybackSession, ordinal: i32, id: i64) {
+    commit_subtitle_selection(ps, ordinal, id, true);
     let (action, tail) = claim(ps);
     assert_eq!(tail, ClaimTail::Retranscode);
     land(ps, &action, tail);
+}
+
+/// Pick the embedded subtitle 77 the same way.
+fn pick_embedded_subtitle_and_land(ps: &mut PlaybackSession) {
+    pick_subtitle_and_land(ps, 2, 77);
 }
 
 #[test]

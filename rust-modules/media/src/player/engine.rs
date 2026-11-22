@@ -2312,6 +2312,11 @@ fn start_bufferfeed_inner(
     // spawned: the demuxer reads `side_subs_owner` once, as it opens the stream, and must never
     // also open subtitle decoders or ASS sources the reader replaces.
     let side_target = if stream { crate::route::side_reader_target(ps) } else { None };
+    // A re-encode that carries the selected text track holds it as its only subtitle stream. The
+    // previous run's side reader is stopped by now, so the index it restores cannot follow this.
+    if stream {
+        crate::route::select_carried_subtitle(ps);
+    }
 
     if stream {
         let su = plx_plex::plex::StreamUrl::parse(&url); // the typed layer's URL splitter

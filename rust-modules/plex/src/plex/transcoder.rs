@@ -55,6 +55,17 @@ pub fn is_dp_subtitle(codec: &str) -> bool {
     DP_SUBTITLE_CODECS.split(',').any(|c| c == codec)
 }
 
+/// The TEXT half of [`DP_SUBTITLE_CODECS`]: the embedded tracks a progressive re-encode may hand
+/// over as a stream of its own ([`EncodeContract::carried_text`]) instead of burning them. `srt`
+/// and `ass` are measured (docs/pms-api.md M10); for the rest the route reads the decision back and
+/// burns what the server did not put in the stream. An image track is never carried: the server
+/// burns it, as it always has.
+pub const CARRIED_SUBTITLE_CODECS: &str = "srt,subrip,ass,ssa,mov_text,movtext,webvtt,text";
+pub fn is_carried_subtitle(codec: &str) -> bool {
+    let codec = codec.to_ascii_lowercase();
+    CARRIED_SUBTITLE_CODECS.split(',').any(|c| c == codec)
+}
+
 // ---- the relay policy: what the LINK to a server allows a plan to ask for -------------------
 
 /// What the connection tier a server is reached over lets a playback plan ask for. Both fields
@@ -220,6 +231,14 @@ pub fn direct_play_video_codecs(caps: &plx_platform::devcaps::Caps) -> Vec<&'sta
 /// The Load payload cannot drift whatever PMS chooses: `route.rs` reads the OUTPUT codecs off
 /// the /decision response (`decision_codecs`) and describes those, not the profile's wish.
 fn profile_for_delivery(caps: &plx_platform::devcaps::Caps, delivery: TranscodeDelivery, head: &str) -> String {
+    transcode_profile(caps, delivery, head, false)
+}
+
+/// [`profile_for_delivery`], with the progressive target optionally declaring the subtitle codecs
+/// a carried text track arrives in (`carried_text`, [`EncodeContract::carried_text`]).
+fn transcode_profile(
+    caps: &plx_platform::devcaps::Caps, delivery: TranscodeDelivery, head: &str, carried_text: bool,
+) -> String {
     let dp_video = direct_play_video_codecs(caps).join(",");
     // The table-gated copy codecs, in list order. Each one is advertised only when the table
     // carries ITS row, and each brings the row's own bound (see `row_limits`).
@@ -321,6 +340,15 @@ fn profile_for_delivery(caps: &plx_platform::devcaps::Caps, delivery: TranscodeD
             .map(|codec| audio_limit(codec, "audio.samplingRate", plx_platform::devcaps::AUDIO_RATE_CEILING))
             .collect::<String>();
     let target = match delivery {
+        // **The only target PMS puts a subtitle stream into.** Measured on PMS 1.43.5 (docs/pms-api.md
+        // M10): spelled `container=mkv` with a `subtitleCodec` list, `subtitles=embedded` answers
+        // `copy location=embedded` for a text track; the `matroska` spelling below answers
+        // `unavailable` whatever else it lists (M4). The video and audio lanes are decided the same
+        // under both spellings, so only a request that carries a track changes.
+        TranscodeDelivery::ProgressiveMkv if carried_text => format!(
+            "add-transcode-target(type=videoProfile&context=streaming&protocol=http\
+             &container=mkv&videoCodec={target_video}&audioCodec={target_audio}&subtitleCodec=srt,ass)"
+        ),
         TranscodeDelivery::ProgressiveMkv => format!(
             "add-transcode-target(type=videoProfile&context=streaming&protocol=http\
              &container=matroska&videoCodec={target_video}&audioCodec={target_audio})"
@@ -537,15 +565,24 @@ impl Client {
         if s.contract.audio.normalize_loudness {
             q = q.int("normalizeLoudness", 1);
         }
-        if s.subtitle_stream_id > 0 {
+        // The selected text track as a stream of the progressive MKV, for the app to draw
+        // (`EncodeContract::carried_text`). `advancedSubtitles=text` is what makes PMS hand over an
+        // ASS track as it is: without it the same request answers `unavailable` (M10).
+        let carried = s.contract.carried_text && s.subtitle_stream_id > 0 && !hls && !s.contract.remux;
+        if carried {
+            q = q
+                .int("subtitleStreamID", s.subtitle_stream_id)
+                .str("subtitles", "embedded")
+                .str("advancedSubtitles", "text");
+        } else if s.subtitle_stream_id > 0 {
             // burned in (Plex's default decision for our profile — no soft-sub support advertised)
             q = q
                 .int("subtitleStreamID", s.subtitle_stream_id)
                 .int("subtitleSize", 100)
                 .str("subtitles", "burn");
         } else if s.client_subtitles {
-            // UNMEASURED on a transcode leg (docs/pms-api.md M8): the spelling is the MDE
-            // handshake's client-rendered mode (`mde_decision`), not a value first sent here.
+            // The MDE handshake's client-rendered mode (`mde_decision`). Measured on a remux and on
+            // a re-encode (docs/pms-api.md M8): the part's selected subtitle is answered `ignore`.
             q = q.int("subtitleStreamID", 0).str("subtitles", "none");
         }
         q = q
@@ -554,7 +591,10 @@ impl Client {
         q = self
             .playback_identity(q)
             .str("X-Plex-Client-Profile-Name", "Generic")
-            .str("X-Plex-Client-Profile-Extra", &profile_for_delivery(s.caps, s.contract.delivery, head));
+            .str(
+                "X-Plex-Client-Profile-Extra",
+                &transcode_profile(s.caps, s.contract.delivery, head, carried),
+            );
         if let Some(offset) = s.offset.wire_seconds() {
             q = q.str("offset", &offset);
         }
@@ -831,6 +871,7 @@ mod tests {
                 ceiling: None,
                 audio,
                 client_sidecar: false,
+                carried_text: false,
             },
             caps: assumed_caps(),
             source: SourceVideo::default(),
@@ -1050,6 +1091,65 @@ mod tests {
         assert!(q.contains("subtitleStreamID=77") && q.contains("subtitles=burn"), "{q}");
         let q = a_client().transcode_query(&spec(true, false));
         assert!(!q.contains("subtitleStreamID") && !q.contains("subtitles="), "no subtitle, no params: {q}");
+    }
+
+    /// A text track the re-encode carries is asked for as a stream of the progressive MKV and
+    /// never burned (docs/pms-api.md M10): `subtitles=embedded`, `advancedSubtitles=text`, and the
+    /// one target spelling PMS puts a subtitle stream into. A burn, a remux, fixed HLS and a
+    /// request with no subtitle keep the wire they had.
+    #[test]
+    fn a_carried_text_subtitle_is_asked_for_as_a_stream_and_never_burned() {
+        let mut s = spec(false, false);
+        s.contract.ceiling = Some(Ceiling { max_kbps: 8000, max_w: 1920, max_h: 1080 });
+        s.subtitle_stream_id = 168_742;
+        let burned = a_client().transcode_query(&s);
+        for required in ["subtitleStreamID=168742", "subtitleSize=100", "subtitles=burn", "container%3Dmatroska"] {
+            assert!(burned.contains(required), "missing {required}: {burned}");
+        }
+        // (The direct-play profile always lists subtitle codecs; only the transcode target must not.)
+        assert!(!target_of(&burned).contains("subtitleCodec") && !burned.contains("advancedSubtitles"), "{burned}");
+
+        s.contract.carried_text = true;
+        let carried = a_client().transcode_query(&s);
+        for required in [
+            "subtitleStreamID=168742",
+            "subtitles=embedded",
+            "advancedSubtitles=text",
+            "container%3Dmkv",
+            "subtitleCodec%3Dsrt",
+            "videoResolution=1920x1080",
+            "maxVideoBitrate=8000",
+        ] {
+            assert!(carried.contains(required), "missing {required}: {carried}");
+        }
+        for absent in ["subtitles=burn", "subtitleSize", "container%3Dmatroska"] {
+            assert!(!carried.contains(absent), "{absent} on a carried request: {carried}");
+        }
+        let profile = super::transcode_profile(s.caps, s.contract.delivery, "hevc", true);
+        let target = target_of(&profile);
+        assert!(target.contains("&container=mkv&") && target.contains("&subtitleCodec=srt,ass)"), "{target}");
+
+        let nothing_selected = TranscodeSpec { subtitle_stream_id: 0, ..s };
+        let q = a_client().transcode_query(&nothing_selected);
+        assert!(!q.contains("subtitles=") && q.contains("container%3Dmatroska"), "{q}");
+        s.contract.delivery = TranscodeDelivery::FixedHls { seconds_per_segment: 2 };
+        let q = a_client().transcode_query(&s);
+        assert!(q.contains("subtitles=burn") && !q.contains("subtitles=embedded"), "fixed HLS carries none: {q}");
+        s.contract.delivery = TranscodeDelivery::ProgressiveMkv;
+        s.contract.remux = true;
+        let q = a_client().transcode_query(&s);
+        assert!(!q.contains("subtitles=embedded") && q.contains("container%3Dmatroska"), "{q}");
+    }
+
+    /// Text tracks are the ones handed over; an image track stays the server's to burn.
+    #[test]
+    fn only_text_codecs_are_carried() {
+        for text in ["srt", "subrip", "ass", "ssa", "mov_text", "webvtt", "ASS"] {
+            assert!(super::is_carried_subtitle(text), "{text}");
+        }
+        for image in ["pgs", "hdmv_pgs_subtitle", "vobsub", "dvd_subtitle", "dvb_subtitle", ""] {
+            assert!(!super::is_carried_subtitle(image), "{image}");
+        }
     }
 
     /// **The Dolby Vision refusal, and the reason this flag exists.** `route::video_direct_plays`

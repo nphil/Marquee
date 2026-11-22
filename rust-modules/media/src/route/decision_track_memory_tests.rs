@@ -613,22 +613,55 @@ fn assert_burned(plan: &Plan, requests: &[String], id: i64) {
     assert!(!plan.memory_note, "the subtitle is shown, so the menu has nothing to say");
 }
 
+/// A re-encode that CARRIES the text track `id`: the decision and the start URL name it with
+/// `subtitles=embedded` (the server copies it into the stream, the app draws it), the selection PUT
+/// names it, and the plan reports it as the session's subtitle so a rebuild reads it back.
+#[cfg(feature = "devtriggers")]
+#[track_caller]
+fn assert_carried(plan: &Plan, requests: &[String], id: i64) {
+    let id_text = id.to_string();
+    assert!(!plan.contract.remux, "a carried track rides a re-encode, never a copy: {}", plan.url);
+    for line in [transcode_decision(requests).as_str(), plan.url.as_str()] {
+        assert_eq!(query_param(line, "subtitleStreamID"), Some(id_text.as_str()), "{line}");
+        assert_eq!(query_param(line, "subtitles"), Some("embedded"), "{line}");
+    }
+    assert_eq!(put_subtitle(requests), Some(id_text.as_str()), "{requests:?}");
+    assert_eq!(plan.sub_sid, id, "N2: the carried track is the plan's subtitle");
+    assert!(!plan.memory_note, "the subtitle is shown, so the menu has nothing to say");
+}
+
+/// A re-encode whose server burns nothing for the sidecar `id`: the app fetches and draws it, so the
+/// decision and the URL say `subtitles=none` and no id, while the PUT keeps naming the file.
+#[cfg(feature = "devtriggers")]
+#[track_caller]
+fn assert_app_drawn(plan: &Plan, requests: &[String], id: i64) {
+    assert!(!plan.contract.remux, "a re-encode: {}", plan.url);
+    for line in [transcode_decision(requests).as_str(), plan.url.as_str()] {
+        assert_eq!(query_param(line, "subtitles"), Some("none"), "{line}");
+        assert_eq!(query_param(line, "subtitleStreamID").unwrap_or("0"), "0", "{line}");
+    }
+    assert_eq!(put_subtitle(requests), Some(id.to_string().as_str()), "{requests:?}");
+    assert_eq!(plan.sub_sid, id, "the session's subtitle is the sidecar");
+    assert!(!plan.memory_note, "the app draws it, so there is nothing to explain");
+}
+
 fn two_subs() -> Vec<plx_data::metadata::Stream> {
     vec![srt(55001, 3, "eng", false, false), srt(55002, 4, "spa", false, true)]
 }
 
-/// A video re-encode is already running, so the remembered subtitle rides it. Fixed 720p rung: the
-/// ceiling denies the remux, MDE is not asked, and the encoder is told to burn the track.
+/// A video re-encode is already running, so the remembered text subtitle rides it as a stream of its
+/// own. Fixed 720p rung: the ceiling denies the remux, MDE is not asked, and the server carries the
+/// track for the app to draw (burning it ran at 0.50x of real time, carrying it at 0.93x).
 #[test]
 #[cfg(feature = "devtriggers")]
-fn q_top_b_a_fixed_rung_burns_the_remembered_subtitle() {
+fn q_top_b_a_fixed_rung_carries_the_remembered_subtitle() {
     let mut case = Case::episode(two_subs(), memory(None, Some(english_track())));
     case.quality = Some(Quality::P720);
     case.mde = MDE_TRANSCODE;
     case.extra = 1;
     let (plan, requests, log) = resolve_logged(case);
     assert!(plan.url.contains("start.mkv"), "setup: a fixed-rung encode: {}", plan.url);
-    assert_burned(&plan, &requests, 55001);
+    assert_carried(&plan, &requests, 55001);
     assert_eq!(memory_lines(&log, 55001).len(), 1, "one line per resolve: {log}");
     assert!(memory_lines(&log, 55001)[0].ends_with("track-memory: applied subtitle (track 55001)"), "{log}");
 }
@@ -636,7 +669,7 @@ fn q_top_b_a_fixed_rung_burns_the_remembered_subtitle() {
 /// **The log a resolve returns is that resolve's alone.** The event log of a host test run is one file
 /// for the whole machine (`/tmp/plxnative-events.log`; only `hostsim` can steer it), and a second
 /// `make check`, another checkout or another lane appends to it from its own process while this one
-/// resolves, in the same fixtures' words: `q_top_b_a_fixed_rung_burns_the_remembered_subtitle` read
+/// resolves, in the same fixtures' words: `q_top_b_a_fixed_rung_carries_the_remembered_subtitle` read
 /// three `track 55001` lines for its one resolve. `serial()` is one process's lock, so it cannot keep
 /// them out; the capture has to be a file they do not write. The foreign writer is a thread spawned
 /// inside the capture window (the redirect is per thread, so its line lands in the shared file just as
@@ -790,8 +823,8 @@ fn q_top_b_an_account_auto_pick_on_a_fixed_rung_is_still_not_burned() {
     assert_eq!((plan.sub_sid, plan.memory_note), (0, false));
 }
 
-/// U10: a known retry that carries its own subtitle (`env.sub_sid`) on a re-encode burns THAT id, and
-/// the plan says so; the first rebuild would otherwise forget it.
+/// U10: a known retry that carries its own text subtitle (`env.sub_sid`) on a re-encode carries THAT
+/// id, and the plan says so; the first rebuild would otherwise forget it.
 #[test]
 #[cfg(feature = "devtriggers")]
 fn u10_a_retry_carrying_a_subtitle_on_a_re_encode_reports_it_in_the_plan() {
@@ -802,7 +835,7 @@ fn u10_a_retry_carrying_a_subtitle_on_a_re_encode_reports_it_in_the_plan() {
     case.extra = 1;
     let (plan, requests, _) = resolve_logged(case);
     assert!(plan.url.contains("start.mkv"), "setup: an encode: {}", plan.url);
-    assert_burned(&plan, &requests, 55002);
+    assert_carried(&plan, &requests, 55002);
 }
 
 /// N2 is scoped to a real re-encode. A retry carrying `env.sub_sid` onto a copy remux the app does
@@ -822,30 +855,31 @@ fn n2_a_carried_subtitle_on_a_copy_remux_is_not_reported_in_the_plan() {
     assert_eq!(plan.sub_sid, 0, "as on main: a remux plan names no burn: {requests:?}");
 }
 
-/// N2: after a remembered burn the plan's subtitle is the burn, so a seek rebuild (`plan_rebase` reads
-/// `cur_sub_sid`) names the id on the new encoder's decision and URL instead of dropping it.
+/// N2: after a remembered text track the re-encode carries, the plan's subtitle is that track, so a
+/// seek rebuild (`plan_rebase` reads `cur_sub_sid`) names the id on the new encoder's decision and
+/// URL instead of dropping it.
 #[test]
 #[cfg(feature = "devtriggers")]
-fn n2_a_seek_after_a_remembered_burn_still_names_the_subtitle() {
+fn n2_a_seek_after_a_remembered_carried_track_still_names_the_subtitle() {
     let mut ps = PlaybackSession::IDLE;
     let _g = fresh_registry(&mut ps);
     let mut case = Case::episode(two_subs(), memory(None, Some(english_track())));
     case.quality = Some(Quality::P720);
     case.mde = MDE_TRANSCODE;
     case.extra = 2; // the selection PUT, and the seek's own decision
-    let ((installed, seek_url), requests, _) = resolve_in(&mut ps, case, |ps, plan| {
-        assert_eq!(plan.sub_sid, 55001, "setup: the resolve reports the burn");
+    let ((installed, seek_url), requests, log) = resolve_in(&mut ps, case, |ps, plan| {
+        assert_eq!(plan.sub_sid, 55001, "setup: the resolve reports the carried track");
         apply_plan(ps, plan, "rk-4k");
         let installed = cur_sub_sid(ps);
         (installed, transcode_seek(ps, 90))
     });
-    assert_eq!(installed, 55001, "the landed session carries the burn");
-    let seek_url = seek_url.expect("the seek rebuilt the encode");
+    assert_eq!(installed, 55001, "the landed session carries the track");
+    let seek_url = seek_url.unwrap_or_else(|| panic!("the seek rebuilt the encode: {requests:?}\n{log}"));
     assert_eq!(query_param(&seek_url, "subtitleStreamID"), Some("55001"), "{seek_url}");
-    assert_eq!(query_param(&seek_url, "subtitles"), Some("burn"), "{seek_url}");
+    assert_eq!(query_param(&seek_url, "subtitles"), Some("embedded"), "{seek_url}");
     let seek_decision = requests.iter().rfind(|r| r.contains("/decision?")).expect("the seek's decision");
     assert_eq!(query_param(seek_decision, "subtitleStreamID"), Some("55001"), "{seek_decision}");
-    assert_eq!(query_param(seek_decision, "subtitles"), Some("burn"), "{seek_decision}");
+    assert_eq!(query_param(seek_decision, "subtitles"), Some("embedded"), "{seek_decision}");
 }
 
 // ---- where the memory comes from: the mirror, at the request -----------------------------------
@@ -1615,18 +1649,18 @@ fn c5_a_remembered_sidecar_is_drawn_over_a_copy_remux_with_no_note() {
     assert!(lines[0].ends_with("track-memory: applied subtitle (track 55009)"), "{}", lines[0]);
 }
 
-/// A route that re-encodes video anyway burns the remembered sidecar, as it burns a server-selected
-/// one (Q-TOP (b)): the decision, the start URL and the PUT all name the file.
+/// A route that re-encodes video anyway leaves the remembered sidecar to the app, as it does for a
+/// server-selected one: the decision and the start URL carry no burn, the PUT names the file.
 #[test]
 #[cfg(feature = "devtriggers")]
-fn c5_a_remembered_sidecar_rides_a_video_re_encode_as_a_burn() {
+fn c5_a_remembered_sidecar_rides_a_video_re_encode_drawn_by_the_app() {
     let mut case = Case::episode(e2_with_english_sidecar(), memory(None, Some(english_sidecar_memo())));
     case.quality = Some(Quality::P720);
     case.mde = MDE_TRANSCODE;
     case.extra = 1;
     let (plan, requests, _) = resolve_logged(case);
     assert!(plan.url.contains("start.mkv"), "setup: a fixed-rung encode: {}", plan.url);
-    assert_burned(&plan, &requests, 55009);
+    assert_app_drawn(&plan, &requests, 55009);
 }
 
 /// **The landing.** The plan's `memory_sidecar` is looked up in the playing item (its key and codec

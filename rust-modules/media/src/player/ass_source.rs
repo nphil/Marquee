@@ -1482,6 +1482,9 @@ mod tests {
     }
     #[test]
     fn reload_seek_keeps_a_known_sign_that_matroska_will_not_resend() {
+        // `reset_session_for_reload` advances the process-wide alignment epoch, which the serial
+        // alignment tests read between a snapshot and its apply.
+        let _guard = plx_base::testlock::serial();
         let shared = crate::player::Shared::new();
         let sign = Event {
             start_ms: 0,
@@ -1537,6 +1540,7 @@ mod tests {
 
     #[test]
     fn new_playback_or_changed_file_inventory_cannot_inherit_subtitle_events() {
+        let _guard = plx_base::testlock::serial();
         for (fresh, key, headers) in [
             (true, "part-A", vec![(0, TrackHeader::Authored(b"header".to_vec()))]),
             (false, "part-B", vec![(0, TrackHeader::Authored(b"header".to_vec()))]),

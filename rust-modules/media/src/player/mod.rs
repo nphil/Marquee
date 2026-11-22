@@ -2234,7 +2234,7 @@ pub fn request_original_recovery(ps: &crate::route::PlaybackSession) {
     );
 }
 
-// ---- client-rendered subtitles (direct-play only; a transcode carries no subs) ----
+// ---- client-rendered subtitles (direct play, and the text track a re-encode carries) ----
 /// selected subtitle track index (-1 = off); the demuxer reads this per block.
 pub fn desired_sub_idx() -> i32 {
     SHARED.desired_sub_idx.load(Relaxed)

@@ -469,11 +469,11 @@ fn a_viewer_pick_made_before_play_still_wins_over_the_servers_selection() {
     assert_eq!(selection_subtitles(&r.requests), vec!["5"], "{:?}", r.requests);
 }
 
-/// A capped re-encode cannot leave the app to draw the sidecar, and a selection moved to 0 would
-/// make PMS discard the download: it stays selected and the encoder burns it.
+/// A capped re-encode leaves the sidecar to the app (no burn, 0.93x instead of 0.50x of real time),
+/// but the selection still names it: moved to 0, PMS would discard the download.
 #[test]
 #[cfg(feature = "devtriggers")]
-fn capped_reencode_start_keeps_the_servers_selected_download_selected() {
+fn capped_reencode_start_leaves_the_servers_selected_download_to_the_app() {
     let mut ps = PlaybackSession::IDLE;
     let _g = fresh_registry(&mut ps);
     let r = resolve(&mut ps, MDE_TRANSCODE, EnhMode::Honor("ac3"), 0, MKV, "ac3",
@@ -481,7 +481,8 @@ fn capped_reencode_start_keeps_the_servers_selected_download_selected() {
         |env, _| { env.quality = Quality::P720; env.audio_enhancements = plx_plex::plex::AudioEnhancements::NONE; });
     assert!(!r.plan.contract.remux, "a re-encode: {}", r.plan.url);
     assert_eq!(selection_subtitles(&r.requests), vec!["77"], "{:?}", r.requests);
-    assert_eq!(query_param(&r.plan.url, "subtitleStreamID"), Some("77"), "{}", r.plan.url);
+    assert_eq!(query_param(&r.plan.url, "subtitleStreamID"), Some("0"), "{}", r.plan.url);
+    assert_eq!(query_param(&r.plan.url, "subtitles"), Some("none"), "{}", r.plan.url);
     assert_eq!(r.plan.sub_sid, 77);
     plx_plex::plex::reset_servers_for_test();
 }

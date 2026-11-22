@@ -132,6 +132,9 @@ pub(super) const MDE_DIRECTPLAY: &[u8] =
 pub(super) const MDE_TRANSCODE: &[u8] =
     br#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode"}]}]}]}}"#;
 
+/// [`MDE_TRANSCODE`] with the text subtitle the request asked for copied into the stream.
+pub(super) const MDE_TRANSCODE_CARRYING_TEXT: &[u8] = br#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode","Stream":[{"streamType":3,"codec":"srt","decision":"copy","location":"embedded"}]}]}]}]}}"#;
+
 /// Part.decision=transcode, video copied, audio transcoded — the measured TrueHD-only shape.
 pub(super) const MDE_TRANSCODE_COPY: &[u8] = br#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode","Stream":[{"streamType":1,"decision":"copy"},{"streamType":2,"decision":"transcode"}]}]}]}]}}"#;
 
@@ -322,7 +325,15 @@ fn serve_plan_pms(
                         .expect("400");
                     } else {
                         let body = if first.contains("/decision?") {
-                            respond.and_then(|r| r(&first)).unwrap_or(mde_body)
+                            // A text subtitle asked for as a stream of the transcode is copied into
+                            // it (docs/pms-api.md M10), as PMS answers; without this every carried
+                            // request would read as refused and fall back to the burn.
+                            let asks_carry = query_param(&first, "subtitles") == Some("embedded");
+                            respond.and_then(|r| r(&first)).unwrap_or(if asks_carry && mde_body == MDE_TRANSCODE {
+                                MDE_TRANSCODE_CARRYING_TEXT
+                            } else {
+                                mde_body
+                            })
                         } else {
                             EMPTY_MC
                         };
@@ -647,6 +658,10 @@ pub(super) enum EnhMode {
     Ignore,
 }
 
+/// The subtitle stream [`enhancement_pms`] answers `unavailable` for when it is asked for as a
+/// stream of the transcode: what PMS 1.43.5 answers for a track the target cannot hold.
+pub(super) const UNCARRIED_SUB: i64 = 4040;
+
 /// Loopback PMS for the audio-enhancement resolve: MDE answers `mde`, a transcode decision answers
 /// per [`EnhMode`] when it carries a param and a plain remux (video+audio copy) when it does not,
 /// and every media GET (Part or `start.mkv`) serves `media_bytes` so a Remote probe can complete.
@@ -738,7 +753,18 @@ pub(super) fn enhancement_pms_parts(
                             (true, EnhMode::Unavailable) => r#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode","Stream":[{"streamType":1,"codec":"hevc","decision":"copy"},{"streamType":2,"decision":"unavailable"}]}]}]}]}}"#.into(),
                             (true, EnhMode::HonorNoCodecs) => String::from_utf8(MDE_TRANSCODE_COPY.to_vec()).unwrap(),
                             (true, EnhMode::Honor(codec)) => format!(r#"{{"MediaContainer":{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":1,"codec":"hevc","decision":"copy"}},{{"streamType":2,"codec":"{codec}","decision":"transcode"}}]}}]}}]}}]}}}}"#),
-                            (true, EnhMode::Ignore) | (false, _) => r#"{"MediaContainer":{"Metadata":[{"Media":[{"Part":[{"decision":"transcode","Stream":[{"streamType":1,"codec":"hevc","decision":"copy"},{"streamType":2,"codec":"ac3","decision":"copy"}]}]}]}]}}"#.into(),
+                            (true, EnhMode::Ignore) | (false, _) => {
+                                // A text subtitle asked for as a stream of the transcode is copied
+                                // into it (docs/pms-api.md M10); `UNCARRIED_SUB` is the one this
+                                // server cannot put there.
+                                let wanted = query_param(&line, "subtitleStreamID").and_then(|v| v.parse::<i64>().ok());
+                                let subtitle = match query_param(&line, "subtitles") {
+                                    Some("embedded") if wanted == Some(UNCARRIED_SUB) => r#",{"streamType":3,"codec":"srt","decision":"unavailable","location":"direct"}"#,
+                                    Some("embedded") => r#",{"streamType":3,"codec":"srt","decision":"copy","location":"embedded"}"#,
+                                    _ => "",
+                                };
+                                format!(r#"{{"MediaContainer":{{"Metadata":[{{"Media":[{{"Part":[{{"decision":"transcode","Stream":[{{"streamType":1,"codec":"hevc","decision":"copy"}},{{"streamType":2,"codec":"ac3","decision":"copy"}}{subtitle}]}}]}}]}}]}}}}"#)
+                            }
                         };
                         write_json(&mut socket, body.as_bytes());
                     } else {

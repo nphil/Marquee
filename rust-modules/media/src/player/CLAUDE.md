@@ -98,7 +98,7 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   (`pump::maybe_begin_rebuffer`, `clock_debt.rs`): direct play and remux at Quality=Original, and a
   fixed quality's progressive re-encode (`route::takes_progressive_hold`). None has rungs to drop,
   so a supply slower than the film (the link, or for a re-encode the server's conversion: 0.84x on a
-  4K source with a burned subtitle) used to play on in slow motion at the delivered rate and then
+  4K source with a burned subtitle; a text subtitle is carried instead since `docs/pms-api.md` M10) used to play on in slow motion at the delivered rate and then
   drop frames to catch up. The hold is the HLS hold's own machine (`ClockHold::ProgressiveRebuffer`:
   one Pause, the `hls_rebuffering` mirror that `player::state` reads as Buffering, then the
   `try_prime` Play), with its own release (`reserve::hold_releases`): the read-ahead rebuilt to what
@@ -662,8 +662,9 @@ something.
   ~12 MiB once decoded to UTF-8); each window stays within it, except a single line larger than the bound, which the renderer refuses. The only thing the sidecar still
   draws itself is the on-screen failure notice (`sidecar::notice()`, `notice_shown()`; 6 s), drawn by the
   player screen with `draw_subtitle_message` (and `notice_shown()` is a term of its `clock_fingerprint`, so
-  the expiry owes a frame). It is silent where the server burns the selection (a re-encode, or a remux whose embedded
-  track the app may not read itself); over a plain remux the app draws it, and draws an embedded
+  the expiry owes a frame). It is silent where the server burns the selection (a re-encode of a picture track, or a remux whose embedded
+  track the app may not read itself); a text track the progressive re-encode carries (`route::carries_subtitle`) is drawn from the stream
+  at demuxer index 0 as on direct play; over a plain remux the app draws it, and draws an embedded
   track too (`subside.rs`) when the link is local and the Part is 1..=30000 kbps. A sidecar is in
   the Part's FILE time while a remux starts on a Part keyframe EARLIER than or at the requested
   offset — not always the last one (a 917 s request started on 914.914 s while 916.916 s existed;

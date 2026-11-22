@@ -9817,7 +9817,7 @@ pub fn demux(
                     SHARED.duration_ns.load(Ordering::Relaxed)
                 ));
 
-                // Client-rendered subtitles (direct-play only): enumerate subtitle streams in FILE
+                // Client-rendered subtitles (direct play, and the text track a re-encode carries): enumerate subtitle streams in FILE
                 // order so their 0-based position maps 1:1 to the track menu's desired_sub_idx (which
                 // indexes metadata d.subs, i.e. every streamType==3 stream in document order). The
                 // selected track is read LIVE in the loop below, so switching subtitles mid-play takes
@@ -10295,7 +10295,10 @@ pub fn demux(
                             *streams.add(si as usize),
                             crate::player::caption_anchor_ns,
                         ) {
-                            cue.push(ass_generation);
+                            // A transcode's stream restarts 0-based at its offset while the
+                            // playhead is content time (`disp_base`; 0 on a direct play): a text
+                            // track the re-encode carries is stamped on the stream's clock.
+                            cue.shifted(SHARED.disp_base.load(Ordering::Relaxed).max(0)).push(ass_generation);
                         }
                         av_packet_unref(pkt);
                     } else {

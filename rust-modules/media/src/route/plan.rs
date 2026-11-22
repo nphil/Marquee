@@ -415,8 +415,10 @@ pub(super) fn transcode_spec<'a>(
     // any `subtitleStreamID=<id>&subtitles=burn` turns the copy into a re-encode. A remux contract
     // therefore never names one — whatever subtitle is on screen over it, the app draws it — and
     // says so (`client_subtitles`) so the server does not fall back to burning the part's own
-    // selection. Every burn is a `remux: false` contract and keeps its id. (A cold start that
-    // CARRIES a burn into a remux-shaped plan asks for it explicitly: [`transcode_spec_carrying_burn`].)
+    // selection; a re-encode that leaves an external subtitle to the app (`client_sidecar`) says the
+    // same. Every burn is a `remux: false` contract and keeps its id, and so does a text track the
+    // re-encode carries (`carried_text`). (A cold start that CARRIES a burn into a remux-shaped plan
+    // asks for it explicitly: [`transcode_spec_carrying_burn`].)
     let (sub, client_subtitles) = if contract.remux || contract.client_sidecar { (0, sub != 0) } else { (sub, false) };
     transcode_spec_carrying_burn(caps, rk, media_index, source, session, encoder_session, offset, aud, sub, client_subtitles, contract)
 }
@@ -450,6 +452,25 @@ pub(super) fn transcode_spec_carrying_burn<'a>(
         client_subtitles,
         offset,
     }
+}
+
+/// **Can a re-encode hand this subtitle over as a stream of its own**
+/// ([`plx_plex::plex::EncodeContract::carried_text`])? An embedded TEXT track: not a sidecar (the
+/// app fetches that itself), not captions inside the video, not an image track (burned).
+pub(super) fn carried_as_text(s: &plx_data::metadata::Stream) -> bool {
+    !s.external && !s.in_video && plx_plex::plex::is_carried_subtitle(&s.codec)
+}
+
+/// **Does this contract re-encode for a reason of its own**, so that a text subtitle may ride it
+/// instead of being burned? A progressive re-encode under a ceiling, or with the video copy
+/// forbidden. Without either (Original) the subtitle's burn is the only reason the server
+/// re-encodes at all: that request stays the burn
+/// [`plx_plex::plex::TranscodeSpec::encode_target`] shapes, and carrying the track there would
+/// leave a remux, which holds no subtitle (M4). Fixed HLS carries none.
+pub(super) fn contract_carries_text(c: &plx_plex::plex::EncodeContract) -> bool {
+    !c.remux
+        && c.delivery == plx_plex::plex::TranscodeDelivery::ProgressiveMkv
+        && (c.ceiling.is_some() || c.no_video_copy)
 }
 
 
@@ -969,6 +990,24 @@ pub(super) fn decision_codecs(mc: &plx_plex::plex::MediaContainer) -> Option<(St
         (Some(v), Some(a)) => Some((v, a)),
         _ => None,
     }
+}
+
+/// PURE: does the `/decision` answer put the selected subtitle in the stream it will send? PMS
+/// states it on the decided Part's subtitle lane: `location="embedded"` with a `copy` (or a
+/// `transcode` between text codecs). A burn answers `location="direct"` with `decision="burn"`, a
+/// track the target cannot hold `unavailable` (docs/pms-api.md M10).
+pub(super) fn decision_carries_subtitle(mc: &plx_plex::plex::MediaContainer) -> bool {
+    mc.metadata
+        .first()
+        .and_then(|m| m.decided_media())
+        .and_then(|md| md.part.first())
+        .is_some_and(|p| {
+            p.stream.iter().any(|s| {
+                s.stream_type == 3
+                    && s.location == "embedded"
+                    && matches!(s.decision.as_str(), "copy" | "transcode")
+            })
+        })
 }
 
 
@@ -2763,6 +2802,24 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
             // to our own server, which answers 200 and changes nothing on theirs.
             plan.contract.remux = remux;
             plan.contract.no_video_copy = no_video_copy;
+            // **A text subtitle on a progressive re-encode is the app's to draw, not the encoder's to
+            // burn** (the live rule, `decision::re_encode_contract`). An embedded one rides the stream
+            // (`carried_text`, read back from the decision below); an external one is fetched and drawn
+            // (`client_sidecar`, restored by the landing). The selection PUT below names it either way.
+            // A burn that is the route's only reason to re-encode (`force_burn`, `burn_for_audio`) has
+            // no ceiling and a copyable video, so `contract_carries_text` leaves it the burn it was.
+            let playing_sub = |id: i64| plan.playing.as_ref().and_then(|item| item.subs.iter().find(|s| s.id == id));
+            let app_draws_sidecar = reencode_burns_sidecar
+                && plan.contract.delivery == plx_plex::plex::TranscodeDelivery::ProgressiveMkv
+                && playing_sub(burn_sub_sid).is_some_and(|s| s.sidecar_renderable());
+            let carries_text = reencodes
+                && burn_sub_sid > 0
+                && contract_carries_text(&plan.contract)
+                && playing_sub(burn_sub_sid).is_some_and(carried_as_text);
+            plan.contract.client_sidecar = app_draws_sidecar;
+            plan.contract.carried_text = carries_text;
+            // What the wire says of the subtitle: nothing to burn where the app draws it.
+            let app_draws = client_draws || app_draws_sidecar;
             // A remux's video is the source's own elementary stream, so the Load declares the source's rate
             // (a 4K H.264 24p stream declared at the 60 an unknown rate keeps is presented at ~13 fps).
             plan.fps = video_copy_fps(&plan.contract, plan.src_fps);
@@ -2797,8 +2854,8 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 &session,
                 plx_plex::plex::TranscodeOffset::Fresh,
                 encode_audio,
-                if client_draws { 0 } else { burn_sub_sid },
-                client_draws,
+                if app_draws { 0 } else { burn_sub_sid },
+                app_draws,
                 plan.contract,
             );
             // The enhanced decision rides the MDE's own `session`, as every remux here always has: M5
@@ -2839,8 +2896,8 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     encode_audio,
                     // the audio enhancement was refused, not the burn rule 3 or a remembered pick chose:
                     // keep that subtitle
-                    if client_draws { 0 } else if burn_for_audio || memory_burn.is_some() { burn_sub_sid } else { env.sub_sid },
-                    client_draws,
+                    if app_draws { 0 } else if burn_for_audio || memory_burn.is_some() { burn_sub_sid } else { env.sub_sid },
+                    app_draws,
                     plan.contract,
                 );
                 decision = client.transcode_decision(off, &sp);
@@ -2864,6 +2921,28 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     plan.enhancement,
                     audio,
                 );
+            }
+            // A carried request the server answered without the track (or refused, or did not answer):
+            // the subtitle is burned instead, as it was before, on the same session.
+            if plan.contract.carried_text
+                && !decision.as_ref().is_some_and(|mc| refusal(mc).is_none() && decision_carries_subtitle(mc))
+            {
+                crate::player::log("decision: the server does not carry the text subtitle; burning it");
+                plan.contract.carried_text = false;
+                sp = transcode_spec_carrying_burn(
+                    &env.caps,
+                    rk,
+                    media_index,
+                    source,
+                    &session,
+                    &session,
+                    plx_plex::plex::TranscodeOffset::Fresh,
+                    encode_audio,
+                    burn_sub_sid,
+                    false,
+                    plan.contract,
+                );
+                decision = client.transcode_decision(off, &sp);
             }
             if !remux && !matches!(plan.contract.delivery, plx_plex::plex::TranscodeDelivery::FixedHls { .. }) {
                 // The re-encode's guess for an unreadable answer; `decision_codecs` replaces it.
