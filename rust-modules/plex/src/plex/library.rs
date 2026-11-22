@@ -221,13 +221,20 @@ impl Client {
             _ => None,
         };
         let metadata = read(&path)?;
-        if let Some(found) = metadata.metadata.into_iter().next()
+        let first = metadata.metadata.into_iter().next();
+        // The genre and country ride the same read as the settings, so classifying the show costs no request.
+        let origin = first.as_ref().map(|m| crate::plex::TitleOrigin::from_tags(&m.genre, &m.country)).unwrap_or_default();
+        let found = first
             .and_then(|m| crate::plex::ShowLangPrefs::from_settings(&m.preferences.setting))
-        {
-            return Some(found);
+            .or_else(|| {
+                read(&format!("/library/metadata/{show_rk}/tree"))
+                    .and_then(|tree| crate::plex::ShowLangPrefs::from_settings(&tree.setting))
+            });
+        match found {
+            Some(found) => Some(crate::plex::ShowLangPrefs { origin, ..found }),
+            None => (origin != crate::plex::TitleOrigin::default())
+                .then(|| crate::plex::ShowLangPrefs { origin, ..Default::default() }),
         }
-        let tree = read(&format!("/library/metadata/{show_rk}/tree"))?;
-        crate::plex::ShowLangPrefs::from_settings(&tree.setting)
     }
 
     /// GET /library/metadata/{rating_key} → the single item (`.metadata[0]`), or None.

@@ -250,6 +250,29 @@ pub struct Setting {
     pub value: String,
 }
 
+/// What a title is, for the automatic track choice: whether it is anime and which countries made
+/// it. Read from the item's own Genre and Country tags (a show's, for an episode).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TitleOrigin {
+    pub anime: bool,
+    pub countries: Vec<String>,
+}
+
+impl TitleOrigin {
+    /// Anime is Plex genre "Anime", or genre "Animation" with country "Japan" (collections are not
+    /// reliable, per the library owner).
+    pub fn from_names(genres: &[String], countries: &[String]) -> Self {
+        let genre = |name: &str| genres.iter().any(|g| g.trim().eq_ignore_ascii_case(name));
+        let japan = countries.iter().any(|c| c.trim().eq_ignore_ascii_case("japan"));
+        Self { anime: genre("anime") || (genre("animation") && japan), countries: countries.to_vec() }
+    }
+
+    pub fn from_tags(genres: &[Tag], countries: &[Tag]) -> Self {
+        let names = |tags: &[Tag]| tags.iter().map(|t| t.tag.clone()).collect::<Vec<_>>();
+        Self::from_names(&names(genres), &names(countries))
+    }
+}
+
 /// A SHOW's language settings — its Advanced dialog in Plex Web. `None` / `-1` mean "Account
 /// default", inherited from the active Plex profile when its preferences are available.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,10 +284,12 @@ pub struct ShowLangPrefs {
     /// `subtitleMode`: -1 account default · 0 manually selected · 1 shown with foreign audio ·
     /// 2 always enabled
     pub subtitle_mode: i32,
+    /// The show's own genre and country, read by the same request as the settings.
+    pub origin: TitleOrigin,
 }
 
 impl Default for ShowLangPrefs {
-    fn default() -> Self { Self { audio: None, subtitle: None, subtitle_mode: -1 } }
+    fn default() -> Self { Self { audio: None, subtitle: None, subtitle_mode: -1, origin: TitleOrigin::default() } }
 }
 
 impl ShowLangPrefs {
@@ -282,6 +307,7 @@ impl ShowLangPrefs {
             audio: lang(a),
             subtitle: lang(s),
             subtitle_mode: m.and_then(|m| m.parse().ok()).unwrap_or(-1),
+            origin: TitleOrigin::default(),
         })
     }
 }

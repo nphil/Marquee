@@ -587,33 +587,24 @@ fn preferred_language_tags_match_both_three_letter_spellings() {
     assert!(!lang_matches("hu-HU", ""));
 }
 
-/// **A show's subtitle settings turn a subtitle on at the start of a direct play.**
+/// **A show's subtitle language chooses the automatic subtitle**: the FULL track in it (not the
+/// forced one before it), else English.
 #[test]
-fn a_shows_subtitle_settings_choose_the_starting_subtitle() {
-    let prefs = |mode: i32| plx_plex::plex::ShowLangPrefs {
-        audio: None,
-        subtitle: Some("hu-HU".into()),
-        subtitle_mode: mode,
-    };
+fn a_shows_subtitle_language_chooses_the_automatic_subtitle() {
+    let prefs = plx_plex::plex::ShowLangPrefs { subtitle: Some("hu-HU".into()), ..Default::default() };
     let forced = |mut s: plx_data::metadata::Stream| {
         s.forced = true;
         s
     };
-    let subs = [sub(10, 3, "eng", false), forced(sub(11, 4, "hun", false)), sub(12, 5, "hun", false)];
-    // always: the FULL Hungarian track, not the forced one before it
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(2), "hun"), Some((12, 2)));
-    // shown with foreign audio: on for English audio, off for Hungarian audio
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(1), "eng"), Some((12, 2)));
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(1), "hun"), None);
-    // manual and account default: nothing, as before
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(0), "eng"), None);
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(-1), "eng"), None);
-    // a sidecar is not client-renderable on direct play, so it is never the pick
-    let subs = [sub(10, 3, "eng", false), sub(20, 4, "hun", true)];
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(2), "eng"), None);
-    // a subtitle the server already has selected is a choice: the show's default stays out
-    let subs = [server_selected(sub(10, 3, "eng", false)), sub(12, 4, "hun", false)];
-    assert_eq!(pick_dp_subtitle_pref(&subs, &prefs(2), "eng"), Some((10, 0)));
+    let item = plx_data::metadata::PlayingItem::with_subs(vec![
+        sub(10, 3, "eng", false), forced(sub(11, 4, "hun", false)), sub(12, 5, "hun", false),
+    ]);
+    let account = SubtitleLangPrefs::default();
+    assert_eq!(auto_subtitle(&item, &prefs, account, "eng"), Some((12, 2)));
+    let no_show = plx_plex::plex::ShowLangPrefs::default();
+    assert_eq!(auto_subtitle(&item, &no_show, account, "eng"), Some((10, 0)), "English when nothing says otherwise");
+    let account = SubtitleLangPrefs { language: Some("hu") };
+    assert_eq!(auto_subtitle(&item, &no_show, account, "eng"), Some((12, 2)), "the account's language");
 }
 
 #[test]
@@ -627,11 +618,11 @@ fn show_settings_are_read_out_of_a_setting_list() {
             s("subtitleLanguage", ""),
             s("subtitleMode", "1"),
         ]),
-        Some(ShowLangPrefs { audio: Some("hu-HU".into()), subtitle: None, subtitle_mode: 1 })
+        Some(ShowLangPrefs { audio: Some("hu-HU".into()), subtitle: None, subtitle_mode: 1, ..Default::default() })
     );
     assert_eq!(
         ShowLangPrefs::from_settings(&[s("audioLanguage", "")]),
-        Some(ShowLangPrefs { audio: None, subtitle: None, subtitle_mode: -1 })
+        Some(ShowLangPrefs { audio: None, subtitle: None, subtitle_mode: -1, ..Default::default() })
     );
 }
 
@@ -721,45 +712,13 @@ fn an_account_default_show_setting_is_no_preference() {
 }
 
 #[test]
-fn inherited_subtitles_use_account_language_and_mode() {
-    let tracks = [sub(1, 0, "eng", false), sub(2, 1, "fra", false)];
-    let account = SubtitleLangPrefs { language: Some("fr"), mode: 2, forced: 0 };
-    assert_eq!(pick_dp_subtitle_account(&tracks, &plx_plex::plex::ShowLangPrefs::default(), account, "eng"), Some((2, 1)));
-}
-
-#[test]
-fn account_subtitle_precedence_foreign_audio_and_forced_modes() {
-    let mut tracks = [sub(1, 0, "eng", false), sub(2, 1, "fra", false), sub(3, 2, "fra", false)];
-    tracks[2].forced = true;
-    let account = SubtitleLangPrefs { language: Some("fr"), mode: 2, forced: 0 };
-    let mut show = plx_plex::plex::ShowLangPrefs::default();
-    for (forced, want) in [(0, 2), (1, 3), (2, 3), (3, 2)] {
-        assert_eq!(pick_dp_subtitle_account(&tracks, &show, SubtitleLangPrefs { forced, ..account }, "eng").map(|p| p.0), Some(want));
-    }
-    assert_eq!(pick_dp_subtitle_account(&tracks[..2], &show, SubtitleLangPrefs { forced: 2, ..account }, "eng"), None);
-    let foreign = SubtitleLangPrefs { mode: 1, ..account };
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, foreign, "fra"), None);
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, foreign, "eng"), Some((2, 1)));
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, foreign, ""), None);
-    show.subtitle_mode = 0;
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, account, "eng"), None);
-    show.subtitle_mode = -1;
-    show.subtitle = Some("en".into());
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, account, "fra"), Some((1, 0)));
-    tracks[1].selected = true;
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, SubtitleLangPrefs { forced: 2, ..account }, "fra"), Some((2, 1)), "PMS selection outranks both show and forced-only policy");
-}
-
-#[test]
-fn account_subtitles_skip_unrenderable_tracks_without_enabling_a_burn() {
-    let mut tracks = [sub(1, 0, "fra", false), sub(2, 1, "fra", true), sub(3, 2, "fra", false)];
-    tracks[0].codec = "unsupported".into();
-    let account = SubtitleLangPrefs { language: Some("fr"), mode: 2, forced: 0 };
-    let show = plx_plex::plex::ShowLangPrefs::default();
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, account, "eng"), Some((3, 1)));
-    assert_eq!(pick_dp_subtitle_account(&tracks[..2], &show, account, "eng"), None);
-    tracks[1].selected = true;
-    assert_eq!(pick_dp_subtitle_account(&tracks, &show, account, "eng"), None, "a PMS sidecar selection prevents automatic embedded selection");
+fn the_title_origin_reads_genre_and_country() {
+    use plx_plex::plex::TitleOrigin;
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(TitleOrigin::from_names(&names(&["Anime"]), &[]).anime);
+    assert!(TitleOrigin::from_names(&names(&["Animation", "Comedy"]), &names(&["Japan"])).anime);
+    assert!(!TitleOrigin::from_names(&names(&["Animation"]), &names(&["United States of America"])).anime);
+    assert!(!TitleOrigin::from_names(&names(&["Drama"]), &names(&["Japan"])).anime);
 }
 
 #[test]
@@ -915,31 +874,29 @@ fn titled_sub(id: i64, index: i64, title: &str, forced: bool, sdh: bool) -> plx_
     plx_data::metadata::Stream { title: title.into(), forced, sdh, ..sub(id, index, "eng", false) }
 }
 
-fn account_pick(subs: &[plx_data::metadata::Stream], forced: i64) -> Option<i64> {
-    let account = SubtitleLangPrefs { language: Some("en"), mode: 2, forced };
-    pick_dp_subtitle_account(subs, &plx_plex::plex::ShowLangPrefs::default(), account, "eng").map(|p| p.0)
+fn auto_pick(subs: &[plx_data::metadata::Stream]) -> Option<i64> {
+    let item = plx_data::metadata::PlayingItem::with_subs(subs.to_vec());
+    auto_subtitle(&item, &plx_plex::plex::ShowLangPrefs::default(), SubtitleLangPrefs::default(), "eng").map(|p| p.0)
 }
 
-/// **The account rule reads "forced" the way the track menu does (#828).** A track whose title
-/// says "Forced" but whose PMS flag is unset is FORCED in the menu (`sub_traits`), so "prefer not
-/// forced" must skip it for the full track behind it, and "forced only" must take it.
+/// **The automatic subtitle reads "forced" the way the track menu does (#828).** A track whose
+/// title says "Forced" but whose PMS flag is unset is FORCED in the menu (`sub_traits`): the full
+/// track behind it wins, and a forced track alone is not shown.
 #[test]
-fn the_account_rule_treats_a_track_titled_forced_as_forced() {
+fn the_automatic_subtitle_treats_a_track_titled_forced_as_forced() {
     let subs = [titled_sub(1, 2, "Forced", false, false), titled_sub(2, 3, "", false, false)];
     assert!(plx_data::metadata::sub_layout::sub_traits(&subs[0]).forced, "the menu calls track 1 Forced");
-    assert_eq!(account_pick(&subs, 0), Some(2), "prefer non-forced skips the track named Forced");
-    assert_eq!(account_pick(&subs, 3), Some(2), "never-forced skips it too");
-    assert_eq!(account_pick(&subs, 1), Some(1), "prefer forced takes it");
-    assert_eq!(account_pick(&subs, 2), Some(1), "forced only takes it");
+    assert_eq!(auto_pick(&subs), Some(2));
+    assert_eq!(auto_pick(&subs[..1]), None);
 }
 
 /// The SDH half of #828: a track titled "English SDH" with no `sdh` flag is SDH in the menu, so
-/// the plain track behind it wins the first tier.
+/// the plain track behind it wins.
 #[test]
-fn the_account_rule_treats_a_track_titled_sdh_as_sdh() {
+fn the_automatic_subtitle_treats_a_track_titled_sdh_as_sdh() {
     let subs = [titled_sub(1, 2, "English SDH", false, false), titled_sub(2, 3, "", false, false)];
     assert!(plx_data::metadata::sub_layout::sub_traits(&subs[0]).sdh, "the menu calls track 1 SDH");
-    assert_eq!(account_pick(&subs, 0), Some(2), "pref non-SDH skips the track named SDH");
+    assert_eq!(auto_pick(&subs), Some(2));
 }
 
 // ---- PMS spells DTS `dca`: the table-backed caps must admit it -----------------------------

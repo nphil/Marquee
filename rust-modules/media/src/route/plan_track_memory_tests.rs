@@ -38,37 +38,37 @@ fn ladder(item: &PlayingItem, audio_lang: &str, memory: Option<&SubtitleMemo>) -
     pick_subtitle(item, &NO_SHOW_RULES(), SubtitleLangPrefs::default(), audio_lang, None, memory)
 }
 
-/// "Always show, English" (account mode 2): what today's ladder would turn on by itself.
+/// The account's subtitle language, English (what the automatic subtitle uses with nothing set).
 fn always_english() -> SubtitleLangPrefs<'static> {
-    SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 0 }
+    SubtitleLangPrefs { language: Some("eng") }
 }
 
 // ---- subtitle rung 3: a remembered track -------------------------------------------------------
 
-/// Q1: PMS's selected flag cannot tell an account auto-pick from a deliberate one, so a remembered
-/// pick outranks it. The control row is today's pick.
+/// Q1: PMS's selected flag cannot tell an automatic pick from a deliberate one, so it is not a rung:
+/// the automatic English subtitle plays, and a remembered pick outranks it.
 #[test]
-fn a_remembered_track_beats_the_pms_embedded_selection() {
+fn a_remembered_track_beats_the_automatic_subtitle() {
     let item = episode(vec![text_sub(1, "eng", ""), server_selected(text_sub(2, "spa", ""))]);
     assert_eq!(
         ladder(&item, "jpn", None),
-        SubDecision { pick: Some((2, 1)), source: SubPickSource::Server, miss: None },
-        "control: with no record PMS's selection plays",
+        SubDecision { pick: Some((1, 0)), source: SubPickSource::Account, miss: None },
+        "control: with no record English plays, whatever PMS selected",
     );
     assert_eq!(
-        ladder(&item, "jpn", Some(&track_memo("eng"))),
-        SubDecision { pick: Some((1, 0)), source: SubPickSource::Memory, miss: None },
+        ladder(&item, "jpn", Some(&track_memo("spa"))),
+        SubDecision { pick: Some((2, 1)), source: SubPickSource::Memory, miss: None },
     );
 }
 
-/// A record that matches no track of this file DECLINES: the ladder falls to today's pick, never to
-/// Off, and says which hard constraint failed.
+/// A record that matches no track of this file DECLINES: the ladder falls to the automatic pick,
+/// never to Off, and says which hard constraint failed.
 #[test]
-fn a_record_that_matches_nothing_gives_todays_pick() {
+fn a_record_that_matches_nothing_gives_the_automatic_pick() {
     let item = episode(vec![text_sub(1, "eng", ""), server_selected(text_sub(2, "spa", ""))]);
     let declined = ladder(&item, "jpn", Some(&track_memo("fra")));
-    assert_eq!(declined.pick, Some((2, 1)), "PMS's selection, as without a record");
-    assert_eq!(declined.source, SubPickSource::Server);
+    assert_eq!(declined.pick, Some((1, 0)), "the automatic English subtitle, as without a record");
+    assert_eq!(declined.source, SubPickSource::Account);
     assert_eq!(declined.miss, Some("language"));
     // the account's rule is what plays when PMS selected nothing
     let item = episode(vec![text_sub(1, "eng", ""), text_sub(2, "spa", "")]);
@@ -106,14 +106,13 @@ fn a_remembered_off_beats_account_mode_2() {
     );
 }
 
-/// Off is absolute (owner): a forced track PMS selected and the account's forced-only setting both
-/// stay hidden. Nothing falls through to them.
+/// Off is absolute (owner): nothing falls through to the automatic subtitle.
 #[test]
-fn a_remembered_off_hides_a_pms_selected_forced_track_and_the_accounts_forced_only() {
+fn a_remembered_off_hides_the_automatic_subtitle() {
     let item = episode(vec![server_selected(forced(text_sub(1, "eng", ""))), text_sub(2, "eng", "")]);
-    let account = SubtitleLangPrefs { language: Some("eng"), mode: 1, forced: 2 };
+    let account = SubtitleLangPrefs { language: Some("eng") };
     let control = pick_subtitle(&item, &NO_SHOW_RULES(), account, "jpn", None, None);
-    assert_eq!((control.pick, control.source), (Some((1, 0)), SubPickSource::Server), "control: PMS's forced track plays");
+    assert_eq!((control.pick, control.source), (Some((2, 1)), SubPickSource::Account), "control: the full track plays, never the forced one");
     let off = pick_subtitle(&item, &NO_SHOW_RULES(), account, "jpn", None, Some(&SubtitleMemo::Off));
     assert_eq!((off.pick, off.source), (None, SubPickSource::Memory));
 }
@@ -193,22 +192,22 @@ fn a_remembered_external_english_subtitle_selects_this_episodes_english_sidecar(
     );
 }
 
-/// With no same-language external file, the memo DECLINES: the ladder falls through to the next
-/// rung (here PMS's own selection), never to Off, and says which hard constraint failed.
+/// With no same-language external file, the memo DECLINES: the ladder falls through to the
+/// automatic pick, never to Off, and says which hard constraint failed.
 #[test]
 fn with_no_same_language_sidecar_a_remembered_external_subtitle_falls_through() {
-    let item = episode(vec![text_sub(1, "spa", ""), server_selected(text_sub(2, "fra", ""))]);
+    let item = episode(vec![text_sub(1, "eng", ""), text_sub(2, "fra", "")]);
     let declined = ladder(&item, "jpn", Some(&external_memo("eng", false)));
     assert_eq!(
         declined,
-        SubDecision { pick: Some((2, 1)), source: SubPickSource::Server, miss: Some("language") },
-        "PMS's selection plays as without a record",
+        SubDecision { pick: Some((1, 0)), source: SubPickSource::Account, miss: Some("language") },
+        "the automatic English subtitle plays as without a record",
     );
     let from_mode = pick_subtitle(
         &episode(vec![text_sub(1, "spa", "")]), &NO_SHOW_RULES(), always_english(), "jpn", None,
         Some(&external_memo("eng", false)),
     );
-    assert_eq!((from_mode.pick, from_mode.source), (None, SubPickSource::Account), "the account's rule, Off here");
+    assert_eq!((from_mode.pick, from_mode.source), (None, SubPickSource::Account), "no English track: Off");
 }
 
 /// A sidecar in ANOTHER language is not selected, however it is spelled, and neither is the
@@ -239,7 +238,7 @@ fn only_a_sidecar_the_app_can_draw_is_selected_and_only_for_an_external_memo() {
 
     let item = episode(vec![sidecar(82, "eng", "")]);
     let embedded_memo = ladder(&item, "jpn", Some(&track_memo("eng")));
-    assert_eq!((embedded_memo.pick, embedded_memo.miss), (None, Some("language")), "embedded memos are unchanged");
+    assert_eq!((embedded_memo.pick, embedded_memo.miss), (Some((82, -1)), Some("language")), "an embedded memo never takes a sidecar; the automatic pick does");
 }
 
 /// Both an embedded and an external English track on this episode: the memo's own kind of file is
@@ -258,21 +257,17 @@ fn an_external_memo_prefers_the_sidecar_and_an_embedded_memo_the_embedded_track(
 
 // ---- the rungs above memory --------------------------------------------------------------------
 
-/// Rung 2: a subtitle the SERVER selected and the app draws itself. Memory is not consulted (a
-/// record that matches nothing leaves no `miss`), and moving the selection off a downloaded
-/// subtitle makes PMS delete it, so nothing may displace it.
+/// A subtitle the SERVER selected is not a rung: a remembered choice, Off included, outranks it, and
+/// without one the automatic rule picks (a sidecar over an embedded track).
 #[test]
-fn a_server_selected_sidecar_beats_memory() {
+fn a_server_selected_sidecar_does_not_outrank_memory() {
     let sidecar = Stream { key: "/library/streams/9".into(), selected: true, ..sub(9, 9, "eng", true) };
     let item = episode(vec![text_sub(1, "eng", ""), sidecar]);
-    for memo in [track_memo("eng"), track_memo("fra"), SubtitleMemo::Off, SubtitleMemo::ForcedOnly { lang: String::new() }] {
-        let decision = ladder(&item, "jpn", Some(&memo));
-        assert_eq!(
-            decision,
-            SubDecision { pick: None, source: SubPickSource::Server, miss: None },
-            "{memo:?}: the sidecar stays; the landing restores it",
-        );
-    }
+    assert_eq!(ladder(&item, "jpn", Some(&SubtitleMemo::Off)), SubDecision { pick: None, source: SubPickSource::Memory, miss: None });
+    assert_eq!(
+        ladder(&item, "jpn", None),
+        SubDecision { pick: Some((9, -1)), source: SubPickSource::Account, miss: None },
+    );
 }
 
 /// Rung 1: this playback's own pick (a known retry) is the viewer's latest word.
@@ -286,19 +281,19 @@ fn this_playbacks_own_pick_beats_memory() {
     assert_eq!((spanish.pick, spanish.source), (Some((2, 1)), SubPickSource::Override));
 }
 
-/// Without a record the ladder is exactly today's, and says whose rule decided.
+/// Without a record the ladder is the automatic rule, and says whose language decided.
 #[test]
-fn without_a_record_the_ladder_is_todays() {
+fn without_a_record_the_ladder_is_the_automatic_rule() {
     let item = episode(vec![text_sub(1, "eng", ""), server_selected(text_sub(2, "spa", ""))]);
-    assert_eq!(ladder(&item, "jpn", None).source, SubPickSource::Server);
+    assert_eq!(ladder(&item, "jpn", None).source, SubPickSource::Account);
     let none_selected = episode(vec![text_sub(1, "eng", "")]);
-    let show = plx_plex::plex::ShowLangPrefs { audio: None, subtitle: Some("eng".into()), subtitle_mode: 2 };
+    let show = plx_plex::plex::ShowLangPrefs { subtitle: Some("eng".into()), subtitle_mode: 2, ..Default::default() };
     let shown = pick_subtitle(&none_selected, &show, SubtitleLangPrefs::default(), "jpn", None, None);
     assert_eq!((shown.pick, shown.source), (Some((1, 0)), SubPickSource::Show));
     let account = pick_subtitle(&none_selected, &NO_SHOW_RULES(), always_english(), "jpn", None, None);
     assert_eq!((account.pick, account.source), (Some((1, 0)), SubPickSource::Account));
-    let off = ladder(&none_selected, "jpn", None);
-    assert_eq!((off.pick, off.source, off.miss), (None, SubPickSource::Account, None));
+    let off = ladder(&episode(vec![text_sub(1, "spa", "")]), "jpn", None);
+    assert_eq!((off.pick, off.source, off.miss), (None, SubPickSource::Account, None), "no English track: Off");
 }
 
 // ---- the gate ----------------------------------------------------------------------------------
@@ -407,7 +402,7 @@ fn the_log_line_says_what_each_half_came_to() {
         memory_log(Some(&Err("commentary")), &tracks, None, None, false).as_deref(),
         Some("track-memory: no match (commentary) audio"),
     );
-    let higher = SubDecision { pick: Some((3, 1)), source: SubPickSource::Server, miss: None };
+    let higher = SubDecision { pick: Some((3, 1)), source: SubPickSource::Override, miss: None };
     assert_eq!(
         log(&track_memo("eng"), &higher, None).as_deref(),
         Some("track-memory: not used (a higher rung decided) subtitle"),
@@ -485,38 +480,34 @@ fn cc_sidecar(id: i64) -> Stream {
     Stream { key: format!("/library/streams/{id}"), sdh: true, ..sub(id, id, "eng", true) }
 }
 
-/// **An automatic subtitle follows the audio.** English audio prefers the dub transcript (the `.cc`
-/// sidecar, or a track titled Dub/Dubtitle) over the full translation PMS selected; Japanese audio
-/// the full translation over a selected dub transcript. On-screen text and the account's Forced only
-/// are left alone, and so is a remembered choice that decided the subtitle.
-#[test]
-fn an_automatic_subtitle_follows_the_audio() {
-    let item = episode(vec![text_sub(2, "eng", "Signs / Songs"), server_selected(text_sub(1, "eng", "Dialogue")), cc_sidecar(9)]);
-    assert_eq!(ladder(&item, "eng", None).pick, Some((9, -1)), "English audio: the .cc sidecar");
-    assert_eq!(ladder(&item, "jpn", None).pick, Some((1, 0)), "Japanese audio: the full translation stands");
-    let titled = episode(vec![server_selected(text_sub(1, "eng", "Dub (SDH)")), text_sub(2, "eng", "")]);
-    assert_eq!(ladder(&titled, "jpn", None).pick, Some((2, 1)));
-    assert_eq!(ladder(&titled, "eng", None).pick, Some((1, 0)));
-    let dubtitle = episode(vec![server_selected(text_sub(1, "eng", "")), text_sub(2, "eng", "Dubtitle")]);
-    assert_eq!(ladder(&dubtitle, "eng", None).pick, Some((2, 1)));
-    let sidecars = episode(vec![
-        text_sub(1, "eng", "Dialogue"),
-        server_selected(Stream { key: "/library/streams/8".into(), ..sub(8, 8, "eng", true) }),
-        cc_sidecar(9),
-    ]);
-    assert_eq!(ladder(&sidecars, "eng", None).pick, Some((9, -1)));
-    assert_eq!(ladder(&sidecars, "jpn", None).pick, None, "the server's translation already fits Japanese audio, so it stays");
-    let downloaded = episode(vec![
-        server_selected(text_sub(1, "eng", "Dialogue")),
-        Stream { key: "/library/streams/8".into(), ..sub(8, 8, "eng", true) },
-    ]);
-    assert_eq!(ladder(&downloaded, "jpn", None).pick, Some((8, -1)), "a downloaded translation outranks the built-in one");
-    assert_eq!(ladder(&downloaded, "eng", None).pick, Some((8, -1)), "and is the English fallback with no dub transcript");
+/// An episode of an anime with a Japanese original and an English dub.
+fn anime(subs: Vec<Stream>) -> PlayingItem {
+    PlayingItem {
+        origin: plx_plex::plex::TitleOrigin { anime: true, countries: Vec::new() },
+        audio: vec![trk(40, "aac", "jpn", true), trk(41, "aac", "eng", false)],
+        ..episode(subs)
+    }
+}
 
-    let signs = episode(vec![server_selected(text_sub(1, "eng", "Signs & Songs")), cc_sidecar(9)]);
-    assert_eq!(ladder(&signs, "eng", None).pick, Some((1, 0)), "on-screen text is not followed");
-    let forced_only = SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 2 };
-    assert_eq!(pick_subtitle(&item, &NO_SHOW_RULES(), forced_only, "eng", None, None).pick, Some((1, 0)));
+/// **An anime's automatic subtitle follows the audio.** English dub audio takes the dub-matched
+/// sidecar (`.en.cc.srt`), the original audio the full translation (`.en.srt`); on-screen text is
+/// never the pick. Outside anime English audio keeps the full translation.
+#[test]
+fn an_anime_subtitle_follows_the_audio() {
+    let subs = vec![text_sub(2, "eng", "Signs / Songs"), text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", ""), cc_sidecar(9)];
+    let item = anime(subs);
+    assert_eq!(ladder(&item, "eng", None).pick, Some((9, -1)), "English dub: the dub-matched sidecar");
+    assert_eq!(ladder(&item, "jpn", None).pick, Some((8, -1)), "original audio: the full translation");
+    let film = PlayingItem { origin: Default::default(), ..item };
+    assert_eq!(ladder(&film, "eng", None).pick, Some((8, -1)), "outside anime the full translation stays on");
+}
+
+/// With no sidecar an embedded text track is drawn by the app, in the same variant order.
+#[test]
+fn an_embedded_text_track_is_drawn_when_no_sidecar_exists() {
+    let item = anime(vec![text_sub(2, "eng", "Signs / Songs"), text_sub(1, "eng", "Dub (SDH)"), text_sub(3, "eng", "Dialogue")]);
+    assert_eq!(ladder(&item, "eng", None).pick, Some((1, 0)), "English dub: the dub transcript");
+    assert_eq!(ladder(&item, "jpn", None).pick, Some((3, 2)), "original audio: the dialogue");
 }
 
 /// One-Punch Man S02E01 as PMS lists it: the built-in PGS "Signs / Songs" and "Dialogue", Bazarr's
@@ -524,7 +515,7 @@ fn an_automatic_subtitle_follows_the_audio() {
 /// selected on the server.
 fn one_punch_man_s02e01() -> PlayingItem {
     let pgs = |id, index, title: &str| Stream { codec: "pgs".into(), title: title.into(), ..sub(id, index, "eng", false) };
-    episode(vec![
+    anime(vec![
         pgs(77178, 3, "Signs / Songs"),
         pgs(77179, 4, "Dialogue"),
         server_selected(cc_sidecar(166341)),
@@ -532,63 +523,48 @@ fn one_punch_man_s02e01() -> PlayingItem {
     ])
 }
 
-/// **The server's selection is an automatic pick: the audio moves it.** PMS (or a tool that rewrites
-/// its selections) had the dub transcript selected, and the profile held a remembered subtitle that
-/// the server's sidecar outranks (`track-memory: not used (a higher rung decided)`). Japanese audio
-/// stayed on the dub transcript instead of the translation, because a withheld memory stopped the
-/// follow. Whatever the withheld memory says, English audio keeps the server's dub and Japanese audio
-/// takes the translation.
+/// **The server's selection does not move the automatic subtitle: the audio does.** Whatever PMS has
+/// selected, English dub audio takes the dub transcript and Japanese audio the translation, and a
+/// picture track is never the pick.
 #[test]
-fn the_servers_selection_follows_the_audio_whatever_memory_it_outranks() {
+fn the_servers_selection_does_not_move_the_automatic_subtitle() {
     let item = one_punch_man_s02e01();
-    let withheld = [
-        None,
-        Some(track_memo("eng")),
-        Some(external_memo("eng", false)),
-        Some(external_memo("eng", true)),
-        Some(SubtitleMemo::Off),
-        Some(SubtitleMemo::ForcedOnly { lang: String::new() }),
-    ];
-    for memo in &withheld {
-        let english = ladder(&item, "eng", memo.as_ref());
-        assert_eq!((english.pick, english.source), (None, SubPickSource::Server), "{memo:?}: English audio: the server's dub transcript stands");
-        let japanese = ladder(&item, "jpn", memo.as_ref());
-        assert_eq!(japanese.pick, Some((166318, -1)), "{memo:?}: Japanese audio: the full translation");
-    }
+    assert_eq!(ladder(&item, "eng", None).pick, Some((166341, -1)));
+    assert_eq!(ladder(&item, "jpn", None).pick, Some((166318, -1)));
+    let swapped = PlayingItem {
+        subs: item.subs.iter().cloned().map(|s| Stream { selected: s.id == 166318, ..s }).collect(),
+        ..item
+    };
+    assert_eq!(ladder(&swapped, "eng", None).pick, Some((166341, -1)));
+    assert_eq!(ladder(&swapped, "jpn", None).pick, Some((166318, -1)));
 }
 
 /// A remembered subtitle that DECIDED is the viewer's choice and is not followed; one that matched
 /// nothing decided nothing, so the automatic pick it fell back to follows the audio as usual.
 #[test]
 fn only_a_memory_that_decided_stops_the_follow() {
-    let item = episode(vec![text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", ""), cc_sidecar(9)]);
+    let item = anime(vec![text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", ""), cc_sidecar(9)]);
     let decided = ladder(&item, "eng", Some(&external_memo("eng", false)));
     assert_eq!((decided.pick, decided.source), (Some((8, -1)), SubPickSource::Memory), "English audio would prefer the dub (9)");
 
-    let selected = episode(vec![text_sub(2, "eng", "Signs / Songs"), server_selected(text_sub(1, "eng", "Dialogue")), cc_sidecar(9)]);
-    let declined = ladder(&selected, "eng", Some(&track_memo("spa")));
-    assert_eq!((declined.pick, declined.source, declined.miss), (Some((9, -1)), SubPickSource::Server, Some("language")));
+    let declined = ladder(&item, "eng", Some(&track_memo("spa")));
+    assert_eq!((declined.pick, declined.source, declined.miss), (Some((9, -1)), SubPickSource::Account, Some("language")));
 }
 
 // ---- a downloaded track stands for its built-in twin -------------------------------------------
 
 /// **No pick lands on a built-in track the Subtitles menu hides** behind a downloaded file of the same
-/// language and kind: PMS's selection, a remembered descriptor and the account's rule all name the
-/// built-in track, and the pick is its downloaded twin (`sub_layout::downloaded_twin`).
+/// language and kind: a remembered descriptor names the built-in track, and the pick is its
+/// downloaded twin (`sub_layout::downloaded_twin`).
 #[test]
 fn a_pick_of_a_built_in_track_lands_on_its_downloaded_twin() {
-    let selected = episode(vec![server_selected(text_sub(1, "eng", "Dub (SDH)")), cc_sidecar(9)]);
-    assert_eq!(ladder(&selected, "eng", None).pick, Some((9, -1)), "English audio: the dub transcript, downloaded");
-    assert_eq!(ladder(&selected, "jpn", None).pick, Some((9, -1)), "no translation to follow to: the dub stays, as its twin");
-
     let remembered = episode(vec![text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", "")]);
     let decision = ladder(&remembered, "eng", Some(&track_memo("eng")));
     assert_eq!((decision.pick, decision.source), (Some((8, -1)), SubPickSource::Memory), "a remembered built-in track falls back to its twin");
 
     let forced_pair = episode(vec![forced(text_sub(1, "eng", "")), Stream { forced: true, ..sidecar(8, "eng", "") }]);
-    let on_screen_only = SubtitleLangPrefs { language: Some("eng"), mode: 2, forced: 2 };
-    let account = pick_subtitle(&forced_pair, &NO_SHOW_RULES(), on_screen_only, "eng", None, None);
-    assert_eq!(account.pick, Some((8, -1)), "the account's On-screen text rule is not followed, but it is mapped");
+    let account = pick_subtitle(&forced_pair, &NO_SHOW_RULES(), always_english(), "eng", None, None);
+    assert_eq!(account.pick, None, "a forced track is never the automatic pick");
 
     let forced_only = SubtitleMemo::ForcedOnly { lang: String::new() };
     let mode = ladder(&forced_pair, "eng", Some(&forced_only));
@@ -599,15 +575,12 @@ fn a_pick_of_a_built_in_track_lands_on_its_downloaded_twin() {
 /// another kind (a full translation does not stand for on-screen text), or the client cannot draw it.
 #[test]
 fn a_built_in_track_without_a_downloaded_twin_stays_the_pick() {
-    let signs = episode(vec![server_selected(text_sub(1, "eng", "Signs & Songs")), sidecar(8, "eng", "")]);
-    assert_eq!(ladder(&signs, "eng", None).pick, Some((1, 0)), "another kind");
-
     for (what, file) in [
         ("an image format", Stream { codec: "pgs".into(), sdh: true, ..sidecar(9, "eng", "") }),
         ("no delivery key", Stream { key: String::new(), sdh: true, ..sidecar(9, "eng", "") }),
     ] {
-        let item = episode(vec![server_selected(text_sub(1, "eng", "Dub (SDH)")), file]);
-        assert_eq!(ladder(&item, "eng", None).pick, Some((1, 0)), "{what}: the client cannot draw the file");
+        let item = episode(vec![text_sub(1, "eng", "Dub (SDH)"), file]);
+        assert_eq!(ladder(&item, "eng", Some(&track_memo("eng"))).pick, Some((1, 0)), "{what}: the client cannot draw the file");
     }
 
     let full_file = episode(vec![forced(text_sub(1, "eng", "")), sidecar(8, "eng", "")]);

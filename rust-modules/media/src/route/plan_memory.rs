@@ -21,12 +21,10 @@ pub(super) fn show_memory<'a>(
 }
 
 /// The remembered subtitle [`pick_subtitle`] actually consulted: none for this playback's own pick
-/// (a retry) or when the server has a sidecar selected, which outranks memory. What a later
-/// re-match may hold the landing to.
-pub(super) fn consulted_memory<'a>(
-    item: &plx_data::metadata::PlayingItem, override_id: Option<i64>, memo: Option<&'a SubtitleMemo>,
-) -> Option<&'a SubtitleMemo> {
-    memo.filter(|_| override_id.is_none() && plx_data::metadata::server_selected_sidecar(item).is_none())
+/// (a retry). A remembered choice outranks the server's selection, which is mostly this app's own
+/// last landing. What a later re-match may hold the landing to.
+pub(super) fn consulted_memory<'a>(override_id: Option<i64>, memo: Option<&'a SubtitleMemo>) -> Option<&'a SubtitleMemo> {
+    memo.filter(|_| override_id.is_none())
 }
 
 /// **Which of the three subtitle states a landing is in** ([`SubMode`]). A retry carries the mode

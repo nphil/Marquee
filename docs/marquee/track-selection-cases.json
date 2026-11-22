@@ -1,0 +1,1220 @@
+{
+ "version": 1,
+ "language": "en",
+ "notes": [
+  "Shared by Marquee (rust-modules/data/src/metadata/auto_tracks.rs checks every case) and the phone apps.",
+  "audio[].original is the title's original-language track, dub any track in another language. Marquee marks the original from the Plex Country tags (first country whose language the file has; anime falls back to Japanese).",
+  "anime is Plex genre Anime, or genres Animation + country Japan.",
+  "Sidecars are SRT. Anime: .en.srt matches the original audio; .en.cc.srt (hearingImpaired) matches the English dub. Films and non-anime TV: exactly one .en.srt; .en.cc.srt stands in when .en.srt is missing.",
+  "Sidecar order of preference: matching external, then any external, then an embedded text track (same variant order). Never a picture track, never forced or signs-only, never a server burn.",
+  "remembered.audio / remembered.subtitle are the viewer's explicit choice for this title or show; subtitle is a stream id, or \"off\". An id the file does not have is ignored.",
+  "expect.audio null: the choice has no opinion (the server's and the file's defaults apply). expect.subtitle null: subtitles off."
+ ],
+ "cases": [
+  {
+   "name": "movie, foreign original: original audio, the one English sidecar",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "movie, English original: English audio, English subtitle still on",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "en",
+     "original": true,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "movie, only the dub-matched sidecar exists: it stands in",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 11
+   }
+  },
+  {
+   "name": "movie, both sidecars: the original-matched one",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    },
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "non-anime episode with a dub present: original audio, never the dub",
+   "title": "episode",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "de",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "non-anime episode, English audio: English subtitle on",
+   "title": "episode",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "en",
+     "original": true,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "anime with the English dub and both sidecars: dub audio, dub-matched subtitle",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 11
+   }
+  },
+  {
+   "name": "anime dub, only the original-matched sidecar: it stands in",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "anime dub, only the dub-matched sidecar",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 11
+   }
+  },
+  {
+   "name": "anime, viewer chose the original audio: original-matched subtitle",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": 1,
+    "subtitle": null
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "anime without a dub, both sidecars: original audio, original-matched subtitle",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "anime without a dub, only the dub-matched sidecar: it stands in",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 11
+   }
+  },
+  {
+   "name": "anime film follows the same rule",
+   "title": "movie",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 11
+   }
+  },
+  {
+   "name": "only an embedded text track: drawn in the app",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 12,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 12
+   }
+  },
+  {
+   "name": "an English sidecar beats an embedded text track",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 12,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "anime dub, embedded full and embedded hearing-impaired, no sidecar: the dub-matched one",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 12,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 13,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 13
+   }
+  },
+  {
+   "name": "anime original audio, embedded full and hearing-impaired, no sidecar: the full one",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 13,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    },
+    {
+     "id": 12,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": 1,
+    "subtitle": null
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": 12
+   }
+  },
+  {
+   "name": "only a picture track: nothing is chosen",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 14,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "a picture track and an embedded text track: the text one",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 14,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs"
+    },
+    {
+     "id": 12,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 12
+   }
+  },
+  {
+   "name": "only an English forced track: nothing is chosen",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 15,
+     "language": "en",
+     "external": false,
+     "forced": true,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "a forced track listed before a full sidecar: the full one",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 15,
+     "language": "en",
+     "external": false,
+     "forced": true,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "a signs and songs track beside the full one: the full one",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 16,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt",
+     "title": "Signs & Songs"
+    },
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 2,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "a forced sidecar only: nothing is chosen",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 15,
+     "language": "en",
+     "external": true,
+     "forced": true,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "only a non-English sidecar: nothing is chosen",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 17,
+     "language": "fr",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 1,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "no subtitle tracks at all",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [],
+   "expect": {
+    "audio": 1,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "viewer chose Off for this title: no subtitle",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": null,
+    "subtitle": "off"
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "viewer chose Off for this anime: no subtitle, dub audio",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": null,
+    "subtitle": "off"
+   },
+   "expect": {
+    "audio": 2,
+    "subtitle": null
+   }
+  },
+  {
+   "name": "viewer chose another language track: it wins",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 17,
+     "language": "fr",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": null,
+    "subtitle": 17
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": 17
+   }
+  },
+  {
+   "name": "viewer chose a specific English track: it wins",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 1,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    },
+    {
+     "id": 11,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": null,
+    "subtitle": 10
+   },
+   "expect": {
+    "audio": 2,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "remembered track is not in this file: the automatic choice",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": null,
+    "subtitle": 99
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "viewer chose the dub for a film: it wins, subtitle still on",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": 2,
+    "subtitle": null
+   },
+   "expect": {
+    "audio": 2,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "remembered audio is not in this file: the automatic choice",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "fr",
+     "original": true,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "en",
+     "original": false,
+     "dub": true
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": 99,
+    "subtitle": null
+   },
+   "expect": {
+    "audio": 1,
+    "subtitle": 10
+   }
+  },
+  {
+   "name": "no track is known to be the original: audio is left to the server, subtitle on",
+   "title": "movie",
+   "anime": false,
+   "audio": [
+    {
+     "id": 1,
+     "language": "en",
+     "original": false,
+     "dub": false
+    },
+    {
+     "id": 2,
+     "language": "fr",
+     "original": false,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 10,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": null,
+    "subtitle": 10
+   }
+  }
+ ]
+}

@@ -4,6 +4,7 @@
 //! CURRENT item. Idiomatic Rust (String/Vec), like the browse catalog (pms.rs) — the fixed C
 //! buffers from the C port are gone.
 use std::os::raw::c_int;
+pub mod auto_tracks;
 pub mod episode_list;
 pub mod record;
 pub mod sub_layout;
@@ -3132,6 +3133,9 @@ pub struct PlayingItem {
     /// (`convert_streams`' `hdr`). The SOURCE's fact, not the picture's: a server re-encode to SDR
     /// keeps it true, so the HDR overlay dim also asks the route (`route::overlay_gain`).
     pub hdr: bool,
+    /// The item's own genre and country (a movie's). An episode carries none of its own: its
+    /// show's come with the show's language settings (`ShowLangPrefs::origin`).
+    pub origin: plx_plex::plex::TitleOrigin,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -3158,6 +3162,7 @@ impl PlayingItem {
             markers_known: false,
             chapters: Vec::new(),
             hdr: false,
+            origin: Default::default(),
         }
     }
 }
@@ -3210,6 +3215,7 @@ fn cached_playing(state: &MetadataState, sid: plx_plex::plex::ServerId, rk: &str
             markers_known: false,
             chapters: d.chapters.clone(),
             hdr: d.hdr,
+            origin: plx_plex::plex::TitleOrigin::from_names(&d.genres, &d.countries),
         })
 }
 
@@ -3349,6 +3355,7 @@ fn playing_item_of(
         markers_known: false,
         chapters,
         hdr,
+        origin: it.map(|it| plx_plex::plex::TitleOrigin::from_tags(&it.genre, &it.country)).unwrap_or_default(),
     }
 }
 

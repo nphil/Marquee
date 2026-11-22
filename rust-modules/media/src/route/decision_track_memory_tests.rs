@@ -232,19 +232,20 @@ use through_build_stream::*;
 
 // ---- the subtitle rungs, through the plan ------------------------------------------------------
 
-/// Q1: a remembered track outranks the track PMS has selected, and the MDE handshake names it (so
-/// the server and the client agree on what is drawn). The control is today's pick.
+/// Q1: a remembered track outranks the automatic subtitle, and the MDE handshake names it (so the
+/// server and the client agree on what is drawn). The control is the automatic English subtitle.
 #[test]
 #[cfg(feature = "devtriggers")]
-fn a_remembered_subtitle_beats_the_pms_embedded_selection() {
+fn a_remembered_subtitle_beats_the_automatic_subtitle() {
     let subs = || vec![srt(55001, 3, "eng", false, false), srt(55002, 4, "spa", false, true)];
     let (control, _) = resolve(Case::episode(subs(), Vec::new()));
-    assert_eq!(control.sub_sid, 55002, "control: with no record PMS's selection plays");
+    assert_eq!(control.sub_sid, 55001, "control: with no record English plays, whatever PMS selected");
 
-    let (plan, requests) = resolve(Case::episode(subs(), memory(None, Some(english_track()))));
+    let spanish = SubtitleMemo::Track(SubtitleTrackMemo { lang: "spa".into(), kind: "text".into(), ..Default::default() });
+    let (plan, requests) = resolve(Case::episode(subs(), memory(None, Some(spanish))));
     assert!(is_direct_play(&plan), "{}", plan.url);
-    assert_eq!((plan.sub_sid, plan.sub_render_ordinal), (55001, Some(0)));
-    assert_eq!(query_param(decision(&requests), "subtitleStreamID"), Some("55001"), "{requests:?}");
+    assert_eq!((plan.sub_sid, plan.sub_render_ordinal), (55002, Some(1)));
+    assert_eq!(query_param(decision(&requests), "subtitleStreamID"), Some("55002"), "{requests:?}");
     assert_eq!(query_param(decision(&requests), "subtitles"), Some("none"), "{requests:?}");
 }
 
@@ -275,7 +276,7 @@ fn a_remembered_off_hides_a_pms_selected_forced_track_and_the_accounts_forced_on
     let account = Some((Some("eng".into()), 1, 2));
     let mut control = Case::episode(subs(), Vec::new());
     control.account = account.clone();
-    assert_eq!(resolve(control).0.sub_sid, 55003, "control: PMS's forced track plays");
+    assert_eq!(resolve(control).0.sub_sid, 55001, "control: the full track plays, never the forced one");
 
     let mut case = Case::episode(subs(), memory(None, Some(SubtitleMemo::Off)));
     case.account = account;
@@ -315,12 +316,11 @@ fn forced_only_follows_the_audio_that_plays() {
     assert_eq!(plan.sub_sid, 55004);
 }
 
-/// A subtitle the SERVER selected and the app draws itself (a downloaded sidecar) beats memory:
-/// moving the selection off a download makes PMS delete it. The route is today's, and no write-back
-/// is made.
+/// A subtitle the SERVER selected (a downloaded sidecar) is not a rung: a remembered choice outranks
+/// it, and without one the automatic rule picks.
 #[test]
 #[cfg(feature = "devtriggers")]
-fn a_server_selected_sidecar_beats_memory() {
+fn a_server_selected_sidecar_does_not_outrank_memory() {
     let sidecar = plx_data::metadata::Stream {
         key: "/library/streams/9".into(),
         external: true,
@@ -328,16 +328,15 @@ fn a_server_selected_sidecar_beats_memory() {
         ..stream(9, 9, "eng", "srt", 0)
     };
     let subs = || vec![srt(55002, 3, "spa", false, false), sidecar.clone()];
-    let (control, control_requests) = resolve(Case::episode(subs(), Vec::new()));
-    let (plan, requests) = resolve(Case::episode(subs(), memory(None, Some(SubtitleMemo::Track(SubtitleTrackMemo {
+    let (control, _) = resolve(Case::episode(subs(), Vec::new()));
+    assert_eq!(control.memory_sidecar, Some(9), "control: the automatic English sidecar");
+    let (plan, _) = resolve(Case::episode(subs(), memory(None, Some(SubtitleMemo::Track(SubtitleTrackMemo {
         lang: "spa".into(),
         kind: "text".into(),
         ..Default::default()
     })))));
-    assert_eq!(plan.sub_sid, control.sub_sid, "the sidecar's route is untouched: {}", plan.sub_sid);
-    assert_eq!(plan.sub_render_ordinal, control.sub_render_ordinal);
-    assert_eq!(shape(&requests), shape(&control_requests));
-    assert_eq!(plan.write_back, None, "nothing remembered was applied");
+    assert_eq!((plan.sub_sid, plan.sub_render_ordinal), (55002, Some(0)), "the remembered Spanish track");
+    assert_eq!(plan.memory_sidecar, None);
 }
 
 /// A record that matches no track of this file changes nothing: today's pick, the same route.
@@ -463,7 +462,7 @@ fn write_back_provenance_declined() {
 fn write_back_provenance_fall_through() {
     let subs = vec![srt(55001, 3, "eng", false, false), srt(55002, 4, "spa", false, true)];
     let (plan, _) = resolve(Case::episode(subs, Vec::new()));
-    assert_eq!(plan.sub_sid, 55002, "setup: PMS's selection played");
+    assert_eq!(plan.sub_sid, 55001, "setup: the automatic English subtitle played");
     assert_eq!(plan.write_back, None);
 }
 
