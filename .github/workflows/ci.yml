@@ -76,6 +76,8 @@ on:
       - 'docs/screenshots/CREDITS.md'
       # include_str!ed by rust-modules/telemetry tests and read by telemetry/src/diag/schema.rs
       - 'docs/privacy-data.md'
+      # include_str!ed by rust-modules/data auto_tracks.rs and media text_ass tests
+      - 'docs/marquee/track-selection-cases.json'
       # replayed by tools/test_abr_calibrate_plant.py, test_abr_transfer_bound.py and
       # test_scrub_logs.py (make check): must stay a trigger
       - 'docs/measurements/*-logs/*.log'

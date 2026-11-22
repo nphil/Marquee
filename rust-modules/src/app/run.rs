@@ -6351,20 +6351,20 @@ mod lifecycle_regression_tests {
 
         rig.play_show_episode_one();
         let ps = &rig.app.player.session;
-        assert_eq!(plx_media::route::cur_sub_sid(ps), 1014, "E1 starts on the server's Spanish subtitle");
+        assert_eq!(plx_media::route::cur_sub_sid(ps), 1015, "E1 starts on the automatic English subtitle, not the server's Spanish");
         assert_eq!(plx_media::route::cur_audio_sid(ps), 1012, "and its first audio, English");
-        rig.pick_subtitle(1015);
+        rig.pick_subtitle(1014);
         rig.pick_audio(1013);
         let ps = &rig.app.player.session;
-        assert_eq!((plx_media::route::cur_sub_sid(ps), plx_media::route::cur_audio_sid(ps)), (1015, 1013), "the picks stood");
+        assert_eq!((plx_media::route::cur_sub_sid(ps), plx_media::route::cur_audio_sid(ps)), (1014, 1013), "the picks stood");
 
         rig.advance_to_next_episode();
         let ps = &rig.app.player.session;
         assert_eq!(
             (plx_media::route::cur_sub_sid(ps), plx_media::route::cur_audio_sid(ps)),
-            (2014, 2013),
-            "E2 shows the English subtitle and plays the Japanese audio the viewer chose on E1 \
-             (the server's own selection there is Spanish, English)"
+            (2015, 2013),
+            "E2 shows the Spanish subtitle and plays the Japanese audio the viewer chose on E1 \
+             (the automatic choice there is the English subtitle and English audio)"
         );
     }
 
@@ -6386,8 +6386,8 @@ mod lifecycle_regression_tests {
         let ps = &rig.app.player.session;
         assert_eq!(
             (plx_media::route::cur_sub_sid(ps), plx_media::route::cur_audio_sid(ps)),
-            (0, 1012),
-            "E1 starts with no subtitle (the server selected none) and its first audio"
+            (1014, 1012),
+            "E1 starts on the automatic full English subtitle and its first audio"
         );
         rig.pick_forced_only();
         let ps = &rig.app.player.session;
