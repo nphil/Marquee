@@ -358,6 +358,7 @@ fn server_selected_external_srt_is_enhanced_remux_sidecar_unaffected() {
     let _g = fresh_registry(&mut ps);
     let external = plx_data::metadata::Stream {
         id: 77,
+        lang_code: "eng".into(),
         codec: "srt".into(),
         key: "/library/streams/77".into(),
         external: true,

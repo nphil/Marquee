@@ -851,22 +851,15 @@ pub(super) fn desired_audio(
     }
 }
 
-/// Will a subtitle be on screen for this item, and which way (issue #266 I6)? The explicit pick,
-/// or the sidecar the direct-play landing restores on its own (`metadata::server_selected_sidecar`
-/// — the same predicate `player::sidecar::restore_selection` switches it on with).
+/// Will a subtitle be on screen for this item, and which way (issue #266 I6)? The ladder's pick:
+/// a sidecar the landing restores (`Plan::memory_sidecar`) is handled by the caller.
 /// `sub_pick`'s ordinal is `metadata::sub_render_ordinal`'s own: negative = external sidecar,
 /// non-negative = an embedded demuxer ordinal. Mid-play the fact is read off the session instead
 /// (`route::decision::facts`); this is the resolve-time half.
-pub(super) fn subtitle_effect_of(
-    item: Option<&plx_data::metadata::PlayingItem>,
-    sub_pick: Option<(i64, i32)>,
-) -> SubtitleEffect {
+pub(super) fn subtitle_effect_of(sub_pick: Option<(i64, i32)>) -> SubtitleEffect {
     match sub_pick {
         Some((_, ord)) if ord < 0 => SubtitleEffect::Sidecar,
         Some(_) => SubtitleEffect::Embedded,
-        None if item.is_some_and(|i| plx_data::metadata::server_selected_sidecar(i).is_some()) => {
-            SubtitleEffect::Sidecar
-        }
         None => SubtitleEffect::None,
     }
 }
@@ -1676,13 +1669,11 @@ pub struct Plan {
     /// Q-TOP (b) burns only on a route that already re-encodes video, so no burn rides it. The menu
     /// will say why once C4 reads this; the log says `not shown (copy remux)`.
     pub memory_note: bool,
-    /// **The remembered sidecar this resolve chose to draw** (C5): the stream id of THIS episode's
-    /// same-language external file that the profile's remembered external subtitle meant
-    /// ([`memory_subtitle`]), or the sidecar an automatic subtitle follows the audio to
-    /// ([`follow_audio`]). `None` for every other plan, including a remembered embedded track and a
-    /// server-selected sidecar left standing (which the landing finds on its own). The landing restores it
-    /// exactly as it restores the server's selection (`player::sidecar::restore_selection`: the key
-    /// and codec are looked up in the playing item), on the routes where the app draws a sidecar.
+    /// **The sidecar this resolve chose to draw**: the stream id of THIS episode's same-language
+    /// external file that the profile's remembered external subtitle meant ([`memory_subtitle`]), or the
+    /// sidecar the automatic rule picked. `None` for every other plan, including an embedded track.
+    /// The landing restores only this one (`player::sidecar::restore_selection`: the key and codec are
+    /// looked up in the playing item), on the routes where the app draws a sidecar.
     pub memory_sidecar: Option<i64>,
     /// Which of the three subtitle states this landing is in ([`SubMode`]): Forced only when the
     /// profile remembered it for the show (or a retry carried it), so an audio switch re-points it.
@@ -2402,7 +2393,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
             } else if side_draws || plan.memory_sidecar.is_some() {
                 SubtitleEffect::Sidecar
             } else {
-                subtitle_effect_of(plan.playing.as_ref(), sub_pick)
+                subtitle_effect_of(sub_pick)
             };
             // A macro, not a closure: a closure whose return type borrows its own parameter fixes one
             // concrete lifetime at its definition site, but this expression is evaluated below against two

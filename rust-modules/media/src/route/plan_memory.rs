@@ -54,8 +54,7 @@ pub(super) fn memory_subtitle_id(decision: Option<&SubDecision>) -> Option<i64> 
 ///   - subtitle: the remembered subtitle (rung 3: a track, Off or Forced only) decided (`Id`, or
 ///     `Off` when nothing is to show), and the Part carries NO external stream at all. An external
 ///     may be another Home user's download (U24), or the viewer's own selected one that rung 2
-///     cannot take (`server_selected_sidecar` wants a renderable sidecar: a PGS `.sup`, a VobSub, a
-///     format outside the allow-list, a keyless stream, all of which fall through to memory), and
+///     cannot draw (a PGS `.sup`, a VobSub, a format outside the allow-list, a keyless stream), and
 ///     moving the selection off a download makes PMS discard it (W5).
 ///
 /// A declined memory, a fall-through, a retry and a preview write nothing.

@@ -1308,13 +1308,11 @@ mod tests {
         reset();
     }
 
-    /// Issue #266 I6: the route withholds the audio enhancement exactly when this restore would
-    /// put a sidecar on screen, so the two must read ONE predicate
-    /// (`metadata::server_selected_sidecar`). Graded against every shape the predicate splits on:
-    /// a drawable selected sidecar is restored and is the shared answer; an unselected one, a
-    /// keyless one, a bitmap one and a selected EMBEDDED track are all nothing to both.
+    /// The restore draws only the sidecar the resolve planned, and only one the app can draw: an
+    /// unplanned one (the server's own selection included), a keyless one, a bitmap one and an
+    /// embedded track are all nothing.
     #[test]
-    fn restore_uses_shared_server_selected_sidecar() {
+    fn restore_draws_only_the_planned_sidecar() {
         let _guard = plx_base::testlock::serial();
         let sidecar = |id: i64, codec: &str, key: &str, selected: bool, external: bool| plx_data::metadata::Stream {
             id,
@@ -1324,20 +1322,20 @@ mod tests {
             external,
             ..Default::default()
         };
-        let cases: [(Vec<plx_data::metadata::Stream>, Option<i64>); 5] = [
-            (vec![sidecar(1, "srt", "/library/streams/1", false, true), sidecar(2, "srt", "/library/streams/2", true, true)], Some(2)),
-            (vec![sidecar(3, "srt", "/library/streams/3", false, true)], None),
-            (vec![sidecar(4, "srt", "", true, true)], None),
-            (vec![sidecar(5, "pgs", "/library/streams/5", true, true)], None),
-            (vec![sidecar(6, "srt", "", true, false)], None),
+        let cases: [(Vec<plx_data::metadata::Stream>, Option<i64>, Option<i64>); 6] = [
+            (vec![sidecar(1, "srt", "/library/streams/1", false, true), sidecar(2, "srt", "/library/streams/2", true, true)], Some(1), Some(1)),
+            (vec![sidecar(1, "srt", "/library/streams/1", false, true), sidecar(2, "srt", "/library/streams/2", true, true)], None, None),
+            (vec![sidecar(4, "srt", "", true, true)], Some(4), None),
+            (vec![sidecar(5, "pgs", "/library/streams/5", true, true)], Some(5), None),
+            (vec![sidecar(6, "srt", "", true, false)], Some(6), None),
+            (vec![sidecar(3, "srt", "/library/streams/3", false, true)], Some(9), None),
         ];
-        for (subs, want) in cases {
+        for (subs, planned, want) in cases {
             let ids: Vec<i64> = subs.iter().map(|s| s.id).collect();
             let item = plx_data::metadata::PlayingItem::with_subs(subs);
-            assert_eq!(plx_data::metadata::server_selected_sidecar(&item).map(|s| s.id), want, "{ids:?}");
             let mut store = plx_data::stores::metadata::MetadataStore::default();
             assert!(store.run(plx_data::stores::metadata::MetadataCmd::InstallPlaying(Some(item))));
-            assert_eq!(restore_selection(plx_plex::plex::ServerId::UNSET, store.view(), None), want, "{ids:?}");
+            assert_eq!(restore_selection(plx_plex::plex::ServerId::UNSET, store.view(), planned), want, "{ids:?} planned {planned:?}");
             finish_download();
             deselect();
         }

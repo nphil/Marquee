@@ -84,6 +84,8 @@ mod through_build_stream {
         pub sub_sid: i64,
         /// The subtitle mode that retry held (`env.sub_mode`); meaningful only beside `sub_sid`.
         pub sub_mode: SubMode,
+        /// The title is an anime (Plex genre), so an English dub takes the dub-matched subtitle.
+        pub anime: bool,
     }
 
     impl Case {
@@ -106,6 +108,7 @@ mod through_build_stream {
                 bitrate: 48_000,
                 sub_sid: 0,
                 sub_mode: SubMode::Track,
+                anime: false,
             }
         }
     }
@@ -188,6 +191,7 @@ mod through_build_stream {
         env.cached_item = Some(plx_data::metadata::PlayingItem {
             kind: case.kind.into(),
             show_rk: case.show_rk.into(),
+            origin: plx_plex::plex::TitleOrigin { anime: case.anime, countries: Vec::new() },
             bitrate: case.bitrate,
             ..fourk_item_with_subs(sid, case.audio, case.subs)
         });
@@ -511,7 +515,7 @@ fn write_back_provenance_external_on_part_withholds_the_subtitle_half() {
 
 /// W5's headline rule, for the externals rung 2 cannot see: a SELECTED external subtitle the app
 /// cannot draw (a PGS `.sup`, a VobSub, a format outside the sidecar allow-list) is not rung 2's
-/// (`server_selected_sidecar` wants a renderable one), so the remembered embedded track plays.
+/// (the automatic pick wants a renderable one), so the remembered embedded track plays.
 /// Writing it back would move the selection off that download, and PMS discards a downloaded
 /// subtitle once the selection leaves it. The memory still applies on screen; only the server write
 /// is withheld.
@@ -1511,12 +1515,12 @@ fn a_pick_on_one_episode_is_what_the_next_episode_resolves_to() {
     let e1_audio = audio_pair();
     let e1_subs = two_subs();
     let e1 = resolve_episode(&ps, "rk-e1", "/library/parts/36013/1/file.mkv", e1_audio.clone(), e1_subs.clone(), DirectPlayMode::Auto);
-    assert_eq!((e1.audio.as_ref().map(|a| a.sid), e1.sub_sid), (Some(36014), 55002), "E1 starts on the server's own selection");
+    assert_eq!((e1.audio.as_ref().map(|a| a.sid), e1.sub_sid), (Some(36014), 55001), "E1 starts on the server's audio and the automatic English subtitle");
     apply_plan(&mut ps, e1, "rk-e1");
 
-    // The viewer picks, through the menu's commits, the Japanese audio and the English subtitle.
+    // The viewer picks, through the menu's commits, the Japanese audio and the Spanish subtitle.
     assert!(commit_audio_pick(&mut ps, CarriedAudio::from_stream(&e1_audio[1], 1), memo_of_audio(&e1_audio, 1)));
-    commit_subtitle_pick(&mut ps, 0, 55001, true, Some(memo_of_subtitle(&e1_subs[0])));
+    commit_subtitle_pick(&mut ps, 1, 55002, true, Some(memo_of_subtitle(&e1_subs[1])));
 
     // The next launch retires the outgoing item's selection before it builds its env.
     begin_track_selection(&mut ps, None);
@@ -1594,7 +1598,7 @@ fn c5_with_no_sidecar_a_remembered_external_subtitle_falls_through() {
     let (plan, _, log) = resolve_logged(Case::episode(subs(), memory(None, Some(english_sidecar_memo()))));
     assert_eq!(plan.memory_sidecar, None);
     assert_eq!((plan.sub_sid, plan.sub_render_ordinal), (control.sub_sid, control.sub_render_ordinal));
-    assert_eq!(plan.sub_sid, 55002, "the next rung: PMS's selection");
+    assert_eq!(plan.sub_sid, 0, "the next rung: the automatic subtitle, Off with no English track");
     assert!(!plan.memory_note);
     assert!(log.contains("no match (language) subtitle"), "{log}");
 }
@@ -1619,7 +1623,7 @@ fn c5_a_forced_sidecar_is_not_the_full_one() {
     let forced_sidecar = plx_data::metadata::Stream { forced: true, ..sidecar_stream(55011, "eng") };
     let subs = || vec![srt(55002, 4, "spa", false, true), forced_sidecar.clone()];
     let (full, _) = resolve(Case::episode(subs(), memory(None, Some(english_sidecar_memo()))));
-    assert_eq!((full.memory_sidecar, full.sub_sid), (None, 55002), "the full memo declines the forced file");
+    assert_eq!((full.memory_sidecar, full.sub_sid), (None, 0), "the full memo declines the forced file");
     let forced_memo = memo_of_subtitle(&plx_data::metadata::Stream { forced: true, ..sidecar_stream(41011, "eng") });
     let (forced, _) = resolve(Case::episode(subs(), memory(None, Some(forced_memo))));
     assert_eq!(forced.memory_sidecar, Some(55011));
@@ -1785,7 +1789,7 @@ fn a_forced_only_landing_holds_the_mode_and_a_retry_carries_it() {
         .0
     };
 
-    assert_eq!(landed(&mut ps, Vec::new()), (0, SubMode::Off), "control: no memory, no forced track in play: Off");
+    assert_eq!(landed(&mut ps, Vec::new()), (55001, SubMode::Track), "control: no memory: the automatic English subtitle");
     assert_eq!(landed(&mut ps, memory(None, Some(english_track()))), (55001, SubMode::Track), "control: a remembered track");
     assert_eq!(landed(&mut ps, memory(None, Some(SubtitleMemo::Off))), (0, SubMode::Off), "control: a remembered Off");
     assert_eq!(landed(&mut ps, memory(None, Some(forced_only_memo()))), (55003, SubMode::ForcedOnly));
@@ -2081,22 +2085,19 @@ fn one_punch_man_s02e01() -> Vec<plx_data::metadata::Stream> {
     ]
 }
 
-/// **The live failure (S02E01 on the TV, 2026-11-04), end to end.** The profile remembers a subtitle
-/// for the show and the server has the dub transcript selected, so the ladder withholds the memory
-/// (`track-memory: not used (a higher rung decided)`). That withheld memory used to switch the audio
-/// follow off: the switch to Japanese stayed on the dub transcript. The server's selection is an
-/// automatic pick, so it follows the audio, and the viewer's own pick still ends the follow.
+/// **The live failure (S02E01 on the TV, 2026-11-04), end to end.** The server's selection is not a
+/// rung: an anime lands on its English dub with the dub transcript, an audio switch re-picks the
+/// subtitle, and the viewer's own pick ends the follow.
 #[test]
 #[cfg(feature = "devtriggers")]
-fn a_withheld_memory_does_not_stop_the_audio_follow_of_the_servers_selection() {
+fn an_anime_landing_follows_the_audio_whatever_the_server_selected() {
     let mut ps = PlaybackSession::IDLE;
     let _g = fresh_registry(&mut ps);
     crate::player::sidecar::reset();
-    let record = memory(None, Some(english_sidecar_memo()));
-    let (plan, _, log) = resolve_in(&mut ps, Case::episode(one_punch_man_s02e01(), record), |_, plan| plan);
-    assert!(log.contains("track-memory: not used (a higher rung decided) subtitle"), "setup: the memory is withheld: {log}");
+    let case = Case { anime: true, ..Case::episode(one_punch_man_s02e01(), Vec::new()) };
+    let (plan, _, _) = resolve_in(&mut ps, case, |_, plan| plan);
     apply_plan(&mut ps, plan, "rk-4k");
-    assert_eq!(cur_sub_sid(&ps), 166341, "English audio: the dub transcript the server selected");
+    assert_eq!(cur_sub_sid(&ps), 166341, "the English dub lands on the dub transcript");
 
     assert!(commit_audio_selection(&mut ps, japanese_audio()));
     assert_eq!(cur_sub_sid(&ps), 166318, "Japanese audio: the full translation");
@@ -2121,13 +2122,13 @@ fn a_reloaded_playback_keeps_following_the_audio() {
     let mut ps = PlaybackSession::IDLE;
     let _g = fresh_registry(&mut ps);
     crate::player::sidecar::reset();
-    let record = memory(None, Some(english_sidecar_memo()));
-    let plan = resolve_in(&mut ps, Case::episode(one_punch_man_s02e01(), record), |_, plan| plan).0;
+    let case = Case { anime: true, ..Case::episode(one_punch_man_s02e01(), Vec::new()) };
+    let plan = resolve_in(&mut ps, case, |_, plan| plan).0;
     apply_plan(&mut ps, plan, "rk-4k");
     assert!(commit_audio_selection(&mut ps, japanese_audio()));
     assert_eq!(cur_sub_sid(&ps), 166318, "setup: Japanese audio, the full translation");
 
-    let mut again = Case::episode(one_punch_man_s02e01(), Vec::new());
+    let mut again = Case { anime: true, ..Case::episode(one_punch_man_s02e01(), Vec::new()) };
     again.sub_sid = cur_sub_sid(&ps);
     let plan = resolve_in(&mut ps, again, |_, plan| plan).0;
     apply_plan(&mut ps, plan, "rk-4k");
@@ -2141,21 +2142,16 @@ fn a_reloaded_playback_keeps_following_the_audio() {
 
 /// **A resumed playback lands on the subtitle its audio asks for.** Switching audio to Japanese
 /// writes the audio memory, so the next landing plays Japanese from the start: the translation, not
-/// the dub transcript the server still has selected. Neither the audio memory nor a subtitle memory
-/// the server's sidecar outranks changes that.
+/// the dub transcript the server still has selected.
 #[test]
 #[cfg(feature = "devtriggers")]
 fn a_landing_on_remembered_japanese_audio_shows_the_translation() {
     let eng_jpn = || vec![("eng".to_string(), Some((166341, -1))), ("jpn".to_string(), Some((166318, -1)))];
-    for (what, record) in [
-        ("audio memory only", memory(Some(japanese_eac3()), None)),
-        ("audio and subtitle memory", memory(Some(japanese_eac3()), Some(english_sidecar_memo()))),
-    ] {
-        let (plan, _) = resolve(Case::episode(one_punch_man_s02e01(), record));
-        assert_eq!(plan.audio.as_ref().map(|a| a.sid), Some(36015), "{what}: Japanese audio plays");
-        assert_eq!(plan.memory_sidecar, Some(166318), "{what}: the translation, not the server's dub transcript");
-        assert_eq!(plan.track_ctx.as_ref().and_then(|c| c.auto_subs.clone()), Some(eng_jpn()), "{what}: and an audio switch keeps following");
-    }
+    let case = Case { anime: true, ..Case::episode(one_punch_man_s02e01(), memory(Some(japanese_eac3()), None)) };
+    let (plan, _) = resolve(case);
+    assert_eq!(plan.audio.as_ref().map(|a| a.sid), Some(36015), "Japanese audio plays");
+    assert_eq!(plan.memory_sidecar, Some(166318), "the translation, not the server's dub transcript");
+    assert_eq!(plan.track_ctx.as_ref().and_then(|c| c.auto_subs.clone()), Some(eng_jpn()), "and an audio switch keeps following");
 
     let off = memory(Some(japanese_eac3()), Some(SubtitleMemo::Off));
     let (plan, _) = resolve(Case::episode(vec![srt(55001, 3, "eng", false, false)], off));

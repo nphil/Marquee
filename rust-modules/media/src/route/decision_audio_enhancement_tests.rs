@@ -2282,13 +2282,12 @@ fn subtitle_first_pick_while_plain_enhanced_remux_burns_it() {
         can_normalize_loudness: true,
         ..Default::default()
     };
-    // No track carries `selected: true` and no account/show subtitle preference is set, so
-    // `pick_dp_subtitle_account` returns `None` — the cold start's own `sub=0`, same as the
-    // device's first run.
+    // No track carries `selected: true` and the track is not English, so the automatic rule picks no
+    // subtitle: the cold start's own `sub=0`, same as the device's first run.
     let sub = plx_data::metadata::Stream {
         id: 10980,
         index: 0,
-        lang_code: "eng".into(),
+        lang_code: "fra".into(),
         codec: "srt".into(),
         selected: false,
         ..Default::default()

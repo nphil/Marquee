@@ -753,7 +753,7 @@ fn audio_only_write_back_keeps_a_server_selected_download() {
     // remembered subtitle, so the memory is audio only; moving the selection off the download would
     // make PMS delete it, so the write names the download unchanged.
     let mut model = part(55009);
-    model.subs.push((55009, true));
+    model.subs.insert(0, (55009, true));
     let mut w = world(model);
     let plan = w.resolve(Resolve { memory: memory(Some(japanese()), None), ..Resolve::launch() });
     assert_eq!(plan.write_back, Some(WriteBack { audio: Some(36015), subtitle: None }), "setup");
@@ -780,7 +780,7 @@ fn audio_only_write_back_keeps_a_server_selected_download() {
 fn audio_only_write_back_survives_a_sidecar_the_plan_does_not_name() {
     plx_base::skip_unless_log_is_ours!(event_log());
     let mut model = part(55009);
-    model.subs.push((55009, true));
+    model.subs.insert(0, (55009, true));
     let mut w = world(model);
     let plan = w.resolve(Resolve { mode: DirectPlayMode::Forced, memory: memory(Some(japanese()), None), ..Resolve::launch() });
     assert!(!plan.url.contains("start.mkv"), "setup: a direct play: {}", plan.url);

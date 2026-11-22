@@ -193,7 +193,7 @@ def capture_scene(spec):
         triggers["clockstop"] = "175750" if spec["marker"] == "credits" else "27020"
         expect += ["slot=skip", "clockstop: clock held at " + triggers["clockstop"] + " ms"]
     if spec.get("captions"):
-        expect.append("server-selected sidecar subtitle: sid=99001")
+        expect.append("planned sidecar subtitle: sid=99001")
     if spec.get("failure"):
         triggers["failtest"] = ""
     focus = {"slot": "upnext" if spec.get("slot") == "up_next" else spec.get("slot", "discs"),

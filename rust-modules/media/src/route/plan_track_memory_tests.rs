@@ -196,12 +196,12 @@ fn a_remembered_external_english_subtitle_selects_this_episodes_english_sidecar(
 /// automatic pick, never to Off, and says which hard constraint failed.
 #[test]
 fn with_no_same_language_sidecar_a_remembered_external_subtitle_falls_through() {
-    let item = episode(vec![text_sub(1, "eng", ""), text_sub(2, "fra", "")]);
+    let item = episode(vec![text_sub(1, "spa", ""), text_sub(2, "fra", "")]);
     let declined = ladder(&item, "jpn", Some(&external_memo("eng", false)));
     assert_eq!(
         declined,
-        SubDecision { pick: Some((1, 0)), source: SubPickSource::Account, miss: Some("language") },
-        "the automatic English subtitle plays as without a record",
+        SubDecision { pick: None, source: SubPickSource::Account, miss: Some("language") },
+        "no English track to fall back to: Off",
     );
     let from_mode = pick_subtitle(
         &episode(vec![text_sub(1, "spa", "")]), &NO_SHOW_RULES(), always_english(), "jpn", None,

@@ -379,8 +379,8 @@ pub fn commit_audio_pick(ps: &mut PlaybackSession, audio: CarriedAudio, memo: Op
 /// The commit is always made (an OK on the checked row republishes), but a pick of the stream the
 /// route already shows is the menu being closed, not chosen: the route put that stream there
 /// (the ladder, a rescue, an earlier pick), and an automatic pick is never written. Off is stored
-/// as Off: it beats the account's rule and the server's embedded selection next episode (only a
-/// server-selected sidecar the app can draw ranks above memory, `plan::pick_subtitle`).
+/// as Off: it beats the automatic subtitle next episode (only a retry's own pick ranks above
+/// memory, `plan::pick_subtitle`).
 ///
 /// **Leaving Forced only is a change** whatever stream it lands on: the very forced track it drew,
 /// or Off while no forced track matched, has the stream id the session already shows, but the

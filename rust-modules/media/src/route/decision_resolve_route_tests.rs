@@ -2479,7 +2479,7 @@ fn restored_sidecar_is_part_of_the_route_contract() {
         }],
     ));
     let start = super::apply_plan(&mut ps, &mut meta, Plan {
-        sid, playing, url: "http://fixture.invalid/movie.mkv".into(), ..Default::default()
+        sid, playing, url: "http://fixture.invalid/movie.mkv".into(), memory_sidecar: Some(77), ..Default::default()
     }, "rk-4k");
     settle_plan_start_in_unit_test(&mut ps, start);
     assert_eq!(cur_sub_sid(&ps), 77, "timeline and later audio/quality transcodes must retain the restored sidecar");

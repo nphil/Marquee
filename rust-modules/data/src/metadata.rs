@@ -3465,17 +3465,6 @@ pub fn audio_ordinal(audio: &[Stream], i: usize) -> i32 {
         .count() as i32
 }
 
-/// The external subtitle the SERVER already has selected for this part and that this client can
-/// draw itself — the one `player::sidecar::restore_selection` switches on at a direct-play
-/// landing. ONE definition, because two readers must agree on it: the restore that turns it on,
-/// and `route::subtitle_effect_of`, which the Plex Pass audio enhancement (issue #266 I6) reads to
-/// tell an unaffected sidecar apart from an embedded subtitle a remux would drop (M4/M7). A route
-/// that treated this sidecar as embedded would force a burn (or drop it outright) for a subtitle
-/// the client already draws for itself, unaffected by any remux.
-pub fn server_selected_sidecar(item: &PlayingItem) -> Option<&Stream> {
-    item.subs.iter().find(|s| s.selected && s.sidecar_renderable())
-}
-
 /// Container ordinal of `subs[i]` among the subtitle streams the CONTAINER carries (all ff.rs
 /// enumerates), or -1 when `subs[i]` is not one: an external sidecar, or captions inside the video
 /// stream (`in_video`), which the demuxer lists no track for. Neither has anything to

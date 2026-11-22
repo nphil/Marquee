@@ -546,15 +546,13 @@ a dead source is **absent** from Home and states itself in its own library secti
   automatic choice and a harness setup commit remember nothing; the harness's
   `plxnative-trackmemory=clear` removes entries through the same door, and `=fill[:N]` writes N worst-case
   shows through it to read the DB8 write cost at the budget). A remembered Off beats the
-  account's rule and PMS's embedded selection, but not a server-selected sidecar the app can draw
-  (`plan.rs` `pick_subtitle` withholds the memory from the ladder while the item has one).
+  automatic subtitle (PMS's own selection is not a rung of the ladder).
   The subtitle half is one of THREE states (`SubtitleMemo`: `Track`, `Off`, `ForcedOnly { lang }`);
   **Forced only** is the Subtitles menu's second row (`TrackCommit::SubtitleForcedOnly`,
   `route::commit_forced_only_pick`), written on an explicit change of mode and never on an OK on the
   row that already holds it (which recommits what is on screen), with the drawn track's language
   (else the playing audio's, else the one the session fell back to). It ranks exactly as a remembered
-  Off does: a retry's own pick and a server-selected sidecar the app can draw still outrank it (the
-  withholding in `pick_subtitle` is of the memory, whichever of the three it is), and below those the
+  Off does: a retry's own pick still outranks it, and below that the
   next episode shows its forced, non-commentary, renderable subtitle (the downloaded file that stands
   for it, when the Subtitles menu lists that in its place) in the
   language of the audio that PLAYS (`route::track_memory::match_forced_only`), or nothing, and never

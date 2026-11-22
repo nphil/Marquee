@@ -1456,6 +1456,9 @@ fn selected_pgs_names_subtitle_stream_id_on_mde() {
         vec![eac3_track()],
         vec![selected_sub(99001, "pgs")],
     ));
+    // The automatic rule never picks a picture track: this is the viewer's own pick.
+    env.sub_sid = 99001;
+    env.subtitle_override = Some(99001);
     let plan = build_stream(
         &plx_base::task::OffFrame::for_test(),
         "rk-4k",
@@ -1626,6 +1629,8 @@ fn selected_dvd_subtitle_names_subtitle_stream_id_on_mde() {
         vec![eac3_track()],
         vec![selected_sub(66001, "dvd_subtitle")],
     ));
+    env.sub_sid = 66001;
+    env.subtitle_override = Some(66001);
     let plan = build_stream(
         &plx_base::task::OffFrame::for_test(),
         "rk-4k",
