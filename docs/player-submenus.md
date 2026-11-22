@@ -15,6 +15,7 @@ because the overlay's state shape changed on purpose.
 
 ## Behaviour
 
+- **Automatic choice and the Advanced page (current layout):** one pure function (`data::metadata::auto_tracks`, cases in `docs/marquee/track-selection-cases.json`, checked by its tests) picks the audio and the English subtitle; the menus show that choice and tuck the rest away. The **Subtitles root** is only On, Off and Style, then one **Advanced** row. On commits the automatic subtitle (`route::automatic_subtitle`) and opens Advanced when the title has none. **Advanced** holds everything the old root had apart from Off and Style: Forced only, the viewer's languages, Other languages, Timing, search and Wrong subtitles. The **Audio root** shows the automatic track (else the playing one), then Advanced (all tracks, Remember and Forget), Boost and Loudness. The bullet below describes the rows now living on that Advanced page.
 - **Subtitles root:** a Subtitles section (Off, Forced only, and the single-track languages), one section per
   multi-track language of `yours`, an "Other languages N" row, then Timing (a value row, no
   chevron; it hands off to the timing capsule) and Style. **Other languages:** one row per

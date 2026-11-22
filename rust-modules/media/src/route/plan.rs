@@ -2138,19 +2138,21 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     ctx.keep_forced_lang(&env.forced_lang);
                 }
                 // Rule 3 of the audio follow: only a subtitle nobody chose follows the audio. A remembered
-                // choice that DECIDED the landing is the viewer's and stays; the server's selection, the
-                // show's and the account's rules, and a memory that matched nothing or that the server's
-                // sidecar outranked (`track-memory: not used`) decided nothing, so those follow.
+                // choice that DECIDED the landing is the viewer's and stays; the server's selection and a
+                // memory that matched nothing decided nothing, so those follow.
+                let account = SubtitleLangPrefs {
+                    language: account_subtitles.as_ref().and_then(|(language, _, _)| language.as_deref()),
+                };
+                let all = auto_subtitles(p, &show_prefs, account);
                 ctx.auto_subs = if env.subtitle_override.is_some() {
                     env.auto_subs.clone()
                 } else if !sub_decision.as_ref().is_some_and(|d| d.source == SubPickSource::Memory) {
-                    let account = SubtitleLangPrefs {
-                        language: account_subtitles.as_ref().and_then(|(language, _, _)| language.as_deref()),
-                    };
-                    Some(auto_subtitles(p, &show_prefs, account))
+                    Some(all.clone())
                 } else {
                     None
                 };
+                ctx.auto_all = all;
+                ctx.auto_audio = audio_prefs.auto.and_then(|i| tracks.get(i)).map(|s| s.id);
                 ctx
             });
             // The ONE `track-memory:` line of this resolve. What the route did with a remembered subtitle

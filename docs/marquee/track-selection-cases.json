@@ -10,6 +10,22 @@
   "remembered.audio / remembered.subtitle are the viewer's explicit choice for this title or show; subtitle is a stream id, or \"off\". An id the file does not have is ignored.",
   "expect.audio null: the choice has no opinion (the server's and the file's defaults apply). expect.subtitle null: subtitles off."
  ],
+ "cue_tags_note": "Library contract: signs-and-songs lines are merged into the .en.srt as cues starting with an alignment tag ({\\an8} puts them at the top). Marquee draws them where the tag says, in the viewer's own style, and never prints the tag. align is the numpad alignment (2 = bottom centre, the default); the body is the text drawn.",
+ "cue_tags": [
+  {"input": "{\\an1}Sign", "align": 1, "body": "Sign"},
+  {"input": "{\\an2}Sign", "align": 2, "body": "Sign"},
+  {"input": "{\\an3}Sign", "align": 3, "body": "Sign"},
+  {"input": "{\\an4}Sign", "align": 4, "body": "Sign"},
+  {"input": "{\\an5}Sign", "align": 5, "body": "Sign"},
+  {"input": "{\\an6}Sign", "align": 6, "body": "Sign"},
+  {"input": "{\\an7}Sign", "align": 7, "body": "Sign"},
+  {"input": "{\\an8}Sign", "align": 8, "body": "Sign"},
+  {"input": "{\\an9}Sign", "align": 9, "body": "Sign"},
+  {"input": "{\\an8}Line one\nLine two", "align": 8, "body": "Line one\\NLine two"},
+  {"input": "{\\an8}{\\an2}Sign", "align": 8, "body": "Sign"},
+  {"input": "{\\an0}Sign", "align": 2, "body": "Sign"},
+  {"input": "{\\an10}Sign", "align": 2, "body": "Sign"}
+ ],
  "cases": [
   {
    "name": "movie, foreign original: original audio, the one English sidecar",

@@ -5340,6 +5340,7 @@ mod lifecycle_regression_tests {
                 markers_known: false,
                 chapters: (1..=2).map(chapter).collect(),
                 hdr: false,
+                origin: Default::default(),
             }))));
             super::super::bridge::nav_push(&mut app.pages, AppArg::Player);
             frame(&mut app, 16);

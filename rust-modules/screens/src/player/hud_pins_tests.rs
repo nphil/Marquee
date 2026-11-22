@@ -477,6 +477,7 @@ impl Chaptered {
                 markers_known: false,
                 chapters: (1..=count).map(chapter).collect(),
                 hdr: false,
+                origin: Default::default(),
             }
         ))));
         Chaptered

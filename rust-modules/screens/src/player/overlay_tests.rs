@@ -759,7 +759,8 @@ fn ok_on_the_dim_timing_row_while_off_keeps_the_panel_open() {
     let ps = plx_media::route::PlaybackSession::IDLE;
     let meta = plx_data::stores::metadata::MetadataStore::default();
     let mut page = PlayerOverlayScreen::new(&ps, meta.view(), ENTRY, OverlayKind::Tracks { tab: 1 });
-    // no playing item: Off, then Timing, then Color — and Off is the checked row
+    open_row(&mut page, TrackRow::OpenAdvanced);
+    // no playing item: the Advanced page reads Timing then nothing else, with Timing dim
     let timing = TrackRow::Timing.key().0;
     deliver(&mut page, ScreenEvent::FocusMoved { from: None, to: FocusKey { entry: ENTRY, elem: timing }, by: By::Dir });
     {
@@ -814,6 +815,7 @@ fn open_timing_dismisses_tracks_and_opens_the_capsule_with_no_extend_hud() {
         }]),
     ))));
     let mut page = PlayerOverlayScreen::new(&ps, store.view(), ENTRY, OverlayKind::Tracks { tab: 1 });
+    open_row(&mut page, TrackRow::OpenAdvanced);
     let (sub_row, timing_row) = (TrackRow::Sub(0).key().0, TrackRow::Timing.key().0);
     // Select the subtitle track first — Timing is inert while subtitles are Off.
     deliver(&mut page, ScreenEvent::FocusMoved { from: None, to: FocusKey { entry: ENTRY, elem: sub_row }, by: By::Dir });
@@ -987,7 +989,7 @@ fn the_player_panels_dim_through_the_container_in_the_neutral_dim_whatever_the_i
         sid: plx_plex::plex::ServerId::from_raw(0), rk: "rk".into(), show_rk: String::new(), kind: String::new(), audio: Vec::new(), subs: Vec::new(),
         media_id: None, part_key: String::new(),
         video_fps: 0.0, width: 0, height: 0, bitrate: 0, video_kbps: 0, dovi: Default::default(),
-        markers: Vec::new(), markers_known: false, chapters: Vec::new(), hdr: false,
+        markers: Vec::new(), markers_known: false, chapters: Vec::new(), hdr: false, origin: Default::default(),
     }))));
     for (kind, alpha) in [
         (OverlayKind::Tracks { tab: 0 }, DIM_PLAYER),
@@ -1053,6 +1055,7 @@ fn a_pointer_click_activates_the_row_it_hit_by_key() {
         english_audio_with_subs(&ps, vec![sub(11, 0, "English", "eng"), sub(22, 1, "English", "eng")]),
     ))));
     let mut page = PlayerOverlayScreen::new(&ps, store.view(), ENTRY, OverlayKind::Tracks { tab: 1 });
+    open_row(&mut page, TrackRow::OpenAdvanced);
     let cx = cx();
     let mut f = DrawFrame::new(&cx, plx_ui::Painter::root());
     page.record_stops(&mut f);
@@ -1064,7 +1067,8 @@ fn a_pointer_click_activates_the_row_it_hit_by_key() {
     let Panel::Tracks(menu) = page.panel() else { panic!("Tracks panel") };
     let mut keys = menu.keys();
     assert!(keys.contains(&TrackRow::Sub(1).key().0), "premise: both tracks are rows");
-    let mut stop_keys: Vec<u32> = stops.iter().map(|s| s.key.elem).collect();
+    // the open page's title band is a pointer-only stop (Back), not a D-pad row
+    let mut stop_keys: Vec<u32> = stops.iter().map(|s| s.key.elem).filter(|&e| !plx_ui::page_stack::is_title_key(e)).collect();
     keys.sort_unstable();
     stop_keys.sort_unstable();
     assert_eq!(stop_keys, keys, "every focusable row registers exactly one stop, under its key");

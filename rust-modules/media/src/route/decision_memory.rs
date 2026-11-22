@@ -552,6 +552,20 @@ pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_si
     commit_derived_subtitle(ps, (id, ordinal), false, put);
 }
 
+/// **The subtitle the automatic rule puts on for the audio now playing** (`(stream id, ordinal)`): what
+/// the Subtitles menu's On row chooses. `None`: the item has no English text track to show.
+pub fn automatic_subtitle(ps: &PlaybackSession) -> Option<(i64, i32)> {
+    let ctx = ps.track_ctx.as_ref()?;
+    let lang = ctx.audio_lang_of(cur_audio_sid(ps));
+    ctx.auto_all.iter().find(|(l, _)| l == lang).and_then(|(_, pick)| *pick)
+}
+
+/// **The audio stream the automatic rule picks** for this title (a stream id): the Audio menu's first
+/// row. `None` when the title's original language is not known.
+pub fn automatic_audio(ps: &PlaybackSession) -> Option<i64> {
+    ps.track_ctx.as_ref()?.auto_audio
+}
+
 /// **The first decoded frame's re-match** (FO; the pump calls it once per frame, and it does
 /// its work once per landing). On a direct play the demuxer's track names are known only once the
 /// file is open, so a remembered subtitle the resolve could not find by name (an MP4 part's PMS

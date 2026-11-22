@@ -321,6 +321,12 @@ pub struct TrackContext {
     /// an audio switch re-picks from (`plan::AutoSubs`). `None` once the viewer picks, or when
     /// the show's memory decides the subtitle.
     pub(super) auto_subs: Option<super::plan::AutoSubs>,
+    /// The automatic subtitle for each audio language whoever chose the landing's own: what the
+    /// Subtitles menu's On row puts on (`route::automatic_subtitle`).
+    pub(super) auto_all: super::plan::AutoSubs,
+    /// The audio the automatic rule picks (a stream id): the Audio menu's first row. `None` when
+    /// the title's original language is unknown.
+    pub(super) auto_audio: Option<i64>,
 }
 
 impl TrackContext {
@@ -338,6 +344,8 @@ impl TrackContext {
             forced_lang,
             rematch: None,
             auto_subs: None,
+            auto_all: Vec::new(),
+            auto_audio: None,
         }
     }
 

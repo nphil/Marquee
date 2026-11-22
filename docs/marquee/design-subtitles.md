@@ -74,6 +74,8 @@ missing or mismatched alignment must retain estimated reveal rather than apply a
   Every family falls back to the default family, which has the Noto script faces, the CJK face and the
   emoji fallback: no family draws a box where Default would draw a glyph.
 - **Encodings**: BOM, UTF-8, UTF-16 and legacy code pages by detection (`sub_charset`).
+- **Which subtitle**: automatic and pure (`data::metadata::auto_tracks`; cases in `track-selection-cases.json`). A matching external English `.srt` first, an embedded English text track only when there is no sidecar, never a picture track, a forced or signs-only track beside a full one, or a server burn for text. Anime (Plex genre Anime, or Animation with country Japan) takes the English dub with the dub-matched `.en.cc.srt`, and the original audio with `.en.srt`; every other title keeps the original audio and an English subtitle that is on by default. A viewer's own choice wins and is remembered; Off is remembered per title.
+- **Signs-and-songs lines** merged into a sidecar start with `{\anN}` (`N` 1-9, normally `{\an8}`). The cue is placed at that position in the viewer's style and the tag is never drawn (`track-selection-cases.json` `cue_tags`, test `an_alignment_tag_in_an_srt_cue_places_it_and_is_never_drawn`).
 - **Sidecar readiness**: native ABI 6 requires at least one authored cue with positive duration. An empty
   render window before or between cues is valid. Renderer publication carries an epoch so an older load
   cannot report readiness for a newer selection.

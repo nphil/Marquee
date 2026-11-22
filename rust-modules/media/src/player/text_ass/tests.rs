@@ -435,6 +435,24 @@ fn the_sidecar_readers_cases_survive_the_conversion() {
     }
 }
 
+/// Library contract (`docs/marquee/track-selection-cases.json`, `cue_tags`): signs-and-songs lines
+/// arrive in the SRT sidecar as cues starting with an alignment tag (`{\an8}` for the top). Each tag
+/// places the cue in its style and is never drawn.
+#[test]
+fn an_alignment_tag_in_an_srt_cue_places_it_and_is_never_drawn() {
+    let table: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../../docs/marquee/track-selection-cases.json")).unwrap();
+    let cases = table["cue_tags"].as_array().expect("the table has cue_tags");
+    assert!(cases.len() >= 9);
+    for case in cases {
+        let (input, align, body) = (case["input"].as_str().unwrap(), case["align"].as_u64().unwrap() as u8, case["body"].as_str().unwrap());
+        let events = script_from_srt(&format!("1\n00:00:01,000 --> 00:00:02,000\n{input}\n")).events;
+        let want = format!("Dialogue: 0,0:00:01.00,0:00:02.00,{},,0,0,0,,{body}\n", style_name(align));
+        assert_eq!(events, want, "{input:?}");
+        assert!(!events.contains("\\an"), "{input:?} leaked a tag: {events}");
+    }
+}
+
 // ---- header -----------------------------------------------------------------------------------
 
 fn style_lines(header: &str) -> Vec<&str> {

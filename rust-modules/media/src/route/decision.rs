@@ -31,7 +31,7 @@ use super::track_memory::{SubMode, TrackContext};
 #[path = "decision_memory.rs"]
 mod memory;
 pub use memory::{
-    audio_memory_present, set_audio_memory, commit_audio_pick, commit_forced_only_and_sidecar, commit_forced_only_pick, commit_subtitle_and_sidecar, commit_subtitle_pick,
+    audio_memory_present, automatic_audio, automatic_subtitle, set_audio_memory, commit_audio_pick, commit_forced_only_and_sidecar, commit_forced_only_pick, commit_subtitle_and_sidecar, commit_subtitle_pick,
     on_decoded_frame, persist_subtitle_offset, rematch_subtitle_with_names, repoint_parked_subtitle, send_parked_write_back,
 };
 #[cfg(any(test, feature = "test-support"))]
