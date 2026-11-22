@@ -1987,6 +1987,7 @@ fn avio_state_for(
         bounce_pos: 0,
         parked_at_end: false,
         heal: HealBudget::default(),
+        multi: None,
     }
 }
 

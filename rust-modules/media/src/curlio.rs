@@ -2145,6 +2145,14 @@ impl CurlSource {
         self.abort.signal();
     }
 
+    /// Stop the transfer and keep the source: ranges carry the stream from here
+    /// ([`crate::multilink`]), and a [`seek`](Self::seek) reopens it. Until then a read fails
+    /// rather than reporting the end of the file.
+    pub fn park(&mut self) {
+        self.stop();
+        self.readable = false;
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn fail_multi_for_test(&mut self) {
         self.fail_multi_wait(1);
@@ -2705,6 +2713,10 @@ enum Attempt {
     /// response whose pin did not confirm.
     Redirect(Target),
 }
+
+/// Ranges of the same object over connections bound to source addresses, for Multi Link.
+#[path = "curlio_ranges.rs"]
+pub mod ranges;
 
 /// What the `curlio_*_tests.rs` files share: one body, one fixture host name and the pin that
 /// sends it to loopback.

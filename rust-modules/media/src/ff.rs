@@ -2424,6 +2424,9 @@ struct AvioState {
     parked_at_end: bool,
     /// Reopens of a cut direct-play body that brought nothing back. See [`HealBudget`].
     heal: HealBudget,
+    /// Ranges over the links the LumaTV helper offers, for a direct-play file that may have them.
+    /// While they have the stream `src` is parked, open at no byte the demuxer will read.
+    multi: Option<MultiReader>,
 }
 
 /// Reopens [`read_cb`] has spent at one byte of a cut body, across calls: libavformat retries a
@@ -2589,7 +2592,7 @@ impl AvioState {
     /// more body is still expected. Cap, abort, I/O fail, Idle, or a finished body `cond_wait`.
     /// A long pause at CAP can let the server keep-alive timer FIN the socket; reuse already
     /// redials on `Transport`. Do not raise CAP.
-    fn drain_wire(&mut self) -> bool {
+    fn drain_source(&mut self) -> bool {
         const CAP: usize = 384 * 1024;
         if matches!(self.src, Src::Idle) {
             return false;
@@ -2642,6 +2645,22 @@ impl AvioState {
             return drain_keep_polling(self.bounce.len() < CAP, self.transfer_finished());
         }
     }
+
+    /// What a park on full queues runs: the default reader's drain, and the requests Multi Link
+    /// has in flight. Returns whether to poll again soon.
+    fn drain_wire(&mut self) -> bool {
+        let aborted = unsafe { crate::aq::aq_is_aborted(self.aq) };
+        let (moving, carrying) = match &mut self.multi {
+            Some(multi) if !aborted => (multi.idle(), multi.carries()),
+            _ => (false, false),
+        };
+        // A parked default reader has nothing to drain.
+        if carrying {
+            moving
+        } else {
+            self.drain_source() || moving
+        }
+    }
 }
 
 fn drain_keep_polling(bounce_under_cap: bool, body_finished: bool) -> bool {
@@ -2654,6 +2673,104 @@ fn hls_should_prefetch_after_abr(delivered: bool, fetch_abandoned: bool, stay: b
 
 fn park_read_fails_closed(bounce_remaining: bool, io_failed: bool) -> bool {
     io_failed && !bounce_remaining
+}
+
+/// The Multi Link reader of a direct-play file ([`crate::multilink`]): ranges over the links the
+/// LumaTV helper offers, beside the state's own source.
+type MultiReader = crate::multilink::reader::Reader<crate::curlio::ranges::Ranges>;
+
+/// What the ranges may hold, fetched or asked for, beside the read-ahead reserve.
+const RANGES_ROOM: u64 = 4 << 20;
+
+/// The reader for the file `src` has open at `url`, when it may have one: a sized part of the
+/// library, open where it was asked for.
+fn multi_reader(src: &Src, origin: &plx_plex::plex::Origin, path: &str, url: &str, size: i64) -> Option<MultiReader> {
+    use crate::curlio::ranges::Ranges;
+    if size <= 0 || !path.starts_with("/library/parts/") {
+        return None;
+    }
+    // The longest a read with nothing to return waits before it asks whether it is stopped:
+    // teardown wakes the ranges beside a curl source, and nothing wakes those beside a socket.
+    let (ranges, wait_most_ms) = match src {
+        Src::Curl(cs) => (Ranges::beside(cs, url), 100),
+        Src::Socket { host, port, path: at, .. }
+            if host.to_bytes() == origin.host().as_bytes() && *port == origin.port() as c_int && at.to_bytes() == path.as_bytes() =>
+        {
+            (Ranges::alone(url), 20)
+        }
+        _ => (Err("its open was redirected"), 0),
+    };
+    match ranges {
+        Ok(ranges) => MultiReader::new(ranges, size as u64, wait_most_ms),
+        Err(why) => {
+            crate::player::log(&format!("multilink: not used for this file: {why}"));
+            None
+        }
+    }
+}
+
+/// What the ranges are told of the player: the reserve ahead of the playhead to a quarter second,
+/// whether the queues are full, and the file's mean rate once its length is known.
+fn ranges_demand(s: &AvioState) -> crate::multilink::engine::Demand {
+    let reserve_ms = playable_reserve_ms().map_or(0, |ms| ms.clamp(0, i64::from(u32::MAX)) as u32);
+    let length_ms = SHARED.duration_ns.load(Ordering::Relaxed) / 1_000_000;
+    crate::multilink::engine::Demand {
+        reserve_ms: reserve_ms / 250 * 250,
+        full: crate::aq::aq_would_park(s.aq),
+        film_bps: if length_ms > 0 { s.size as u64 * 8 / length_ms as u64 * 1000 } else { 0 },
+        room: RANGES_ROOM,
+    }
+}
+
+/// Read at `s.off` from the ranges when they have the stream, first taking it there when a proven
+/// link is ready to. `None` while the default reader has the stream: the caller reads from it.
+fn read_ranges(s: &mut AvioState, dst: &mut [u8]) -> Option<c_int> {
+    use crate::multilink::reader::Read;
+    if !s.multi.as_ref()?.listening() {
+        return None;
+    }
+    let demand = ranges_demand(s);
+    let aq = s.aq;
+    let multi = s.multi.as_mut()?;
+    multi.demand(demand);
+    if !multi.carries() {
+        if !multi.take_over(s.off as u64) {
+            return None;
+        }
+        // The default reader stays parked until ranges hand the stream back, which reopens it
+        // through `seek_cb`.
+        match &mut s.src {
+            Src::Curl(cs) => cs.park(),
+            Src::Socket { hs, .. } => plx_net::stream::http_close(*hs),
+            Src::Idle => {}
+        }
+    }
+    let began = std::time::Instant::now();
+    match multi.read(dst, &|| unsafe { crate::aq::aq_is_aborted(aq) }) {
+        Read::Bytes(n) => {
+            s.heal = HealBudget::default();
+            s.body_active_us = s.body_active_us.saturating_add(elapsed_since(began).as_micros().max(1) as u64);
+            if s.first_byte_at.is_none() {
+                s.first_byte_at = Some(std::time::Instant::now());
+            }
+            s.body_bytes = s.body_bytes.saturating_add(n as u64);
+            s.off += n as i64;
+            SHARED.dg_net_rx.fetch_add(n as i64, Ordering::Relaxed);
+            Some(n as c_int)
+        }
+        Read::End => Some(AVERROR_EOF),
+        Read::Stopped => {
+            s.latch_abort();
+            Some(AVERROR_EOF)
+        }
+        Read::HandBack(at) => {
+            if seek_cb(s as *mut AvioState as *mut c_void, at as i64, SEEK_SET) == at as i64 {
+                return None;
+            }
+            s.io_failed = true;
+            Some(AVERROR_IO)
+        }
+    }
 }
 
 /// Settle one enclosing FFmpeg operation against the exact callback state it accumulated.
@@ -2767,6 +2884,9 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
             }
             let bounced = s.take_bounce(std::slice::from_raw_parts_mut(dst, n.max(0) as usize));
             if bounced > 0 {
+                if let Some(multi) = &mut s.multi {
+                    multi.passed(s.off as u64, std::slice::from_raw_parts(dst, bounced));
+                }
                 s.off += bounced as i64;
                 s.body_bytes = s.body_bytes.saturating_add(bounced as u64);
                 return bounced as c_int;
@@ -2782,6 +2902,12 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
                     continue;
                 }
                 return AVERROR_IO;
+            }
+            // Ranges over the helper's links, once a proven one takes the stream at this byte.
+            if s.multi.is_some() && !s.parked_at_end && !dst.is_null() && n > 0 {
+                if let Some(r) = read_ranges(s, std::slice::from_raw_parts_mut(dst, n as usize)) {
+                    return r;
+                }
             }
             // The abort rule, evaluated where the numbers are — through the same runtime check
             // the open and the transport waits consult. See `StallGuard`.
@@ -2960,6 +3086,9 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
             if s.first_byte_at.is_none() {
                 s.first_byte_at = Some(std::time::Instant::now());
             }
+            if let Some(multi) = &mut s.multi {
+                multi.passed(s.off as u64, std::slice::from_raw_parts(dst, r as usize));
+            }
             s.body_bytes = s.body_bytes.saturating_add(r as u64);
             s.off += r as i64;
             SHARED.dg_net_rx.fetch_add(r as i64, Ordering::Relaxed);
@@ -3018,6 +3147,12 @@ extern "C" fn seek_cb(op: *mut c_void, offset: i64, whence: c_int) -> i64 {
             return target;
         }
         s.parked_at_end = false;
+        // Ranges that have the stream follow the demuxer there, and nothing is reopened.
+        if s.multi.as_mut().is_some_and(|multi| multi.seek(target as u64)) {
+            s.off = target;
+            s.io_failed = false;
+            return target;
+        }
         let aq = s.aq;
         let sized = s.size > 0;
         let mut hopped_to_tls = None;
@@ -3110,6 +3245,9 @@ extern "C" fn seek_cb(op: *mut c_void, offset: i64, whence: c_int) -> i64 {
             return -1;
         }
         s.off = target;
+        if let Some(multi) = &mut s.multi {
+            multi.resumed(target as u64);
+        }
         // This may be libavformat healing a failed read. A source validated at the requested byte
         // has recovered; a later callback failure will arm the bit again.
         s.io_failed = false;
@@ -4971,6 +5109,7 @@ unsafe fn hls_input(
             bounce_pos: 0,
             parked_at_end: false,
             heal: HealBudget::default(),
+            multi: None,
         }),
         avio: std::ptr::null_mut(),
         fmt: std::ptr::null_mut(),
@@ -9413,6 +9552,7 @@ pub fn demux(
                 };
 
                 crate::player::log(&format!("ff: open ms={}", open_began.elapsed().as_millis()));
+                let multi = multi_reader(&src, &origin, &path, &url, size);
 
                 let mut state = Box::new(AvioState {
                     src,
@@ -9432,6 +9572,7 @@ pub fn demux(
                     bounce_pos: 0,
                     parked_at_end: false,
                     heal: HealBudget::default(),
+                    multi,
                 });
                 let buf = av_malloc(65536) as *mut u8;
                 if buf.is_null() {

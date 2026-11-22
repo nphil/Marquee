@@ -176,6 +176,7 @@ fn with_sized_source<R>(port: u16, size: i64, f: impl FnOnce(*mut c_void) -> R) 
         bounce_pos: 0,
         parked_at_end: false,
         heal: HealBudget::default(),
+        multi: None,
     };
     let op = &mut state as *mut AvioState as *mut c_void;
     assert_eq!(seek_cb(op, 0, SEEK_SET), 0, "the first open");
