@@ -784,6 +784,11 @@ pub enum TrackCommit {
         sidecar_codec: String,
         memo: Option<plx_plex::plex::session::prefs::SubtitleMemo>,
     },
+    /// **On**: the automatic subtitle for the audio that plays (`render_ordinal`, `stream_id`,
+    /// `sidecar_key` and `sidecar_codec` as for [`TrackCommit::Subtitle`]), put on as nobody's pick:
+    /// it writes no memory, drops an earlier remembered Off or track, and lets the subtitle follow
+    /// the audio again (`route::commit_automatic_subtitle_and_sidecar`).
+    SubtitleAutomatic { render_ordinal: c_int, stream_id: i64, sidecar_key: Option<String>, sidecar_codec: String },
     /// **Forced only** (FO): the panel matched the forced track in the
     /// playing audio's language (`render_ordinal`/`stream_id`, `-1`/`0` when the item has none),
     /// and the loop commits it, holds the mode and remembers `SubtitleMemo::ForcedOnly { lang }`
@@ -1496,7 +1501,16 @@ impl TrackMenuState {
             // an On that is already checked only closes the menu
             TrackRow::SubOn if self.forced_only || self.active_sub >= 0 => TrackOk::Dismiss,
             TrackRow::SubOn => match self.auto_sub {
-                Some(i) => self.commit_sub(i as c_int, meta),
+                Some(i) => match self.commit_sub(i as c_int, meta) {
+                    TrackOk::Commit {
+                        commit: TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, .. },
+                        keep_open,
+                    } => TrackOk::Commit {
+                        commit: TrackCommit::SubtitleAutomatic { render_ordinal, stream_id, sidecar_key, sidecar_codec },
+                        keep_open,
+                    },
+                    other => other,
+                },
                 None => {
                     self.push(TrackPage::Advanced);
                     TrackOk::Navigated
@@ -2383,6 +2397,9 @@ impl TrackMenuState {
     /// both draw from ([`Self::audio_data`]).
     fn read_audio_data(ps: &plx_media::route::PlaybackSession, meta: metadata::MetadataView<'_>) -> AudioData {
         let Some(d) = tracks(meta) else { return AudioData::default() };
+        // "Original" names the title's original-language track, not the one the file flags as default
+        // (a dub can carry the flag) nor the one the automatic rule plays (an anime's English dub).
+        let original = plx_media::route::original_audio(ps);
         let names = plx_media::player::SHARED.track_names.lock().unwrap();
         // Plain words only: the language, "(commentary)" for a commentary track and the channel
         // layout, never the file's own title or the codec. Tracks that would still read the same
@@ -2393,7 +2410,7 @@ impl TrackMenuState {
             } else {
                 s.lang.as_str()
             };
-            let base = if s.default {
+            let base = if original == Some(s.id) {
                 plx_platform::i18n::msg::widgets_tracks_original(lang)
             } else {
                 lang.to_string()
@@ -4230,6 +4247,43 @@ mod tests {
         assert_eq!(menu.page_path(), [TrackPage::Advanced]);
         let all: Vec<TrackRow> = menu.ids().into_iter().filter(|r| matches!(r, TrackRow::Audio(_))).collect();
         assert_eq!(all, vec![TrackRow::Audio(0), TrackRow::Audio(1), TrackRow::Audio(2)]);
+    }
+
+    /// **On puts the automatic subtitle back as nobody's pick.** It commits `SubtitleAutomatic`, which
+    /// writes no memory, rather than a `Subtitle` pick the show would remember (On after Off).
+    #[test]
+    fn on_commits_the_automatic_subtitle_as_nobodys_pick() {
+        let _g = plx_base::testlock::serial();
+        plx_media::player::sidecar::reset();
+        let mut ps = plx_media::route::PlaybackSession::IDLE;
+        plx_media::route::set_published_tracks_for_test(&mut ps, Some((1, 0)), None, None);
+        let store = one_sub_store();
+        let mut menu = TrackMenuState::new(&ps, store.view(), 1, vec!["eng".into()]);
+        assert!(menu.focus_id(TrackRow::SubOn));
+        assert!(matches!(
+            menu.on_ok(store.view()),
+            TrackOk::Commit { commit: TrackCommit::SubtitleAutomatic { stream_id: 1, .. }, keep_open: false }
+        ));
+    }
+
+    /// **The Audio root lists the automatic track first and marks the one playing; "Original" names the
+    /// title's original track only**, not the file's default (an anime's dub can be both).
+    #[test]
+    fn the_audio_root_lists_the_automatic_track_first_and_labels_the_original() {
+        let _g = plx_base::testlock::serial();
+        let track = |id: i64, lang: &str, default: bool| plx_data::metadata::Stream {
+            id, index: id - 10, lang: lang.into(), lang_code: lang.to_lowercase(), codec: "aac".into(), channels: 2,
+            default, ..Default::default()
+        };
+        let store = store_with_audio(vec![track(10, "English", true), track(11, "Japanese", false)]);
+        let mut ps = plx_media::route::PlaybackSession::IDLE;
+        plx_media::route::set_published_tracks_for_test(&mut ps, None, Some(11), Some(11));
+        let menu = TrackMenuState::new(&ps, store.view(), 0, Vec::new());
+        assert_eq!(menu.ids()[..2], [TrackRow::Audio(1), TrackRow::Audio(0)], "automatic first, then the playing one");
+        assert!(row_checked(&menu, TrackRow::Audio(0)) && !row_checked(&menu, TrackRow::Audio(1)), "the playing one is marked");
+        let label = |i: usize| menu.form.table.sections[0].rows[menu.form.index_of(&TrackRow::Audio(i)).unwrap()].label.clone();
+        assert_eq!(label(1), plx_platform::i18n::msg::widgets_tracks_original("Japanese"));
+        assert_eq!(label(0), "English", "the file's default dub is not the original");
     }
 
     #[test]

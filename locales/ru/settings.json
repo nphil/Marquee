@@ -236,7 +236,7 @@
   "settings.audio.prefer_forced": "Предпочитать надписи",
   "settings.audio.prefer_forced.short": "Сначала надписи",
   "settings.audio.only_forced": "Субтитры только для надписей и песен",
-  "settings.audio.only_forced.short": "Только надписи",
+  "settings.audio.only_forced.short": "Надписи и песни",
   "settings.audio.only_regular": "Только полные субтитры",
   "settings.audio.only_regular.short": "Только полные",
   "settings.audio.original": "Оригинал",

@@ -230,7 +230,7 @@
   "settings.audio.prefer_forced": "Kiírások előnyben",
   "settings.audio.prefer_forced.short": "Kiírások előnyben",
   "settings.audio.only_forced": "Felirat csak táblákhoz és dalokhoz",
-  "settings.audio.only_forced.short": "Csak kiírások",
+  "settings.audio.only_forced.short": "Csak táblák és dalok",
   "settings.audio.only_regular": "Csak teljes feliratok",
   "settings.audio.only_regular.short": "Csak teljes",
   "settings.audio.original": "Eredeti",

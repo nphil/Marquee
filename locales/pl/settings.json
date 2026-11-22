@@ -236,7 +236,7 @@
   "settings.audio.prefer_forced": "Preferuj plansze",
   "settings.audio.prefer_forced.short": "Preferuj plansze",
   "settings.audio.only_forced": "Napisy tylko do szyldów i piosenek",
-  "settings.audio.only_forced.short": "Tylko plansze",
+  "settings.audio.only_forced.short": "Szyldy i piosenki",
   "settings.audio.only_regular": "Tylko pełne napisy",
   "settings.audio.only_regular.short": "Tylko pełne",
   "settings.audio.original": "Oryginalny",

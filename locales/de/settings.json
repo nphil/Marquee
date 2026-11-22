@@ -230,7 +230,7 @@
   "settings.audio.prefer_forced": "Einblendungen bevorzugen",
   "settings.audio.prefer_forced.short": "Einblendungen bevorzugen",
   "settings.audio.only_forced": "Untertitel nur für Schilder und Lieder",
-  "settings.audio.only_forced.short": "Nur Einblendungen",
+  "settings.audio.only_forced.short": "Nur Schilder, Lieder",
   "settings.audio.only_regular": "Nur vollständige Untertitel",
   "settings.audio.only_regular.short": "Nur vollständige",
   "settings.audio.original": "Original",

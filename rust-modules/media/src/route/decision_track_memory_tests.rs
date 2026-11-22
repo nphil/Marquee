@@ -2068,6 +2068,66 @@ fn an_automatic_subtitle_follows_the_audio_until_the_viewer_picks() {
     tidy_write(&mut ps);
 }
 
+/// A landed anime episode (English dub plays, Japanese is the original) with an English text track and a Chinese one, the account wanting English
+/// subtitles on, in a signed-in, seated profile (so a pick is remembered).
+#[cfg(feature = "devtriggers")]
+fn landed_with_english_text(ps: &mut PlaybackSession, session: &session::TempSession) {
+    sign_in_and_seat(session, "");
+    let mut case = Case::episode(vec![srt(55001, 3, "eng", false, true), srt(55002, 4, "chi", false, false)], Vec::new());
+    case.account = Some((Some("en".into()), 2, 0));
+    case.anime = true;
+    let (plan, _, _) = resolve_in(ps, case, |_, plan| plan);
+    apply_plan(ps, plan, "rk-4k");
+}
+
+/// **The track menu reads the automatic picks off the published session**, which carries no
+/// `track_ctx`: On, the Audio menu's first row and its "Original" label all came back empty in the
+/// app (On after Off drew nothing) while the menu tests, on live sessions, passed.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn the_published_session_carries_the_automatic_picks() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let session = session::TempSession::new("track-memory-published-picks");
+    landed_with_english_text(&mut ps, &session);
+    let published = ps.publication();
+    assert_eq!(automatic_subtitle(&published), Some((55001, 0)));
+    assert_eq!(automatic_audio(&published), Some(audio_pair()[0].id), "the English dub is what plays automatically");
+    assert_eq!(original_audio(&published), Some(audio_pair()[1].id), "and the Japanese track is the original");
+    commit_subtitle_pick(&mut ps, -1, 0, true, Some(SubtitleMemo::Off));
+    assert_eq!(automatic_subtitle(&ps.publication()), Some((55001, 0)), "Off leaves the automatic pick to put back");
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
+/// **On after Off puts the automatic subtitle back as nobody's pick**: the remembered Off is
+/// dropped (the next episode lands on the automatic subtitle again) and the subtitle follows the
+/// audio again.
+#[test]
+fn on_after_off_forgets_the_off_and_follows_the_audio_again() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let session = session::TempSession::new("track-memory-on-after-off");
+    sign_in_and_seat(&session, "");
+    let subs = vec![srt(55001, 3, "eng", false, false), plx_data::metadata::Stream { sdh: true, ..srt(55002, 4, "eng", false, false) }];
+    land_with_context(&mut ps, subs, Some(0), SubMode::Track);
+    let ctx = ps.track_ctx.as_mut().unwrap();
+    ctx.auto_all = vec![("eng".into(), Some((55002, 1))), ("jpn".into(), Some((55001, 0)))];
+    ctx.auto_subs = Some(ctx.auto_all.clone());
+    commit_subtitle_pick(&mut ps, -1, 0, true, Some(SubtitleMemo::Off));
+    assert_eq!(cur_sub_sid(&ps), 0);
+    assert_eq!(remembered("").and_then(|e| e.subtitle), Some(SubtitleMemo::Off), "setup: Off is remembered");
+
+    let (stream, ordinal) = automatic_subtitle(&ps.publication()).expect("an automatic subtitle");
+    commit_automatic_subtitle_and_sidecar(&mut ps, ordinal, stream, None, String::new());
+    assert_eq!(cur_sub_sid(&ps), 55002);
+    assert_eq!(remembered(""), None, "no memory of the Off, and none of the automatic track");
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55001, "the subtitle follows the audio again");
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
 /// One-Punch Man S02E01 as PMS lists it: the built-in PGS "Signs / Songs" and "Dialogue", Bazarr's
 /// `.en.srt` (166318) and SpeechDock's `.en.cc.srt` (166341, hearing-impaired), the last one selected
 /// on the server.

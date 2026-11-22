@@ -936,7 +936,7 @@
     "description": "Settings, consent or sign-in UI: settings.audio.only_forced"
   },
   "settings.audio.only_forced.short": {
-    "value": "On-screen text only",
+    "value": "Signs & songs only",
     "description": "Settings, consent or sign-in UI: a SHORT trailing value shown beside the 'Forced Subtitles' row label (not the picker, which still uses the long settings.audio.only_forced string). Keep it a few words in the same grammatical form as its sibling On-screen text values."
   },
   "settings.audio.only_regular": {

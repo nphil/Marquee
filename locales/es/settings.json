@@ -233,7 +233,7 @@
   "settings.audio.prefer_forced": "Preferir rótulos",
   "settings.audio.prefer_forced.short": "Preferir rótulos",
   "settings.audio.only_forced": "Subtítulos solo para carteles y canciones",
-  "settings.audio.only_forced.short": "Solo rótulos",
+  "settings.audio.only_forced.short": "Carteles, canciones",
   "settings.audio.only_regular": "Solo subtítulos completos",
   "settings.audio.only_regular.short": "Solo completos",
   "settings.audio.original": "Original",

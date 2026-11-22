@@ -135,11 +135,11 @@
     "description": "Forget the locally saved audio choice for this title; Plex item selection is unchanged."
   },
   "widgets.tracks.audio_remember_show": {
-    "value": "For this show. Plex may keep its own selection.",
+    "value": "For every episode of this show.",
     "description": "Audio track selector note: an explicit choice applies to the whole series and another choice replaces it."
   },
   "widgets.tracks.audio_remember_movie": {
-    "value": "For this movie. Plex may keep its own selection.",
+    "value": "Whenever this movie plays.",
     "description": "Audio track selector note: an explicit choice applies to this movie and another choice replaces it."
   },
   "widgets.tracks.audio": {
@@ -159,7 +159,7 @@
     "description": "Label or formatted fact in the media track information sheet or track selector."
   },
   "widgets.tracks.forced_only": {
-    "value": "On-screen text only",
+    "value": "Signs & songs only",
     "description": "Subtitles tab of the player's track selector. The row directly after Off: show only the forced subtitle in the language of the audio that is playing (the lines that translate foreign speech or on-screen text), or nothing when the episode has none. Remembered per show, like Off or a chosen track. While it is the choice, the row reads out the language it shows or looked for, so keep it short enough to share the line with a language name. Same words as the account-wide Forced Subtitles setting's short value (settings.audio.only_forced.short)."
   },
   "widgets.tracks.mono": {
@@ -753,7 +753,7 @@
     "description": "Audio panel of the player's track selector (Plex Pass only, issue #266). Toggle row label; the On/Off read-out comes from the row's own switch state, not this string."
   },
   "widgets.tracks.enh_note_sidecar": {
-    "value": "Subtitles won't change.",
+    "value": "Turning these on keeps your subtitles as they are.",
     "description": "Issue #266/M7. One-line note under the ENABLED Boost dialog / Normalize loudness rows when the subtitle on screen is an external file the app draws itself — reassures the viewer that turning the toggle on leaves it untouched. No jargon: never say sidecar/remux/burn."
   },
   "widgets.tracks.enh_note_burn": {

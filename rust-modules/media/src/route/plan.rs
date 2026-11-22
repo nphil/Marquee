@@ -2157,6 +2157,10 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                 };
                 ctx.auto_all = all;
                 ctx.auto_audio = audio_prefs.auto.and_then(|i| tracks.get(i)).map(|s| s.id);
+                let origin = title_origin(p, &show_prefs);
+                ctx.original_audio = plx_data::metadata::auto_tracks::original_audio(tracks, origin.anime, &origin.countries)
+                    .and_then(|i| tracks.get(i))
+                    .map(|s| s.id);
                 ctx
             });
             // The ONE `track-memory:` line of this resolve. What the route did with a remembered subtitle

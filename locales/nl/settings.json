@@ -230,7 +230,7 @@
   "settings.audio.prefer_forced": "Tekst in beeld verkiezen",
   "settings.audio.prefer_forced.short": "Tekst in beeld verkiezen",
   "settings.audio.only_forced": "Ondertitels alleen voor borden en liedjes",
-  "settings.audio.only_forced.short": "Alleen tekst in beeld",
+  "settings.audio.only_forced.short": "Borden en liedjes",
   "settings.audio.only_regular": "Alleen volledige ondertitels",
   "settings.audio.only_regular.short": "Alleen volledige",
   "settings.audio.original": "Origineel",

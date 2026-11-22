@@ -233,7 +233,7 @@
   "settings.audio.prefer_forced": "Préférer le texte à l'écran",
   "settings.audio.prefer_forced.short": "Texte à l'écran d'abord",
   "settings.audio.only_forced": "Sous-titres des panneaux et chansons seuls",
-  "settings.audio.only_forced.short": "Texte à l'écran seul",
+  "settings.audio.only_forced.short": "Panneaux et chants",
   "settings.audio.only_regular": "Uniquement les sous-titres complets",
   "settings.audio.only_regular.short": "Complets seulement",
   "settings.audio.original": "Original",

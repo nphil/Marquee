@@ -327,9 +327,45 @@ pub struct TrackContext {
     /// The audio the automatic rule picks (a stream id): the Audio menu's first row. `None` when
     /// the title's original language is unknown.
     pub(super) auto_audio: Option<i64>,
+    /// The title's original-language audio (a stream id), which an anime's English dub is not:
+    /// the Audio menu's "Original" label. `None` when nothing is known to be the original.
+    pub(super) original_audio: Option<i64>,
+}
+
+/// **What the track menus read of the [`TrackContext`]**, the one part of it the per-frame
+/// publication carries (the context itself is not published: it holds the item's whole track
+/// list). Taken at each publication for the audio that plays, so an audio switch moves
+/// `auto_subtitle` with it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PublishedTracks {
+    /// The automatic subtitle for the audio now playing (`route::automatic_subtitle`).
+    pub(super) auto_subtitle: Option<(i64, i32)>,
+    pub(super) auto_audio: Option<i64>,
+    pub(super) original_audio: Option<i64>,
+    pub(super) forced_lang: String,
+}
+
+impl PublishedTracks {
+    pub(super) const NONE: PublishedTracks = PublishedTracks {
+        auto_subtitle: None,
+        auto_audio: None,
+        original_audio: None,
+        forced_lang: String::new(),
+    };
 }
 
 impl TrackContext {
+    /// The part of this context the menus read, for the audio stream `audio_sid` that plays.
+    pub(super) fn published(&self, audio_sid: i64) -> PublishedTracks {
+        let lang = self.audio_lang_of(audio_sid);
+        PublishedTracks {
+            auto_subtitle: self.auto_all.iter().find(|(l, _)| l == lang).and_then(|(_, pick)| *pick),
+            auto_audio: self.auto_audio,
+            original_audio: self.original_audio,
+            forced_lang: self.forced_lang.clone(),
+        }
+    }
+
     /// The context of a landing of `item` under `audio_lang`, with `memo` the remembered subtitle
     /// the ladder consulted (`None` for a retry or no memory).
     pub(super) fn of_landing(item: &PlayingItem, audio_lang: &str, memo: Option<&SubtitleMemo>) -> Self {
@@ -346,6 +382,7 @@ impl TrackContext {
             auto_subs: None,
             auto_all: Vec::new(),
             auto_audio: None,
+            original_audio: None,
         }
     }
 

@@ -228,7 +228,7 @@
   "settings.audio.prefer_forced": "Preferir texto na tela",
   "settings.audio.prefer_forced.short": "Preferir texto na tela",
   "settings.audio.only_forced": "Legendas só para placas e músicas",
-  "settings.audio.only_forced.short": "Só texto na tela",
+  "settings.audio.only_forced.short": "Só placas e músicas",
   "settings.audio.only_regular": "Apenas legendas completas",
   "settings.audio.only_regular.short": "Só completas",
   "settings.audio.original": "Original",

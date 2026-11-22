@@ -236,7 +236,7 @@
   "settings.audio.prefer_forced": "Аддаваць перавагу надпісам",
   "settings.audio.prefer_forced.short": "Спачатку надпісы",
   "settings.audio.only_forced": "Субцітры толькі для надпісаў і песень",
-  "settings.audio.only_forced.short": "Толькі надпісы",
+  "settings.audio.only_forced.short": "Надпісы і песні",
   "settings.audio.only_regular": "Толькі поўныя субцітры",
   "settings.audio.only_regular.short": "Толькі поўныя",
   "settings.audio.original": "Зыходная",

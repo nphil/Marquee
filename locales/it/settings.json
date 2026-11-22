@@ -233,7 +233,7 @@
   "settings.audio.prefer_forced": "Preferisci scritte",
   "settings.audio.prefer_forced.short": "Preferisci scritte",
   "settings.audio.only_forced": "Sottotitoli solo per cartelli e canzoni",
-  "settings.audio.only_forced.short": "Solo scritte",
+  "settings.audio.only_forced.short": "Cartelli e canzoni",
   "settings.audio.only_regular": "Solo sottotitoli completi",
   "settings.audio.only_regular.short": "Solo completi",
   "settings.audio.original": "Originale",

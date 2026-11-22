@@ -553,17 +553,52 @@ pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_si
 }
 
 /// **The subtitle the automatic rule puts on for the audio now playing** (`(stream id, ordinal)`): what
-/// the Subtitles menu's On row chooses. `None`: the item has no English text track to show.
+/// the Subtitles menu's On row chooses. `None`: the item has no English text track to show. Read off
+/// the PUBLISHED session ([`PlaybackSession::publication`]), as the menu does.
 pub fn automatic_subtitle(ps: &PlaybackSession) -> Option<(i64, i32)> {
-    let ctx = ps.track_ctx.as_ref()?;
-    let lang = ctx.audio_lang_of(cur_audio_sid(ps));
-    ctx.auto_all.iter().find(|(l, _)| l == lang).and_then(|(_, pick)| *pick)
+    ps.published_tracks.auto_subtitle
 }
 
 /// **The audio stream the automatic rule picks** for this title (a stream id): the Audio menu's first
-/// row. `None` when the title's original language is not known.
+/// row. `None` when the title's original language is not known. Read off the published session.
 pub fn automatic_audio(ps: &PlaybackSession) -> Option<i64> {
-    ps.track_ctx.as_ref()?.auto_audio
+    ps.published_tracks.auto_audio
+}
+
+/// **The title's original-language audio stream** (a stream id): the Audio menu's "Original" row.
+/// Differs from [`automatic_audio`] on an anime with an English dub. Read off the published session.
+pub fn original_audio(ps: &PlaybackSession) -> Option<i64> {
+    ps.published_tracks.original_audio
+}
+
+/// **The track menu's On: put the automatic subtitle back, as nobody's pick.** The commit and sidecar
+/// draw of [`commit_subtitle_and_sidecar`] with no memory written, then what the viewer's earlier
+/// subtitle choice left behind is dropped: a remembered Off or track no longer decides the next
+/// landing, and the subtitle follows the audio again. (A pick by hand is kept; only On is automatic.)
+pub fn commit_automatic_subtitle_and_sidecar(
+    ps: &mut PlaybackSession,
+    render_ordinal: i32,
+    stream_id: i64,
+    sidecar_key: Option<String>,
+    sidecar_codec: String,
+) {
+    commit_subtitle_and_sidecar(ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, None);
+    forget_subtitle_memory(ps);
+    if let Some(ctx) = ps.track_ctx.as_mut() {
+        ctx.auto_subs = Some(ctx.auto_all.clone());
+    }
+}
+
+/// Drop only the subtitle half of the title's remembered choice; the audio half stays.
+fn forget_subtitle_memory(ps: &PlaybackSession) {
+    let Some(key) = memory_show(cur_kind(ps), cur_show_rk(ps)) else { return };
+    let Some((profile, machine)) = memory_scope(cur_sid(ps)) else { return };
+    let key = key.to_string();
+    let _ = remember::<TrackMemoryEntry>(&profile, (machine, key), |current| {
+        let mut entry = current?.clone();
+        entry.subtitle = None;
+        entry.audio.is_some().then_some(entry)
+    });
 }
 
 /// **The first decoded frame's re-match** (FO; the pump calls it once per frame, and it does

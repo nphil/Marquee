@@ -567,6 +567,10 @@ pub(crate) fn commit_track(
         TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, memo } => {
             plx_media::route::commit_subtitle_and_sidecar(ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, memo);
         }
+        // On: the automatic subtitle, nobody's pick (`route::commit_automatic_subtitle_and_sidecar`)
+        TrackCommit::SubtitleAutomatic { render_ordinal, stream_id, sidecar_key, sidecar_codec } => {
+            plx_media::route::commit_automatic_subtitle_and_sidecar(ps, render_ordinal, stream_id, sidecar_key, sidecar_codec);
+        }
         // Forced only (FO): the panel matched the forced track for the playing audio (or nothing; the
         // downloaded file that stands for it when the menu lists that instead), the route holds the
         // mode, remembers `ForcedOnly { lang }` when it changed, and performs the sidecar half

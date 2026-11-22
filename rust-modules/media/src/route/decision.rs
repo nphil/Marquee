@@ -23,7 +23,7 @@ use std::sync::Mutex;
 use super::flight::*;
 use super::plan::*;
 use super::prefs::*;
-use super::track_memory::{SubMode, TrackContext};
+use super::track_memory::{PublishedTracks, SubMode, TrackContext};
 
 // The track memory's effects: the recall at a resolve, the parked write-back and the track menu's
 // picks. A child module so the file that declares `PlaybackSession` is not also the one that
@@ -31,7 +31,7 @@ use super::track_memory::{SubMode, TrackContext};
 #[path = "decision_memory.rs"]
 mod memory;
 pub use memory::{
-    audio_memory_present, automatic_audio, automatic_subtitle, set_audio_memory, commit_audio_pick, commit_forced_only_and_sidecar, commit_forced_only_pick, commit_subtitle_and_sidecar, commit_subtitle_pick,
+    audio_memory_present, automatic_audio, automatic_subtitle, commit_automatic_subtitle_and_sidecar, original_audio, set_audio_memory, commit_audio_pick, commit_forced_only_and_sidecar, commit_forced_only_pick, commit_subtitle_and_sidecar, commit_subtitle_pick,
     on_decoded_frame, persist_subtitle_offset, rematch_subtitle_with_names, repoint_parked_subtitle, send_parked_write_back,
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -420,6 +420,9 @@ pub struct PlaybackSession {
     /// What the audio follow and the first-frame names re-match need of the playing item (neither
     /// can read the metadata store); NOT published ([`Self::publication`]). `None` without an item.
     track_ctx: Option<TrackContext>,
+    /// What the track menus read of [`Self::track_ctx`]: filled by [`Self::publication`] alone, so
+    /// it is empty on the live session and is the only part of the context a screen sees.
+    published_tracks: PublishedTracks,
     /// the playing item's Part id (from the part key), so an audio switch can PUT the
     /// server-side stream selection — the transcoder encodes the part's SELECTED audio.
     cur_part_id: i64,
@@ -621,6 +624,7 @@ impl PlaybackSession {
         write_back: None,
         sub_mode: SubMode::Track,
         track_ctx: None,
+        published_tracks: PublishedTracks::NONE,
         cur_part_id: 0,
         sess: String::new(),
         machine_id: String::new(),
@@ -713,7 +717,8 @@ impl PlaybackSession {
             // The parked write is the loop's to send, not a screen's to see.
             write_back: _,
             sub_mode,
-            track_ctx: _,
+            track_ctx,
+            published_tracks: _,
             cur_part_id,
             sess,
             machine_id,
@@ -787,6 +792,7 @@ impl PlaybackSession {
             write_back: None,
             sub_mode: *sub_mode,
             track_ctx: None,
+            published_tracks: track_ctx.as_ref().map(|c| c.published(cur_audio.as_ref().map_or(0, |a| a.sid))).unwrap_or_default(),
             cur_part_id: *cur_part_id,
             sess: sess.clone(),
             machine_id: machine_id.clone(),
@@ -9812,6 +9818,7 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
             write_back,
             sub_mode,
             track_ctx: plan.track_ctx,
+            published_tracks: PublishedTracks::NONE,
             cur_part_id: plan.part_id,
             sess: plan.sess,
             machine_id,
@@ -12296,16 +12303,28 @@ pub fn set_sub_mode_for_test(ps: &mut PlaybackSession, mode: SubMode) {
 /// **The language Forced only falls back to** when the audio that plays names none: the one the
 /// remembered Forced only (or the row's last choice) recorded, kept on the landing's
 /// [`TrackContext`]. Empty when nothing recorded one or no item has landed. The resolve and the
-/// audio follow already match with it; the Subtitles menu reads it too, so the row and the next
-/// episode choose by one rule.
+/// audio follow already match with it; the Subtitles menu reads it too (from the published
+/// session, [`PlaybackSession::publication`]), so the row and the next episode choose by one rule.
 pub fn forced_only_lang(ps: &PlaybackSession) -> &str {
-    ps.track_ctx.as_ref().map_or("", |c| c.forced_lang.as_str())
+    ps.track_ctx.as_ref().map_or(ps.published_tracks.forced_lang.as_str(), |c| c.forced_lang.as_str())
+}
+
+/// Give `ps` the published automatic picks `(subtitle, audio, original audio)`, for a menu test that
+/// has no landing to take them from.
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_published_tracks_for_test(
+    ps: &mut PlaybackSession, auto_subtitle: Option<(i64, i32)>, auto_audio: Option<i64>, original_audio: Option<i64>,
+) {
+    ps.published_tracks.auto_subtitle = auto_subtitle;
+    ps.published_tracks.auto_audio = auto_audio;
+    ps.published_tracks.original_audio = original_audio;
 }
 
 /// Give `ps` the Forced only fallback language `lang`, for a menu test that cannot reach the field.
 #[cfg(any(test, feature = "test-support"))]
 pub fn set_forced_only_lang_for_test(ps: &mut PlaybackSession, lang: &str) {
     ps.track_ctx.get_or_insert_with(TrackContext::default).forced_lang = lang.to_string();
+    ps.published_tracks.forced_lang = lang.to_string();
 }
 
 /// Atomically publish the main-thread session fields a newly spawned timeline reporter may read.
