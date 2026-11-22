@@ -350,7 +350,7 @@ fn a_slow_clock_with_both_tracks_already_fed_is_not_paused_for_network_refill() 
     assert!(rig.run_until(|rig| {
         let p = SHARED.pres_fed.load(Relaxed);
         let e = rig.eng();
-        p > S && e.max_fed_video_pts.min(e.max_fed_audio_pts) - p > HEALTHY_NS
+        p > super::super::clock_debt::DEBT_MIN_POS_NS && e.max_fed_video_pts.min(e.max_fed_audio_pts) - p > HEALTHY_NS
     }));
     ffi_host::reset_volume_probe_for_test();
     let mut wall = SHARED.dg_vpres_at.load(Relaxed);
