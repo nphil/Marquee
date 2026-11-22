@@ -263,6 +263,127 @@
    }
   },
   {
+   "name": "Made in Abyss S01E01: dub audio, the .en.cc.srt (hearing-impaired) goes with the dub",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 171411,
+     "language": "en",
+     "original": false,
+     "dub": true
+    },
+    {
+     "id": 171412,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 171413,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Signs / Songs"
+    },
+    {
+     "id": 171414,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Dialogue"
+    },
+    {
+     "id": 171421,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    },
+    {
+     "id": 171420,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "expect": {
+    "audio": 171411,
+    "subtitle": 171421
+   }
+  },
+  {
+   "name": "Made in Abyss S01E01: viewer chose the original audio, the .en.srt goes with it",
+   "title": "episode",
+   "anime": true,
+   "audio": [
+    {
+     "id": 171411,
+     "language": "en",
+     "original": false,
+     "dub": true
+    },
+    {
+     "id": 171412,
+     "language": "ja",
+     "original": true,
+     "dub": false
+    }
+   ],
+   "subtitles": [
+    {
+     "id": 171413,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Signs / Songs"
+    },
+    {
+     "id": 171414,
+     "language": "en",
+     "external": false,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "pgs",
+     "title": "Dialogue"
+    },
+    {
+     "id": 171421,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": true,
+     "codec": "srt"
+    },
+    {
+     "id": 171420,
+     "language": "en",
+     "external": true,
+     "forced": false,
+     "hearingImpaired": false,
+     "codec": "srt"
+    }
+   ],
+   "remembered": {
+    "audio": 171412
+   },
+   "expect": {
+    "audio": 171412,
+    "subtitle": 171420
+   }
+  },
+  {
    "name": "anime dub, only the original-matched sidecar: it stands in",
    "title": "episode",
    "anime": true,

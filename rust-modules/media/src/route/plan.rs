@@ -3792,7 +3792,8 @@ pub(super) struct SubDecision {
 /// remembered track, so rung 1 outranks all three alike.
 ///   1. this playback's own pick (`override_id`, a known retry);
 ///   2. what the profile remembered for the show: a track (`track_memory::match_subtitle`; a
-///      remembered sidecar picks this file's same-language sidecar, see [`memory_subtitle`]), Off, or
+///      remembered sidecar picks this file's same-language sidecar, see [`memory_subtitle`]; in an
+///      anime that sidecar names the language only, see [`sidecar_variant_of_audio`]), Off, or
 ///      Forced only (`track_memory::match_forced_only`, judged by the language of the audio that
 ///      is PLAYING);
 ///   3. the automatic subtitle ([`auto_subtitle`]), which follows the audio. What PMS has selected
@@ -3814,17 +3815,44 @@ pub(super) fn pick_subtitle(
         return SubDecision { pick, source: SubPickSource::Override, miss: None };
     }
     let mut miss = None;
+    let source = if prefs.subtitle.is_some() { SubPickSource::Show } else { SubPickSource::Account };
     if let Some(memo) = consulted_memory(override_id, memory) {
         match memory_subtitle(subs, memo, audio_lang) {
-            // The track a memory names may be one the menu hides behind its downloaded twin (Forced
-            // only's forced track too): the pick is the row that is listed.
-            Ok(pick) => return SubDecision { pick: visible_pick(subs, pick), source: SubPickSource::Memory, miss: None },
+            Ok(pick) => {
+                // The track a memory names may be one the menu hides behind its downloaded twin (Forced
+                // only's forced track too): the pick is the row that is listed.
+                let pick = visible_pick(subs, pick);
+                return match sidecar_variant_of_audio(item, prefs, account, audio_lang, memo, pick) {
+                    Some(auto) => SubDecision { pick: Some(auto), source, miss: None },
+                    None => SubDecision { pick, source: SubPickSource::Memory, miss: None },
+                };
+            }
             Err(reason) => miss = Some(reason),
         }
     }
-    let source = if prefs.subtitle.is_some() { SubPickSource::Show } else { SubPickSource::Account };
     let pick = auto_subtitle(item, prefs, account, audio_lang);
     SubDecision { pick, source, miss }
+}
+
+/// **An anime's two sidecars of one language are the two audios', not two choices.** The dub
+/// transcript goes with the dub and the translation with the original, so a remembered sidecar pick
+/// names the language and the automatic rule picks the variant for the audio that plays; the
+/// subtitle then keeps following the audio (a decided memory would stop that). `Some` is that
+/// automatic sidecar, when the memory names a sidecar of the same language and the title is an anime;
+/// every other memory (a film, an embedded track, Off, Forced only) decides.
+fn sidecar_variant_of_audio(
+    item: &plx_data::metadata::PlayingItem, prefs: &plx_plex::plex::ShowLangPrefs, account: SubtitleLangPrefs<'_>,
+    audio_lang: &str, memo: &SubtitleMemo, remembered: Option<(i64, i32)>,
+) -> Option<(i64, i32)> {
+    let SubtitleMemo::Track(track) = memo else { return None };
+    if !track.external || !title_origin(item, prefs).anime {
+        return None;
+    }
+    let sidecar = |id: i64| item.subs.iter().find(|s| s.id == id && s.external && s.sidecar_renderable());
+    let remembered = sidecar(remembered?.0)?;
+    let auto = auto_subtitle(item, prefs, account, audio_lang)?;
+    let picked = sidecar(auto.0)?;
+    lang_matches(&remembered.lang_code, &picked.lang_code).then_some(auto)
 }
 
 /// The title's genre and country: the item's own (a movie), else its show's, which the show's

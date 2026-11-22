@@ -540,15 +540,57 @@ fn the_servers_selection_does_not_move_the_automatic_subtitle() {
 }
 
 /// A remembered subtitle that DECIDED is the viewer's choice and is not followed; one that matched
-/// nothing decided nothing, so the automatic pick it fell back to follows the audio as usual.
+/// nothing decided nothing, so the automatic pick it fell back to follows the audio as usual. An
+/// anime's remembered sidecar names the language only: its variant is the audio's, and follows.
 #[test]
 fn only_a_memory_that_decided_stops_the_follow() {
     let item = anime(vec![text_sub(1, "eng", "Dialogue"), sidecar(8, "eng", ""), cc_sidecar(9)]);
-    let decided = ladder(&item, "eng", Some(&external_memo("eng", false)));
-    assert_eq!((decided.pick, decided.source), (Some((8, -1)), SubPickSource::Memory), "English audio would prefer the dub (9)");
+    let embedded = ladder(&item, "eng", Some(&track_memo("eng")));
+    assert_eq!(
+        (embedded.pick, embedded.source),
+        (Some((8, -1)), SubPickSource::Memory),
+        "a remembered built-in track decides (it lands on its downloaded twin)",
+    );
+    let film = PlayingItem { origin: Default::default(), ..item.clone() };
+    let decided = ladder(&film, "eng", Some(&external_memo("eng", false)));
+    assert_eq!((decided.pick, decided.source), (Some((8, -1)), SubPickSource::Memory), "outside anime a remembered sidecar decides");
 
     let declined = ladder(&item, "eng", Some(&track_memo("spa")));
     assert_eq!((declined.pick, declined.source, declined.miss), (Some((9, -1)), SubPickSource::Account, Some("language")));
+}
+
+/// Made in Abyss S01E01 as PMS lists it (rk 18064): the two built-in PGS tracks, SpeechDock's
+/// `.en.cc.srt` (171421, hearing-impaired, goes with the English dub) and Bazarr's `.en.srt`
+/// (171420, goes with the Japanese original), the latter selected on the server.
+fn made_in_abyss_s01e01() -> PlayingItem {
+    let pgs = |id, index, title: &str| Stream { codec: "pgs".into(), title: title.into(), ..sub(id, index, "eng", false) };
+    PlayingItem {
+        audio: vec![trk(171411, "dca", "eng", true), trk(171412, "dca", "jpn", false)],
+        ..anime(vec![
+            pgs(171413, 3, "Signs / Songs"),
+            pgs(171414, 4, "Dialogue"),
+            cc_sidecar(171421),
+            server_selected(Stream { key: "/library/streams/171420".into(), ..sub(171420, 6, "eng", true) }),
+        ])
+    }
+}
+
+/// **The live failure (Made in Abyss on the TV, 2026-11-22).** The profile remembered an English
+/// sidecar (the `.en.srt`), and that memory pinned it under the English dub too, so the dub's own
+/// transcript (171421) never came up and an audio switch never moved the subtitle. The remembered
+/// sidecar now names the language: the variant is the audio's, and the subtitle keeps following.
+#[test]
+fn a_remembered_sidecar_does_not_pin_the_variant_of_an_anime() {
+    let item = made_in_abyss_s01e01();
+    let memo = external_memo("eng", false);
+    let english = ladder(&item, "eng", Some(&memo));
+    assert_eq!((english.pick, english.source), (Some((171421, -1)), SubPickSource::Account), "the dub's transcript");
+    let japanese = ladder(&item, "jpn", Some(&memo));
+    assert_eq!((japanese.pick, japanese.source), (Some((171420, -1)), SubPickSource::Account), "the original's translation");
+    let dub_memo = SubtitleMemo::Track(SubtitleTrackMemo {
+        lang: "eng".into(), kind: "text".into(), external: true, sdh: true, ..Default::default()
+    });
+    assert_eq!(ladder(&item, "jpn", Some(&dub_memo)).pick, Some((171420, -1)), "a remembered dub transcript is no more pinned");
 }
 
 // ---- a downloaded track stands for its built-in twin -------------------------------------------

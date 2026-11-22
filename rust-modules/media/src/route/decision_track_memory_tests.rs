@@ -2200,6 +2200,51 @@ fn a_reloaded_playback_keeps_following_the_audio() {
     tidy_write(&mut ps);
 }
 
+/// Made in Abyss S01E01 as PMS lists it (rk 18064): the two built-in PGS tracks, the `.en.cc.srt`
+/// (171421, goes with the English dub) and the `.en.srt` (171420, goes with the Japanese original,
+/// selected on the server).
+#[cfg(feature = "devtriggers")]
+fn made_in_abyss_s01e01() -> Vec<plx_data::metadata::Stream> {
+    let pgs = |id, index, title: &str| plx_data::metadata::Stream {
+        title: title.into(),
+        ..stream(id, index, "eng", "pgs", 0)
+    };
+    vec![
+        pgs(171413, 3, "Signs / Songs"),
+        pgs(171414, 4, "Dialogue"),
+        plx_data::metadata::Stream { sdh: true, ..sidecar_stream(171421, "eng") },
+        plx_data::metadata::Stream { selected: true, ..sidecar_stream(171420, "eng") },
+    ]
+}
+
+/// **The live failure (Made in Abyss on the TV, 2026-11-22), end to end.** The profile remembered the
+/// `.en.srt` sidecar and the Japanese audio, so the English dub never got its own transcript and an
+/// audio switch left the subtitle alone. The remembered sidecar names the language: the audio picks
+/// the variant, at the landing and on every switch. The selection PUT of the switch fails here (the
+/// loopback server is gone by then); the subtitle follows locally all the same.
+#[test]
+#[cfg(feature = "devtriggers")]
+fn a_remembered_sidecar_does_not_pin_an_anime_variant_end_to_end() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    crate::player::sidecar::reset();
+    let memo = memory(Some(japanese_eac3()), Some(english_sidecar_memo()));
+    let case = Case { anime: true, ..Case::episode(made_in_abyss_s01e01(), memo) };
+    let (plan, _, _) = resolve_in(&mut ps, case, |_, plan| plan);
+    assert_eq!(plan.memory_sidecar, Some(171420), "Japanese audio lands on the translation");
+    assert!(plan.write_back.as_ref().map_or(true, |w| w.subtitle.is_none()), "no subtitle is written back for an automatic pick");
+    apply_plan(&mut ps, plan, "rk-4k");
+    assert_eq!(cur_sub_sid(&ps), 171420, "Japanese audio: the translation");
+
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 171421, "English audio: the dub transcript");
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(cur_sub_sid(&ps), 171420, "and back");
+    crate::player::sidecar::reset();
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
 /// **A resumed playback lands on the subtitle its audio asks for.** Switching audio to Japanese
 /// writes the audio memory, so the next landing plays Japanese from the start: the translation, not
 /// the dub transcript the server still has selected.

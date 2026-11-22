@@ -10,7 +10,8 @@
 //! - The subtitle is a sidecar when one exists in the language, else an embedded TEXT track, drawn in
 //!   the app. Never a picture track, never a forced or signs-only track, never a server burn.
 //! - Either variant stands in for the other when it is the only one ("`.en.cc.srt` only" films).
-//! - A remembered choice (a track, or Off) decides before any of this.
+//! - A remembered choice (a track, or Off) decides before any of this, except an anime's remembered
+//!   sidecar: it names the language, the variant above stays the audio's (`route::plan::pick_subtitle`).
 //!
 //! The case table is a file the Swift phone apps copy; `tests` runs every case against these
 //! functions, so the two cannot drift.
