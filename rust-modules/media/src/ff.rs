@@ -2679,13 +2679,12 @@ fn park_read_fails_closed(bounce_remaining: bool, io_failed: bool) -> bool {
 /// LumaTV helper offers, beside the state's own source.
 type MultiReader = crate::multilink::reader::Reader<crate::curlio::ranges::Ranges>;
 
-/// What the ranges may hold, fetched or asked for, beside the read-ahead reserve.
-const RANGES_ROOM: u64 = 4 << 20;
-
 /// The reader for the file `src` has open at `url`, when it may have one: a sized part of the
 /// library, open where it was asked for.
 fn multi_reader(src: &Src, origin: &plx_plex::plex::Origin, path: &str, url: &str, size: i64) -> Option<MultiReader> {
     use crate::curlio::ranges::Ranges;
+    // A stream starts with no ranges in the reserve, whatever the last one left there.
+    crate::player::reserve::note_ranges(None);
     if size <= 0 || !path.starts_with("/library/parts/") {
         return None;
     }
@@ -2710,7 +2709,8 @@ fn multi_reader(src: &Src, origin: &plx_plex::plex::Origin, path: &str, url: &st
 }
 
 /// What the ranges are told of the player: the reserve ahead of the playhead to a quarter second,
-/// whether the queues are full, and the file's mean rate once its length is known.
+/// whether the queues are full, the file's mean rate once its length is known, and the room the
+/// read-ahead reserve gives them.
 fn ranges_demand(s: &AvioState) -> crate::multilink::engine::Demand {
     let reserve_ms = playable_reserve_ms().map_or(0, |ms| ms.clamp(0, i64::from(u32::MAX)) as u32);
     let length_ms = SHARED.duration_ns.load(Ordering::Relaxed) / 1_000_000;
@@ -2718,7 +2718,7 @@ fn ranges_demand(s: &AvioState) -> crate::multilink::engine::Demand {
         reserve_ms: reserve_ms / 250 * 250,
         full: crate::aq::aq_would_park(s.aq),
         film_bps: if length_ms > 0 { s.size as u64 * 8 / length_ms as u64 * 1000 } else { 0 },
-        room: RANGES_ROOM,
+        room: crate::player::reserve::ranges_room(),
     }
 }
 
@@ -2726,7 +2726,10 @@ fn ranges_demand(s: &AvioState) -> crate::multilink::engine::Demand {
 /// link is ready to. `None` while the default reader has the stream: the caller reads from it.
 fn read_ranges(s: &mut AvioState, dst: &mut [u8]) -> Option<c_int> {
     use crate::multilink::reader::Read;
-    if !s.multi.as_ref()?.listening() {
+    let multi = s.multi.as_ref()?;
+    let listening = multi.listening();
+    crate::player::reserve::note_ranges(listening.then(|| multi.held()));
+    if !listening {
         return None;
     }
     let demand = ranges_demand(s);

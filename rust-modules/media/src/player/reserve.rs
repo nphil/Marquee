@@ -14,8 +14,13 @@
 //! drain to their base caps as the film plays. Nothing is dropped to shrink, because dropped media
 //! would have to be read again.
 //!
-//! Pure values and two atomics; `pump` applies the allowance and `engine::try_prime` asks
-//! [`hold_releases`].
+//! A stream read over Multi Link ([`crate::multilink`]) holds ranges ahead of the demuxer as well.
+//! Their room is [`RANGES_BYTES`] of the same allowance, given up by the video lane, so the
+//! allowance stays the one limit on what a stream holds beyond the base caps. Without an
+//! allowance the ranges have no room and the default reader reads alone.
+//!
+//! Pure values and a few atomics; `pump` applies the allowance, the demuxer tells of its ranges
+//! ([`note_ranges`]) and `engine::try_prime` asks [`hold_releases`].
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 
@@ -33,12 +38,20 @@ const STEP_BYTES: u64 = 8 << 20;
 /// The audio lane's share of the bytes. One reader fills both lanes, so the audio lane must be
 /// able to hold the same seconds as the video lane: an eighth covers lossless audio beside 4K.
 const AUDIO_SHARE: u64 = 8;
+/// What Multi Link's ranges get of the bytes while a stream has them: eight of the largest
+/// range, enough for two links to fetch out of order ahead of the demuxer.
+const RANGES_BYTES: u64 = 8 << 20;
 
 /// The memory guard's last sample: available bytes (0 until the first) and whether it is short.
 static AVAILABLE_BYTES: AtomicU64 = AtomicU64::new(0);
 static MEMORY_SHORT: AtomicBool = AtomicBool::new(false);
-/// Bumped per sample, so the pump recomputes only when there is a new one.
+/// Bumped per sample and when the ranges come or go, so the pump recomputes only then.
 static SAMPLES: AtomicU32 = AtomicU32::new(0);
+/// The demuxer's word on its ranges: whether the stream has them, and the bytes they hold.
+static RANGES_IN_USE: AtomicBool = AtomicBool::new(false);
+static RANGES_HELD: AtomicU64 = AtomicU64::new(0);
+/// The room the pump last gave the ranges.
+static RANGES_ROOM: AtomicU64 = AtomicU64::new(0);
 
 /// The app's memory guard: one sample of the system's available memory, and its own verdict.
 pub fn note_memory(available_bytes: u64, short: bool) {
@@ -47,31 +60,56 @@ pub fn note_memory(available_bytes: u64, short: bool) {
     SAMPLES.fetch_add(1, Relaxed);
 }
 
-/// How many samples [`note_memory`] has taken.
+/// How many samples [`note_memory`] has taken, and changes [`note_ranges`] has seen.
 pub fn samples() -> u32 {
     SAMPLES.load(Relaxed)
 }
 
-/// What the two lanes may hold beyond their base caps.
+/// The demuxer: the stream's ranges hold `held_bytes` now, or it has none.
+pub fn note_ranges(held_bytes: Option<u64>) {
+    RANGES_HELD.store(held_bytes.unwrap_or(0), Relaxed);
+    if RANGES_IN_USE.swap(held_bytes.is_some(), Relaxed) != held_bytes.is_some() {
+        SAMPLES.fetch_add(1, Relaxed);
+    }
+}
+
+/// The pump: the ranges' part of the allowance it applied.
+pub fn grant_ranges(room_bytes: u64) {
+    RANGES_ROOM.store(room_bytes, Relaxed);
+}
+
+/// What the ranges may hold, fetched or asked for.
+pub fn ranges_room() -> u64 {
+    RANGES_ROOM.load(Relaxed)
+}
+
+/// What the two lanes may hold beyond their base caps, and the ranges ahead of them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Allowance {
     pub video_bytes: i64,
     pub audio_bytes: i64,
+    pub ranges_bytes: i64,
 }
 
 impl Allowance {
     pub const fn total(self) -> i64 {
-        self.video_bytes + self.audio_bytes
+        self.video_bytes + self.audio_bytes + self.ranges_bytes
+    }
+
+    /// The ranges' part alone, for a stream whose lanes take no read-ahead.
+    pub const fn ranges_alone(self) -> Allowance {
+        Allowance { video_bytes: 0, audio_bytes: 0, ranges_bytes: self.ranges_bytes }
     }
 }
 
 /// The allowance for the last memory sample. `held_bytes` is what the queues hold now: it is
-/// already missing from the available figure, so it is added back before the share is taken.
+/// already missing from the available figure, as what the ranges hold is, so both are added back
+/// before the share is taken.
 pub fn allowance(held_bytes: u64) -> Allowance {
-    allowance_for(AVAILABLE_BYTES.load(Relaxed), held_bytes, MEMORY_SHORT.load(Relaxed))
+    allowance_for(AVAILABLE_BYTES.load(Relaxed), held_bytes + RANGES_HELD.load(Relaxed), MEMORY_SHORT.load(Relaxed), RANGES_IN_USE.load(Relaxed))
 }
 
-fn allowance_for(available_bytes: u64, held_bytes: u64, short: bool) -> Allowance {
+fn allowance_for(available_bytes: u64, held_bytes: u64, short: bool, ranges: bool) -> Allowance {
     if short || available_bytes == 0 {
         return Allowance::default();
     }
@@ -81,7 +119,8 @@ fn allowance_for(available_bytes: u64, held_bytes: u64, short: bool) -> Allowanc
         return Allowance::default();
     }
     let audio = total / AUDIO_SHARE;
-    Allowance { video_bytes: (total - audio) as i64, audio_bytes: audio as i64 }
+    let ranges = if ranges { RANGES_BYTES } else { 0 };
+    Allowance { video_bytes: (total - audio - ranges) as i64, audio_bytes: audio as i64, ranges_bytes: ranges as i64 }
 }
 
 /// The least media a hold plays again with.
@@ -179,19 +218,32 @@ mod tests {
     /// The TV of 2026-11-21: 539 MiB available with the film playing.
     #[test]
     fn the_allowance_is_half_of_what_is_available_above_the_margin() {
-        let a = allowance_for(539 * MIB, 0, false);
+        let a = allowance_for(539 * MIB, 0, false, false);
         assert_eq!(a.total() as u64, 152 * MIB, "(539 - 224) / 2, in 8 MiB steps");
         assert_eq!(a.audio_bytes as u64, 19 * MIB);
         // The queues' own bytes are added back: filling the allowance does not shrink it.
-        assert_eq!(allowance_for(387 * MIB, 152 * MIB, false), a);
+        assert_eq!(allowance_for(387 * MIB, 152 * MIB, false, false), a);
     }
 
     #[test]
     fn the_allowance_is_capped_and_goes_when_memory_is_short() {
-        assert_eq!(allowance_for(4096 * MIB, 0, false).total() as u64, MAX_BYTES);
-        assert_eq!(allowance_for(4096 * MIB, 0, true), Allowance::default(), "the guard calls it short");
-        assert_eq!(allowance_for(250 * MIB, 0, false), Allowance::default(), "under the least worth having");
-        assert_eq!(allowance_for(0, 64 * MIB, false), Allowance::default(), "no sample yet");
+        assert_eq!(allowance_for(4096 * MIB, 0, false, false).total() as u64, MAX_BYTES);
+        assert_eq!(allowance_for(4096 * MIB, 0, true, false), Allowance::default(), "the guard calls it short");
+        assert_eq!(allowance_for(250 * MIB, 0, false, false), Allowance::default(), "under the least worth having");
+        assert_eq!(allowance_for(0, 64 * MIB, false, false), Allowance::default(), "no sample yet");
+    }
+
+    #[test]
+    fn the_ranges_room_is_the_video_lane_s_and_the_allowance_stays_one_limit() {
+        let plain = allowance_for(539 * MIB, 0, false, false);
+        let ranged = allowance_for(539 * MIB, 0, false, true);
+        assert_eq!(ranged.ranges_bytes as u64, RANGES_BYTES);
+        assert_eq!(ranged.total(), plain.total());
+        assert_eq!((ranged.audio_bytes, ranged.video_bytes), (plain.audio_bytes, plain.video_bytes - RANGES_BYTES as i64));
+        assert_eq!(allowance_for(4096 * MIB, 0, false, true).total() as u64, MAX_BYTES, "the cap holds with ranges");
+        assert!(allowance_for(256 * MIB, 0, false, true).video_bytes > 0, "the least allowance leaves the lane some");
+        assert_eq!(allowance_for(4096 * MIB, 0, true, true), Allowance::default(), "no allowance, no room");
+        assert_eq!(ranged.ranges_alone().total() as u64, RANGES_BYTES, "a stream whose lanes take none keeps it");
     }
 
     /// The film of 2026-11-21 gained about 0.97 s of media per second held: a deficit of 3%.

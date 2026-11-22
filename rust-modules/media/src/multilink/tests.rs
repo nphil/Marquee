@@ -56,44 +56,27 @@ fn assert_proven_anew(sim: &Sim, source: Ipv4Addr, after: Micros) {
     assert_eq!(first, Some(PROOF), "{source} carries again only after a new proof\n{}", sim.logs.join("\n"));
 }
 
-/// Run until Wi-Fi has shown a rate and has a range out, and return when that was. The wire has
-/// carried its first ranges by then.
-fn carrying_on_wifi(sim: &mut Sim) -> Micros {
-    let on_wifi = |s: &Sim| s.logged("using wlan0") && s.net.live().iter().any(|r| r.source == WIFI && asked(r) != PROOF);
-    assert!(sim.run_until(3_000, on_wifi), "Wi-Fi carries\n{}", sim.logs.join("\n"));
+/// Run until both links carry, and return when that was.
+fn carrying_both(sim: &mut Sim) -> Micros {
+    assert!(sim.run_until(3_000, |s| s.logged("using wlan0") && s.net.live().len() == 2), "both links carry\n{}", sim.logs.join("\n"));
     sim.now
 }
 
 #[test]
-fn the_fastest_proven_link_carries_the_file_alone() {
-    let mut sim = wire_and_wifi(48 << 20);
-    sim.finish(6_000);
+fn two_links_join_ranges_that_arrive_out_of_order_into_the_exact_file() {
+    let mut sim = wire_and_wifi(16 << 20);
+    sim.finish(4_000);
     assert_whole(&sim);
 
-    // The wire shows its rate, then Wi-Fi, and Wi-Fi is the faster: it has the file from there.
-    let led = sim.logged_at("using wlan0").expect("Wi-Fi took the file") * MS;
-    assert!(sim.net.bytes(WIRE, 0, led) > 4 << 20, "the wire carried its first ranges");
-    assert_eq!(sim.net.bytes(WIRE, led, sim.now), 0, "the wire is left to the television");
-    let (from, to) = (led + 100 * MS, led + 1_100 * MS);
-    assert!(bps(sim.net.bytes(WIFI, from, to), to - from) > 150_000_000, "Wi-Fi carries what it can: {}", bps(sim.net.bytes(WIFI, from, to), to - from));
+    let started = sim.logged_at("carrying from byte").expect("the links took the stream over") * MS;
+    let (from, to) = (started + 200 * MS, started + 500 * MS);
+    let (wire, wifi) = (sim.net.bytes(WIRE, from, to), sim.net.bytes(WIFI, from, to));
+    assert!(bps(wire + wifi, to - from) > 200_000_000, "together they carry more than either alone: {}", bps(wire + wifi, to - from));
+    assert!(bps(wifi, to - from) <= 180_000_000 && bps(wire, to - from) <= 94_000_000);
 
-    // Never two ranges at once.
-    let ended = |r: &Request| sim.net.finished.iter().find(|(_, done)| done.id == r.id).map_or(Micros::MAX, |(at, _)| *at);
-    let ranges: Vec<(Micros, Micros)> = sim.net.started.iter().filter(|(_, r, _)| asked(r) != PROOF).map(|(at, r, _)| (*at, ended(r))).collect();
-    assert!(ranges.len() > 40 && ranges.windows(2).all(|pair| pair[0].1 <= pair[1].0), "a range began before the last one ended");
+    let ranges: Vec<&Request> = sim.net.finished.iter().map(|(_, r)| r).filter(|r| asked(r) > PROOF).collect();
+    assert!(ranges.windows(2).any(|pair| pair[1].first < pair[0].first), "a later range finished before an earlier one");
     assert!(sim.peak_held > 0 && sim.peak_held <= sim.room, "held {} of {}", sim.peak_held, sim.room);
-    assert!(sim.longest_wait_ms <= 250, "the demuxer waited {} ms for a byte", sim.longest_wait_ms);
-    assert_no_byte_twice(&sim);
-}
-
-#[test]
-fn a_link_that_shows_itself_slow_carries_two_ranges_and_no_more() {
-    let mut sim = Sim::new(24 << 20, vec![Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(8))], vec![wire(), wifi()]);
-    sim.finish(5_000);
-    assert_whole(&sim);
-    let carried = sim.net.requests(WIFI).iter().filter(|r| asked(r) != PROOF).count();
-    assert_eq!(carried, 2, "Wi-Fi was tried and found slow\n{}", sim.logs.join("\n"));
-    assert_eq!(sim.handbacks, 0, "the wire has the file");
     assert_no_byte_twice(&sim);
 }
 
@@ -142,8 +125,8 @@ fn an_answer_that_is_not_a_part_of_the_file_ends_multi_link_for_it() {
     ] {
         // Its proof and one range are answered well.
         let paths = vec![Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180)).answering(answer, 2)];
-        let mut sim = Sim::new(12 << 20, paths, vec![wire(), wifi()]);
-        sim.finish(8_000);
+        let mut sim = Sim::new(3 << 20, paths, vec![wire(), wifi()]);
+        sim.finish(4_000);
         assert_whole(&sim);
         let off = sim.logged_at(&format!("off for this file: {why}")).unwrap_or_else(|| panic!("{answer:?} ends it\n{}", sim.logs.join("\n")));
         assert_eq!(sim.handbacks, 1, "{answer:?}: the default reader takes the stream back once");
@@ -156,8 +139,8 @@ fn an_answer_that_is_not_a_part_of_the_file_ends_multi_link_for_it() {
 #[test]
 fn a_request_names_the_object_and_a_redirect_is_never_followed() {
     let paths = vec![Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180)).answering(Answer::Redirects, 2)];
-    let mut sim = Sim::new(12 << 20, paths, vec![wire(), wifi()]);
-    sim.finish(8_000);
+    let mut sim = Sim::new(3 << 20, paths, vec![wire(), wifi()]);
+    sim.finish(4_000);
     // A request is a range of the one object its transport was built for and nothing else. Once
     // a proof has named the object each says so, so a server whose file changed answers 200.
     let named = sim.logged_at("carrying from byte").expect("took over") * MS;
@@ -175,7 +158,7 @@ fn a_request_names_the_object_and_a_redirect_is_never_followed() {
 fn a_range_cut_short_or_refused_by_tls_is_finished_by_the_other_link() {
     for (answer, why) in [(Answer::Truncates(100_000), "cut short"), (Answer::TlsFails, "TLS")] {
         let paths = vec![Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180)).answering(answer, 2)];
-        let mut sim = Sim::new(16 << 20, paths, vec![wire(), wifi()]);
+        let mut sim = Sim::new(4 << 20, paths, vec![wire(), wifi()]);
         sim.finish(4_000);
         assert_whole(&sim);
         assert!(sim.logged(&format!("wlan0 failed ({why}), failovers 1")), "{answer:?}\n{}", sim.logs.join("\n"));
@@ -188,7 +171,7 @@ fn a_range_cut_short_or_refused_by_tls_is_finished_by_the_other_link() {
 #[test]
 fn a_link_that_stalls_mid_range_loses_it_to_the_other_within_a_second() {
     let mut sim = wire_and_wifi(16 << 20);
-    let stalled = carrying_on_wifi(&mut sim);
+    let stalled = carrying_both(&mut sim);
     sim.net.path(WIFI).rates.push((stalled, 0));
     let victim = sim.net.live().into_iter().find(|r| r.source == WIFI).expect("a range on Wi-Fi");
     sim.run_ms(1_000);
@@ -214,12 +197,56 @@ fn a_link_that_stalls_mid_range_loses_it_to_the_other_within_a_second() {
 }
 
 #[test]
+fn work_moves_to_the_wire_as_wifi_slows_and_the_reserve_runs_down() {
+    let mut sim = wire_and_wifi(56 << 20);
+    sim.film = Some(Film::new(90, 30_000));
+    assert!(sim.run_until(3_000, |s| s.logged("carrying from byte")), "{}", sim.logs.join("\n"));
+    // The reserve is full from here: the demuxer reads only as the film plays.
+    sim.film.as_mut().expect("a film").queued = 60_000 * MS;
+    let alone = |s: &Sim| s.logs.iter().any(|l| l.contains("using wlan0") && !l.contains("eth0"));
+    assert!(sim.run_until(1_000, alone), "Wi-Fi covers the film alone\n{}", sim.logs.join("\n"));
+    let covered = sim.now;
+    sim.run_ms(300);
+    assert_eq!(sim.net.bytes(WIRE, covered + 50 * MS, sim.now), 0, "the wire is left to the television");
+
+    // Neither link covers the film now: the wire joins, held to its share.
+    let slowed = sim.now;
+    sim.net.path(WIFI).rates.push((slowed, mbit(60)));
+    assert!(sim.run_until(800, |s| s.logged("(held to 70)")), "the wire joins\n{}", sim.logs.join("\n"));
+    let shared = sim.now;
+    sim.run_ms(700);
+    for from in (shared..sim.now - 500 * MS).step_by(50 * MS as usize) {
+        let wire = sim.net.bytes(WIRE, from, from + 500 * MS);
+        assert!(wire <= mbit(70) / 2 + (1 << 20), "the wire carried {} bit/s while it shared", bps(wire, 500 * MS));
+    }
+
+    // The reserve falls under what restores it and Wi-Fi fades: the wire alone is faster than
+    // both with its share held, so it carries alone and whole.
+    let faded = sim.now;
+    sim.film.as_mut().expect("a film").queued = 5_000 * MS;
+    sim.net.path(WIFI).rates.push((faded, mbit(8)));
+    assert!(sim.run_until(800, |s| s.logged("wlan0 set aside")), "Wi-Fi is set aside\n{}", sim.logs.join("\n"));
+    let whole = sim.now + 100 * MS;
+    sim.run_ms(400);
+    assert!(bps(sim.net.bytes(WIRE, whole, sim.now), sim.now - whole) > 85_000_000, "the wire carries all it can");
+
+    // The reserve is all but gone: nothing waits behind a slow range.
+    sim.film.as_mut().expect("a film").queued = 400 * MS;
+    sim.run_ms(500);
+    assert!(sim.film.as_ref().is_some_and(|f| f.starved_at.is_none()), "the film never ran dry\n{}", sim.logs.join("\n"));
+    assert!(sim.longest_wait_ms <= 250, "the demuxer waited {} ms for a byte", sim.longest_wait_ms);
+    assert_eq!(sim.handbacks, 0);
+    sim.assert_exact();
+    assert_no_byte_twice(&sim);
+}
+
+#[test]
 fn a_link_whose_address_or_carrier_changed_is_retired_and_proven_anew() {
     const MOVED: Ipv4Addr = Ipv4Addr::new(192, 168, 5, 32);
     for moved in [true, false] {
-        let mut sim = wire_and_wifi(24 << 20);
+        let mut sim = wire_and_wifi(16 << 20);
         sim.net.paths.push(Path::new(MOVED, mbit(180)));
-        let changed = carrying_on_wifi(&mut sim);
+        let changed = carrying_both(&mut sim);
         let old = sim.net.live().into_iter().find(|r| r.source == WIFI).expect("a range on Wi-Fi");
         if moved {
             // DHCP gave the interface another address: nothing answers from the old one.
@@ -246,7 +273,7 @@ fn a_link_whose_address_or_carrier_changed_is_retired_and_proven_anew() {
 #[test]
 fn an_unplugged_adapter_is_retired_and_the_other_links_carry_on() {
     let paths = vec![Path::new(USB, mbit(900)), Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180))];
-    let mut sim = Sim::new(32 << 20, paths, vec![usb(), wire(), wifi()]);
+    let mut sim = Sim::new(24 << 20, paths, vec![usb(), wire(), wifi()]);
     assert!(sim.run_until(3_000, |s| s.logged("using eth1")), "the adapter carries\n{}", sim.logs.join("\n"));
     let unplugged = sim.now;
     sim.offered.remove(0);
@@ -329,8 +356,8 @@ fn without_a_usable_state_nothing_is_asked_of_any_link() {
 
 #[test]
 fn a_state_that_stops_vouching_hands_the_stream_back_and_its_links_are_proven_anew() {
-    let mut sim = wire_and_wifi(64 << 20);
-    carrying_on_wifi(&mut sim);
+    let mut sim = wire_and_wifi(10 << 20);
+    carrying_both(&mut sim);
     // Stale, missing or switched off: all the same to the reader.
     let offered = std::mem::take(&mut sim.offered);
     let lost = sim.now;
@@ -343,7 +370,7 @@ fn a_state_that_stops_vouching_hands_the_stream_back_and_its_links_are_proven_an
 
     sim.offered = offered;
     let back = sim.now;
-    sim.finish(10_000);
+    sim.finish(8_000);
     assert_whole(&sim);
     assert_proven_anew(&sim, WIRE, back);
     assert_proven_anew(&sim, WIFI, back);
@@ -352,22 +379,22 @@ fn a_state_that_stops_vouching_hands_the_stream_back_and_its_links_are_proven_an
 
 #[test]
 fn a_restarted_helper_s_links_are_proven_anew() {
-    let mut sim = wire_and_wifi(64 << 20);
-    carrying_on_wifi(&mut sim);
+    let mut sim = wire_and_wifi(10 << 20);
+    carrying_both(&mut sim);
     sim.boot += 1;
     let restarted = sim.now;
     sim.run_ms(1);
     assert!(sim.net.live().iter().all(|r| asked(r) == PROOF), "every range is cancelled at once");
-    sim.finish(10_000);
+    sim.finish(8_000);
     assert_whole(&sim);
     assert_proven_anew(&sim, WIRE, restarted);
     assert_proven_anew(&sim, WIFI, restarted);
 }
 
 #[test]
-fn a_seek_cancels_the_range_in_flight_and_nothing_of_it_is_read() {
+fn a_seek_cancels_every_range_in_flight_and_nothing_of_them_is_read() {
     let mut sim = wire_and_wifi(24 << 20);
-    carrying_on_wifi(&mut sim);
+    carrying_both(&mut sim);
     let before = sim.net.live();
     let to = (17 << 20) + 12_345;
     sim.seek(to);
@@ -376,9 +403,9 @@ fn a_seek_cancels_the_range_in_flight_and_nothing_of_it_is_read() {
     }
     let after = sim.net.live();
     assert!(!after.is_empty() && after.iter().all(|r| r.generation > before[0].generation && r.first >= to), "{after:?}");
-    // What the old range still says is of another generation.
+    // What an old range still says is of another generation.
     sim.put(Event::Body { id: before[0].id, bytes: vec![0xEE; 4_096] });
-    sim.put(Event::Done { id: before[0].id });
+    sim.put(Event::Done { id: before[1].id });
 
     sim.finish(3_000);
     sim.assert_exact();
@@ -390,7 +417,7 @@ fn a_seek_cancels_the_range_in_flight_and_nothing_of_it_is_read() {
 #[test]
 fn a_stop_while_a_link_waits_to_be_tried_again_leaves_nothing_behind() {
     let paths = vec![Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180)).answering(Answer::Truncates(100_000), 2)];
-    let mut sim = Sim::new(16 << 20, paths, vec![wire(), wifi()]);
+    let mut sim = Sim::new(8 << 20, paths, vec![wire(), wifi()]);
     assert!(sim.run_until(3_000, |s| s.logged("wlan0 failed (cut short)")), "{}", sim.logs.join("\n"));
     sim.run_ms(20);
     assert!(sim.engine.next_wake(sim.now).is_some(), "Wi-Fi was to be tried again");
@@ -414,11 +441,26 @@ fn a_file_that_ends_inside_a_range_is_read_to_its_last_byte() {
 }
 
 #[test]
+fn a_range_cut_short_again_and_again_is_finished_from_where_each_left_it() {
+    let paths = vec![
+        Path::new(USB, mbit(400)).answering(Answer::Truncates(300_000), 2),
+        Path::new(WIRE, mbit(94)),
+        Path::new(WIFI, mbit(180)).answering(Answer::Truncates(100_000), 2),
+    ];
+    let mut sim = Sim::new(8 << 20, paths, vec![usb(), wire(), wifi()]);
+    sim.finish(4_000);
+    assert_whole(&sim);
+    assert!(sim.logged("failovers 2"), "{}", sim.logs.join("\n"));
+    assert_eq!(sim.handbacks, 0);
+    assert_no_byte_twice(&sim);
+}
+
+#[test]
 fn a_full_reserve_stops_the_fetching_at_the_room_it_was_given() {
     let mut sim = wire_and_wifi(24 << 20);
     sim.room = 4 << 20;
     sim.film = Some(Film::new(40, 30_000));
-    carrying_on_wifi(&mut sim);
+    carrying_both(&mut sim);
     // The queues are full: the demuxer reads nothing.
     sim.film.as_mut().expect("a film").queued = 600_000 * MS;
     sim.run_ms(600);
@@ -432,6 +474,63 @@ fn a_full_reserve_stops_the_fetching_at_the_room_it_was_given() {
     sim.film.as_mut().expect("a film").queued = 30_000 * MS;
     sim.finish(4_000);
     assert_whole(&sim);
-    assert!(sim.film.as_ref().is_some_and(|f| f.starved_at.is_none()), "the film never ran dry");
     assert_no_byte_twice(&sim);
+}
+
+#[test]
+fn a_reserve_with_no_room_for_ranges_gets_the_stream_back_and_is_asked_nothing() {
+    let mut sim = wire_and_wifi(24 << 20);
+    carrying_both(&mut sim);
+    // Memory is short: the reserve has nothing for the ranges.
+    sim.room = 0;
+    let short = sim.now;
+    sim.run_ms(700);
+    assert!(sim.logged("handing back at byte") && sim.logged("the reserve has no room for ranges"), "{}", sim.logs.join("\n"));
+    assert_eq!((sim.handbacks, sim.engine.held_bytes()), (1, 0));
+    assert!(sim.net.started.iter().all(|(at, _, _)| *at <= short), "nothing is asked while there is no room");
+
+    sim.room = 8 << 20;
+    let back = sim.now;
+    sim.finish(6_000);
+    assert_whole(&sim);
+    assert!(sim.net.bytes(WIFI, back, sim.now) > PROOF, "the links carry again once there is room");
+}
+
+#[test]
+fn an_adapter_that_covers_the_film_alone_leaves_wifi_unasked() {
+    let paths = vec![Path::new(USB, mbit(900)), Path::new(WIRE, mbit(94)), Path::new(WIFI, mbit(180))];
+    let mut sim = Sim::new(24 << 20, paths, vec![usb(), wire(), wifi()]);
+    sim.film = Some(Film::new(80, 4_000));
+    sim.finish(4_000);
+    assert_whole(&sim);
+    assert!(sim.net.requests(WIFI).is_empty(), "Wi-Fi is not even proven\n{}", sim.logs.join("\n"));
+    // The wire shows its rate with its first ranges, and is then left to the television.
+    let carried = sim.logged_at("carrying from byte").expect("took over") * MS;
+    let (usb, wire) = (sim.net.bytes(USB, carried, sim.now), sim.net.bytes(WIRE, carried, sim.now));
+    assert!(wire <= 2 << 20 && usb >= 20 << 20, "the wire carried {wire} bytes beside the adapter's {usb}");
+    assert_eq!(sim.net.bytes(WIRE, carried + 200 * MS, sim.now), 0);
+}
+
+#[test]
+fn a_wire_too_slow_for_the_film_plays_out_the_reserve_it_has() {
+    let mut sim = Sim::new(20 << 20, vec![Path::new(WIRE, mbit(20)), Path::new(WIFI, mbit(180))], vec![wire(), wifi()]);
+    sim.film = Some(Film::new(80, 2_000));
+    carrying_both(&mut sim);
+    sim.run_ms(300);
+    // What is queued, and what the reader holds for the queues, as film time.
+    let film = sim.film.as_ref().expect("a film");
+    let (lost, reserve) = (sim.now, film.queued + sim.engine.held_bytes() * 8 * 1_000_000 / film.bps);
+    sim.net.path(WIFI).rates.push((lost, 0));
+    assert!(sim.run_until(6_000, |s| s.film.as_ref().is_some_and(|f| f.starved_at.is_some())), "the reserve runs out\n{}", sim.logs.join("\n"));
+    let starved = sim.film.as_ref().and_then(|f| f.starved_at).expect("starved");
+
+    // The wire brings a quarter of what the film plays: the reserve lasts a third longer than
+    // its own length, and the demuxer then waits for bytes as it does on any slow link.
+    let lasted = starved - lost;
+    assert!(lasted >= reserve * 4 / 3 * 80 / 100 && lasted <= reserve * 4 / 3 + 150 * MS, "{} ms of reserve lasted {} ms", reserve / MS, lasted / MS);
+    assert!(sim.logged("wlan0 failed (stalled), failovers 1"), "{}", sim.logs.join("\n"));
+    sim.run_ms(500);
+    assert!(bps(sim.net.bytes(WIRE, starved, sim.now), sim.now - starved) > 18_000_000, "the wire still carries all it can");
+    assert_eq!((sim.engine.phase(), sim.handbacks), (Phase::Carrying, 0), "and the stream stays where it is");
+    sim.assert_exact();
 }

@@ -14,11 +14,11 @@
 //! * **Ranges.** The file ahead of the demuxer is cut into ranges of about [`RANGE_SPAN_MS`] of
 //!   the fetching link's measured rate. Each has one slot in the window, in file order, so what
 //!   arrives out of order is read out in order.
-//! * **Which link.** One link carries at a time. Each proven link shows its rate over its first
-//!   ranges, the wire first, and the fastest then keeps the file. The machine can already share
-//!   a file between links (a range goes to the link that will finish it first, and the built-in
-//!   wire is held to [`WIRE_SHARE`] beside another), but `choose` names one carrier, so none of
-//!   that runs.
+//! * **Which link.** The fastest proven link carries alone while it covers the film. The others
+//!   join when it does not or the reserve is low, and a range goes to the idle link that will
+//!   finish it first, or to a slower one only when the demuxer will not be waiting for it.
+//! * **The wire's share.** While another link carries too, the built-in wire is given ranges at
+//!   no more than [`WIRE_SHARE`], so the TV's controls keep the rest of it.
 //! * **Doubt.** An answer that is not the object ends ranges for the file. A link that stalls
 //!   loses its range to another and must be proven again. No usable helper state, or no proven
 //!   link, hands the stream back to the default reader.
@@ -926,10 +926,7 @@ impl Engine {
             0 => !self.refilling,
             film => self.links[lead].rate * 8 * 100 >= film * percent,
         };
-        // A link has shown its rate after its first ranges, or sooner once two of them brought
-        // under half of what the fastest carries.
-        let best = self.links[fastest].rate;
-        let tried = |link: &Link| link.samples >= TRIAL_RANGES || (link.samples >= 2 && link.rate * 2 < best);
+        let tried = |link: &Link| link.samples >= TRIAL_RANGES;
         // The wire alone at its whole rate carries more than the others beside its share: they
         // are not worth what limiting it takes.
         let alone = !self.covered
@@ -962,12 +959,6 @@ impl Engine {
                 }
             }
         }
-        // One link carries. Of those that would share the file, one that has not shown its rate
-        // goes first, the wire before the others; then the lead keeps it.
-        let untried = |wire: bool| self.using.iter().copied().find(|&key| self.links.iter().any(|l| l.key == key && l.wire() == wire && !tried(l)));
-        let carrier = untried(true).or_else(|| untried(false)).unwrap_or(self.using[0]);
-        self.using.clear();
-        self.using.push(carrier);
         self.sharing = self.links.iter().any(|l| l.wire() && self.using.contains(&l.key))
             && self.links.iter().any(|l| !l.wire() && self.using.contains(&l.key) && (now < l.carried_until || !self.idle(l.key)));
     }

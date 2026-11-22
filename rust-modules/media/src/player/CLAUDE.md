@@ -110,7 +110,8 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   (`Shared::hand_stall_hold_to_user`: no Play, Buffering drops, Resume primes like any other; the
   resume line ends `-> viewer pause`). **Its queues read ahead by
   time, not to 10 MiB**: `pump::apply_read_ahead` lets both lanes hold up to 60 s of media within
-  `reserve::allowance` (half of MemAvailable above 224 MiB, at most 192 MiB, an eighth of it audio;
+  `reserve::allowance` (half of MemAvailable above 224 MiB, at most 192 MiB, an eighth of it audio,
+  8 MiB of the video lane's the Multi Link ranges' while a stream has them, `docs/marquee/multi-link.md`;
   nothing while the memory guard reads short), worked out again on each guard sample
   (`app::memory_guard` -> `reserve::note_memory`). The base caps, headroom and push gates are
   unchanged underneath (`aq::aq_set_reserve`), and every other route keeps the base caps. The hold
@@ -126,7 +127,7 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   clock, during a seek, before the first picture, under the viewer's Pause or once the demuxer is
   done. Never held: a trailer preview, the looped sample, and an Original that Auto quality
   supervises.
-  The log reads `feed: read-ahead allowance video= audio= span=`, `feed: progressive rebuffer hold
+  The log reads `feed: read-ahead allowance video= audio= ranges= span=`, `feed: progressive rebuffer hold
   n= arm= S= debt= ...` and `... resume n= reason= held= reserve=`. The constants
   (`DebtParams::PROGRESSIVE`) are upstream's, measured on its television; the
   Buffering read-out during a hold is not yet seen on this one.

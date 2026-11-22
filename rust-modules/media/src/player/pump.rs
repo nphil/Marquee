@@ -460,9 +460,10 @@ fn should_begin_progressive_rebuffer(debt_fired: bool, native_clock_stopped: boo
     debt_fired || native_clock_stopped
 }
 
-/// Give a progressive stream's lane queues the read-ahead the TV's memory allows
-/// (`reserve::allowance`), worked out again on each memory sample. Every other route keeps the
-/// base caps: a segmented stream's reserve is its ladder's.
+/// Give a progressive stream's lane queues, and its Multi Link ranges when it has them, the
+/// read-ahead the TV's memory allows (`reserve::allowance`), worked out again on each memory
+/// sample. A segmented stream and a preview keep the base caps: a segmented stream's reserve is
+/// its ladder's.
 fn apply_read_ahead(ps: &crate::route::PlaybackSession, eng: &mut Engine) {
     let sample = super::reserve::samples();
     if eng.read_ahead_sample == Some(sample) {
@@ -471,12 +472,16 @@ fn apply_read_ahead(ps: &crate::route::PlaybackSession, eng: &mut Engine) {
     eng.read_ahead_sample = Some(sample);
     let video = crate::aq::queue_ptr(&mut eng.aq_video);
     let audio = crate::aq::queue_ptr(&mut eng.aq_audio);
-    let allowance = if rebuffer_rule(ps, true) == Some(RebufferRule::Progressive) {
-        let held = i64::from(crate::aq::aq_bytes(video)) + i64::from(crate::aq::aq_bytes(audio));
-        super::reserve::allowance(held.max(0) as u64)
-    } else {
-        super::reserve::Allowance::default()
+    let held = (i64::from(crate::aq::aq_bytes(video)) + i64::from(crate::aq::aq_bytes(audio))).max(0) as u64;
+    let allowance = match rebuffer_rule(ps, true) {
+        Some(RebufferRule::Progressive) => super::reserve::allowance(held),
+        // An Original that Auto quality supervises is Auto's to keep supplied: its lanes take
+        // no read-ahead, and its ranges keep their room.
+        None if !crate::route::preview_request(ps) => super::reserve::allowance(held).ranges_alone(),
+        _ => super::reserve::Allowance::default(),
     };
+    // A new stream's ranges start from what this one applies, whatever the last was given.
+    super::reserve::grant_ranges(allowance.ranges_bytes as u64);
     if allowance == eng.read_ahead {
         return;
     }
@@ -485,9 +490,10 @@ fn apply_read_ahead(ps: &crate::route::PlaybackSession, eng: &mut Engine) {
     crate::aq::aq_set_reserve(video, allowance.video_bytes as std::os::raw::c_long, span_ns);
     crate::aq::aq_set_reserve(audio, allowance.audio_bytes as std::os::raw::c_long, span_ns);
     super::log(&format!(
-        "feed: read-ahead allowance video={}MiB audio={}MiB span={}s",
+        "feed: read-ahead allowance video={}MiB audio={}MiB ranges={}MiB span={}s",
         allowance.video_bytes >> 20,
         allowance.audio_bytes >> 20,
+        allowance.ranges_bytes >> 20,
         span_ns / 1_000_000_000,
     ));
 }

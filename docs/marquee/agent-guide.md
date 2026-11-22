@@ -38,6 +38,7 @@ it would orphan the installed app's data.
 - `docs/marquee/changelog.md`: fork changes.
 - `docs/marquee/design-subtitles.md`: subtitle look, text handling, "Wrong subtitles?".
 - `docs/marquee/subtitles-ui-status.md`: TV acceptance history and proof limits.
+- `docs/marquee/multi-link.md`: fetching a direct-play film over several links, its rules and log.
 - `docs/marquee/ports.md`: Android TV, Android tablet and iPhone requirements. The iPhone app is a
   separate clean-room repository (`nphil/marquee-ios`) with its own owner session.
 - Outside the repository: `/data/home/Marquee-BUILD-NOTES.md` (what is installed on the TV, the
