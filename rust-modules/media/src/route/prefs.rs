@@ -1052,15 +1052,13 @@ pub fn select_subtitle_look(look: SubtitleLook, reply: Option<Sender<bool>>) {
 }
 
 /// A rung picked on the player's Style pages (Size, Position or Color) wins over the exact value the
-/// Subtitles page set for the same thing: `clear` resets that one field of the live look, and the
-/// look is written, with its preset label turned to `Custom`, only when something changed.
-pub fn clear_look_override(clear: impl FnOnce(&mut SubtitleLook)) {
+/// Subtitles page set for the same thing: `follow` is one of [`SubtitleLook::following_size`] and its
+/// siblings, and the live look is written only when it changed anything.
+pub fn follow_ladder(follow: fn(SubtitleLook) -> SubtitleLook) {
     let now = subtitle_look();
-    let mut next = now;
-    clear(&mut next);
+    let next = follow(now);
     if next != now {
-        next.preset = plx_plex::plex::session::LookPreset::Custom;
-        select_subtitle_look(next.clamped(), None);
+        select_subtitle_look(next, None);
     }
 }
 

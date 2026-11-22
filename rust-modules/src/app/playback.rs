@@ -576,12 +576,22 @@ pub(crate) fn commit_track(
                 ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, &lang, changed,
             );
         }
-        TrackCommit::SubtitleTone(tone) => plx_media::player::set_subtitle_tone(tone),
+        // a ladder pick wins over the exact value the Subtitles page set for the same field
+        TrackCommit::SubtitleTone(tone) => {
+            plx_media::route::follow_ladder(plx_plex::plex::session::SubtitleLook::following_color);
+            plx_media::player::set_subtitle_tone(tone)
+        }
         // a preset or one hand edit of the whole look: live first, persisted after, like size and position
         TrackCommit::SubtitleLook(look) => plx_media::route::select_subtitle_look(look, None),
         // live first, persisted after, nothing republished on completion (`route::select_subtitle_size`)
-        TrackCommit::SubtitleSize(size) => plx_media::route::select_subtitle_size(size, None),
-        TrackCommit::SubtitlePosition(position) => plx_media::route::select_subtitle_position(position, None),
+        TrackCommit::SubtitleSize(size) => {
+            plx_media::route::follow_ladder(plx_plex::plex::session::SubtitleLook::following_size);
+            plx_media::route::select_subtitle_size(size, None)
+        }
+        TrackCommit::SubtitlePosition(position) => {
+            plx_media::route::follow_ladder(plx_plex::plex::session::SubtitleLook::following_position);
+            plx_media::route::select_subtitle_position(position, None)
+        }
         TrackCommit::SubtitleOffset(offset) => {
             plx_media::player::set_subtitle_offset(offset);
             plx_media::route::persist_subtitle_offset(ps, offset);

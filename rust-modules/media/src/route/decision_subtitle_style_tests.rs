@@ -86,3 +86,32 @@ fn select_reports_a_failed_write_and_keeps_the_live_value() {
     let _ = std::fs::remove_dir_all(&dir);
     drop(session);
 }
+
+/// **A ladder pick wins over the exact value that ruled.** Large print's 150 % beats the Size
+/// ladder, so a rung pick has to clear it from the live look (and turn the preset to Custom); a
+/// look that has nothing to clear is left alone.
+#[test]
+fn a_ladder_pick_clears_the_exact_value_from_the_live_look() {
+    use plx_plex::plex::session::{LookPreset, SubtitleLook};
+    struct RestoreLook(SubtitleLook);
+    impl Drop for RestoreLook {
+        fn drop(&mut self) {
+            restore_subtitle_look(self.0);
+        }
+    }
+    let _g = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("follow-ladder");
+    sign_in(&session);
+    let _restore = RestoreLook(subtitle_look());
+
+    restore_subtitle_look(LookPreset::LargePrint.look());
+    follow_ladder(SubtitleLook::following_size);
+    let now = subtitle_look();
+    assert_eq!((now.size_pct, now.preset), (0, LookPreset::Custom));
+    assert!(now.bold && now.edge_w == 3, "only the size was cleared: {now:?}");
+
+    restore_subtitle_look(SubtitleLook::DEFAULT);
+    follow_ladder(SubtitleLook::following_color);
+    assert_eq!(subtitle_look(), SubtitleLook::DEFAULT, "nothing to clear, nothing written");
+    drop(session);
+}
