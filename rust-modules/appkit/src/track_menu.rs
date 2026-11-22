@@ -2477,6 +2477,11 @@ impl TrackMenuState {
                     (),
                     Row::new(plx_platform::i18n::msg::widgets_tracks_normalize_loudness()).toggle(shown.normalize_loudness),
                 );
+            // Both options are done by the server, so a receiver fed the sound untouched stops
+            // getting it that way; said only where that is true (`earc::cached`, no bus call).
+            if plx_platform::tv::earc::cached().is_some_and(|c| c.passes_dts_hd()) {
+                enh = enh.note(plx_platform::i18n::msg::widgets_tracks_enh_note_receiver());
+            }
             if let Some(route) = enhance_route {
                 if let Some(note) = Self::enh_note_text(route, enhance_subtitle_effect) {
                     enh = enh.note(note);
@@ -4358,6 +4363,28 @@ mod enhancement_menu_tests {
         teardown(&ps);
     }
 
+    /// **The enhancement rows say what they cost a receiver** that is fed the sound untouched, and
+    /// stay silent on a set that is not (the TV's own speakers, or no eARC).
+    #[test]
+    fn enh_rows_warn_only_when_the_receiver_gets_the_sound_untouched() {
+        use plx_platform::tv::earc::{set_cached_for_test, Chain, Link};
+        let _g = plx_base::testlock::serial();
+        let (menu, ps) = audio_tab(EnhTestFixture::default());
+        assert!(!notes(&menu).iter().any(|n| n == plx_platform::i18n::msg::widgets_tracks_enh_note_receiver()));
+        teardown(&ps);
+        set_cached_for_test(Some(Chain {
+            output: "external_arc".into(),
+            pass_through: true,
+            link: Link::Earc,
+            capability: vec!["PCM".into(), "DTSHD_MA".into()],
+        }));
+        let (menu, ps) = audio_tab(EnhTestFixture::default());
+        let rows = &menu.form.table.sections[1].rows;
+        assert_eq!(rows[2].label, plx_platform::i18n::msg::widgets_tracks_enh_note_receiver(), "right under the two toggles");
+        teardown(&ps);
+        set_cached_for_test(None);
+    }
+
     /// M7: a usable-base-layer Dolby Vision source is offered the plain remux, with no
     /// Dolby-Vision-off note: whether the copied remux keeps DV is settled by its `/decision`
     /// (`copied_video_dv`), and a copy keeps it.
@@ -5189,6 +5216,7 @@ mod enhancement_menu_tests {
             for (name, value) in [
                 ("enh_note_sidecar", plx_platform::i18n::msg::widgets_tracks_enh_note_sidecar()),
                 ("enh_note_burn", plx_platform::i18n::msg::widgets_tracks_enh_note_burn()),
+                ("enh_note_receiver", plx_platform::i18n::msg::widgets_tracks_enh_note_receiver()),
                 ("enh_reason_not_analyzed", plx_platform::i18n::msg::widgets_tracks_enh_reason_not_analyzed()),
                 ("enh_reason_dv_unusable", plx_platform::i18n::msg::widgets_tracks_enh_reason_dv_unusable()),
                 ("enh_reason_dv_subtitle", plx_platform::i18n::msg::widgets_tracks_enh_reason_dv_subtitle()),

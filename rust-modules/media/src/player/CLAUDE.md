@@ -397,6 +397,7 @@ something.
   (2-arg calls corrupt memory / segfault). The developer-only `acb-control`/`acb-dass` URI
   experiment separately permits a reconstructed descriptor for its known SDR720p24 fixture;
   that exception does not apply to normal buffer-feed playback.
+- **DTS-HD is fed whole to a receiver the chain proves** (`ff_lossless.rs`, `platform/src/tv/earc.rs`): the demuxer pushes a DTS packet unmodified (otherwise `ff::dts_core_packet` cuts it to the core) when `earc::chain()` reads an eARC link in pass-through whose receiver advertises DTS-HD, and no refusal has vetoed it for the request. A named pipeline refusal before the first picture goes to `pump::retry_core_audio` BEFORE the recovery ladder (so the ladder never learns the refusal against plain DTS): it vetoes the whole feed and reloads at the same offset with the core (`OpenRecoveryRun::CoreAudio`). The veto resets in `PlaybackSession::begin_attempt`; `ff::native_audio::reset` clears the published feed. The planner reads only `earc::cached()` (primed at boot, refreshed by each open) through `ResolveEnv::lossless_dts`; the track order is `route/audio_rank.rs`. TrueHD has no Load input; do not rank it. A silent failure after the first picture is not detected.
 - **Opus goes to LG's own decoder only as far as the set is known to take it** (`ff_native_audio.rs`,
   `devcaps.rs`). What a set announces is layered, in this order and logged at boot as `devcaps: ...
   audio layers:`: the codec table, minus the codecs `/etc/gst/gstcool.conf` shows nothing can decode

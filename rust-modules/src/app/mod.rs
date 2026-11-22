@@ -529,6 +529,8 @@ fn pre_boot_diagnostics() -> plx_telemetry::telemetry::native::Guard {
     // Last: the worker must observe every boot-time environment/trigger mutation above, while a
     // controlled replay which deliberately skips this preflight keeps the conservative Unknown.
     plx_platform::tv::start_capability_probe();
+    // The sound chain, so the first play's plan knows whether the receiver takes DTS-HD whole.
+    plx_platform::tv::earc::prime();
     telemetry_guard
 }
 

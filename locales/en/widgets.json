@@ -760,6 +760,10 @@
     "value": "Subtitles stay on. Your Plex server will rework the video to keep them, so the picture may look a little softer.",
     "description": "Issue #266/M7. One-line note under the ENABLED Boost dialog / Normalize loudness rows when the subtitle on screen is embedded in the file — turning the toggle on makes the server re-encode the video to keep it in view. No jargon: never say burn/re-encode/transcode."
   },
+  "widgets.tracks.enh_note_receiver": {
+    "value": "Either one makes your server rework the sound, so your receiver no longer gets it untouched.",
+    "description": "Audio panel of the player's track selector, under the ENABLED Boost dialog / Normalize loudness rows, shown only when the TV hands sound to an AV receiver untouched (eARC bitstream). Both options are done by the Plex server, which changes the sound before it reaches the receiver. No jargon: never say transcode/decode/bitstream/passthrough."
+  },
   "widgets.tracks.enh_reason_not_analyzed": {
     "value": "Not ready for this video yet. Your Plex server needs to scan its sound first.",
     "description": "Issue #266/M7. One-line reason under the DISABLED (dim) Boost dialog / Normalize loudness rows when the carried audio track has no canNormalizeLoudness fact yet."

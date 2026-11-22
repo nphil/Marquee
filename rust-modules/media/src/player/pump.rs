@@ -813,10 +813,24 @@ enum OpenRecoveryRun {
     /// reloaded at `offset_ns` with the app decoding its audio ([`decode_in_app`]). No flight: the
     /// caller reloads.
     DecodeInApp { offset_ns: i64 },
+    /// A refused open that was fed DTS whole ([`crate::ff::lossless`]): the same direct play, reloaded
+    /// at `offset_ns` with the core fed as before. No flight and no rung of the ladder: the whole
+    /// feed is the one new thing in the open, so it is the first thing taken back.
+    CoreAudio { offset_ns: i64 },
     /// Nothing to recover with: the Engine failed for good and the viewer has the read-out.
     Failed,
     /// The ladder asked for nothing; the frame goes on.
     Quiet,
+}
+
+impl OpenRecoveryRun {
+    /// The offset of the reload the caller must run itself ([`decode_in_app`]), when the answer is one.
+    fn reload_offset(self) -> Option<i64> {
+        match self {
+            Self::DecodeInApp { offset_ns } | Self::CoreAudio { offset_ns } => Some(offset_ns),
+            Self::Flying | Self::Failed | Self::Quiet => None,
+        }
+    }
 }
 
 /// What the ladder decides on, read at the moment of a failure ([`super::recovery::OpenFacts`]).
@@ -1018,14 +1032,35 @@ fn recover_failed_open(
     native_audio: Option<plx_platform::devcaps::Facet>,
     why: &str,
 ) -> OpenRecoveryRun {
+    if let Some(run) = retry_core_audio(ps, refusal) {
+        return run;
+    }
     let facts = open_facts(ps, native_audio);
     let run = drive_open_recovery(ps, super::recovery::RecoveryEvent::Refused { refusal, facts }, why);
     match run {
         OpenRecoveryRun::Flying => hold_connecting_state(eng),
-        OpenRecoveryRun::Failed | OpenRecoveryRun::DecodeInApp { .. } => {}
+        OpenRecoveryRun::Failed | OpenRecoveryRun::DecodeInApp { .. } | OpenRecoveryRun::CoreAudio { .. } => {}
         OpenRecoveryRun::Quiet => fail_engine_for_good(),
     }
     run
+}
+
+/// A pipeline refusal of an open that fed DTS whole and showed no picture: take the whole feed back
+/// for the rest of the request and reload the same direct play with the core, which is what plays
+/// without it. Before the ladder, because the ladder's rungs (a server conversion, the app decode)
+/// answer a refusal of the track, and this refusal is of the extension substreams only; it also
+/// keeps the refusal off the learned list, where it would cost every DTS track its direct play.
+/// `None` when the open did not feed DTS whole, a picture was shown, or the route is a server session.
+fn retry_core_audio(ps: &crate::route::PlaybackSession, refusal: super::recovery::LoadRefusal) -> Option<OpenRecoveryRun> {
+    if !refusal.names_pipeline() || !crate::ff::lossless::fed_whole() || SHARED.frames.load(Relaxed) != 0 {
+        return None;
+    }
+    if crate::route::is_transcoding(ps) {
+        return None;
+    }
+    crate::ff::lossless::veto();
+    super::log(&format!("open recovery: the receiver feed of DTS-HD was refused ({refusal}); reloading with the DTS core"));
+    Some(OpenRecoveryRun::CoreAudio { offset_ns: SHARED.playpos_ns.load(Relaxed) })
 }
 
 /// The ladder's app-decode rung ([`super::recovery::RecoveryEffect::DecodeInApp`]; the very last rung
@@ -1181,7 +1216,9 @@ fn land_recovery_flight(
         }
         crate::route::RecoveryVerdict::Refused => {
             match drive_open_recovery(ps, super::recovery::RecoveryEvent::FlightRefused, "") {
-                OpenRecoveryRun::DecodeInApp { offset_ns } => decode_in_app(ps, pa, offset_ns),
+                run @ (OpenRecoveryRun::DecodeInApp { .. } | OpenRecoveryRun::CoreAudio { .. }) => {
+                    decode_in_app(ps, pa, run.reload_offset().unwrap_or_default())
+                }
                 OpenRecoveryRun::Quiet => fail_engine_for_good(),
                 OpenRecoveryRun::Flying | OpenRecoveryRun::Failed => {}
             }
@@ -1951,7 +1988,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         // viewer would have had; a refusal the machine does not handle (it is in `Failed`, or a
         // flight is outstanding) fails the Engine again, never silence.
         let run = recover_failed_open(ps, eng, load_refusal(), native_audio_fact(), "Audio Codec Not Supported");
-        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+        if let Some(offset_ns) = run.reload_offset() {
             decode_in_app(ps, pa, offset_ns);
         }
         return;
@@ -1964,7 +2001,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
     {
         super::log("route trial: no decoded frame within 45 seconds; restoring the previous route");
         let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::Stalled, None, "");
-        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+        if let Some(offset_ns) = run.reload_offset() {
             decode_in_app(ps, pa, offset_ns);
         }
         return;
@@ -1984,7 +2021,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
         if let Some(audio) = native_audio_fact() {
             let why = "it swallowed the feed: no picture";
             let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::Stalled, Some(audio), why);
-            if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+            if let Some(offset_ns) = run.reload_offset() {
                 decode_in_app(ps, pa, offset_ns);
             }
             return;
@@ -2014,7 +2051,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
             return;
         }
         let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::SourceFailed, None, "");
-        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+        if let Some(offset_ns) = run.reload_offset() {
             decode_in_app(ps, pa, offset_ns);
         }
         return;
@@ -2082,7 +2119,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
             return;
         }
         let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::SourceFailed, None, "");
-        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+        if let Some(offset_ns) = run.reload_offset() {
             decode_in_app(ps, pa, offset_ns);
         }
         return;
@@ -2097,7 +2134,7 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
             return;
         }
         let run = recover_failed_open(ps, eng, super::recovery::LoadRefusal::SourceFailed, None, "");
-        if let OpenRecoveryRun::DecodeInApp { offset_ns } = run {
+        if let Some(offset_ns) = run.reload_offset() {
             decode_in_app(ps, pa, offset_ns);
         }
         return;
@@ -3027,6 +3064,44 @@ fn stall_observation(ps: &crate::route::PlaybackSession, pa: &mut super::adapter
 
 #[cfg(test)]
 mod tests {
+
+    /// **A refused open of a whole DTS-HD feed takes the core back, once, before the ladder.** Only
+    /// the pipeline's own refusal (or its stall), only before a picture, only for a direct play that
+    /// was fed whole; a source failure, a shown picture or a core feed leave it to the usual path.
+    #[test]
+    fn a_refused_whole_dts_feed_reloads_with_the_core_and_nothing_else_does() {
+        use super::super::recovery::LoadRefusal;
+        use std::sync::atomic::Ordering::Relaxed;
+        let _guard = plx_base::testlock::serial();
+        let ps = crate::route::PlaybackSession::IDLE;
+        SHARED.frames.store(0, Relaxed);
+        SHARED.playpos_ns.store(7_000, Relaxed);
+
+        plx_platform::tv::earc::set_cached_for_test(Some(plx_platform::tv::earc::Chain {
+            output: "external_arc".into(),
+            pass_through: true,
+            link: plx_platform::tv::earc::Link::Earc,
+            capability: vec!["DTSHD_MA".into()],
+        }));
+        crate::ff::lossless::new_request();
+        assert!(crate::ff::lossless::planned(), "premise: the chain passes DTS-HD");
+        assert!(super::retry_core_audio(&ps, LoadRefusal::Stalled).is_none(), "a core feed has nothing to take back");
+
+        crate::ff::lossless::publish(true);
+        assert!(super::retry_core_audio(&ps, LoadRefusal::SourceFailed).is_none(), "not the pipeline's refusal");
+
+        SHARED.frames.store(1, Relaxed);
+        assert!(super::retry_core_audio(&ps, LoadRefusal::Stalled).is_none(), "a picture was shown");
+        SHARED.frames.store(0, Relaxed);
+
+        let run = super::retry_core_audio(&ps, LoadRefusal::Stalled);
+        assert_eq!(run.and_then(super::OpenRecoveryRun::reload_offset), Some(7_000));
+        assert!(matches!(run, Some(super::OpenRecoveryRun::CoreAudio { .. })));
+        assert!(!crate::ff::lossless::planned(), "the veto holds for the rest of the request");
+        crate::ff::lossless::new_request();
+        assert!(crate::ff::lossless::planned(), "and ends with it");
+        plx_platform::tv::earc::set_cached_for_test(None);
+    }
 
     /// **Who settles a failed Load: the Load call's own synchronous result is the foreground
     /// lifecycle's, anything the pump sees after the call returned is the ladder's.** The pump

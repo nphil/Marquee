@@ -2002,6 +2002,8 @@ mod acquisition;
 mod subs;
 #[path = "ff_native_audio.rs"]
 pub(crate) mod native_audio;
+#[path = "ff_lossless.rs"]
+pub(crate) mod lossless;
 #[path = "ff_subside.rs"]
 pub(crate) mod subside;
 #[path = "ff_seekprev.rs"]
@@ -9742,8 +9744,14 @@ pub fn demux(
                 let dts_audio = ai >= 0 && !pcm_lossy() && std::ffi::CStr::from_ptr(avcodec_get_name(
                     (*stream_codecpar(*streams.add(ai as usize))).codec_id
                 )).to_bytes() == b"dts";
+                let dts_whole = dts_audio && lossless::wanted();
                 if dts_audio {
-                    crate::player::log("ff: DTS core extraction on (DTS-HD extensions discarded)");
+                    lossless::publish(dts_whole);
+                    crate::player::log(if dts_whole {
+                        "ff: DTS fed whole (DTS-HD extensions kept for the receiver)"
+                    } else {
+                        "ff: DTS core extraction on (DTS-HD extensions discarded)"
+                    });
                 }
                 // Playback speed: this session's Load declared PCM, so the audio must be decoded,
                 // stretched and fed as PCM. A stream with no bundled decoder cannot honour it — the
@@ -10362,17 +10370,24 @@ pub fn demux(
                             }
                         } else if dts_audio {
                             let raw = std::slice::from_raw_parts((*pkt).data, (*pkt).size.max(0) as usize);
-                            let Some(core) = dts_core_packet(raw) else {
-                                crate::player::log("ff: DTS packet has no complete supported core; refusing audio feed");
-                                SHARED.fail_demux(DemuxExitClass::DtsCoreMissing);
-                                SHARED.demux_io_failed.store(true, Ordering::Release);
-                                av_packet_unref(pkt);
-                                break;
-                            };
-                            crate::aq::aq_push_gated(
-                                aqa_p, core.as_ptr(), core.len() as c_int, pts, 1, 2, gate,
-                                || state.drain_wire(),
-                            )
+                            if dts_whole && lossless::feeds_whole(raw) {
+                                crate::aq::aq_push_gated(
+                                    aqa_p, raw.as_ptr(), raw.len() as c_int, pts, 1, 2, gate,
+                                    || state.drain_wire(),
+                                )
+                            } else {
+                                let Some(core) = dts_core_packet(raw) else {
+                                    crate::player::log("ff: DTS packet has no complete supported core; refusing audio feed");
+                                    SHARED.fail_demux(DemuxExitClass::DtsCoreMissing);
+                                    SHARED.demux_io_failed.store(true, Ordering::Release);
+                                    av_packet_unref(pkt);
+                                    break;
+                                };
+                                crate::aq::aq_push_gated(
+                                    aqa_p, core.as_ptr(), core.len() as c_int, pts, 1, 2, gate,
+                                    || state.drain_wire(),
+                                )
+                            }
                         } else {
                             crate::aq::aq_push_gated(
                                 aqa_p,

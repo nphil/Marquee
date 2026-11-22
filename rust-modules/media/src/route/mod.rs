@@ -9,6 +9,8 @@
 //! `Instant::now`/`SystemTime::now`/`.elapsed()`; `decision.rs` is not scanned by that gate (a
 //! network/adapter effect is allowed to read wall time) but as of this split carries none either.
 
+mod audio_rank;
+pub(crate) use audio_rank::is_dts_hd;
 mod decision;
 mod queue_navigation;
 pub use queue_navigation::{PREVIOUS_RESTART_AFTER_NS, PreviousPress, QueueContinuation, QueueStep, previous_press, queue_neighbor, queue_neighbors};

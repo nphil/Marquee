@@ -1348,6 +1348,9 @@ pub struct ResolveEnv {
     pub quality: Quality,
     /// Captured with the quality preference; never re-read by a worker.
     pub direct_play_mode: DirectPlayMode,
+    /// The sound chain passes DTS-HD whole to the receiver (`ff::lossless::planned`), read at the
+    /// request without a bus call. Turns on the lossless-first ranking ([`audio_rank`]).
+    pub lossless_dts: bool,
     /// The seated profile's Dolby Vision setting, captured with the direct-play mode for the same
     /// reason: the worker must not read the cell the main thread moves. `Off` plans as an
     /// `Unsupported` set ([`DolbyVisionMode::gate`]): no node is sent, a stream with a
@@ -2059,6 +2062,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                             tracks, acodec, audio_prefs, if forced { 0 } else { env.audio_sid }, stand_in, plays,
                         ))
                         .flatten()
+                        .map(|sel| if forced { sel } else { lossless_upgrade(tracks, sel, env.lossless_dts, plays) })
                 })
             };
             // Auto has one pass over everything it can play (the set's decoder or a codec in force); only
@@ -3356,6 +3360,24 @@ fn pick_dp_audio_mode(
 ) -> Option<(i32, String, i64)> {
     pick_dp_audio_eligible(tracks, default_acodec, prefs, 0, StandIn::Any,
         |codec, channels, rate| audio_direct_plays_with(caps, mode, codec, channels, rate))
+}
+
+/// `sel` (the planner's pick), or the better sibling of the same language and kind that
+/// [`audio_rank`] ranks above it. Only on a sound chain that carries the bitstream (`whole`): the
+/// order is about what reaches the receiver, and the TV's own speakers keep the plain pick.
+fn lossless_upgrade(
+    tracks: &[plx_data::metadata::Stream], sel: (i32, String, i64), whole: bool, plays: &dyn Fn(&str, i64, i64) -> bool,
+) -> (i32, String, i64) {
+    let Some(i) = usize::try_from(sel.0).ok().filter(|&i| whole && i < tracks.len()) else {
+        return sel;
+    };
+    let lang = |i: usize| plx_data::metadata::audio_language(&tracks[i]);
+    let j = super::audio_rank::upgraded(
+        tracks, i, whole,
+        |s| plays(&s.codec, s.channels, s.sampling_rate),
+        |a, b| same_audio_language(lang(a), lang(b)) && audio_is_commentary(tracks, a) == audio_is_commentary(tracks, b),
+    );
+    if j == i { sel } else { (j as i32, tracks[j].codec.to_lowercase(), tracks[j].id) }
 }
 
 /// The codec of the audio track a refused Force Direct Play was going to play: the first intent

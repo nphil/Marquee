@@ -1,5 +1,6 @@
 //! The television, as everything outside the port sees it (step L15, docs/module-layers.md).
 pub mod device;
+pub mod earc;
 pub mod home;
 pub mod launch;
 pub mod sandbox;
@@ -27,6 +28,7 @@ pub struct Port {
     pub remove: fn(&secure::Backend, &str),
     pub system_locale: fn() -> LocaleReply,
     pub sound_output: fn() -> sound::Reply,
+    pub audio_chain: fn() -> earc::Reply,
     pub go_home: fn(),
     pub poll_home: fn(),
     pub deliver_toast: fn(&str, toast::Identity) -> toast::Sent,
@@ -69,6 +71,7 @@ static ABSENT: Port = Port {
     remove: |_, _| {},
     system_locale: || LocaleReply::NoPlatform,
     sound_output: || sound::Reply::NoPlatform,
+    audio_chain: || earc::Reply::NoPlatform,
     go_home: nothing,
     poll_home: nothing,
     deliver_toast: toast::deliver_without_port,

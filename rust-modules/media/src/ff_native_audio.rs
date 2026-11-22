@@ -37,6 +37,7 @@ static FED: Mutex<Option<(Kind, u32)>> = Mutex::new(None);
 /// A new session is starting: forget the last one's answer. Called on the main thread before the
 /// demuxer is spawned, so no demuxer is alive to answer into the cell.
 pub(crate) fn reset() {
+    super::lossless::publish(false);
     *FED.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 

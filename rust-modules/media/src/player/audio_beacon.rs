@@ -115,8 +115,10 @@ fn family(codec: &str) -> &'static str {
 
 /// The delivered format of track `s`. `fed_codec` is the codec the pipeline is fed
 /// ([`crate::route::stream_acodec`]), which differs from the track's only when the server converts it;
-/// `immersive` is what the Load declares ([`crate::route::stream_immersive`]).
-pub fn format_for(s: &Stream, delivered: Delivered, fed_codec: &str, immersive: bool) -> Format {
+/// `immersive` is what the Load declares ([`crate::route::stream_immersive`]); `dts_whole` is whether
+/// the demuxer feeds DTS with its extensions ([`crate::ff::lossless::fed_whole`]), because without
+/// them a DTS-HD track leaves as its 5.1 core and says so (`profile: "core"`).
+pub fn format_for(s: &Stream, delivered: Delivered, fed_codec: &str, immersive: bool, dts_whole: bool) -> Format {
     let some = |t: &str| (!t.is_empty()).then(|| t.to_owned());
     match delivered {
         Delivered::AppStereoMix => {
@@ -127,6 +129,9 @@ pub fn format_for(s: &Stream, delivered: Delivered, fed_codec: &str, immersive: 
             // AC-3 carries at most 5.1, whatever the source had
             let channels = if codec == "ac3" { s.channels.min(6) } else { s.channels };
             Format { codec, profile: None, atmos: false, channels, layout: None, delivered }
+        }
+        Delivered::Source if family(&s.codec) == "dts" && !dts_whole && crate::route::is_dts_hd(&s.profile.to_ascii_lowercase()) => {
+            Format { codec: "dts", profile: Some("core".into()), atmos: false, channels: s.channels.min(6), layout: None, delivered }
         }
         Delivered::Source => Format {
             codec: family(&s.codec),
@@ -157,7 +162,7 @@ pub fn want(ps: &crate::route::PlaybackSession, audio: &[Stream]) -> Option<Want
         Delivered::Source
     };
     let immersive = delivered == Delivered::Source && crate::route::stream_immersive(ps);
-    Some(Want { format: format_for(s, delivered, &crate::route::stream_acodec(ps), immersive), context: super::media_context() })
+    Some(Want { format: format_for(s, delivered, &crate::route::stream_acodec(ps), immersive, crate::ff::lossless::fed_whole()), context: super::media_context() })
 }
 
 /// One request on the wire.
@@ -407,7 +412,7 @@ mod tests {
     #[test]
     fn a_source_track_keeps_the_files_own_facts() {
         let s = stream("eac3", 6, "dolby digital plus + dolby atmos", "5.1(side)");
-        let f = format_for(&s, Delivered::Source, "eac3", true);
+        let f = format_for(&s, Delivered::Source, "eac3", true, false);
         assert_eq!(
             f,
             Format {
@@ -419,22 +424,31 @@ mod tests {
                 delivered: Delivered::Source,
             }
         );
-        let dts = format_for(&stream("dca", 8, "dts-hd ma", ""), Delivered::Source, "dca", false);
-        assert_eq!((dts.codec, dts.profile.as_deref(), dts.atmos, dts.layout), ("dts", Some("dts-hd ma"), false, None));
+        let dts = format_for(&stream("dca", 8, "dts-hd ma", ""), Delivered::Source, "dca", false, true);
+        assert_eq!((dts.codec, dts.profile.as_deref(), dts.atmos, dts.layout, dts.channels), ("dts", Some("dts-hd ma"), false, None, 8));
+    }
+
+    #[test]
+    fn a_dts_hd_track_fed_as_its_core_says_core() {
+        let hd = stream("dca", 8, "dts-hd ma", "7.1");
+        let f = format_for(&hd, Delivered::Source, "dca", false, false);
+        assert_eq!((f.codec, f.profile.as_deref(), f.channels, f.layout), ("dts", Some("core"), 6, None));
+        let plain = format_for(&stream("dca", 6, "dts", "5.1"), Delivered::Source, "dca", false, false);
+        assert_eq!((plain.profile.as_deref(), plain.layout.as_deref()), (Some("dts"), Some("5.1")), "a core track is its own core");
     }
 
     #[test]
     fn a_converted_track_is_named_by_what_the_server_sends() {
         let s = stream("dca", 8, "dts-hd ma", "7.1");
-        let f = format_for(&s, Delivered::ServerConverted, "ac3", true);
+        let f = format_for(&s, Delivered::ServerConverted, "ac3", true, false);
         assert_eq!((f.codec, f.profile, f.atmos, f.channels, f.layout), ("ac3", None, false, 6, None), "AC-3 stops at 5.1; no Atmos survives");
-        assert_eq!(format_for(&s, Delivered::ServerConverted, "", false).codec, "dts", "no fed codec yet: the track's own");
+        assert_eq!(format_for(&s, Delivered::ServerConverted, "", false, false).codec, "dts", "no fed codec yet: the track's own");
     }
 
     #[test]
     fn a_mixed_down_track_leaves_as_stereo_pcm() {
         let s = stream("dca", 6, "dts", "5.1");
-        let f = format_for(&s, Delivered::AppStereoMix, "dca", false);
+        let f = format_for(&s, Delivered::AppStereoMix, "dca", false, false);
         assert_eq!((f.codec, f.channels, f.atmos, f.profile.as_deref(), f.delivered), ("pcm", 2, false, None, Delivered::AppStereoMix));
     }
 

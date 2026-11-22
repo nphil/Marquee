@@ -229,8 +229,8 @@ pub const AUDIO_RATE_CEILING: u32 = 48_000;
 
 /// Whether `codec` is held to [`AUDIO_RATE_CEILING`], by [`audio_track_fits`] and by the profile's
 /// `audio.samplingRate` limitation alike: every codec but DTS, TrueHD and the lossless PCM codecs
-/// ([`PCM_AUDIO_CODECS`]: FLAC, ALAC, LPCM). The app feeds only the DTS core
-/// (`ff.rs::dts_core_packet`), 48 kHz at most by format, so a DTS-HD 96/24 source plays today and
+/// ([`PCM_AUDIO_CODECS`]: FLAC, ALAC, LPCM). The app feeds the DTS core
+/// (`ff.rs::dts_core_packet`; the whole stream when `ff::lossless` is on), 48 kHz at most by format, so a DTS-HD 96/24 source plays today and
 /// bounding it would push that source into a lossy AC-3 conversion. TrueHD and the lossless PCM codecs,
 /// when the app decodes them, are resampled to 48 or 44.1 kHz by the app itself (`speed_audio::Resampler`
 /// low-passes before it decimates from 88.2 kHz and up), so their Load never carries the source rate;

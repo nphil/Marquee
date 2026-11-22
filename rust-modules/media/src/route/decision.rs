@@ -835,6 +835,7 @@ impl PlaybackSession {
     /// handed to [`request_play_with_queue`] (the one caller in production). The request's ladder
     /// starts from it; the previous request's, and whatever it had narrowed, is dropped.
     pub(super) fn begin_attempt(&mut self, caps: std::sync::Arc<plx_platform::devcaps::Caps>) {
+        crate::ff::lossless::new_request();
         self.recovery = Some(crate::player::recovery::OpenRecovery::new(caps));
     }
 
@@ -8672,6 +8673,7 @@ impl ResolveEnv {
             version: None,
             quality: quality(),
             direct_play_mode: direct_play_mode(),
+            lossless_dts: crate::ff::lossless::planned(),
             dolby_vision_mode: dolby_vision_mode(),
             dv_capability: plx_platform::devcaps::dv::capability(),
             caps: ps.attempt_caps(),

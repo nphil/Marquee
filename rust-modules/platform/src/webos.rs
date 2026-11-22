@@ -485,6 +485,31 @@ pub fn sound_output() -> crate::tv::sound::Reply {
     crate::tv::sound::Reply::NoPlatform
 }
 
+/// The sound settings and the ARC link state, for `tv::earc`. Two bus calls on the caller's worker
+/// (never the frame thread), 300 ms each; the pair is `Unavailable` when either did not answer.
+#[cfg(all(not(feature = "hostsim"), not(any(test, feature = "test-support"))))]
+pub fn audio_chain() -> crate::tv::earc::Reply {
+    use crate::tv::earc::Reply;
+    let budget = std::time::Duration::from_millis(300);
+    let settings = settings_reply(
+        r#"{"category":"sound","keys":["soundOutput","soundOutputDigital"]}"#,
+        budget,
+    );
+    let arc = ls2::register()
+        .map_err(ls2::Fail::from)
+        .and_then(|client| client.call("luna://com.webos.service.arccontroller/getARCState", "{}", budget))
+        .ok();
+    match (settings, arc) {
+        (Some(settings), Some(arc)) => Reply::Reply { settings, arc },
+        _ => Reply::Unavailable,
+    }
+}
+
+#[cfg(any(feature = "hostsim", test, feature = "test-support"))]
+pub fn audio_chain() -> crate::tv::earc::Reply {
+    crate::tv::earc::Reply::NoPlatform
+}
+
 #[cfg(all(not(feature = "hostsim"), not(any(test, feature = "test-support"))))]
 fn launch_home() -> bool {
     let payload = format!("{{\"id\":\"{HOME_APP_ID}\"}}");
