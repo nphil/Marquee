@@ -25,6 +25,8 @@ pub struct AuQueue {
     max_bytes: c_long, // per-queue backpressure cap: `base_bytes` + any headroom granted
     base_bytes: c_long, // the cap the caller chose at aq_new; headroom is granted on top of it
     releasing: c_int, // headroom released but not yet drained: `aq_pop` walks `max_bytes` down
+    reserve_bytes: c_long, // read-ahead allowance past the cap (`aq_set_reserve`), bytes; 0 = none
+    reserve_span_ns: i64, // and the media span the queue may hold while it uses that allowance
     pops: u64, // AUs the consumer has popped, ever: a producer's evidence that the lane is draining
     pushes: u64, // AUs the producer has appended, ever: the consumer's evidence that the source works
     parked: c_int, // the producer is waiting for room right now
@@ -291,7 +293,7 @@ fn aq_push_park(
         }
         libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
         let mut admitted = false;
-        while !admitted && (*q).queued_bytes > (*q).max_bytes && (*q).abort == 0 {
+        while !admitted && over_cap(q) && (*q).abort == 0 {
             (*q).parked = 1;
             if let Some(g) = gate {
                 libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
@@ -310,7 +312,7 @@ fn aq_push_park(
                     libc::free(n as *mut c_void);
                     return 0;
                 }
-                if (*q).queued_bytes <= (*q).max_bytes || (*q).abort != 0 {
+                if !over_cap(q) || (*q).abort != 0 {
                     continue;
                 }
                 if starved {
@@ -337,7 +339,7 @@ fn aq_push_park(
                 libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
                 let keep_polling = drain();
                 libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
-                if (*q).queued_bytes > (*q).max_bytes && (*q).abort == 0 {
+                if over_cap(q) && (*q).abort == 0 {
                     if keep_polling {
                         let ts = aq_park_deadline();
                         libc::pthread_cond_timedwait(
@@ -648,6 +650,46 @@ unsafe fn settle_released_cap(q: *mut AuQueue) {
     }
 }
 
+/// With `m` held: the queue holds more than it may. Over its cap, and outside the read-ahead
+/// allowance: more bytes than the allowance, or more media than its span.
+unsafe fn over_cap(q: *mut AuQueue) -> bool {
+    unsafe {
+        let bytes = (*q).queued_bytes;
+        bytes > (*q).max_bytes && (bytes > (*q).reserve_bytes || span_locked(q) > (*q).reserve_span_ns)
+    }
+}
+
+/// With `m` held: [`aq_span_ns`].
+unsafe fn span_locked(q: *mut AuQueue) -> i64 {
+    unsafe {
+        if (*q).head.is_null() || (*q).tail.is_null() {
+            0
+        } else {
+            ((*(*q).tail).pts - (*(*q).head).pts).max(0)
+        }
+    }
+}
+
+/// Consumer: let this queue read ahead past its cap, up to `bytes` and up to `span_ns` of media
+/// (the pts span [`aq_span_ns`] reports), whichever it reaches first. The cap and its headroom
+/// keep their meaning underneath: a queue within them is never full. `bytes == 0` takes the
+/// allowance away; a queue then over its cap parks its producer until the consumer has drained it.
+pub fn aq_set_reserve(q: *mut AuQueue, bytes: c_long, span_ns: i64) {
+    if q.is_null() {
+        return;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let grew = bytes > (*q).reserve_bytes || span_ns > (*q).reserve_span_ns;
+        (*q).reserve_bytes = bytes.max(0);
+        (*q).reserve_span_ns = span_ns.max(0);
+        if grew {
+            libc::pthread_cond_broadcast(ptr::addr_of_mut!((*q).not_full));
+        }
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+    }
+}
+
 /// The cap in force right now: the base, plus any headroom granted and not yet drained away.
 pub fn aq_cap(q: *mut AuQueue) -> c_long {
     if q.is_null() {
@@ -669,7 +711,7 @@ pub fn aq_would_park(q: *mut AuQueue) -> bool {
     }
     unsafe {
         libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
-        let parks = (*q).queued_bytes > (*q).max_bytes && (*q).abort == 0;
+        let parks = over_cap(q) && (*q).abort == 0;
         libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
         parks
     }
@@ -792,6 +834,56 @@ mod tests {
         assert!(!parked.is_finished(), "zero headroom restores the base cap");
         aq_abort(qp);
         assert_eq!(parked.join().unwrap(), -1);
+        aq_destroy(qp);
+    }
+
+    /// A read-ahead reserve lets a queue fill past its base cap up to either of its limits, the
+    /// bytes or the media time. Taken away, the queue is over its cap again until it drains.
+    #[test]
+    fn a_reserve_admits_pushes_past_the_base_cap_up_to_its_bytes_or_its_span() {
+        let mut q = aq_new(100);
+        let qp = &mut *q as *mut AuQueue;
+        let au = [0u8; 60];
+        let push = |pts: i64| assert_eq!(aq_push(qp, au.as_ptr(), au.len() as c_int, pts, 0, 1), 0);
+        push(0);
+        push(1);
+        assert!(aq_would_park(qp), "120 bytes: over the base cap");
+
+        aq_set_reserve(qp, 300, 10);
+        assert!(!aq_would_park(qp), "inside both limits of the reserve");
+        (2..6).for_each(push);
+        assert!(aq_would_park(qp), "360 bytes: past the reserve's bytes");
+
+        aq_set_reserve(qp, 1_000, 10);
+        assert!(!aq_would_park(qp), "a larger reserve has room again");
+        push(11);
+        assert!(aq_would_park(qp), "11 ns queued: past the reserve's span");
+
+        aq_set_reserve(qp, 1_000, 20);
+        assert!(!aq_would_park(qp));
+        aq_set_reserve(qp, 0, 0);
+        assert!(aq_would_park(qp), "the reserve went: over the base cap until the consumer drains it");
+        aq_destroy(qp);
+    }
+
+    /// A producer parked at the base cap before the reserve was granted is woken by the grant.
+    #[test]
+    fn granting_a_reserve_wakes_a_producer_parked_at_the_base_cap() {
+        let mut q = aq_new(100);
+        let qp = &mut *q as *mut AuQueue;
+        let au = [0u8; 120];
+        assert_eq!(aq_push(qp, au.as_ptr(), au.len() as c_int, 0, 1, 1), 0);
+        let addr = qp as usize;
+        let parked = std::thread::spawn(move || {
+            let au = [0u8; 10];
+            aq_push(addr as *mut AuQueue, au.as_ptr(), au.len() as c_int, 1, 0, 1)
+        });
+        while !aq_parked(qp) {
+            std::thread::yield_now();
+        }
+        aq_set_reserve(qp, 1_000, 10);
+        assert_eq!(parked.join().unwrap(), 0, "the grant did not admit the parked push");
+        assert_eq!(aq_bytes(qp), 130);
         aq_destroy(qp);
     }
 

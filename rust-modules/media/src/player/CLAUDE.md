@@ -99,8 +99,16 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   drop, so a link slower than the file used to play on in slow motion at the delivered rate and
   then drop frames to catch up. The hold is the HLS hold's own machine (`ClockHold::ProgressiveRebuffer`:
   one Pause, the `hls_rebuffering` mirror that `player::state` reads as Buffering, then the
-  `try_prime` Play), with its own release: a full video or audio queue (`reason=full`) or the end of
-  the stream (`reason=eof`), never a runway. It begins on one of two arms. The CLOCK DEBT
+  `try_prime` Play), with its own release (`reserve::hold_releases`): the read-ahead rebuilt to what
+  the link delivered during the hold calls for (`reason=reserve`: 3 s when it outran the film, up to
+  12 s as it falls short), a full video or audio queue (`reason=full`), the end of the stream
+  (`reason=eof`), or 15 s held with 1.5 s read ahead (`reason=deadline`). **Its queues read ahead by
+  time, not to 10 MiB**: `pump::apply_read_ahead` lets both lanes hold up to 60 s of media within
+  `reserve::allowance` (half of MemAvailable above 224 MiB, at most 192 MiB, an eighth of it audio;
+  nothing while the memory guard reads short), worked out again on each guard sample
+  (`app::memory_guard` -> `reserve::note_memory`). The base caps, headroom and push gates are
+  unchanged underneath (`aq::aq_set_reserve`), and every other route keeps the base caps. The hold
+  begins on one of two arms. The CLOCK DEBT
   (`ClockDebt::step`, once per position callback: `S <- max(0, S + (dwall - dpos) - k * dwall)`,
   k = 0.05, fires at 100 ms, resets whenever the app's video queue holds over 1 MiB) is slow motion;
   a clock stopped for `NATIVE_CLOCK_STOPPED_MS` over a reserve it will never spend
@@ -112,8 +120,9 @@ and seeks by time via `av_seek_frame` (libavformat's own Cues index).
   clock, during a seek, before the first picture, under the viewer's Pause or once the demuxer is
   done. Never held: a trailer preview, the looped sample, a progressive re-encode under a fixed
   quality ceiling, and an Original that Auto quality supervises (`route::is_progressive_original`).
-  The log reads `feed: progressive rebuffer hold n= arm= S= debt= ...` and `... resume n= reason=
-  held=`. The constants (`DebtParams::PROGRESSIVE`) are upstream's, measured on its television; the
+  The log reads `feed: read-ahead allowance video= audio= span=`, `feed: progressive rebuffer hold
+  n= arm= S= debt= ...` and `... resume n= reason= held= reserve=`. The constants
+  (`DebtParams::PROGRESSIVE`) are upstream's, measured on its television; the
   Buffering read-out during a hold is not yet seen on this one.
 - `threads.rs` — the workers beside the demuxer: **`load_thread`** (construct Starfish + `Load()`,
   which owns its own GMainContext) and **`timeline_thread`** (the ~10 s `/:/timeline` progress

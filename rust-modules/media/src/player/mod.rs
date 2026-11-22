@@ -57,6 +57,7 @@ mod era_callbacks; // the one diagnostic line for an era-chosen sink counter tha
 mod native_stall; // the surround native-audio stall watchdog (pure state) and the AU size evidence line
 mod segment_landing; // when an accepted Segment seek has reached the picture, else one reload (pure state)
 mod clock_debt; // a direct-play stream's position falling behind the wall (pure step); `pump` drives it
+pub mod reserve; // a direct-play stream's read-ahead: what the queues may hold and when a hold plays again (pure)
 mod pump;
 pub mod report;
 #[cfg(all(test, feature = "hostsim"))]

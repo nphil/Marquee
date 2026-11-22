@@ -11,7 +11,8 @@
 //! frame thread: art that is not on screen is released down to a lower ceiling (`tex::squeeze`),
 //! the art prefetch rests (`poster::rest_warms`), trailer autoplay holds
 //! (`preview::rest_for_memory`) and the seek stills made on the TV are dropped and paused
-//! (`seekprev::rest_for_memory`). Playback itself is left alone.
+//! (`seekprev::rest_for_memory`). Playback is left alone but for its read-ahead, which is sized
+//! from every sample and goes while memory is short (`player::reserve`).
 
 use std::sync::mpsc;
 
@@ -119,6 +120,10 @@ impl MemoryGuard {
                 Ok(sample) => {
                     self.pending = None;
                     changed = sample.and_then(|s| self.pressure.observe(s.level()).map(|level| (level, s)));
+                    if let Some(s) = sample {
+                        // Every sample, not only a change of level: the read-ahead is sized from it.
+                        plx_media::player::reserve::note_memory(s.available_kib << 10, self.pressure.level != Level::Fine);
+                    }
                 }
                 // The worker ended without an answer; the next read starts on the clock.
                 Err(mpsc::TryRecvError::Disconnected) => self.pending = None,

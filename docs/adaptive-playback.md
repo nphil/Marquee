@@ -546,12 +546,22 @@ dropping frames. At Quality=Original the stream takes the same internal hold (on
 Buffering read-out, the `try_prime` Play) with a release of its own. The hold begins when the clock
 debt fires (the native position callback has fallen behind the wall by more than 100 ms, net of a
 5 % drift allowance, counted only while the app's video queue holds under 1 MiB) or when the native
-clock has stopped over a remnant it will never spend (a dead link). It releases on the end of the
-stream or on a video or audio queue at its byte cap. On a link that cannot carry the file at all the
-hold cycles for as long as the link stays short, because Original offers no other answer; that
-replaces slow motion and catch-up drops, it is not smooth 1x play. A trailer preview, the looped
-sample, a viewer Pause, a seek, a progressive re-encode under a fixed quality ceiling and an
-Original that Auto quality supervises (section 7) are never held: Auto keeps its own exit.
+clock has stopped over a remnant it will never spend (a dead link). It releases once the read-ahead
+is rebuilt to what the link delivered during the hold calls for (3 s of film when it outran the
+film, up to 12 s as it falls short), on a full queue, on the end of the stream, or after 15 s with
+1.5 s read ahead. On a link that cannot carry the file at all the hold cycles for as long as the
+link stays short, because Original offers no other answer; that replaces slow motion and catch-up
+drops, it is not smooth 1x play.
+
+Between holds the stream reads ahead by time rather than to the queues' 10 MiB: up to 60 s of
+film, within half of the TV's available memory above 224 MiB and at most 192 MiB, worked out again
+every 2 s from the memory guard's sample and withdrawn while memory is short. A film whose
+bitrate crosses the link's rate only in places plays those stretches from what the calmer ones left
+over.
+
+A trailer preview, the looped sample, a viewer Pause, a seek, a progressive re-encode under a fixed
+quality ceiling and an Original that Auto quality supervises (section 7) are never held: Auto keeps
+its own exit.
 
 ## 6. Original is a mode, not the top HLS rung
 
@@ -737,7 +747,8 @@ abr: tx Up|Down ... outcome=... decided=... control=... media=... \
     candidate_acq=... candidate_bytes=... candidate_dur=...
 hls: auto-rebuffer pause buf=... trial_reserve=... runway=... silent=...
 feed: progressive rebuffer hold n=... arm=debt|silence|both S=... debt=... pos=... reserve=... silent=...
-feed: progressive rebuffer resume n=... reason=full|eof held=...
+feed: read-ahead allowance video=...MiB audio=...MiB span=...s
+feed: progressive rebuffer resume n=... reason=reserve|full|eof|deadline held=... reserve=...
 primed: v=... a=... runway=... -> Play
 primed: v=... a=... recovery_n=... debt=... runway=... -> Play
 abr: mode chose=... why=... scale=... win[...] lose[...]

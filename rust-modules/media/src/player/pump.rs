@@ -460,9 +460,42 @@ fn should_begin_progressive_rebuffer(debt_fired: bool, native_clock_stopped: boo
     debt_fired || native_clock_stopped
 }
 
+/// Give a direct-play stream's lane queues the read-ahead the TV's memory allows
+/// (`reserve::allowance`), worked out again on each memory sample. Every other route keeps the
+/// base caps: a segmented stream's reserve is its ladder's.
+fn apply_read_ahead(ps: &crate::route::PlaybackSession, eng: &mut Engine) {
+    let sample = super::reserve::samples();
+    if eng.read_ahead_sample == Some(sample) {
+        return;
+    }
+    eng.read_ahead_sample = Some(sample);
+    let video = crate::aq::queue_ptr(&mut eng.aq_video);
+    let audio = crate::aq::queue_ptr(&mut eng.aq_audio);
+    let allowance = if rebuffer_rule(ps, true) == Some(RebufferRule::Progressive) {
+        let held = i64::from(crate::aq::aq_bytes(video)) + i64::from(crate::aq::aq_bytes(audio));
+        super::reserve::allowance(held.max(0) as u64)
+    } else {
+        super::reserve::Allowance::default()
+    };
+    if allowance == eng.read_ahead {
+        return;
+    }
+    eng.read_ahead = allowance;
+    let span_ns = super::reserve::TARGET_NS;
+    crate::aq::aq_set_reserve(video, allowance.video_bytes as std::os::raw::c_long, span_ns);
+    crate::aq::aq_set_reserve(audio, allowance.audio_bytes as std::os::raw::c_long, span_ns);
+    super::log(&format!(
+        "feed: read-ahead allowance video={}MiB audio={}MiB span={}s",
+        allowance.video_bytes >> 20,
+        allowance.audio_bytes >> 20,
+        span_ns / 1_000_000_000,
+    ));
+}
+
 /// Hold a direct-play stream whose link has stopped keeping up: pause the native clock and show
 /// Buffering, instead of letting it play on in slow motion and then drop frames to catch up. Demux
-/// and feeding stay alive; `try_prime` releases the hold on a full queue or the end of the stream.
+/// and feeding stay alive; `try_prime` releases the hold on its read-ahead reserve
+/// (`reserve::hold_releases`).
 fn begin_progressive_rebuffer(mt: &MainThread, eng: &mut Engine) {
     let video_q = crate::aq::queue_ptr(&mut eng.aq_video);
     let audio_q = crate::aq::queue_ptr(&mut eng.aq_audio);
@@ -478,7 +511,8 @@ fn begin_progressive_rebuffer(mt: &MainThread, eng: &mut Engine) {
     let callback_ms = SHARED.dg_vpres_at.load(Relaxed);
     let video = LaneTail { fed_ns: eng.max_fed_video_pts, queued_ns: crate::aq::aq_span_ns(video_q) };
     let audio = LaneTail { fed_ns: eng.max_fed_audio_pts, queued_ns: crate::aq::aq_span_ns(audio_q) };
-    let reserve_ms = progressive_reserve_ns(position_ns, video, Some(audio)).map(|ns| ns / 1_000_000);
+    let reserve_ns = progressive_reserve_ns(position_ns, video, Some(audio));
+    let reserve_ms = reserve_ns.map(|ns| ns / 1_000_000);
     let watch = &mut eng.progressive_hold;
     if SHARED.applied_rate_permille.load(Relaxed) != super::RATE_NORMAL
         || position_ns == super::engine::PRES_NONE
@@ -523,6 +557,7 @@ fn begin_progressive_rebuffer(mt: &MainThread, eng: &mut Engine) {
     arm_live_clock_prime(eng);
     let watch = &mut eng.progressive_hold;
     watch.holds += 1;
+    watch.reserve_at_hold_ns = reserve_ns.unwrap_or(0);
     // `arm=` says which observation began it; `silent=` is the clock's own silence at that moment.
     super::log(&format!(
         "feed: progressive rebuffer hold n={} arm={} S={}ms debt={}ms pos={}ms reserve={}ms silent={}ms \
@@ -2797,6 +2832,9 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
     // issuing Play. NOT while a seek is armed: on a resume the seek is armed before PLAYING, so
     // feeding first would present the file start for a frame before the seek repositions — a
     // visible jump. ----------
+    if stream {
+        apply_read_ahead(ps, eng);
+    }
     maybe_begin_rebuffer(ps, mt, eng);
     if eng.stage >= Stage::Playing && TX.feed_allowed() && TX.seek_to_ns.load(Relaxed) < 0 {
         if stream {

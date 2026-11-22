@@ -133,14 +133,16 @@ impl ClockDebt {
 }
 
 /// What the progressive hold keeps between ticks (`pump::maybe_begin_progressive_rebuffer`): the
-/// clock-debt detector's state, the native position callback it was last stepped with, and the number
-/// of holds this Engine has begun (the `n` of the hold and resume lines).
+/// clock-debt detector's state, the native position callback it was last stepped with, the number
+/// of holds this Engine has begun (the `n` of the hold and resume lines) and the reserve the last
+/// one began with (what its release measures the link against).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProgressiveHoldWatch {
     pub debt: ClockDebt,
     /// `SHARED.dg_pos_ticks` as of the last step: the detector steps once per native callback.
     pub seen_pos_ticks: u32,
     pub holds: u32,
+    pub reserve_at_hold_ns: i64,
 }
 
 impl ProgressiveHoldWatch {
