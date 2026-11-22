@@ -343,6 +343,27 @@ fn a_hold_is_not_begun_when_its_own_release_is_already_true() {
     assert!(!text.contains("progressive rebuffer hold"), "a hold line was written: {text}");
 }
 
+#[test]
+fn a_slow_clock_with_both_tracks_already_fed_is_not_paused_for_network_refill() {
+    let _serial = plx_base::testlock::serial();
+    let mut rig = Rig::with_media(6 * S, 6 * S).with_virtual_wall();
+    assert!(rig.run_until(|rig| {
+        let p = SHARED.pres_fed.load(Relaxed);
+        let e = rig.eng();
+        p > S && e.max_fed_video_pts.min(e.max_fed_audio_pts) - p > HEALTHY_NS
+    }));
+    ffi_host::reset_volume_probe_for_test();
+    let mut wall = SHARED.dg_vpres_at.load(Relaxed);
+    for _ in 0..3 {
+        ffi_host::advance_clock_for_test(40);
+        ffi_host::tick_for_test();
+        wall += 200;
+        SHARED.dg_vpres_at.store(wall, Relaxed);
+        rig.step_without_sink();
+    }
+    assert_eq!(pauses(), 0, "refilling cannot help a decoder already holding both tracks");
+}
+
 /// **The hold's way out.** A progressive hold has no HLS segment to credit, so a certificate borrowed
 /// from the HLS hold would show Buffering for good. The producer delivers again: media that leaves
 /// the queue with room keeps holding (no runway constant), and the Play that ends it clears Buffering

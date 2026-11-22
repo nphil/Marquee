@@ -3570,7 +3570,7 @@ const FEED_LANE_SLICE_US: u64 = 3_000;
 /// [`FEED_LANE_SLICE_US`]. 250 ms is [`FEED_PACE_CAP_MS`]: the position reports arrive every
 /// ~200 ms, so a lead under it can be gone before the next report says so, and it is ~6 AUs of
 /// 24 fps video — a handful of `Feed()` calls, bounded cost, never a backlog.
-const FEED_LOW_WATER_NS: i64 = 250_000_000;
+pub(super) const FEED_LOW_WATER_NS: i64 = 250_000_000;
 
 /// Whether a lane is short of media, and so must be fed past its slice.
 ///

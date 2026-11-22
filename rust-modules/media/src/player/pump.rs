@@ -534,7 +534,10 @@ fn begin_progressive_rebuffer(mt: &MainThread, eng: &mut Engine) {
                 wall_ms: callback_ms,
                 pos_ns: position_ns,
                 video_queue_bytes: crate::aq::aq_bytes(video_q).max(0) as usize,
-                eligible: callback_ms != 0,
+                // Empty application queues need not mean starvation: after a seek the
+                // decoder can already hold nearly a second of both tracks.
+                eligible: callback_ms != 0
+                    && video.fed_ns.min(audio.fed_ns).saturating_sub(position_ns) < super::engine::FEED_LOW_WATER_NS,
             },
         );
     }
