@@ -513,8 +513,9 @@ fn commit_derived_subtitle(ps: &mut PlaybackSession, picked: (i64, i32), forced_
 /// one), or at nothing when there is none; a forced track a downloaded file stands for is that file.
 /// Nothing happens off Forced only; while the landing's note says a copy remux shows no remembered
 /// subtitle, since a derived pick would turn that into a re-encode; or while the audio is only
-/// deferred behind an Original handoff (the deferred commit follows when it lands).
-pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid: i64) {
+/// deferred behind an Original handoff (the deferred commit follows when it lands). `carried`: the
+/// audio pick's own selection write (queued after the follows) names the result, so none is sent here.
+pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid: i64, carried: bool) {
     if ps.sub_mode != SubMode::ForcedOnly || ps.cur_memory_note || original_recovery_pending() {
         return;
     }
@@ -525,7 +526,7 @@ pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid:
     };
     // W5: the selection never moves off a download the Part carries (PMS would discard it), and the
     // forced track may be that download; the follow changes what is on screen.
-    let put = !external_on_part(&ctx.subs);
+    let put = !carried && !external_on_part(&ctx.subs);
     if shown.id != ps.cur_sub_sid {
         commit_derived_subtitle(ps, (shown.id, shown.ordinal), true, put);
     }
@@ -534,21 +535,23 @@ pub(super) fn follow_audio_with_forced_only(ps: &mut PlaybackSession, audio_sid:
 /// **The audio follow of an automatic subtitle**: while the landing's subtitle is one nobody chose
 /// (`TrackContext::auto_subs`: absent when a remembered choice decided the landing, cleared by the
 /// viewer's own pick), a new audio puts on what the ladder would have landed for that audio's
-/// language: the dub transcript for audio in the subtitle's language, the full translation otherwise,
-/// or Off. Derived like the Forced only follow: no memory is written, and no selection PUT goes over
-/// a Part with an external stream (W5).
-pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_sid: i64) {
+/// language: the dub transcript for audio in the subtitle's language, the full translation otherwise.
+/// It never turns a subtitle that is showing Off: when the rule has nothing for the new audio the
+/// shown one stays, and only the viewer's own Off removes it. Derived like the Forced only follow: no
+/// memory is written, and no selection PUT goes over a Part with an external stream (W5) beyond the
+/// audio pick's own write (`carried`).
+pub(super) fn follow_audio_with_auto_subtitle(ps: &mut PlaybackSession, audio_sid: i64, carried: bool) {
     if ps.sub_mode == SubMode::ForcedOnly || ps.cur_memory_note || original_recovery_pending() {
         return;
     }
     let Some(ctx) = ps.track_ctx.as_ref() else { return };
     let lang = ctx.audio_lang_of(audio_sid);
     let Some(&(_, want)) = ctx.auto_subs.as_ref().and_then(|t| t.iter().find(|(l, _)| l == lang)) else { return };
-    let (id, ordinal) = want.unwrap_or((0, -1));
+    let Some((id, ordinal)) = want else { return };
     if id == ps.cur_sub_sid {
         return;
     }
-    let put = !external_on_part(&ctx.subs);
+    let put = !carried && !external_on_part(&ctx.subs);
     commit_derived_subtitle(ps, (id, ordinal), false, put);
 }
 

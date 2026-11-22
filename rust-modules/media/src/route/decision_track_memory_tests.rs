@@ -2068,6 +2068,25 @@ fn an_automatic_subtitle_follows_the_audio_until_the_viewer_picks() {
     tidy_write(&mut ps);
 }
 
+/// **An audio pick never turns the subtitle Off**: when the automatic rule has nothing for the new
+/// audio's language, the subtitle on screen stays (only the viewer's own Off removes it).
+#[test]
+#[cfg(feature = "devtriggers")]
+fn an_audio_pick_never_turns_the_subtitle_off() {
+    let mut ps = PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let subs = vec![srt(55001, 3, "eng", false, false), srt(55002, 4, "chi", false, false)];
+    land_with_context(&mut ps, subs, Some(0), SubMode::Track);
+    ps.track_ctx.as_mut().unwrap().auto_subs = Some(vec![("eng".into(), None), ("jpn".into(), Some((55001, 0)))]);
+
+    assert!(commit_audio_selection(&mut ps, japanese_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55001);
+    assert!(commit_audio_selection(&mut ps, english_audio()));
+    assert_eq!(cur_sub_sid(&ps), 55001, "no subtitle for English audio is not a reason to hide the one shown");
+    reset_player_control_for_test(&ps);
+    tidy_write(&mut ps);
+}
+
 /// A landed anime episode (English dub plays, Japanese is the original) with an English text track and a Chinese one, the account wanting English
 /// subtitles on, in a signed-in, seated profile (so a pick is remembered).
 #[cfg(feature = "devtriggers")]

@@ -1053,3 +1053,90 @@ fn a_parked_write_is_dropped_while_the_memory_note_is_up() {
     assert!(!w.parked(), "the value is spent");
     assert!(w.log().contains("write-back dropped (the remembered pick is not shown)"), "{}", w.log());
 }
+
+// ---- an audio pick writes the pair the subtitle follow lands ------------------------------------
+
+/// Made in Abyss S01E01 as PMS lists it (rk 18064): English dub and Japanese original, the two
+/// built-in PGS tracks, the `.en.cc.srt` (171421, the dub's) and the `.en.srt` (171420, the original's).
+/// The two sidecars are library files beside the video, so PMS keeps them whatever is selected.
+fn abyss_part() -> PartModel {
+    PartModel {
+        id: PART,
+        audio: vec![171411, 171412],
+        subs: vec![(171413, false), (171414, false), (171421, false), (171420, false)],
+        audio_sel: 171411,
+        sub_sel: 171420,
+        forced: Vec::new(),
+    }
+}
+
+fn abyss_item(w: &World) -> plx_data::metadata::PlayingItem {
+    let audio = |id, index, lang: &str| plx_data::metadata::Stream {
+        id,
+        index,
+        lang_code: lang.into(),
+        codec: "eac3".into(),
+        channels: 6,
+        default: index == 1,
+        selected: id == 171411,
+        ..Default::default()
+    };
+    let pgs = |id, index, title: &str| plx_data::metadata::Stream {
+        id,
+        index,
+        lang_code: "eng".into(),
+        codec: "pgs".into(),
+        title: title.into(),
+        default: id == 171413,
+        ..Default::default()
+    };
+    let sidecar = |id, _index, sdh| plx_data::metadata::Stream {
+        id,
+        index: 0,
+        lang_code: "eng".into(),
+        codec: "srt".into(),
+        external: true,
+        key: format!("/library/streams/{id}"),
+        sdh,
+        selected: id == 171420,
+        ..Default::default()
+    };
+    plx_data::metadata::PlayingItem {
+        kind: "episode".into(),
+        show_rk: SHOW.into(),
+        origin: plx_plex::plex::TitleOrigin { anime: true, countries: Vec::new() },
+        bitrate: 48_000,
+        ..fourk_item_with_subs(
+            w.sid,
+            vec![audio(171411, 1, "eng"), audio(171412, 2, "jpn")],
+            vec![pgs(171413, 3, "Signs / Songs"), pgs(171414, 4, "Dialogue"), sidecar(171421, 5, true), sidecar(171420, 6, false)],
+        )
+    }
+}
+
+/// **The write-back names what is on screen, not the step before.** The viewer remembered the Japanese
+/// audio and the English sidecar; an audio pick re-points the subtitle at the dub's (or the original's)
+/// sidecar, and the one PUT of the pick carries that pair. It used to carry the subtitle the pick
+/// replaced, so PMS held the previous sidecar while the other was drawn.
+#[test]
+fn an_audio_pick_writes_the_subtitle_it_lands_not_the_one_it_replaced() {
+    plx_base::skip_unless_log_is_ours!(event_log());
+    let mut w = world(abyss_part());
+    let memo = memory(Some(japanese()), Some(crate::route::memo_of_subtitle(&abyss_item(&w).subs[3])));
+    let plan = w.resolve(Resolve { memory: memo, cached: Some(abyss_item(&w)), ..Resolve::launch() });
+    w.land(plan);
+    w.first_frame();
+    assert_eq!(cur_sub_sid(&w.ps), 171420, "setup: Japanese audio lands the original's sidecar");
+
+    let tracks = abyss_item(&w).audio;
+    assert!(commit_audio_selection(&mut w.ps, CarriedAudio::from_stream(&tracks[0], 0)));
+    wait_idle();
+    assert_eq!(cur_sub_sid(&w.ps), 171421, "English audio: the dub's sidecar");
+    assert_eq!(w.pms.selection(PART), (171411, 171421), "the server holds the pair on screen: {:?}", w.pms.puts());
+
+    assert!(commit_audio_selection(&mut w.ps, CarriedAudio::from_stream(&tracks[1], 1)));
+    wait_idle();
+    assert_eq!(cur_sub_sid(&w.ps), 171420);
+    assert_eq!(w.pms.selection(PART), (171412, 171420), "and back: {:?}", w.pms.puts());
+    assert!(!w.pms.puts().iter().any(|p| param(p, "subtitleStreamID") == Some("0")), "an audio pick never writes Off: {:?}", w.pms.puts());
+}

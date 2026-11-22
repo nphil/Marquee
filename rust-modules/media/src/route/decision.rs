@@ -12029,22 +12029,36 @@ pub fn enhancement_test_session(route: EnhTestFixture) -> (PlaybackSession, Serv
 ///
 /// **While the subtitle mode is Forced only the pick also re-points it** (FO): the forced
 /// track in the language of the audio just chosen is committed as a derived selection
-/// ([`follow_audio_with_forced_only`]), which PUTs like any in-playback subtitle change and writes
-/// NO memory: the memo stays Forced only. **An automatic subtitle re-picks by the same rule**
-/// ([`follow_audio_with_auto_subtitle`]), unless the viewer chose one by hand or a remembered choice
-/// decided the landing.
+/// ([`follow_audio_with_forced_only`]), which writes NO memory: the memo stays Forced only.
+/// **An automatic subtitle re-picks by the same rule** ([`follow_audio_with_auto_subtitle`]), unless
+/// the viewer chose one by hand or a remembered choice decided the landing.
+///
+/// **The server hears one write for the pick, and it names the pair that is on screen.** A native
+/// audio switch PUTs the selection, queued only after the follows have re-pointed the subtitle (the
+/// follows then queue none of their own): queued first, it named the subtitle the pick replaced and
+/// PMS kept the old one while the new one was drawn. A subtitle the pick left Off is not written as
+/// Off unless the viewer chose Off: only the viewer's Off may move the selection to 0, which makes
+/// PMS discard a downloaded subtitle (docs/pms-api.md, 2026-10-06).
 pub fn commit_audio_selection(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
     let sid = audio.sid;
-    let accepted = commit_audio_route(ps, audio);
-    if accepted {
-        follow_audio_with_forced_only(ps, sid);
-        follow_audio_with_auto_subtitle(ps, sid);
+    let Some(writes_selection) = commit_audio_route(ps, audio) else { return false };
+    follow_audio_with_forced_only(ps, sid, writes_selection);
+    follow_audio_with_auto_subtitle(ps, sid, writes_selection);
+    if writes_selection {
+        let sub = cur_sub_sid(ps);
+        let viewer_chose_off = ps.track_ctx.as_ref().is_none_or(|c| c.auto_subs.is_none());
+        let sub = (sub != 0 || viewer_chose_off).then_some(sub);
+        // Reached from `app/playback.rs::commit_track` inside the run-loop's `FrameScope`, so this
+        // PUT runs on the serial selection worker instead of blocking the frame thread.
+        queue_selection(cur_sid(ps), cur_part_id(ps), cur_audio_sid(ps), sub, false);
     }
-    accepted
+    true
 }
 
 /// The route half of [`commit_audio_selection`]: which way the pick reloads, and what it displaces.
-fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
+/// `None` is the Forced refusal; `Some(writes_selection)` says the pick is accepted and a native
+/// switch owes the server its selection write, which the caller queues once the subtitle is settled.
+fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> Option<bool> {
     if forced_direct_play(ps) && !audio_track_direct_plays(ps, &audio.codec, audio.channels, audio.sample_rate) {
         let friendly = plx_data::metadata::friendly_codec(&audio.codec);
         crate::player::log(&format!(
@@ -12053,7 +12067,7 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
         ps.play_verdict = Some(PlayVerdict::Forced(ForcedFailure::AudioNeedsConversion {
             codec: friendly,
         }));
-        return false;
+        return None;
     }
     if original_recovery_pending() {
         if let Some(pending) = PLAYER_CONTROL
@@ -12065,7 +12079,7 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
             pending.deferred_audio = Some(audio);
         }
         crate::player::log("audio: deferred until pending Original handoff commits or rolls back");
-        return true;
+        return Some(false);
     }
     // Audio always changes the decoder/server route contract, even when the eventual route stays
     // direct. Fence the old worker before publishing the selected stream or invalidating its
@@ -12106,24 +12120,20 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
         crate::player::alignment::invalidate();
     }
     { let s = &mut *ps; s.cur_audio = Some(audio); s.selection_known = true };
-    if native {
-        // record the pick: the timeline then reports the stream that actually plays, and a
-        // later transcode event (subtitle burn refresh / transcode seek) keeps this track.
-        // persist the USER's pick server-side (official-client behavior): /status/sessions'
-        // selected-stream display keys on the part selection, not the timeline report. User picks
-        // persist here; an applied remembered pick is written once, on its first decoded frame
-        // (`send_parked_write_back`); a fall-through auto-pick still only reports. Reached
-        // from `app/playback.rs::commit_track` inside the run-loop's `FrameScope`, so this PUT runs
-        // on the serial selection worker instead of blocking the frame thread.
-        queue_put_selection(cur_sid(ps), cur_part_id(ps), cur_audio_sid(ps), cur_sub_sid(ps));
-    }
+    // record the pick: the timeline then reports the stream that actually plays, and a later
+    // transcode event (subtitle burn refresh / transcode seek) keeps this track. A native switch
+    // also persists the USER's pick server-side (official-client behavior): /status/sessions'
+    // selected-stream display keys on the part selection, not the timeline report. User picks
+    // persist; an applied remembered pick is written once, on its first decoded frame
+    // (`send_parked_write_back`); a fall-through auto-pick still only reports.
+
     // The new track may change what the enhancement offer says (capability, candidate). If the
     // route must change for that, the reconcile's Retranscode REPLACES this pick's own reload and
     // is marked as owing it, so a refused enhancement still switches the track.
     if reconcile_enhancement(ps, true) {
         // the reconcile's Retranscode owes this pick its reload
         crate::player::note_audio_pick();
-        return true;
+        return Some(native);
     }
     if native {
         crate::player::request_audio_track(ps, ordinal, &codec);
@@ -12132,7 +12142,7 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> bool {
     }
     // the rebuild now loading is this pick's: the read-out says "Switching audio…"
     crate::player::note_audio_pick();
-    true
+    Some(native)
 }
 
 /// Apply commands which were attached to one exact Original trial, after either the candidate or
