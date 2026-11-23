@@ -34,6 +34,13 @@ impl Feeder {
         Feeder { packer, gate: Gate::new(), session, run: 0, carrying: false }
     }
 
+    /// A feeder with a session that has no helper (`Session::for_test`): zeros while the gate arms.
+    #[cfg(test)]
+    pub fn for_test() -> Feeder {
+        let carrier = Carrier::default();
+        Feeder { packer: Packer::new(carrier.order), gate: Gate::new(), session: Some(Session::for_test(carrier)), run: 0, carrying: false }
+    }
+
     pub fn gave_up(&self) -> bool {
         self.session.is_none()
     }
@@ -86,15 +93,16 @@ impl Feeder {
             self.carrying = carrying;
             self.run = 0;
         }
-        self.run += 1;
         match self.packer.front() {
             Some(burst) if carrying => Some(&burst.bytes[..]),
             _ => Some(&ZERO_BURST[..]),
         }
     }
 
-    /// The sink took the burst [`next`](Self::next) gave.
+    /// The sink took the burst [`next`](Self::next) gave (zeros or TrueHD; the packed burst goes
+    /// either way, so the timeline keeps its pace).
     pub fn fed(&mut self) {
+        self.run += 1;
         self.packer.pop();
     }
 

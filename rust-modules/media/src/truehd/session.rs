@@ -95,6 +95,22 @@ impl Session {
     }
 }
 
+#[cfg(test)]
+impl Session {
+    /// A session with no worker and no helper: its facts stay empty, so the gate answers zeros.
+    pub fn for_test(carrier: Carrier) -> Session {
+        let shared = Shared {
+            facts: Mutex::new(Facts::default()),
+            epoch: AtomicU64::new(1),
+            flushed: AtomicBool::new(false),
+            stop: Mutex::new(false),
+            wake: Condvar::new(),
+            carrier,
+        };
+        Session { shared: Arc::new(shared) }
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());

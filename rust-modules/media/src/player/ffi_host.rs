@@ -164,10 +164,10 @@ pub(super) fn reset_acb_for_test(accept_video_data: bool) {
 /// direct-play seek went through LG's public `Seek` and landed where the keyframe did.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) static SEEK_LOG: Mutex<Vec<i64>> = Mutex::new(Vec::new());
-/// The sink pts of every Feed the armed host sink took, as `(es_data, pts)` in call order: what a test reads to
-/// prove WHAT timeline an audio unit and a picture reached the sink on (#1086).
+/// The sink pts and size of every Feed the armed host sink took, as `(es_data, pts, size)` in call order: what a
+/// test reads to prove WHAT timeline an audio unit and a picture reached the sink on (#1086), and how big it was.
 #[cfg(any(test, feature = "test-support"))]
-pub(super) static FEED_LOG: Mutex<Vec<(c_int, i64)>> = Mutex::new(Vec::new());
+pub(super) static FEED_LOG: Mutex<Vec<(c_int, i64, c_uint)>> = Mutex::new(Vec::new());
 /// How many Feeds [`FEED_LOG`] keeps: a test reads the first few, and a long simulator run must
 /// not grow it without end.
 #[cfg(any(test, feature = "test-support"))]
@@ -348,8 +348,19 @@ pub(super) fn feed_log_for_test(es_data: c_int) -> Vec<i64> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .iter()
-        .filter(|(es, _)| *es == es_data)
-        .map(|(_, pts)| *pts)
+        .filter(|(es, ..)| *es == es_data)
+        .map(|(_, pts, _)| *pts)
+        .collect()
+}
+/// The byte sizes of the same Feeds, in the same order.
+#[cfg(test)]
+pub(super) fn feed_sizes_for_test(es_data: c_int) -> Vec<c_uint> {
+    FEED_LOG
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|(es, ..)| *es == es_data)
+        .map(|(_, _, size)| *size)
         .collect()
 }
 /// How many private-offset Segment verbs ran since [`reset_seek_probe_for_test`].
@@ -1026,7 +1037,7 @@ unsafe fn sf_feed(p: *const u8, size: c_uint, pts: i64, es_data: c_int) -> c_cha
     {
         let mut feeds = FEED_LOG.lock().unwrap_or_else(|e| e.into_inner());
         if feeds.len() < FEED_LOG_ROOM {
-            feeds.push((es_data, pts));
+            feeds.push((es_data, pts, size));
         }
     }
     #[cfg(test)]

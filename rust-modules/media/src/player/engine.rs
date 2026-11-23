@@ -253,6 +253,9 @@ pub struct Engine {
     pub hs: Box<HttpStream>, // demux socket (M owns; D uses via raw ptr)
     pub pending_video: Option<AuBox>, // bf_pending, VIDEO lane (held across BufferFull)
     pub pending_audio: Option<AuBox>, // bf_pending, AUDIO lane
+    /// This Load's TrueHD carrier ([`crate::truehd`]): the audio lane feeds its bursts where it would
+    /// feed access units. `None` for every other track.
+    pub(super) truehd: Option<Box<crate::truehd::feeder::Feeder>>,
     #[allow(dead_code)]
     pub payload: std::ffi::CString, // bf_payload (kept alive for the session)
     pub source: Source,
@@ -1386,6 +1389,42 @@ fn opus_payload_from_output(
     }
 }
 
+/// What a Load of this audio is to the TrueHD carrier ([`crate::truehd`]): none of its business
+/// (another codec, a speed session, whose app decoder takes every codec, or a track the app
+/// decodes itself), TrueHD fed to the receiver whole, or TrueHD the chain no longer carries, where
+/// the track the pick displaced plays instead ([`crate::route::fall_back_from_truehd`]).
+/// PURE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrueHdLoad {
+    Other,
+    Carrier,
+    Backup,
+}
+
+fn truehd_load(codec: &str, session_rate: i32, planned: bool, app_decodes: bool) -> TrueHdLoad {
+    if !crate::truehd::carries(codec, 0) || app_decodes || session_rate != super::RATE_NORMAL {
+        TrueHdLoad::Other
+    } else if planned {
+        TrueHdLoad::Carrier
+    } else {
+        TrueHdLoad::Backup
+    }
+}
+
+/// The carrier Load's audio source buffer. A burst is 61440 bytes, so the audio ES's 1 MiB holds 17
+/// of them: 340 ms, against the 300 ms the lane primes ([`PRIME_AUDIO_NS`]), which leaves the sink
+/// no room for a backlog. Four times the size does.
+/// PURE, spliced over the payload's own `srcBufferLevelAudio`.
+fn with_carrier_buffer(p: &str, pcm: Option<crate::route::PcmFormat>) -> String {
+    if pcm != Some(crate::route::PcmFormat::TRUEHD_CARRIER) {
+        return p.to_string();
+    }
+    p.replace(
+        r#""srcBufferLevelAudio":{"minimum":1,"maximum":1048576}"#,
+        r#""srcBufferLevelAudio":{"minimum":1,"maximum":4194304}"#,
+    )
+}
+
 /// **Who owns the PCM a Load declares.** Audio the app decodes at 1x (FLAC, ALAC, LPCM, and a lossy codec the attempt decodes in
 /// the app: `ff_pcm`)
 /// declares its own shape; at any other speed the speed decoder (`ff::SpeedDecoder`) decodes every
@@ -1419,7 +1458,11 @@ fn with_pcm_info(p: &str, audio: &str, pcm: Option<crate::route::PcmFormat>) -> 
     };
     let anchor = r#""provider":"plxnative""#;
     let format = if f.bits == 16 { "S16LE" } else { "S32LE" };
-    let mode = if f.channels == 1 { "mono" } else { "stereo" };
+    let mode = match f.channels {
+        1 => "mono".to_string(),
+        2 => "stereo".to_string(),
+        n => format!("{n}-channel"),
+    };
     p.replace(
         anchor,
         &format!(
@@ -1511,6 +1554,7 @@ fn build_av_payload_at(
     // The app-decoded (FLAC, 1x) node: sampleRate in kHz and a format name. The speed decoder's
     // fixed node above is the only other `pcmInfo` a Load can carry, and never together with this.
     let p = with_pcm_info(&p, audio, app_pcm);
+    let p = with_carrier_buffer(&p, app_pcm);
     with_immersive(&p, audio, crate::route::stream_immersive(ps))
 }
 
@@ -2116,6 +2160,9 @@ fn start_bufferfeed_inner(
     // The LG-side audio name the payload ended up carrying, hoisted so the `load:` line below can
     // report it. "-" is the video-only case, where there is no audio ES to name.
     let mut audio_declared: &str = "-";
+    // Whether this Load feeds the TrueHD carrier ([`crate::truehd`]), settled with the audio's codec
+    // below; the Engine owns the feeder then.
+    let mut truehd_carried = false;
     // ...and the plan for the sink lead that declaration carries (`load_audio`), none for a
     // compressed or absent track.
     let mut audio_lead = PcmLead::Off;
@@ -2169,7 +2216,19 @@ fn start_bufferfeed_inner(
             // LG's pipeline names E-AC3 "AC3 PLUS" (Dolby Digital Plus), NOT "EAC3" — the
             // wrong string leaves the audio ES unconfigured, and with audioSync the video
             // sink slaves to the dead audio clock and stalls (verified: video-only plays).
-            let codec = crate::route::stream_acodec(ps);
+            let mut codec = crate::route::stream_acodec(ps);
+            // A TrueHD pick is the carrier's, or, when the chain stopped carrying it since the plan,
+            // the track it displaced. The latch is what `stream_pcm` reads for the declaration below,
+            // and the sink hook must be in before the Load builds its pipeline.
+            let load = truehd_load(&codec, session_rate, crate::truehd::planned(), crate::route::stream_pcm_is_lossy(ps));
+            if load == TrueHdLoad::Backup && crate::route::fall_back_from_truehd(ps) {
+                codec = crate::route::stream_acodec(ps);
+            }
+            truehd_carried = load == TrueHdLoad::Carrier;
+            crate::truehd::latch(truehd_carried);
+            if truehd_carried {
+                crate::truehd::sink::install();
+            }
             // App-decoded audio: the Load must state the PCM shape, and the demuxer must produce
             // exactly that. Missing facts refuse the Load — a guessed rate plays at the wrong pitch.
             let pcm = match app_pcm_for_rate(session_rate, crate::route::stream_pcm(ps)) {
@@ -2191,13 +2250,15 @@ fn start_bufferfeed_inner(
                 SHARED.fail_demux(DemuxExitClass::LoadRefused);
                 return Err(crate::route::RouteStartResult::StartFailed);
             };
+            // The carrier declares PCM but is not decoded: the demuxer hands its packets over whole.
+            let decoded = pcm.filter(|_| !truehd_carried);
             crate::ff::set_pcm_out(
-                pcm.map(|f| crate::ff_pcm::PcmOut {
+                decoded.map(|f| crate::ff_pcm::PcmOut {
                     rate: f.sample_rate, bits: f.bits, channels: f.channels, source_rate: f.source_rate,
                 }),
-                pcm.is_some() && crate::route::stream_pcm_is_lossy(ps),
+                decoded.is_some() && crate::route::stream_pcm_is_lossy(ps),
             );
-            if let Some(f) = pcm {
+            if let Some(f) = decoded {
                 log(&pcm_decode_line(&codec, &f));
             }
             SHARED.dg_load_a.store(audio.diagnostic, Ordering::Relaxed);
@@ -2505,6 +2566,7 @@ fn start_bufferfeed_inner(
         hs,
         pending_video: None,
         pending_audio: None,
+        truehd: truehd_carried.then(|| Box::new(crate::truehd::feeder::Feeder::start(crate::truehd::carrier()))),
         payload: payload_c,
         source,
         stream_th,
@@ -3375,6 +3437,10 @@ pub fn publish_seek(eng: &mut Engine, t: i64) {
     crate::aq::aq_fence(video, &SHARED.seek_to_ns, t);
     eng.pending_video = None;
     eng.pending_audio = None;
+    // The carrier's packed bursts are the old position's too, and its route is confirmed again.
+    if let Some(feeder) = eng.truehd.as_mut() {
+        feeder.restart();
+    }
 }
 
 /// The demuxer's half of [`publish_seek`], at the top of every read: the posted target, or -1.
@@ -4631,6 +4697,11 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
         SHARED.applied_rate_permille.load(Ordering::Relaxed),
     );
     let slice = FeedSlice::begin();
+    if let Some(mut feeder) = eng.truehd.take() {
+        feed_carrier_bursts(mt, eng, &mut feeder, qp, shift, pres, &slice);
+        eng.truehd = Some(feeder);
+        return;
+    }
     let mut fed = 0;
     while fed < 120 {
         if eng.pending_audio.is_none() {
@@ -4667,29 +4738,8 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
         }
         let sink_pts = audio_sink_pts(fp, eng.pcm_sink_lead_ns);
         let r = plx_base::diag::spans::span("sfa", || unsafe { sink().feed(mt, data, len as u32, sink_pts, es) });
-        // Accepted only — see the video lane's note.
-        if (r as u8) == b'O' && fp > eng.max_fed_audio_pts {
-            eng.max_fed_audio_pts = fp;
-        }
-        if (r as u8) == b'O' && opens {
-            if eng.audio_start_fp.is_none() && fp - eng.max_fed_video_pts > MAX_FEED_AHEAD_NS {
-                log(&format!(
-                    "feed: audio starts {}ms after the video fed so far; fed ahead of the clock",
-                    (fp - eng.max_fed_video_pts) / 1_000_000
-                ));
-            }
-            eng.audio_start_fp = Some(fp);
-        }
-        let a = AATT.fetch_add(1, Ordering::Relaxed) + 1;
-        if a <= 4 || a % 200 == 0 {
-            let qb = crate::aq::aq_bytes(qp);
-            log(&format!(
-                "feed a#{a} sz={len} fed={fp} reply={} qbytes={qb}",
-                r as u8 as char
-            ));
-        }
+        note_audio_feed(eng, qp, fp, opens, len as u32, r as u8);
         if (r as u8) == b'O' {
-            ATOT.fetch_add(1, Ordering::Relaxed); // accepted, not attempted — see feed_stream
             let mut sizes = super::native_stall::SIZES.lock().unwrap_or_else(|e| e.into_inner());
             if sizes.open() && crate::ff::native_audio::fed().is_some() {
                 if let Some(line) = sizes.record(len as u32) {
@@ -4701,6 +4751,93 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
             break; // 'B' BufferFull -> keep pending, retry next tick (AUDIO lane only)
         }
         eng.pending_audio = None;
+        fed += 1;
+    }
+}
+
+/// What the sink's reply to an audio feed does to the lane's books: the accepted high-water mark, the
+/// lead-in ([`audio_lead_in`]), the feed log and the accepted count. The AU lane and the TrueHD
+/// carrier's share it, so a burst counts as an AU does.
+fn note_audio_feed(eng: &mut Engine, qp: *mut AuQueue, fp: i64, opens: bool, len: u32, reply: u8) {
+    // Accepted only — see the video lane's note.
+    if reply == b'O' && fp > eng.max_fed_audio_pts {
+        eng.max_fed_audio_pts = fp;
+    }
+    if reply == b'O' && opens {
+        if eng.audio_start_fp.is_none() && fp - eng.max_fed_video_pts > MAX_FEED_AHEAD_NS {
+            log(&format!(
+                "feed: audio starts {}ms after the video fed so far; fed ahead of the clock",
+                (fp - eng.max_fed_video_pts) / 1_000_000
+            ));
+        }
+        eng.audio_start_fp = Some(fp);
+    }
+    let a = AATT.fetch_add(1, Ordering::Relaxed) + 1;
+    if a <= 4 || a % 200 == 0 {
+        let qb = crate::aq::aq_bytes(qp);
+        log(&format!("feed a#{a} sz={len} fed={fp} reply={} qbytes={qb}", reply as char));
+    }
+    if reply == b'O' {
+        ATOT.fetch_add(1, Ordering::Relaxed); // accepted, not attempted — see feed_stream
+    }
+}
+
+/// The audio lane of a TrueHD carrier Load ([`crate::truehd`]): the demuxer's packets go into the
+/// packer, and each finished 20 ms burst is fed where an AU would be, under the AU lane's rules (a
+/// stale one after a backward jump is skipped, the lead-in is fed ahead of the clock, the feed-ahead
+/// throttle and the slice apply, only an accepted feed counts). The feeder decides the bytes: the
+/// packed TrueHD once the route is confirmed, zeros until then. A burst the sink does not take stays
+/// at the front for the next tick.
+fn feed_carrier_bursts(
+    mt: &MainThread, eng: &mut Engine, feeder: &mut crate::truehd::feeder::Feeder, qp: *mut AuQueue, shift: i64, pres: i64,
+    slice: &FeedSlice,
+) {
+    let mut fed = 0;
+    while fed < 120 && !feeder.gave_up() {
+        while feeder.front_pts().is_none() {
+            let mut eof: c_int = 0;
+            let n = crate::aq::aq_pop(qp, &mut eof);
+            if n.is_null() {
+                return;
+            }
+            let au = AuBox(n);
+            let (_es, _key, pts, len, data) = unsafe { crate::aq::au_fields(au.0) };
+            // SAFETY: the popped node holds `len` bytes at `data` until `au` drops.
+            let packet = unsafe { std::slice::from_raw_parts(data, usize::try_from(len).unwrap_or(0)) };
+            if !feeder.push(packet, pts) {
+                return;
+            }
+        }
+        let Some(burst_pts) = feeder.front_pts() else { return };
+        let mut fp = burst_pts + shift;
+        let first_pts = SHARED.first_audio_pts.load(Ordering::Acquire);
+        // A burst starts at the pts of the first access unit it holds, so the one that opens this
+        // timeline is the first made since the open or seek that the sink has not yet taken.
+        let opens = first_pts != i64::MIN && burst_pts >= first_pts && eng.audio_start_fp.is_none();
+        let lead_in = audio_lead_in(fp, opens, eng.audio_start_fp);
+        if fp < eng.max_fed_audio_pts - STALE_BACKJUMP_NS {
+            feeder.skip();
+            continue;
+        }
+        if fp < 0 {
+            fp = 0;
+        }
+        if !eng.prime_play && !lead_in && pres != PRES_NONE && fp - pres > MAX_FEED_AHEAD_NS + AUDIO_SLACK_NS {
+            return;
+        }
+        let starved = lane_starved(eng.prime_play, eng.max_fed_audio_pts, eng.seek_base_pts, PRIME_AUDIO_NS, pres);
+        if slice.spent(fed, starved) {
+            return;
+        }
+        let sink_pts = audio_sink_pts(fp, eng.pcm_sink_lead_ns);
+        let Some(bytes) = feeder.next(std::time::Instant::now()) else { return };
+        let (ptr, len) = (bytes.as_ptr(), bytes.len() as u32);
+        let r = plx_base::diag::spans::span("sfa", || unsafe { sink().feed(mt, ptr, len, sink_pts, 2) });
+        note_audio_feed(eng, qp, fp, opens, len, r as u8);
+        if (r as u8) != b'O' {
+            return; // 'B' BufferFull: the burst stays at the front
+        }
+        feeder.fed();
         fed += 1;
     }
 }
@@ -5777,6 +5914,7 @@ mod prime_livelock_tests {
             hs: plx_net::stream::http_stream_boxed(),
             pending_video: None,
             pending_audio: None,
+            truehd: None,
             payload: std::ffi::CString::new("").unwrap(),
             source: Source::Stream,
             stream_th: None,
@@ -8663,6 +8801,37 @@ mod pcm_info_tests {
         assert!(app_pcm_for_rate(750, missing()).is_none());
     }
 
+    /// **TrueHD in the MAT carrier is declared as 48 kHz 8-channel PCM**, and its Load gets four times the
+    /// audio source buffer, so the sink has room for the backlog 61440-byte bursts make. No other shape
+    /// touches the payload's buffer.
+    #[test]
+    fn the_truehd_carrier_declares_eight_channels_and_a_larger_audio_buffer() {
+        let p = with_pcm_info(BASE, "PCM", Some(PcmFormat::TRUEHD_CARRIER));
+        assert!(
+            p.contains(r#""pcmInfo":{"format":"S16LE","channelMode":"8-channel","layout":"interleaved","sampleRate":48,"bitsPerSample":16}"#),
+            "{p}"
+        );
+        let wide = with_carrier_buffer(PAYLOAD_AV, Some(PcmFormat::TRUEHD_CARRIER));
+        assert!(wide.contains(r#""srcBufferLevelAudio":{"minimum":1,"maximum":4194304}"#), "{wide}");
+        assert!(!wide.contains("1048576"), "the 1 MiB is replaced, not added to");
+        serde_json::from_str::<serde_json::Value>(&wide).unwrap();
+        assert_eq!(with_carrier_buffer(PAYLOAD_AV, Some(PcmFormat::STEREO_48K)), PAYLOAD_AV);
+        assert_eq!(with_carrier_buffer(PAYLOAD_AV, None), PAYLOAD_AV);
+    }
+
+    /// A Load is the carrier's only for TrueHD, planned, at 1x and not decoded in the app; TrueHD the chain
+    /// no longer carries is the displaced track's Load.
+    #[test]
+    fn a_truehd_load_is_the_carrier_only_while_planned_at_1x_and_not_decoded_in_the_app() {
+        let rate = crate::player::RATE_NORMAL;
+        assert_eq!(truehd_load("truehd", rate, true, false), TrueHdLoad::Carrier);
+        assert_eq!(truehd_load("TrueHD", rate, true, false), TrueHdLoad::Carrier);
+        assert_eq!(truehd_load("truehd", rate, false, false), TrueHdLoad::Backup, "the chain stopped carrying it");
+        assert_eq!(truehd_load("truehd", 1500, true, false), TrueHdLoad::Other, "a speed session decodes in the app");
+        assert_eq!(truehd_load("truehd", rate, true, true), TrueHdLoad::Other, "the app decodes this one");
+        assert_eq!(truehd_load("eac3", rate, true, false), TrueHdLoad::Other);
+    }
+
     /// **DTS the attempt decodes in the app** is declared as PCM — stereo 48 kHz S16, one `pcmInfo` — and
     /// where it does not is `DTS` exactly as before. The shape is the session's own
     /// (`route::stream_pcm`), so a native DTS Load can never carry a PCM node nor the reverse.
@@ -9439,6 +9608,116 @@ mod late_audio_start_tests {
         // Past the lead-in the throttle holds the audio.
         let next = eng.pending_audio.as_ref().map(|n| unsafe { crate::aq::au_fields(n.0) }.2);
         assert_eq!(next, Some(eng.max_fed_audio_pts + A_STEP_NS), "the next AU waits for the clock");
+    }
+}
+
+/// **The TrueHD carrier's audio lane** ([`feed_carrier_bursts`]) against the host feed seam. The session has
+/// no helper, so the gate feeds zeros: the bytes are the feeder's, and what these grade is the lane's part —
+/// access units in, one 61440-byte burst per 24 of them out on the burst's own 20 ms timeline, a refused
+/// burst fed again, and a seek forgetting what was packed for the old position.
+#[cfg(all(test, feature = "hostsim"))]
+mod truehd_carrier_lane_tests {
+    use super::*;
+    use crate::player::ffi_host;
+    use crate::truehd::mat::{BURST_BYTES, BURST_NS};
+
+    /// The first 160 access units of FFmpeg 5.1's TrueHD encoding of 48 kHz 5.1 silence: a major sync
+    /// every 16, 1200 to the second (tests/fixtures/README.md).
+    const FIXTURE: &[u8] = include_bytes!("../../../../tests/fixtures/truehd-silence-160.thd");
+    const AU_NS: i64 = 1_000_000_000 / 1200;
+
+    /// Process-wide state these tests set, restored on the way out, panic or not.
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ffi_host::force_clocksink_for_test(false);
+            ffi_host::refuse_feed_lane_for_test(None);
+            SHARED.first_audio_pts.store(i64::MIN, Ordering::Relaxed);
+            SHARED.pres_fed.store(0, Ordering::Relaxed);
+            SHARED.seek_to_ns.store(-1, Ordering::Relaxed);
+        }
+    }
+
+    fn arm() -> Restore {
+        ffi_host::force_clocksink_for_test(true);
+        ffi_host::reset_seek_probe_for_test(None);
+        SHARED.pres_fed.store(0, Ordering::Relaxed);
+        SHARED.seek_to_ns.store(-1, Ordering::Relaxed);
+        Restore
+    }
+
+    /// An engine past `SMP Play` that feeds the carrier.
+    fn carrier_engine() -> Engine {
+        let mut eng = super::prime_livelock_tests::engine_after_reload();
+        eng.prime_play = false;
+        eng.truehd = Some(Box::new(crate::truehd::feeder::Feeder::for_test()));
+        eng
+    }
+
+    /// The fixture's first `count` access units from `base_ns`, queued as the demuxer queues them.
+    fn queue_units(eng: &mut Engine, base_ns: i64, count: usize) {
+        let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
+        let mut rest = FIXTURE;
+        for i in 0..count {
+            let n = usize::from(u16::from_be_bytes([rest[0], rest[1]]) & 0xfff) * 2;
+            crate::aq::aq_push(qa, rest.as_ptr(), n as c_int, base_ns + i as i64 * AU_NS, 1, 2);
+            rest = &rest[n..];
+        }
+        SHARED.first_audio_pts.store(base_ns, Ordering::Relaxed);
+    }
+
+    fn tick(eng: &mut Engine) {
+        let mt = unsafe { plx_base::task::MainThread::assume() };
+        feed_audio_lane(&mt, eng);
+    }
+
+    #[test]
+    fn the_lane_feeds_a_whole_burst_for_each_24_access_units_on_the_bursts_own_timeline() {
+        let _serial = plx_base::testlock::serial();
+        let _restore = arm();
+        let mut eng = carrier_engine();
+        queue_units(&mut eng, 0, 160);
+        for _ in 0..8 {
+            tick(&mut eng);
+        }
+        assert_eq!(ffi_host::feed_log_for_test(2), (0..6).map(|k| k * BURST_NS).collect::<Vec<_>>());
+        assert!(ffi_host::feed_sizes_for_test(2).iter().all(|&n| n as usize == BURST_BYTES), "never an access unit");
+        assert_eq!(eng.audio_start_fp, Some(0), "the first burst opens the timeline");
+        assert_eq!(eng.max_fed_audio_pts, 5 * BURST_NS);
+        assert!(!eng.truehd.as_ref().unwrap().gave_up());
+    }
+
+    #[test]
+    fn a_burst_the_sink_refuses_is_fed_again_and_not_lost() {
+        let _serial = plx_base::testlock::serial();
+        let _restore = arm();
+        let mut eng = carrier_engine();
+        queue_units(&mut eng, 0, 30);
+        ffi_host::refuse_feed_lane_for_test(Some(2));
+        tick(&mut eng);
+        assert_eq!(eng.audio_start_fp, None, "a refused burst is not counted as fed");
+        ffi_host::refuse_feed_lane_for_test(None);
+        tick(&mut eng);
+        assert_eq!(ffi_host::feed_log_for_test(2), [0, 0], "the same burst, twice");
+        assert_eq!(eng.audio_start_fp, Some(0));
+    }
+
+    #[test]
+    fn a_seek_drops_what_was_packed_for_the_old_position() {
+        let _serial = plx_base::testlock::serial();
+        let _restore = arm();
+        let mut eng = carrier_engine();
+        queue_units(&mut eng, 0, 30); // one burst and 6 units of the next
+        tick(&mut eng);
+        assert_eq!(ffi_host::feed_log_for_test(2), [0]);
+        let to = 1_000_000_000;
+        publish_seek(&mut eng, to);
+        queue_units(&mut eng, to, 160);
+        for _ in 0..8 {
+            tick(&mut eng);
+        }
+        let want: Vec<i64> = [0].into_iter().chain((0..6).map(|k| to + k * BURST_NS)).collect();
+        assert_eq!(ffi_host::feed_log_for_test(2), want, "the 6 units left over do not start the burst after the seek");
     }
 }
 
