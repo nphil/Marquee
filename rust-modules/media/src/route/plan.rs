@@ -1356,6 +1356,10 @@ pub struct ResolveEnv {
     /// the request like `lossless_dts`. A direct play then plays a TrueHD track in place of the one the
     /// TV would decode ([`truehd_carrier_pick`]).
     pub truehd_carrier: bool,
+    /// The helper's last answer behind [`Self::truehd_carrier`] is missing or stale
+    /// (`truehd::reading_stale`) at the normal speed: a plan that meets a TrueHD track reads the
+    /// helper itself before it decides ([`carry_truehd`]).
+    pub truehd_reading_stale: bool,
     /// The seated profile's Dolby Vision setting, captured with the direct-play mode for the same
     /// reason: the worker must not read the cell the main thread moves. `Off` plans as an
     /// `Unsupported` set ([`DolbyVisionMode::gate`]): no node is sent, a stream with a
@@ -3416,10 +3420,22 @@ pub(super) fn truehd_carrier_pick(
 
 /// Puts the carrier's TrueHD track in `sel` for a direct play ([`truehd_carrier_pick`]) and returns the
 /// track it displaced, [`Plan::truehd_backup`]. Not under Force Direct Play, which keeps its own picks.
+/// Runs on the resolve worker: when the helper's last answer is stale and the title has a TrueHD
+/// track, it reads the helper once first, so the first play after launch does not decide before the
+/// background read has seen the plugin.
 fn carry_truehd(
     sel: &mut Option<(i32, String, i64)>, tracks: &[plx_data::metadata::Stream], env: &ResolveEnv,
 ) -> Option<CarriedAudio> {
-    if !env.truehd_carrier || env.direct_play_mode == DirectPlayMode::Forced {
+    if env.direct_play_mode == DirectPlayMode::Forced {
+        return None;
+    }
+    // A title with no TrueHD track never waits on the helper.
+    let open = if env.truehd_reading_stale && tracks.iter().any(|t| crate::truehd::carries(&t.codec, t.sampling_rate)) {
+        crate::truehd::planned_after_read()
+    } else {
+        env.truehd_carrier
+    };
+    if !open {
         return None;
     }
     let from = sel.as_ref()?;

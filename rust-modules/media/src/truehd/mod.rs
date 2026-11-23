@@ -41,13 +41,36 @@ pub(crate) fn veto() {
     CARRIED.store(false, Ordering::Release);
 }
 
+/// What does not depend on the helper: nothing in this request gave the carrier up, and the last
+/// read of the sound chain passes TrueHD.
+fn possible() -> bool {
+    !VETO.load(Ordering::Acquire)
+        && !plx_base::devtrig::flag("notruehd")
+        && plx_platform::tv::earc::cached().is_some_and(|c| c.passes_truehd())
+}
+
 /// What a plan may count on, without a call: the helper admits this process, the last read of
 /// the sound chain passes TrueHD, and nothing in this request gave the carrier up.
 pub(crate) fn planned() -> bool {
-    !VETO.load(Ordering::Acquire)
-        && !plx_base::devtrig::flag("notruehd")
-        && watch::topic().is_some_and(|t| t.admits(std::process::id()))
-        && plx_platform::tv::earc::cached().is_some_and(|c| c.passes_truehd())
+    possible() && watch::topic().is_some_and(|t| t.admits(std::process::id()))
+}
+
+/// The helper's last answer is missing or past its validity, while the rest allows the carrier: a
+/// plan that would pick a TrueHD track asks the helper itself first ([`planned_after_read`]). The
+/// background read runs every 2 s and, while the helper does not answer, every 10 s, so a play
+/// right after launch or after the plugin was switched on can come before it has seen the plugin.
+pub(crate) fn reading_stale() -> bool {
+    possible() && !watch::is_fresh()
+}
+
+/// [`planned`] after one bounded read of the helper when its last answer is stale. Off the frame
+/// thread only (the resolve worker); a helper that does not answer in time reads as not ready.
+pub(crate) fn planned_after_read() -> bool {
+    if !possible() {
+        return false;
+    }
+    watch::refresh_if_stale();
+    planned()
 }
 
 /// Whether the carrier takes a track: TrueHD in the 48 kHz family of rates, or at a rate PMS did

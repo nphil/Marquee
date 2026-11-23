@@ -8707,6 +8707,8 @@ impl ResolveEnv {
             direct_play_mode: direct_play_mode(),
             lossless_dts: crate::ff::lossless::planned(),
             truehd_carrier: truehd_carrier_open(),
+            truehd_reading_stale: crate::player::play_rate_permille() == crate::player::RATE_NORMAL
+                && crate::truehd::reading_stale(),
             dolby_vision_mode: dolby_vision_mode(),
             dv_capability: plx_platform::devcaps::dv::capability(),
             caps: ps.attempt_caps(),

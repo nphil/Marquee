@@ -88,6 +88,8 @@ pub struct Topic {
     /// session found; `None` when it matches.
     pub after: Option<String>,
     pub carrier: Carrier,
+    /// How long the helper says this reading holds, from when it was taken; 0 when it names none.
+    pub valid_for_ms: u64,
 }
 
 impl Topic {
@@ -175,6 +177,7 @@ pub fn parse_topic(body: &[u8]) -> Option<Topic> {
         reason: text(v, "reason"),
         after: Some(text(v, "after")).filter(|note| !note.is_empty()),
         carrier,
+        valid_for_ms: v.get("validForMs").and_then(Value::as_u64).unwrap_or(0),
     })
 }
 
