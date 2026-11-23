@@ -524,6 +524,14 @@ The host regression grades exact preservation and extension stripping; audible d
 synchronization and seeking are TV checks. The many-audio fixture now uses TrueHD at ordinal
 6 so its forced-transcode case remains a test of an unsupported format on DTS-capable TVs.
 
+### TrueHD access units for the MAT carrier
+
+`truehd-silence-160.thd` is the first 2,540 bytes (160 access units, a major sync every 16) of
+`ffmpeg -f lavfi -i 'anullsrc=r=48000:cl=5.1(side)' -t 1 -c:a truehd -strict -2 -f truehd`
+under FFmpeg 5.1. `truehd::mat`'s tests rewrite the timing words and rate codes to build the
+timing cases, and hold the packed bursts to the SHA-256 of FFmpeg 5.1.9's own
+`ffmpeg -f truehd -i truehd-silence-160.thd -c copy -f spdif` output.
+
 
 ### Dolby Vision Profile 7 RPU fixtures
 
