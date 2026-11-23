@@ -17,6 +17,7 @@ use plx_data::metadata::lang_matches;
 use plx_data::metadata::sub_layout::downloaded_twin;
 use plx_plex::plex::session::prefs::{SubtitleMemo, TrackMemoryEntry};
 use super::track_memory::{blank_lang, match_audio, memory_subtitle, Miss, SubMode, TrackContext};
+use super::audio_rank::Whole;
 
 // The track memory's pure helpers (the show's entry, the write-back a landing owes, the resolve's
 // `track-memory:` line), a child module so this file keeps the route plan and the ladder.
@@ -1351,6 +1352,10 @@ pub struct ResolveEnv {
     /// The sound chain passes DTS-HD whole to the receiver (`ff::lossless::planned`), read at the
     /// request without a bus call. Turns on the lossless-first ranking ([`audio_rank`]).
     pub lossless_dts: bool,
+    /// The sound chain carries TrueHD to the receiver in the MAT carrier (`truehd::planned`), read at
+    /// the request like `lossless_dts`. A direct play then plays a TrueHD track in place of the one the
+    /// TV would decode ([`truehd_carrier_pick`]).
+    pub truehd_carrier: bool,
     /// The seated profile's Dolby Vision setting, captured with the direct-play mode for the same
     /// reason: the worker must not read the cell the main thread moves. `Off` plans as an
     /// `Unsupported` set ([`DolbyVisionMode::gate`]): no node is sent, a stream with a
@@ -1636,6 +1641,9 @@ pub struct Plan {
     pub(super) original_declined: Option<OriginalDeclined>,
     /// demuxer stream ordinal to feed (direct-play, non-default track). None = leave as-is.
     pub feed_audio_ordinal: Option<i32>,
+    /// The track the TV would have played had the carrier not taken TrueHD, kept for when the carrier
+    /// gives up (`truehd::take_gave_up`). `None` unless this plan plays TrueHD in the carrier.
+    pub truehd_backup: Option<CarriedAudio>,
     /// the subtitle selected for this part or by the show preference (0 = none/off), so the
     /// menu checkmark and the timeline report agree with what is on screen — and a later
     /// transcode of this item burns the subtitle the user was already watching.
@@ -2062,7 +2070,7 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                             tracks, acodec, audio_prefs, if forced { 0 } else { env.audio_sid }, stand_in, plays,
                         ))
                         .flatten()
-                        .map(|sel| if forced { sel } else { lossless_upgrade(tracks, sel, env.lossless_dts, plays) })
+                        .map(|sel| if forced { sel } else { lossless_upgrade(tracks, sel, Whole { dts_hd: env.lossless_dts, truehd: false }, plays) })
                 })
             };
             // Auto has one pass over everything it can play (the set's decoder or a codec in force); only
@@ -2701,7 +2709,9 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
             if (directplay || rk.is_empty()) && !part.is_empty() {
                 // direct-play: the pipeline decodes the SOURCE codecs natively, so the Load payload uses
                 // them (h264/hevc + the chosen audio track's codec).
+                let backup = carry_truehd(&mut audio_sel, tracks, env);
                 fill_direct_plan(&mut plan, client, part, &session, vcodec, acodec, audio_sel.as_ref(), dovi, dv_decision, sub_pick);
+                plan.truehd_backup = backup;
                 // The one route that sends no selection PUT of its own (the others PUT before they start),
                 // so the one where a remembered choice is something the server does not have yet (W3).
                 // The enhancement fallback's direct play below follows that route's PUT and sets nothing.
@@ -2875,7 +2885,9 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
                     let _ = server_decision(client, &env.caps, rk, media_index, &session, carry_audio_id, subtitle_id);
                     plan.contract.remux = false;
                     plan.contract.no_video_copy = false;
+                    let backup = carry_truehd(&mut audio_sel, tracks, env);
                     fill_direct_plan(&mut plan, client, part, &session, vcodec, acodec, audio_sel.as_ref(), dovi, dv_decision, sub_pick);
+                    plan.truehd_backup = backup;
                     return plan;
                 }
                 if let Some((_, c, _)) = audio_sel.as_ref() {
@@ -3370,9 +3382,9 @@ fn pick_dp_audio_mode(
 /// [`audio_rank`] ranks above it. Only on a sound chain that carries the bitstream (`whole`): the
 /// order is about what reaches the receiver, and the TV's own speakers keep the plain pick.
 fn lossless_upgrade(
-    tracks: &[plx_data::metadata::Stream], sel: (i32, String, i64), whole: bool, plays: &dyn Fn(&str, i64, i64) -> bool,
+    tracks: &[plx_data::metadata::Stream], sel: (i32, String, i64), whole: Whole, plays: &dyn Fn(&str, i64, i64) -> bool,
 ) -> (i32, String, i64) {
-    let Some(i) = usize::try_from(sel.0).ok().filter(|&i| whole && i < tracks.len()) else {
+    let Some(i) = usize::try_from(sel.0).ok().filter(|&i| whole.any() && i < tracks.len()) else {
         return sel;
     };
     let lang = |i: usize| plx_data::metadata::audio_language(&tracks[i]);
@@ -3382,6 +3394,40 @@ fn lossless_upgrade(
         |a, b| same_audio_language(lang(a), lang(b)) && audio_is_commentary(tracks, a) == audio_is_commentary(tracks, b),
     );
     if j == i { sel } else { (j as i32, tracks[j].codec.to_lowercase(), tracks[j].id) }
+}
+
+/// The TrueHD track the carrier plays in place of `sel`, the planner's pick: the one the viewer named
+/// when the carrier takes it, else the best of `sel`'s language and kind that [`audio_rank`] puts above
+/// it (TrueHD tops the order). A viewer's pick of another track stands. `None` leaves `sel` playing.
+pub(super) fn truehd_carrier_pick(
+    tracks: &[plx_data::metadata::Stream], sel: &(i32, String, i64), viewer_pick: i64, dts_hd: bool,
+) -> Option<(i32, String, i64)> {
+    let carries = |codec: &str, _channels: i64, rate: i64| crate::truehd::carries(codec, rate);
+    let named = (viewer_pick > 0).then(|| tracks.iter().position(|t| t.id == viewer_pick)).flatten();
+    let to = match named {
+        Some(i) if carries(&tracks[i].codec, tracks[i].channels, tracks[i].sampling_rate) => {
+            (i as i32, tracks[i].codec.to_lowercase(), tracks[i].id)
+        }
+        Some(_) if viewer_pick == sel.2 => return None,
+        _ => lossless_upgrade(tracks, sel.clone(), Whole { dts_hd, truehd: true }, &carries),
+    };
+    (to.2 != sel.2).then_some(to)
+}
+
+/// Puts the carrier's TrueHD track in `sel` for a direct play ([`truehd_carrier_pick`]) and returns the
+/// track it displaced, [`Plan::truehd_backup`]. Not under Force Direct Play, which keeps its own picks.
+fn carry_truehd(
+    sel: &mut Option<(i32, String, i64)>, tracks: &[plx_data::metadata::Stream], env: &ResolveEnv,
+) -> Option<CarriedAudio> {
+    if !env.truehd_carrier || env.direct_play_mode == DirectPlayMode::Forced {
+        return None;
+    }
+    let from = sel.as_ref()?;
+    let to = truehd_carrier_pick(tracks, from, env.audio_sid, env.lossless_dts)?;
+    let backup = plan_track(tracks, from.2, plx_data::metadata::audio_ordinal(tracks, usize::try_from(from.0).ok()?), true)?;
+    crate::player::log(&format!("route: TrueHD carrier plays track {} in place of track {}", to.2, from.2));
+    *sel = Some(to);
+    Some(backup)
 }
 
 /// The codec of the audio track a refused Force Direct Play was going to play: the first intent

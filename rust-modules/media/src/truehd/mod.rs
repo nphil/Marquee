@@ -49,9 +49,20 @@ pub fn planned() -> bool {
         && plx_platform::tv::earc::cached().is_some_and(|c| c.passes_truehd())
 }
 
-/// The Load says whether it feeds the carrier.
+/// Whether the carrier takes a track: TrueHD in the 48 kHz family of rates, or at a rate PMS did
+/// not state. The 44.1 kHz family has no MAT code ([`mat::Fallback::Rate`]), and the feeder gives
+/// it up at the first major sync, which the pump answers with the fallback track.
+pub fn carries(codec: &str, sample_rate: i64) -> bool {
+    plx_platform::devcaps::audio_codec_id(codec) == "truehd" && matches!(sample_rate, 0 | 48_000 | 96_000 | 192_000)
+}
+
+/// The Load says whether it feeds the carrier. A give-up an earlier Load's feeder left is not
+/// this one's.
 pub fn latch(carried: bool) {
     CARRIED.store(carried, Ordering::Release);
+    if carried {
+        *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
 }
 
 /// This Load feeds the carrier.

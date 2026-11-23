@@ -354,6 +354,10 @@ pub struct PlaybackSession {
     /// old accessor kept as a projection: `.map_or(0, |a| a.sid)`, so every existing caller that
     /// only ever wanted the wire id keeps compiling unchanged.
     cur_audio: Option<CarriedAudio>,
+    /// The track the TV decodes that plays when the TrueHD carrier is given up ([`crate::truehd`]).
+    /// `Some` only while [`Self::cur_audio`] is the TrueHD track the carrier plays;
+    /// [`fall_back_from_truehd`] swaps it in.
+    truehd_backup: Option<CarriedAudio>,
     /// current subtitle selection (0 = none) — the picked Plex stream id, regardless of how it
     /// renders: burned into any TRANSCODE (our client profile advertises no soft-sub support, so
     /// Plex's decision is burn), or client-rendered from the demuxer on direct play
@@ -610,6 +614,7 @@ impl PlaybackSession {
         alignment_part_key: String::new(),
         cur_sid: ServerId::UNSET,
         cur_audio: None,
+        truehd_backup: None,
         cur_sub_sid: 0,
         selection_known: false,
         carried_selection: None,
@@ -703,6 +708,7 @@ impl PlaybackSession {
             alignment_part_key,
             cur_sid,
             cur_audio,
+            truehd_backup,
             cur_sub_sid,
             selection_known,
             carried_selection,
@@ -778,6 +784,7 @@ impl PlaybackSession {
             alignment_part_key: alignment_part_key.clone(),
             cur_sid: *cur_sid,
             cur_audio: cur_audio.clone(),
+            truehd_backup: truehd_backup.clone(),
             cur_sub_sid: *cur_sub_sid,
             selection_known: *selection_known,
             carried_selection: *carried_selection,
@@ -842,6 +849,7 @@ impl PlaybackSession {
     /// starts from it; the previous request's, and whatever it had narrowed, is dropped.
     pub(super) fn begin_attempt(&mut self, caps: std::sync::Arc<plx_platform::devcaps::Caps>) {
         crate::ff::lossless::new_request();
+        crate::truehd::new_request();
         self.recovery = Some(crate::player::recovery::OpenRecovery::new(caps));
     }
 
@@ -6063,12 +6071,20 @@ impl PcmFormat {
     /// `source_rate` is 48 kHz by convention: the lossy decode accepts any source rate (it is the
     /// lossless declaration that `source_rate` is checked against).
     pub const STEREO_48K: PcmFormat = PcmFormat { sample_rate: 48_000, bits: 16, channels: 2, source_rate: 48_000 };
+    /// What the TrueHD carrier's Load declares ([`crate::truehd`]): eight channels of 16-bit samples, which
+    /// LG's sink is told to read as 192 kHz so a 61440-byte burst lasts 20 ms. Not a rate the app decodes.
+    pub const TRUEHD_CARRIER: PcmFormat = PcmFormat { sample_rate: 48_000, bits: 16, channels: 8, source_rate: 48_000 };
 }
 
 /// [`PcmFormat`] for the stream now being fed, `None` when it is not app-decoded audio.
 /// `Some(Err(why))` when it IS, but the facts the Load needs are missing or outside the PCM path:
 /// the caller refuses the Load rather than declare a rate the decoder would contradict.
+/// While the TrueHD carrier is latched for this Load ([`crate::truehd::latch`]) the declaration is the
+/// carrier's.
 pub fn stream_pcm(ps: &PlaybackSession) -> Option<Result<PcmFormat, String>> {
+    if crate::truehd::carried() && crate::truehd::carries(&ps.stream_acodec, 0) {
+        return Some(Ok(PcmFormat::TRUEHD_CARRIER));
+    }
     let id = plx_platform::devcaps::audio_codec_id(&ps.stream_acodec);
     if plx_platform::devcaps::PCM_AUDIO_CODECS.split(',').any(|c| c == id) {
         return Some(pcm_format_of(ps.cur_audio.as_ref(), &id));
@@ -7747,8 +7763,18 @@ pub fn forced_direct_play(ps: &PlaybackSession) -> bool {
     ps.direct_play_mode == DirectPlayMode::Forced
 }
 
+/// Whether a Load now would feed TrueHD to the receiver ([`crate::truehd`]): the chain passes it and the
+/// speed is Normal, since any other speed is decoded in the app.
+fn truehd_carrier_open() -> bool {
+    crate::player::play_rate_permille() == crate::player::RATE_NORMAL && crate::truehd::planned()
+}
+
 pub fn audio_track_direct_plays(ps: &PlaybackSession, codec: &str, channels: i64, sample_rate: i64) -> bool {
     audio_direct_plays_with(&ps.attempt_caps(), ps.direct_play_mode, codec, channels, sample_rate)
+        // The carrier plays TrueHD while it is open; Force Direct Play keeps refusing it.
+        || (ps.direct_play_mode != DirectPlayMode::Forced
+            && crate::truehd::carries(codec, sample_rate)
+            && truehd_carrier_open())
 }
 
 /// **Would the server convert this track's audio if it played?** The track menu's "converted by
@@ -8680,6 +8706,7 @@ impl ResolveEnv {
             quality: quality(),
             direct_play_mode: direct_play_mode(),
             lossless_dts: crate::ff::lossless::planned(),
+            truehd_carrier: truehd_carrier_open(),
             dolby_vision_mode: dolby_vision_mode(),
             dv_capability: plx_platform::devcaps::dv::capability(),
             caps: ps.attempt_caps(),
@@ -9799,6 +9826,7 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
             // The carried track, as `build_stream` froze it from the fetched stream. `None` = the
             // plan names the server default, or its track list was never fetched.
             cur_audio: plan.audio,
+            truehd_backup: plan.truehd_backup,
             // the part/show-selected subtitle (0 = none), so the menu checkmark, the timeline report
             // and any later transcode of this item all agree with what the renderer is told below
             cur_sub_sid: plan.sub_sid,
@@ -12119,7 +12147,11 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> Option<b
     if ps.cur_audio.as_ref().map(|a| a.sid) != Some(audio.sid) {
         crate::player::alignment::invalidate();
     }
-    { let s = &mut *ps; s.cur_audio = Some(audio); s.selection_known = true };
+    // The carrier plays a TrueHD pick: the track it replaces is what plays if the carrier is given up.
+    let backup = (native && crate::truehd::carries(&audio.codec, audio.sample_rate))
+        .then(|| ps.cur_audio.clone().filter(|a| !crate::truehd::carries(&a.codec, 0)))
+        .flatten();
+    { let s = &mut *ps; s.cur_audio = Some(audio); s.truehd_backup = backup; s.selection_known = true };
     // record the pick: the timeline then reports the stream that actually plays, and a later
     // transcode event (subtitle burn refresh / transcode seek) keeps this track. A native switch
     // also persists the USER's pick server-side (official-client behavior): /status/sessions'
@@ -12143,6 +12175,17 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> Option<b
     // the rebuild now loading is this pick's: the read-out says "Switching audio…"
     crate::player::note_audio_pick();
     Some(native)
+}
+
+/// The TrueHD carrier is given up: the track the TV decodes ([`PlaybackSession::truehd_backup`]) plays
+/// from the next Load on. `false` when the pick has none; the caller then has the server convert it.
+pub fn fall_back_from_truehd(ps: &mut PlaybackSession) -> bool {
+    let Some(backup) = ps.truehd_backup.take() else { return false };
+    crate::player::log(&format!("audio: the TrueHD carrier is off; track {} ({}) plays instead", backup.sid, backup.codec));
+    crate::player::alignment::invalidate();
+    crate::player::stage_native_audio(ps, backup.ordinal, &backup.codec);
+    ps.cur_audio = Some(backup);
+    true
 }
 
 /// Apply commands which were attached to one exact Original trial, after either the candidate or

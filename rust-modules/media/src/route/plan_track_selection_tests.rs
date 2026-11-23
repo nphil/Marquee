@@ -1130,3 +1130,25 @@ fn an_attempt_without_dts_picks_the_ac3_sibling_while_the_wider_attempt_keeps_th
     assert_eq!(pick(&a), Some((0, "dca".into(), 11)), "the set with a DTS row direct-plays its default");
     assert_eq!(pick(&b), Some((1, "ac3".into(), 12)), "without the row the same-language AC3 plays instead");
 }
+
+/// **The carrier plays the TrueHD sibling of the planner's pick and never overrules the viewer.** The
+/// TrueHD track of the pick's language takes its place; the viewer's own pick of another playable
+/// track stands, while a viewer's pick of a TrueHD one is taken; a 44.1 kHz TrueHD has no MAT code and
+/// stays out; a file with no TrueHD has nothing to change.
+#[test]
+fn the_carrier_swaps_in_the_truehd_sibling_and_leaves_the_viewers_own_pick_alone() {
+    let truehd = |id, lang: &str, rate| plx_data::metadata::Stream {
+        channels: 8,
+        sampling_rate: rate,
+        ..trk(id, "truehd", lang, false)
+    };
+    let tracks = [trk(1, "ac3", "eng", true), truehd(2, "eng", 48_000), truehd(3, "fre", 48_000)];
+    let sel = (0, "ac3".to_string(), 1);
+    assert_eq!(truehd_carrier_pick(&tracks, &sel, 0, false), Some((1, "truehd".into(), 2)));
+    assert_eq!(truehd_carrier_pick(&tracks, &sel, 1, false), None, "the viewer's AC3 stands");
+    assert_eq!(truehd_carrier_pick(&tracks, &sel, 3, false), Some((2, "truehd".into(), 3)));
+    let off_rate = [trk(1, "ac3", "eng", true), truehd(2, "eng", 44_100)];
+    assert_eq!(truehd_carrier_pick(&off_rate, &sel, 0, false), None, "no MAT code at 44.1 kHz");
+    let none = [trk(1, "ac3", "eng", true), trk(2, "eac3", "eng", false)];
+    assert_eq!(truehd_carrier_pick(&none, &sel, 0, false), None);
+}
