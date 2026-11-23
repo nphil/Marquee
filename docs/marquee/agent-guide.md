@@ -13,7 +13,9 @@ workflow (pull requests, releases, the TV), this file wins.
   decision, 2026-11-03).
 - No pull requests. A change goes on a short-lived branch, `gh workflow run ci.yml` and
   `gh workflow run simulators.yml` are dispatched on it, and when both are green on the same SHA
-  `main` is fast-forwarded to it and the branch deleted. Pushes to `main` run CI again.
+  `main` is fast-forwarded to it and the branch deleted. Pushes to `main` run CI again. The macOS
+  simulator jobs are opt-in (`-f macos=true`) and not part of the gate: the fork ships only to the
+  LG TV (owner decision, 2026-11-23).
 - The full test suite is too heavy for the shared build host (below), so GitHub CI is the gate;
   locally only the tests a change touches are run.
 - Author-only workflows are disabled in the repository settings: Build bench, CI metrics, Issue

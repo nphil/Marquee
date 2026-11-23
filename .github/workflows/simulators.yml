@@ -43,6 +43,11 @@ on:
   pull_request:
     paths: *simulator_paths
   workflow_dispatch:
+    inputs:
+      macos:
+        description: Also run the macOS jobs (the fork ships only to the LG TV)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -130,6 +135,9 @@ jobs:
   macos:
     name: macOS simulator build + launch
     runs-on: macos-latest
+    # Opt-in: the fork ships only to the LG TV, and macos-latest runners went unavailable for hours
+    # at a time (2026-11-23), holding every merge. Linux simulator + armv7 cross-build stay the gate.
+    if: github.event_name == 'workflow_dispatch' && inputs.macos
     # Measured max 22.6 min over the last 40 successful runs; limit ~2x, rounded up to 5 (unset = 360).
     timeout-minutes: 50
     steps:
@@ -234,6 +242,7 @@ jobs:
   macos-host-tests:
     name: macOS tests against bundled FFmpeg and ASS
     runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.macos
     # These were the tail of the `macos` job, run after its replay step for no reason: they share
     # nothing with the simulator build or the replays except the host FFmpeg and libass builds,
     # and they use their own target dir and toolchain. As a job of their own they run beside the
