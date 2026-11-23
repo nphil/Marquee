@@ -12188,6 +12188,12 @@ pub fn fall_back_from_truehd(ps: &mut PlaybackSession) -> bool {
     true
 }
 
+/// A session whose TrueHD pick displaced `backup` (the pump's recovery tests).
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_truehd_backup(ps: &mut PlaybackSession, backup: Option<CarriedAudio>) {
+    ps.truehd_backup = backup;
+}
+
 /// Apply commands which were attached to one exact Original trial, after either the candidate or
 /// its rollback Engine has really started. Consuming the value makes cross-trial leakage
 /// impossible; dropping it on terminal start failure is the explicit cancellation edge.

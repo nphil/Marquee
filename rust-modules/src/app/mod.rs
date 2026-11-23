@@ -531,6 +531,8 @@ fn pre_boot_diagnostics() -> plx_telemetry::telemetry::native::Guard {
     plx_platform::tv::start_capability_probe();
     // The sound chain, so the first play's plan knows whether the receiver takes DTS-HD whole.
     plx_platform::tv::earc::prime();
+    // And the helper's passthrough readiness, so the first play's plan knows whether the TrueHD carrier can run.
+    plx_media::truehd::watch::start();
     telemetry_guard
 }
 
@@ -549,6 +551,8 @@ unsafe fn run_and_shutdown(app: &mut App) -> ! {
     let code = i32::from(failed);
     app.audio_beacon.clear_for_exit();
     run::shutdown(&mut app.player.session, &mut app.adapters.player);
+    // After the Engine is gone: LG's mixer must not stay bypassed for a process that has exited.
+    plx_media::truehd::session::release_at_exit();
     // The crash-channel guard is the one `Drop` that persists something (it closes the capture
     // backend and removes its database), so it runs here explicitly: nothing drops the `App`.
     drop(app.telemetry_guard.take());

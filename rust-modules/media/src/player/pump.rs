@@ -816,9 +816,10 @@ enum OpenRecoveryRun {
     /// reloaded at `offset_ns` with the app decoding its audio ([`decode_in_app`]). No flight: the
     /// caller reloads.
     DecodeInApp { offset_ns: i64 },
-    /// A refused open that was fed DTS whole ([`crate::ff::lossless`]): the same direct play, reloaded
-    /// at `offset_ns` with the core fed as before. No flight and no rung of the ladder: the whole
-    /// feed is the one new thing in the open, so it is the first thing taken back.
+    /// A refused open that was fed audio whole, DTS-HD ([`crate::ff::lossless`]) or TrueHD in its carrier
+    /// ([`crate::truehd`]): the same direct play, reloaded at `offset_ns` with the audio the pipeline took
+    /// before (the DTS core, the track the TrueHD pick displaced). No flight and no rung of the ladder:
+    /// the whole feed is the one new thing in the open, so it is the first thing taken back.
     CoreAudio { offset_ns: i64 },
     /// Nothing to recover with: the Engine failed for good and the viewer has the read-out.
     Failed,
@@ -1038,6 +1039,9 @@ fn recover_failed_open(
     if let Some(run) = retry_core_audio(ps, refusal) {
         return run;
     }
+    if let Some(run) = retry_truehd(ps, refusal, crate::truehd::carried()) {
+        return run;
+    }
     let facts = open_facts(ps, native_audio);
     let run = drive_open_recovery(ps, super::recovery::RecoveryEvent::Refused { refusal, facts }, why);
     match run {
@@ -1064,6 +1068,40 @@ fn retry_core_audio(ps: &crate::route::PlaybackSession, refusal: super::recovery
     crate::ff::lossless::veto();
     super::log(&format!("open recovery: the receiver feed of DTS-HD was refused ({refusal}); reloading with the DTS core"));
     Some(OpenRecoveryRun::CoreAudio { offset_ns: SHARED.playpos_ns.load(Relaxed) })
+}
+
+/// A pipeline refusal of an open that fed the TrueHD carrier and showed no picture: take the carrier back
+/// for the rest of the request and reload the same direct play with the track the pick displaced, which
+/// the pipeline takes as it always has. Before the ladder, for [`retry_core_audio`]'s reasons. With no
+/// track displaced the ladder answers the refusal, the carrier vetoed. `None` when the open did not feed
+/// the carrier (`carried`), a picture was shown, or the route is a server session.
+fn retry_truehd(
+    ps: &mut crate::route::PlaybackSession, refusal: super::recovery::LoadRefusal, carried: bool,
+) -> Option<OpenRecoveryRun> {
+    if !carried || !refusal.names_pipeline() || SHARED.frames.load(Relaxed) != 0 || crate::route::is_transcoding(ps) {
+        return None;
+    }
+    crate::truehd::veto();
+    if !crate::route::fall_back_from_truehd(ps) {
+        return None;
+    }
+    super::log(&format!("open recovery: the TrueHD carrier was refused ({refusal}); reloading with the track it displaced"));
+    Some(OpenRecoveryRun::CoreAudio { offset_ns: SHARED.playpos_ns.load(Relaxed) })
+}
+
+/// The carrier gave itself up mid-play ([`crate::truehd::take_gave_up`]): the rest of the request plays
+/// without it, from where the viewer is. The track the pick displaced loads through the viewer's own
+/// native audio switch; with none the server converts the TrueHD as it does for any stream the set cannot
+/// take.
+fn leave_carrier(ps: &mut crate::route::PlaybackSession, why: &str) {
+    crate::truehd::veto();
+    super::log(&format!("truehd: the carrier was given up ({why}); reloading without it"));
+    let intent = if crate::route::fall_back_from_truehd(ps) {
+        crate::route::UserRouteIntent::NativeAudioReload
+    } else {
+        crate::route::UserRouteIntent::Retranscode
+    };
+    crate::route::request_user_route_intent(ps, intent);
 }
 
 /// The ladder's app-decode rung ([`super::recovery::RecoveryEffect::DecodeInApp`]; the very last rung
@@ -1957,6 +1995,13 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
     // the route Stable before this Engine exists in the main-thread slot. Drain its exact-token
     // result here, after installation and before any worker publication can be accepted.
     crate::route::drain_route_start_results(ps);
+    // The TrueHD carrier gave itself up (no route, a second of forced silence, a stream it cannot pack):
+    // leave it at the viewer's position.
+    if let Some(why) = crate::truehd::take_gave_up() {
+        if crate::truehd::carried() {
+            leave_carrier(ps, why);
+        }
+    }
     inject_refuse601(ps, eng);
     // A failed open's recovery flight (the Original rollback's rebase, the unopened source's HLS
     // fallback, the refused native audio's conversion): land it, or wait for it. Ahead of every
@@ -3104,6 +3149,40 @@ mod tests {
         crate::ff::lossless::new_request();
         assert!(crate::ff::lossless::planned(), "and ends with it");
         plx_platform::tv::earc::set_cached_for_test(None);
+    }
+
+    /// **A refused open of the TrueHD carrier takes the displaced track back, once, before the ladder.**
+    /// Only the pipeline's own refusal, only before a picture, only for a direct play that fed the carrier;
+    /// with no track displaced the ladder has the refusal.
+    #[test]
+    fn a_refused_carrier_feed_reloads_the_displaced_track_and_nothing_else_does() {
+        use super::super::recovery::LoadRefusal;
+        use std::sync::atomic::Ordering::Relaxed;
+        let _guard = plx_base::testlock::serial();
+        let was_idx = SHARED.desired_audio_idx.load(Relaxed);
+        let mut ps = crate::route::PlaybackSession::IDLE;
+        crate::route::set_truehd_backup(
+            &mut ps,
+            Some(crate::route::CarriedAudio {
+                sid: 11, ordinal: 2, codec: "eac3".into(), channels: 6,
+                can_normalize_loudness: false, immersive: false, sample_rate: 48_000, bit_depth: 0,
+            }),
+        );
+        SHARED.frames.store(0, Relaxed);
+        SHARED.playpos_ns.store(9_000, Relaxed);
+
+        assert!(super::retry_truehd(&mut ps, LoadRefusal::Stalled, false).is_none(), "no carrier was fed");
+        assert!(super::retry_truehd(&mut ps, LoadRefusal::SourceFailed, true).is_none(), "not the pipeline's refusal");
+        SHARED.frames.store(1, Relaxed);
+        assert!(super::retry_truehd(&mut ps, LoadRefusal::Stalled, true).is_none(), "a picture was shown");
+        SHARED.frames.store(0, Relaxed);
+
+        let run = super::retry_truehd(&mut ps, LoadRefusal::Stalled, true);
+        assert_eq!(run, Some(super::OpenRecoveryRun::CoreAudio { offset_ns: 9_000 }));
+        assert_eq!(crate::route::stream_acodec(&ps), "eac3", "the displaced track is what the reload loads");
+        assert_eq!(SHARED.desired_audio_idx.load(Relaxed), 2);
+        assert!(super::retry_truehd(&mut ps, LoadRefusal::Stalled, true).is_none(), "nothing left to take back: the ladder's");
+        SHARED.desired_audio_idx.store(was_idx, Relaxed);
     }
 
     /// **Who settles a failed Load: the Load call's own synchronous result is the foreground
