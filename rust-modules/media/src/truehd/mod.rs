@@ -4,11 +4,11 @@
 //!
 //! A plan picks a TrueHD track only while the helper admits this process and the sound chain
 //! passes TrueHD ([`planned`]); the track it would otherwise have played stays on the session as
-//! the fallback. The feeder ([`feeder`]) sends zeros until the helper has armed the route and
-//! confirmed the bypass ([`gate`]), checks every burst, and gives the carrier up after a second of
-//! forced zeros; the pump then reloads the fallback ([`take_gave_up`]). A debug build's `notruehd`
-//! trigger turns it off.
-pub mod alsa;
+//! the fallback. The helper is armed with the renderer's tail and the decoder input LG's audio
+//! sink reports ([`sink`], [`session`]). The feeder ([`feeder`]) sends zeros until the helper has
+//! armed the route and confirmed the bypass ([`gate`]), checks every burst, and gives the carrier
+//! up after a second of forced zeros while the route is not bypassing; the pump then reloads the
+//! fallback ([`take_gave_up`]). A debug build's `notruehd` trigger turns it off.
 pub mod contract;
 pub mod feeder;
 pub mod gate;

@@ -29,7 +29,7 @@ impl Feeder {
         let packer = Packer::new(carrier.order);
         let session = Session::start(carrier);
         if session.is_none() {
-            super::give_up("the eARC controls cannot be read");
+            super::give_up("the route worker cannot start");
         }
         Feeder { packer, gate: Gate::new(), session, run: 0, carrying: false }
     }

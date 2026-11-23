@@ -32,10 +32,15 @@ pub fn start() {
 
 fn publish(topic: Option<Topic>) {
     let mut latest = LATEST.lock().unwrap_or_else(|e| e.into_inner());
-    let said = |t: &Option<Topic>| t.as_ref().map(|t| (t.state, t.ready, t.reason.clone()));
+    let said = |t: &Option<Topic>| {
+        t.as_ref().map(|t| (t.state, t.ready, t.reason.clone(), t.session_adec, t.after.clone()))
+    };
     if said(&latest) != said(&topic) {
         match &topic {
-            Some(t) => crate::player::log(&format!("truehd: helper {:?}, ready {} ({})", t.state, t.ready, t.reason)),
+            Some(t) => crate::player::log(&format!(
+                "truehd: helper {:?}, ready {} ({}), session ADEC {:?}, after {:?}",
+                t.state, t.ready, t.reason, t.session_adec, t.after
+            )),
             None => crate::player::log("truehd: helper not answering"),
         }
     }

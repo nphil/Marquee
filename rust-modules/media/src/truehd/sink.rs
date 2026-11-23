@@ -6,13 +6,17 @@
 //!
 //! The layouts below are GStreamer 1.x's public structs, the same on every webOS release:
 //! `GValue` (24 bytes), the head of `GstPadProbeInfo`, `GstMiniObject` and `GstEvent`.
+//!
+//! The same sink names the decoder input LG granted the renderer: its `index` property ("Index of
+//! audio resource") reads back the port libpf set, and its `mixer` property says whether that
+//! port is a mixer channel's rather than a decoder's ([`Granted`]).
 use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-use super::session;
+use super::session::{self, Granted};
 
 #[repr(C)]
 struct GValue {
@@ -51,6 +55,7 @@ type ProbeFn = unsafe extern "C" fn(*mut c_void, *mut ProbeInfo, *mut c_void) ->
 type Destroy = unsafe extern "C" fn(*mut c_void);
 
 const G_TYPE_BOOLEAN: usize = 5 << 2;
+const G_TYPE_INT: usize = 6 << 2;
 const PROBE_BUFFER: c_uint = 1 << 4;
 const PROBE_EVENT_DOWNSTREAM: c_uint = 1 << 6;
 /// Flushes are not downstream events; a seek or a resume sends them.
@@ -80,7 +85,10 @@ plx_base::dynlib! {
         fn g_object_class_find_property(class: *mut c_void, name: *const c_char) -> *mut c_void;
         fn g_value_init(v: *mut GValue, t: usize) -> *mut GValue;
         fn g_value_set_boolean(v: *mut GValue, b: c_int);
+        fn g_value_get_boolean(v: *const GValue) -> c_int;
+        fn g_value_get_int(v: *const GValue) -> c_int;
         fn g_object_set_property(object: *mut c_void, name: *const c_char, v: *const GValue);
+        fn g_object_get_property(object: *mut c_void, name: *const c_char, v: *mut GValue);
         fn g_value_unset(v: *mut GValue);
     }
 }
@@ -202,7 +210,7 @@ unsafe extern "C" fn on_probe(_pad: *mut c_void, info: *mut ProbeInfo, data: *mu
 /// turns the property back on with the second. The recipe that played TrueHD on the set held the
 /// second buffer back until the helper had armed, for at most this long; the arm is that
 /// configuration here.
-const ARM_WINDOW: Duration = Duration::from_secs(3);
+const ARM_WINDOW: Duration = Duration::from_secs(5);
 const ARM_POLL: Duration = Duration::from_millis(10);
 
 /// Calls `done` until it holds or `window` has passed in steps of `step`; `sleep` is
@@ -238,6 +246,7 @@ impl Probe {
                     crate::player::log("truehd: LG's audio sink left the carrier");
                     return PROBE_REMOVE;
                 };
+                self.read_granted(&shared);
                 if let Some(caps) = &shared.carrier.sink_caps {
                     rewrite_caps(info, caps);
                 }
@@ -256,14 +265,18 @@ impl Probe {
     /// session ended is the carrier's tail and is zeroed too.
     unsafe fn buffer(&self, info: &mut ProbeInfo) -> c_int {
         let shared = session::active();
+        if let Some(s) = shared.as_deref() {
+            self.read_granted(s);
+        }
         let bitstream = shared.as_ref().is_some_and(|s| s.carrier.start_as_bitstream);
         if bitstream {
             if self.first.swap(false, Ordering::AcqRel) {
                 self.configured.store(true, Ordering::Release);
                 set_multi_ch(self.sink, false);
                 if let Some(s) = shared.as_deref() {
-                    if !hold_until(ARM_WINDOW, ARM_POLL, || s.armed(), std::thread::sleep) {
-                        crate::player::log("truehd: the route was not armed within 3 s of the first buffer");
+                    let named = || s.armed() || matches!(s.granted(), Granted::Refused(_));
+                    if !hold_until(ARM_WINDOW, ARM_POLL, named, std::thread::sleep) {
+                        crate::player::log("truehd: the route was not armed within 5 s of the first buffer");
                     }
                 }
             } else if self.configured.load(Ordering::Acquire) && !self.feeding.swap(true, Ordering::AcqRel) {
@@ -289,6 +302,44 @@ impl Probe {
         }
         PROBE_OK
     }
+}
+
+impl Probe {
+    /// What the sink's `index` and `mixer` properties say, until the sink names a decoder input.
+    unsafe fn read_granted(&self, shared: &session::Shared) {
+        if shared.granted() != Granted::Unknown {
+            return;
+        }
+        let index = read_int(self.sink, c"index");
+        let mixer = read_boolean(self.sink, c"mixer");
+        let granted = Granted::from_sink(index, mixer);
+        if granted != Granted::Unknown {
+            crate::player::log(&format!("truehd: LG's audio sink reports index {index:?}, mixer {mixer:?}"));
+        }
+        shared.note_granted(granted);
+    }
+}
+
+/// A property of the sink, or `None` when its class has none by that name.
+unsafe fn read_property(sink: *mut c_void, name: &CStr, kind: usize, get: unsafe fn(*const GValue) -> c_int) -> Option<c_int> {
+    // G_OBJECT_GET_CLASS: an instance's first word is its class.
+    if g_object_class_find_property(*sink.cast::<*mut c_void>(), name.as_ptr()).is_null() {
+        return None;
+    }
+    let mut v = GValue { g_type: 0, _data: [0; 2] };
+    g_value_init(&mut v, kind);
+    g_object_get_property(sink, name.as_ptr(), &mut v);
+    let value = get(&v);
+    g_value_unset(&mut v);
+    Some(value)
+}
+
+unsafe fn read_int(sink: *mut c_void, name: &CStr) -> Option<i32> {
+    read_property(sink, name, G_TYPE_INT, |v| g_value_get_int(v))
+}
+
+unsafe fn read_boolean(sink: *mut c_void, name: &CStr) -> Option<bool> {
+    read_property(sink, name, G_TYPE_BOOLEAN, |v| g_value_get_boolean(v)).map(|b| b != 0)
 }
 
 /// Swap the caps event for one with the helper's caps.
@@ -339,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn the_second_buffer_waits_for_the_arm_for_at_most_three_seconds() {
+    fn the_second_buffer_waits_for_the_arm_for_at_most_the_window() {
         let mut polls = 0;
         let mut slept = Duration::ZERO;
         assert!(hold_until(ARM_WINDOW, ARM_POLL, || { polls += 1; polls > 5 }, |d| slept += d));
