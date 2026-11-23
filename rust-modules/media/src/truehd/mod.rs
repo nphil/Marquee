@@ -28,21 +28,21 @@ static CARRIED: AtomicBool = AtomicBool::new(false);
 static GAVE_UP: Mutex<Option<&'static str>> = Mutex::new(None);
 
 /// A new play request starts: whatever the last one gave up is forgotten.
-pub fn new_request() {
+pub(crate) fn new_request() {
     VETO.store(false, Ordering::Release);
     CARRIED.store(false, Ordering::Release);
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// The rest of this request plays without the carrier.
-pub fn veto() {
+pub(crate) fn veto() {
     VETO.store(true, Ordering::Release);
     CARRIED.store(false, Ordering::Release);
 }
 
 /// What a plan may count on, without a call: the helper admits this process, the last read of
 /// the sound chain passes TrueHD, and nothing in this request gave the carrier up.
-pub fn planned() -> bool {
+pub(crate) fn planned() -> bool {
     !VETO.load(Ordering::Acquire)
         && !plx_base::devtrig::flag("notruehd")
         && watch::topic().is_some_and(|t| t.admits(std::process::id()))
@@ -52,13 +52,13 @@ pub fn planned() -> bool {
 /// Whether the carrier takes a track: TrueHD in the 48 kHz family of rates, or at a rate PMS did
 /// not state. The 44.1 kHz family has no MAT code ([`mat::Fallback::Rate`]), and the feeder gives
 /// it up at the first major sync, which the pump answers with the fallback track.
-pub fn carries(codec: &str, sample_rate: i64) -> bool {
+pub(crate) fn carries(codec: &str, sample_rate: i64) -> bool {
     plx_platform::devcaps::audio_codec_id(codec) == "truehd" && matches!(sample_rate, 0 | 48_000 | 96_000 | 192_000)
 }
 
 /// The Load says whether it feeds the carrier. A give-up an earlier Load's feeder left is not
 /// this one's.
-pub fn latch(carried: bool) {
+pub(crate) fn latch(carried: bool) {
     CARRIED.store(carried, Ordering::Release);
     if carried {
         *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -66,21 +66,21 @@ pub fn latch(carried: bool) {
 }
 
 /// This Load feeds the carrier.
-pub fn carried() -> bool {
+pub(crate) fn carried() -> bool {
     CARRIED.load(Ordering::Acquire)
 }
 
 /// The carrier's shape for a new session, as the helper names it.
-pub fn carrier() -> contract::Carrier {
+pub(crate) fn carrier() -> contract::Carrier {
     watch::topic().map(|t| t.carrier).unwrap_or_default()
 }
 
 /// The feeder gave the carrier up.
-pub fn give_up(why: &'static str) {
+pub(crate) fn give_up(why: &'static str) {
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
 }
 
 /// Why the carrier was given up, once.
-pub fn take_gave_up() -> Option<&'static str> {
+pub(crate) fn take_gave_up() -> Option<&'static str> {
     GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()).take()
 }

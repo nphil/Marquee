@@ -165,11 +165,23 @@ DTS-HD Master Audio, High Resolution and DTS:X, then E-AC3 Atmos, DTS, E-AC3, AC
 picked track's language and kind; a viewer's explicit pick is never replaced. A DTS-HD track with
 more channels than the DTS ceiling (7.1) is not admitted by this change and converts as before.
 A refused open before the first picture takes the core back for the rest of that request and
-reloads at the same position (`open recovery: core audio`). TrueHD, with or without Atmos, cannot
-reach the receiver: the pipeline's Load has no TrueHD or MAT input, so such a file plays its AC3 or
-E-AC3 sibling. Boost dialogue and Even out loudness are done by the server and so end the
-untouched path; the Audio menu says so. Unmeasured on the set; acceptance needs the receiver's own
-display to read DTS-HD.
+reloads at the same position (`open recovery: core audio`). Boost dialogue and Even out loudness are
+done by the server and so end the untouched path; the Audio menu says so. TrueHD has its own path
+(below). Unmeasured on the set; acceptance needs the receiver's own display to read DTS-HD.
+
+### TrueHD to a receiver
+
+The pipeline's Load has no TrueHD input, so TrueHD, with or without Atmos, is packed into the MAT
+carrier (`truehd/`) and fed as 8-channel 48 kHz PCM, which the LumaTV helper routes past the
+television's mixer to the eARC output. It runs only at normal speed, when the helper's
+`audio.passthrough` answer admits Marquee and the sound chain above is proven with a receiver that
+advertises TrueHD. The track order then puts a TrueHD track first and the track it displaced stays
+ready. The carrier plays silence until the helper confirms the route. A refused open, a 44.1 kHz
+stream, a route that does not come up or a second of forced silence takes the carrier back for the
+rest of the request and reloads the displaced track at the same position (a server conversion when
+the file has no other track; the log lines start `truehd:`). Force Direct Play still refuses TrueHD.
+Unmeasured on the set; acceptance needs the receiver's own display to read TrueHD, and the byte
+order and the audio lead checked on it.
 
 ### Implementation verification — 2026-09-27
 

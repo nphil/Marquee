@@ -2494,9 +2494,10 @@ impl TrackMenuState {
                     (),
                     Row::new(plx_platform::i18n::msg::widgets_tracks_normalize_loudness()).toggle(shown.normalize_loudness),
                 );
-            // Both options are done by the server, so a receiver fed the sound untouched stops
-            // getting it that way; said only where that is true (`earc::cached`, no bus call).
-            if plx_platform::tv::earc::cached().is_some_and(|c| c.passes_dts_hd()) {
+            // Both options are done by the server, so a receiver fed the sound untouched (DTS-HD, or TrueHD
+            // in its carrier) stops getting it that way; said only where that is true (`earc::cached`, no
+            // bus call).
+            if plx_platform::tv::earc::cached().is_some_and(|c| c.passes_dts_hd() || c.passes_truehd()) {
                 enh = enh.note(plx_platform::i18n::msg::widgets_tracks_enh_note_receiver());
             }
             if let Some(route) = enhance_route {
@@ -4426,16 +4427,22 @@ mod enhancement_menu_tests {
         let (menu, ps) = audio_tab(EnhTestFixture::default());
         assert!(!notes(&menu).iter().any(|n| n == plx_platform::i18n::msg::widgets_tracks_enh_note_receiver()));
         teardown(&ps);
-        set_cached_for_test(Some(Chain {
-            output: "external_arc".into(),
-            pass_through: true,
-            link: Link::Earc,
-            capability: vec!["PCM".into(), "DTSHD_MA".into()],
-        }));
-        let (menu, ps) = audio_tab(EnhTestFixture::default());
-        let rows = &menu.form.table.sections[1].rows;
-        assert_eq!(rows[2].label, plx_platform::i18n::msg::widgets_tracks_enh_note_receiver(), "right under the two toggles");
-        teardown(&ps);
+        for capability in ["DTSHD_MA", "TrueHD"] {
+            set_cached_for_test(Some(Chain {
+                output: "external_arc".into(),
+                pass_through: true,
+                link: Link::Earc,
+                capability: vec!["PCM".into(), capability.into()],
+            }));
+            let (menu, ps) = audio_tab(EnhTestFixture::default());
+            let rows = &menu.form.table.sections[1].rows;
+            assert_eq!(
+                rows[2].label,
+                plx_platform::i18n::msg::widgets_tracks_enh_note_receiver(),
+                "{capability}: right under the two toggles"
+            );
+            teardown(&ps);
+        }
         set_cached_for_test(None);
     }
 

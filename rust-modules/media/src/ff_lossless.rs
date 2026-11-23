@@ -3,8 +3,8 @@
 //! so a DTS-HD Master Audio, High Resolution or DTS:X track reached the receiver as lossy DTS. When
 //! the sound chain proves the receiver takes the bitstream over eARC ([`plx_platform::tv::earc::Chain::passes_dts_hd`]),
 //! the packet is fed as the file holds it and the television passes the extension substreams on
-//! (the stock Plex app does the same on this set). The pipeline has no TrueHD or MAT input, so
-//! nothing here is TrueHD's.
+//! (the stock Plex app does the same on this set). TrueHD has no input on the pipeline and takes its
+//! own path ([`crate::truehd`]); nothing here is TrueHD's.
 //!
 //! **Not yet measured on the set.** The fallback is the old feed: a refused
 //! open before the first picture takes the core back for the rest of the request ([`veto`], the

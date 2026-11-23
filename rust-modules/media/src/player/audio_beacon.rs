@@ -14,7 +14,7 @@
 //! (`app_stereo_mix`, the track menu's "played in stereo") changes both codec and channel count; only
 //! a track played as it is (`source`) keeps the file's codec, profile, Atmos flag and layout. The two
 //! conversion facts are the track menu's own ([`crate::route::audio_conversion`]); Atmos is what the
-//! Load declares ([`crate::route::stream_immersive`]).
+//! Load declares ([`crate::route::stream_immersive`]), or the track's own while the TrueHD carrier plays it.
 //!
 //! **Sans-IO core, thin driver.** [`Core`] decides, from the clock and what is playing, which request
 //! is due: a POST at the start and on any change of format or context, one every [`KEEP_ALIVE_MS`]
@@ -144,6 +144,12 @@ pub fn format_for(s: &Stream, delivered: Delivered, fed_codec: &str, immersive: 
     }
 }
 
+/// Whether the sound leaving is Atmos: what the Load declares (E-AC-3 JOC), or the track's own for TrueHD
+/// in its carrier, which reaches the receiver whole, objects included, while the Load declares only PCM.
+fn leaves_as_atmos(declared: bool, carried: bool, s: &Stream) -> bool {
+    declared || (carried && crate::truehd::carries(&s.codec, s.sampling_rate) && s.has_atmos())
+}
+
 /// What to tell the shell now: the playing track's delivered format while something plays (or waits
 /// to), `None` otherwise: idle, resolving, a failed open, a detail-page preview, or a track the route
 /// and the item's track list cannot name.
@@ -161,7 +167,8 @@ pub fn want(ps: &crate::route::PlaybackSession, audio: &[Stream]) -> Option<Want
     } else {
         Delivered::Source
     };
-    let immersive = delivered == Delivered::Source && crate::route::stream_immersive(ps);
+    let immersive = delivered == Delivered::Source
+        && leaves_as_atmos(crate::route::stream_immersive(ps), crate::truehd::carried(), s);
     Some(Want { format: format_for(s, delivered, &crate::route::stream_acodec(ps), immersive, crate::ff::lossless::fed_whole()), context: super::media_context() })
 }
 
@@ -426,6 +433,19 @@ mod tests {
         );
         let dts = format_for(&stream("dca", 8, "dts-hd ma", ""), Delivered::Source, "dca", false, true);
         assert_eq!((dts.codec, dts.profile.as_deref(), dts.atmos, dts.layout, dts.channels), ("dts", Some("dts-hd ma"), false, None, 8));
+    }
+
+    #[test]
+    fn a_truehd_track_in_its_carrier_leaves_as_truehd_with_its_own_atmos() {
+        let s = Stream { sampling_rate: 48_000, ..stream("truehd", 8, "truehd + dolby atmos", "7.1") };
+        assert!(leaves_as_atmos(false, true, &s), "the Load declares PCM; the receiver decodes the objects");
+        assert!(!leaves_as_atmos(false, false, &s), "not in the carrier: nothing says Atmos");
+        let plain = Stream { sampling_rate: 48_000, ..stream("truehd", 6, "truehd", "5.1") };
+        assert!(!leaves_as_atmos(false, true, &plain));
+        let ddp = stream("eac3", 6, "dolby digital plus + dolby atmos", "5.1(side)");
+        assert!(!leaves_as_atmos(false, true, &ddp), "E-AC-3's Atmos is the Load's to declare");
+        let f = format_for(&s, Delivered::Source, "truehd", true, false);
+        assert_eq!((f.codec, f.profile.as_deref(), f.atmos, f.channels), ("truehd", Some("truehd + dolby atmos"), true, 8));
     }
 
     #[test]
