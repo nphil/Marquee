@@ -6,8 +6,9 @@
 //!
 //! Measured on the OLED65C4 (webOS 10.2.1) with a Denon AVR-S760H: `external_arc`, `passThrough`,
 //! `arcActivation: "eARC"`, and `earcCapability` PCM, DD, DTS, DD+, MAT2PCM, TrueHD, DTSX_P1,
-//! DTSHD_MA, DTSHD. What the Load can then send is a separate question ([`Chain::passes_dts_hd`]
-//! is the only claim made from it: the pipeline has no TrueHD or MAT input at all).
+//! DTSHD_MA, DTSHD. What the Load can then send is a separate question: [`Chain::passes_dts_hd`]
+//! for a DTS-HD stream fed whole, [`Chain::passes_truehd`] for TrueHD in the MAT carrier (the
+//! pipeline itself has no TrueHD or MAT input).
 //!
 //! **Blocking.** One or two bus round trips, so [`chain`] runs on a worker, never the frame
 //! thread (it asserts that). The answer is kept for [`FRESH`], so a plan and the Load that follows
@@ -41,11 +42,21 @@ impl Chain {
         self.capability.iter().any(|c| c.eq_ignore_ascii_case(name))
     }
 
+    /// The receiver is on eARC and takes the bitstream untouched.
+    fn bypasses(&self) -> bool {
+        self.output == "external_arc" && self.pass_through && self.link == Link::Earc
+    }
+
     /// The receiver is on eARC, takes the bitstream untouched and says it decodes DTS-HD: a DTS-HD
     /// stream fed whole reaches it as DTS-HD (the stock Plex app does the same on this set).
     pub fn passes_dts_hd(&self) -> bool {
-        self.output == "external_arc" && self.pass_through && self.link == Link::Earc
-            && (self.advertises("DTSHD_MA") || self.advertises("DTSHD"))
+        self.bypasses() && (self.advertises("DTSHD_MA") || self.advertises("DTSHD"))
+    }
+
+    /// The same chain with a receiver that decodes TrueHD: what the MAT carrier needs past LG's
+    /// mixer.
+    pub fn passes_truehd(&self) -> bool {
+        self.bypasses() && self.advertises("TrueHD")
     }
 }
 
@@ -115,8 +126,8 @@ pub fn chain() -> Option<Chain> {
         read.as_ref().map_or_else(
             || "unreadable".to_string(),
             |c| format!(
-                "output={} passThrough={} link={:?} capability=[{}] dts-hd={}",
-                c.output, c.pass_through, c.link, c.capability.join(","), c.passes_dts_hd()
+                "output={} passThrough={} link={:?} capability=[{}] dts-hd={} truehd={}",
+                c.output, c.pass_through, c.link, c.capability.join(","), c.passes_dts_hd(), c.passes_truehd()
             ),
         ),
         started.elapsed().as_millis()
@@ -139,10 +150,10 @@ mod tests {
     const ARC: &str = r#"{"returnValue":true,"earcCapability":["PCM","DD","DTS","DD+","MAT2PCM","TrueHD","DTSX_P1","DTSHD_MA","DTSHD"],"arcActivation":"eARC"}"#;
 
     #[test]
-    fn the_measured_c4_chain_passes_dts_hd() {
+    fn the_measured_c4_chain_passes_dts_hd_and_truehd() {
         let c = parse(SETTINGS, ARC).unwrap();
         assert_eq!(c.link, Link::Earc);
-        assert!(c.pass_through && c.advertises("truehd") && c.passes_dts_hd());
+        assert!(c.pass_through && c.passes_dts_hd() && c.passes_truehd());
     }
 
     #[test]

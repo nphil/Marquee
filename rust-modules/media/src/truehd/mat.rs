@@ -3,8 +3,8 @@
 //! [`Muxer`] is FFmpeg 9.0.2's `spdif_header_truehd` (libavformat/spdifenc.c) line for line: each
 //! access unit is laid into a 61424-byte MAT frame after zero padding worked out from its 16-bit
 //! input timing, around three fixed MAT codes, and a full frame leaves as one 61440-byte burst
-//! (preamble, the frame byte-swapped to little-endian, eight zero bytes): 20 ms of the 192 kHz,
-//! 8-channel, 16-bit carrier.
+//! (preamble, the frame, eight zero bytes) in 16-bit words of either [`ByteOrder`]: 20 ms of the
+//! 192 kHz, 8-channel, 16-bit carrier.
 //!
 //! [`Packer`] wraps it in dts_restore_plus PR 45. FFmpeg caps the padding at half a MAT frame and
 //! lays a larger timing gap in with none, after which the stream plays late and the receiver keeps
@@ -21,8 +21,18 @@ pub const BURST_NS: i64 = 20_000_000;
 /// The MAT frame inside a burst.
 const MAT_FRAME: usize = 61424;
 
-/// Pa Pb (sync), Pc 0x16 (TrueHD), Pd 61424 (the frame's length), little-endian words.
-const PREAMBLE: [u8; 8] = [0x72, 0xF8, 0x1F, 0x4E, 0x16, 0x00, 0xF0, 0xEF];
+/// Pa Pb (sync), Pc 0x16 (TrueHD), Pd 61424 (the frame's length), as big-endian words.
+const PREAMBLE: [u8; 8] = [0xF8, 0x72, 0x4E, 0x1F, 0x00, 0x16, 0xEF, 0xF0];
+
+/// The byte order of the carrier's 16-bit words. LG's DSP takes the first byte of a word as its
+/// high byte: on the C4 a little-endian carrier (FFmpeg's default) reached the receiver as PCM
+/// silence, and upstream feeds FFmpeg's `spdif_flags=be`. The helper may name the other.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ByteOrder {
+    #[default]
+    Big,
+    Little,
+}
 
 /// The carrier's silence: what the sink is fed whenever carrier bytes may not reach it.
 pub static ZERO_BURST: [u8; BURST_BYTES] = [0; BURST_BYTES];
@@ -159,6 +169,7 @@ pub struct Burst {
 /// Access units in, timed bursts out (PR 45's `truehdmat` element without GStreamer).
 pub struct Packer {
     mux: Muxer,
+    order: ByteOrder,
     /// Samples per access unit; zero until a major sync this carrier takes.
     samples_per_unit: u32,
     last_timing: u16,
@@ -169,16 +180,11 @@ pub struct Packer {
     spare: Vec<Box<[u8]>>,
 }
 
-impl Default for Packer {
-    fn default() -> Packer {
-        Packer::new()
-    }
-}
-
 impl Packer {
-    pub fn new() -> Packer {
+    pub fn new(order: ByteOrder) -> Packer {
         Packer {
             mux: Muxer::new(),
+            order,
             samples_per_unit: 0,
             last_timing: 0,
             anchor: None,
@@ -218,10 +224,10 @@ impl Packer {
             self.made = 0;
             pts
         });
-        let Packer { mux, made, ready, spare, .. } = self;
+        let Packer { mux, order, made, ready, spare, .. } = self;
         mux.push(au, &mut |frame: &[u8]| {
             let mut bytes = spare.pop().unwrap_or_else(|| vec![0; BURST_BYTES].into_boxed_slice());
-            lay_burst(frame, &mut bytes);
+            lay_burst(frame, &mut bytes, *order);
             ready.push_back(Burst { pts: anchor + *made * BURST_NS, bytes });
             *made += 1;
         })?;
@@ -252,15 +258,25 @@ impl Packer {
     }
 }
 
-/// Preamble, the MAT frame as 16-bit little-endian words, then zeros to the burst's length.
-fn lay_burst(frame: &[u8], out: &mut [u8]) {
-    out[..PREAMBLE.len()].copy_from_slice(&PREAMBLE);
-    let body = &mut out[PREAMBLE.len()..PREAMBLE.len() + MAT_FRAME];
-    for (o, i) in body.chunks_exact_mut(2).zip(frame.chunks_exact(2)) {
-        o[0] = i[1];
-        o[1] = i[0];
+/// Preamble and MAT frame in `order`, then zeros to the burst's length. Both are big-endian as
+/// laid; little-endian swaps every word.
+fn lay_burst(frame: &[u8], out: &mut [u8], order: ByteOrder) {
+    let (head, rest) = out.split_at_mut(PREAMBLE.len());
+    let (body, tail) = rest.split_at_mut(MAT_FRAME);
+    match order {
+        ByteOrder::Big => {
+            head.copy_from_slice(&PREAMBLE);
+            body.copy_from_slice(frame);
+        }
+        ByteOrder::Little => {
+            let words = head.chunks_exact_mut(2).zip(PREAMBLE.chunks_exact(2));
+            for (o, i) in words.chain(body.chunks_exact_mut(2).zip(frame.chunks_exact(2))) {
+                o[0] = i[1];
+                o[1] = i[0];
+            }
+        }
     }
-    out[PREAMBLE.len() + MAT_FRAME..].fill(0);
+    tail.fill(0);
 }
 
 fn be16(b: &[u8]) -> u16 {
@@ -322,18 +338,23 @@ mod tests {
     }
 
     #[test]
-    fn bursts_match_ffmpeg_spdif_output() {
-        let mut p = Packer::new();
-        for (i, f) in frames().iter().enumerate() {
-            assert_eq!(shifted(&mut p, f, i, 0), None);
+    fn bursts_match_ffmpeg_spdif_output_in_either_order() {
+        // `ffmpeg -f truehd -i truehd-silence-160.thd -c copy [-spdif_flags be] -f spdif` (FFmpeg 5.1.9)
+        for (order, sha) in [
+            (ByteOrder::Little, "0957c22facc5654ae96f1ce2dde9ccb2fb872d0c78eda121e1bd1d351583a714"),
+            (ByteOrder::Big, "7a523e5e4ae06abafd07436e1d9a97b73665b21709059607a097bc7996be929b"),
+        ] {
+            let mut p = Packer::new(order);
+            for (i, f) in frames().iter().enumerate() {
+                assert_eq!(shifted(&mut p, f, i, 0), None);
+            }
+            let bursts = drain(&mut p);
+            let pts: Vec<i64> = bursts.iter().map(|b| b.0).collect();
+            assert_eq!(pts, (0..6).map(|k| k * BURST_NS).collect::<Vec<_>>());
+            let all: Vec<u8> = bursts.into_iter().flat_map(|b| b.1).collect();
+            let hex: String = plx_base::sha256::sha256(&all).iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(hex, sha, "{order:?}");
         }
-        let bursts = drain(&mut p);
-        let pts: Vec<i64> = bursts.iter().map(|b| b.0).collect();
-        assert_eq!(pts, (0..6).map(|k| k * BURST_NS).collect::<Vec<_>>());
-        let all: Vec<u8> = bursts.into_iter().flat_map(|b| b.1).collect();
-        // `ffmpeg -f truehd -i truehd-silence-160.thd -c copy -f spdif` (FFmpeg 5.1.9)
-        let hex: String = plx_base::sha256::sha256(&all).iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(hex, "0957c22facc5654ae96f1ce2dde9ccb2fb872d0c78eda121e1bd1d351583a714");
     }
 
     #[test]
@@ -342,7 +363,7 @@ mod tests {
         // the 16-bit wrap moved onto the boundary's major sync, then an 80-sample gap there
         let wrap = 0u16.wrapping_sub(be16(&fr[BOUNDARY][2..]));
         for gap in [None, Some(40)] {
-            let mut p = Packer::new();
+            let mut p = Packer::new(ByteOrder::Big);
             for (i, f) in fr.iter().enumerate() {
                 let shift = gap.map_or(wrap, |g| if i < BOUNDARY { 0 } else { g });
                 assert_eq!(shifted(&mut p, f, i, shift), None);
@@ -354,7 +375,7 @@ mod tests {
     #[test]
     fn a_1770_sample_jump_restarts_like_a_fresh_packer() {
         let fr = frames();
-        let (mut actual, mut fresh) = (Packer::new(), Packer::new());
+        let (mut actual, mut fresh) = (Packer::new(ByteOrder::Big), Packer::new(ByteOrder::Big));
         for (i, f) in fr[..BOUNDARY].iter().enumerate() {
             shifted(&mut actual, f, i, 0);
         }
@@ -377,12 +398,12 @@ mod tests {
         for (rate_code, step, below) in [(0u8, 40u16, 639u16), (1, 80, 1279), (2, 160, 2559)] {
             for gap in [below, below + 1] {
                 let shift = gap - step;
-                let mut actual = Packer::new();
+                let mut actual = Packer::new(ByteOrder::Big);
                 for (i, f) in fr[..BOUNDARY].iter().enumerate() {
                     assert_eq!(feed(&mut actual, f, i, i as u16 * step, rate_code), Ok(None));
                 }
                 assert!(!drain(&mut actual).is_empty());
-                let mut fresh = Packer::new();
+                let mut fresh = Packer::new(ByteOrder::Big);
                 let mut resyncs = Vec::new();
                 for (i, f) in fr.iter().enumerate().skip(BOUNDARY) {
                     let timing = (i as u16 * step).wrapping_add(shift);
@@ -404,7 +425,7 @@ mod tests {
     #[test]
     fn a_flush_waits_for_the_next_major_sync() {
         let fr = frames();
-        let (mut actual, mut fresh) = (Packer::new(), Packer::new());
+        let (mut actual, mut fresh) = (Packer::new(ByteOrder::Big), Packer::new(ByteOrder::Big));
         for (i, f) in fr[..BOUNDARY].iter().enumerate() {
             shifted(&mut actual, f, i, 0);
         }
@@ -425,7 +446,7 @@ mod tests {
         let short: &[u8] = &[0, 4, 0, 0, 0xf8, 0x72, 0x6f, 0xba];
         let rate_44k: &[u8] = &[0, 5, 0, 0, 0xf8, 0x72, 0x6f, 0xba, 0x80, 0];
         for bad in [short, rate_44k] {
-            let mut p = Packer::new();
+            let mut p = Packer::new(ByteOrder::Big);
             for (i, f) in fr[..BOUNDARY].iter().enumerate() {
                 shifted(&mut p, f, i, 0);
             }
@@ -433,6 +454,6 @@ mod tests {
             assert_eq!(p.push(bad, 0), Err(Fallback::Rate));
             assert!(p.front().is_none());
         }
-        assert_eq!(Packer::new().push(&[0, 4, 0, 0, 0, 0, 0, 0], 0), Ok(None), "a minor unit before any sync waits");
+        assert_eq!(Packer::new(ByteOrder::Big).push(&[0, 4, 0, 0, 0, 0, 0, 0], 0), Ok(None), "a minor unit before any sync waits");
     }
 }
