@@ -1391,9 +1391,10 @@ fn opus_payload_from_output(
 
 /// What a Load of this audio is to the TrueHD carrier ([`crate::truehd`]): none of its business
 /// (another codec, a speed session, whose app decoder takes every codec, or a track the app
-/// decodes itself), TrueHD fed to the receiver whole, or TrueHD the chain no longer carries, where
-/// the track the pick displaced plays instead ([`crate::route::fall_back_from_truehd`]).
-/// PURE.
+/// decodes itself), TrueHD fed to the receiver whole, or TrueHD the chain no longer carries or
+/// whose sink hook cannot go in, where the track the pick displaced plays instead
+/// ([`crate::route::fall_back_from_truehd`]). `hook` is [`crate::truehd::sink::install`], called
+/// for a carrier Load only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrueHdLoad {
     Other,
@@ -1401,10 +1402,10 @@ enum TrueHdLoad {
     Backup,
 }
 
-fn truehd_load(codec: &str, session_rate: i32, planned: bool, app_decodes: bool) -> TrueHdLoad {
+fn truehd_load(codec: &str, session_rate: i32, planned: bool, app_decodes: bool, hook: impl FnOnce() -> bool) -> TrueHdLoad {
     if !crate::truehd::carries(codec, 0) || app_decodes || session_rate != super::RATE_NORMAL {
         TrueHdLoad::Other
-    } else if planned {
+    } else if planned && hook() {
         TrueHdLoad::Carrier
     } else {
         TrueHdLoad::Backup
@@ -2217,18 +2218,21 @@ fn start_bufferfeed_inner(
             // wrong string leaves the audio ES unconfigured, and with audioSync the video
             // sink slaves to the dead audio clock and stalls (verified: video-only plays).
             let mut codec = crate::route::stream_acodec(ps);
-            // A TrueHD pick is the carrier's, or, when the chain stopped carrying it since the plan,
-            // the track it displaced. The latch is what `stream_pcm` reads for the declaration below,
-            // and the sink hook must be in before the Load builds its pipeline.
-            let load = truehd_load(&codec, session_rate, crate::truehd::planned(), crate::route::stream_pcm_is_lossy(ps));
+            // A TrueHD pick is the carrier's, or, when the chain stopped carrying it since the plan
+            // or the sink hook cannot go in before the Load builds its pipeline, the track it
+            // displaced. The latch is what `stream_pcm` reads for the declaration below.
+            let load = truehd_load(
+                &codec,
+                session_rate,
+                crate::truehd::planned(),
+                crate::route::stream_pcm_is_lossy(ps),
+                crate::truehd::sink::install,
+            );
             if load == TrueHdLoad::Backup && crate::route::fall_back_from_truehd(ps) {
                 codec = crate::route::stream_acodec(ps);
             }
             truehd_carried = load == TrueHdLoad::Carrier;
             crate::truehd::latch(truehd_carried);
-            if truehd_carried {
-                crate::truehd::sink::install();
-            }
             // App-decoded audio: the Load must state the PCM shape, and the demuxer must produce
             // exactly that. Missing facts refuse the Load — a guessed rate plays at the wrong pitch.
             let pcm = match app_pcm_for_rate(session_rate, crate::route::stream_pcm(ps)) {
@@ -8819,17 +8823,21 @@ mod pcm_info_tests {
         assert_eq!(with_carrier_buffer(PAYLOAD_AV, None), PAYLOAD_AV);
     }
 
-    /// A Load is the carrier's only for TrueHD, planned, at 1x and not decoded in the app; TrueHD the chain
-    /// no longer carries is the displaced track's Load.
+    /// A Load is the carrier's only for TrueHD, planned, at 1x, not decoded in the app and with the sink
+    /// hook in; TrueHD the chain no longer carries, or whose hook cannot go in, is the displaced track's
+    /// Load. Only a carrier Load asks for the hook.
     #[test]
-    fn a_truehd_load_is_the_carrier_only_while_planned_at_1x_and_not_decoded_in_the_app() {
+    fn a_truehd_load_is_the_carrier_only_while_planned_at_1x_not_decoded_in_the_app_and_hooked() {
         let rate = crate::player::RATE_NORMAL;
-        assert_eq!(truehd_load("truehd", rate, true, false), TrueHdLoad::Carrier);
-        assert_eq!(truehd_load("TrueHD", rate, true, false), TrueHdLoad::Carrier);
-        assert_eq!(truehd_load("truehd", rate, false, false), TrueHdLoad::Backup, "the chain stopped carrying it");
-        assert_eq!(truehd_load("truehd", 1500, true, false), TrueHdLoad::Other, "a speed session decodes in the app");
-        assert_eq!(truehd_load("truehd", rate, true, true), TrueHdLoad::Other, "the app decodes this one");
-        assert_eq!(truehd_load("eac3", rate, true, false), TrueHdLoad::Other);
+        let hooked = || true;
+        let unasked = || -> bool { unreachable!("only a carrier Load installs the sink hook") };
+        assert_eq!(truehd_load("truehd", rate, true, false, hooked), TrueHdLoad::Carrier);
+        assert_eq!(truehd_load("TrueHD", rate, true, false, hooked), TrueHdLoad::Carrier);
+        assert_eq!(truehd_load("truehd", rate, true, false, || false), TrueHdLoad::Backup, "LG's sink is out of reach");
+        assert_eq!(truehd_load("truehd", rate, false, false, unasked), TrueHdLoad::Backup, "the chain stopped carrying it");
+        assert_eq!(truehd_load("truehd", 1500, true, false, unasked), TrueHdLoad::Other, "a speed session decodes in the app");
+        assert_eq!(truehd_load("truehd", rate, true, true, unasked), TrueHdLoad::Other, "the app decodes this one");
+        assert_eq!(truehd_load("eac3", rate, true, false, unasked), TrueHdLoad::Other);
     }
 
     /// **DTS the attempt decodes in the app** is declared as PCM — stereo 48 kHz S16, one `pcmInfo` — and

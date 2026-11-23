@@ -13,7 +13,7 @@
 use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::session::{self, Granted};
@@ -51,6 +51,7 @@ struct Event {
 }
 
 type Hook = unsafe extern "C" fn(*mut c_void, c_uint, *const GValue, *mut c_void) -> c_int;
+type InterfaceCheck = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type ProbeFn = unsafe extern "C" fn(*mut c_void, *mut ProbeInfo, *mut c_void) -> c_int;
 type Destroy = unsafe extern "C" fn(*mut c_void);
 
@@ -78,7 +79,10 @@ plx_base::dynlib! {
 
 plx_base::dynlib! {
     gobject: ["libgobject-2.0.so.0"] {
-        fn g_type_class_ref(t: usize) -> *mut c_void;
+        fn g_type_from_name(name: *const c_char) -> usize;
+        fn g_type_name(t: usize) -> *const c_char;
+        fn g_type_class_peek(t: usize) -> *mut c_void;
+        fn g_type_add_interface_check(data: *mut c_void, check: InterfaceCheck);
         fn g_signal_lookup(name: *const c_char, itype: usize) -> c_uint;
         fn g_signal_add_emission_hook(signal: c_uint, detail: c_uint, hook: Hook, data: *mut c_void, destroy: *mut c_void) -> c_ulong;
         fn g_value_get_object(v: *const GValue) -> *mut c_void;
@@ -95,7 +99,6 @@ plx_base::dynlib! {
 
 plx_base::dynlib! {
     gst: ["libgstreamer-1.0.so.0"] {
-        fn gst_bin_get_type() -> usize;
         fn gst_element_get_factory(element: *mut c_void) -> *mut c_void;
         fn gst_object_get_name(object: *mut c_void) -> *mut c_char;
         fn gst_object_unref(object: *mut c_void);
@@ -112,28 +115,70 @@ plx_base::dynlib! {
     }
 }
 
-/// GstBin is hooked before the first carrier Load builds its pipeline; once per process. False
-/// when GStreamer is out of reach, and the carrier then plays without the probe.
-static INSTALLED: LazyLock<bool> = LazyLock::new(|| {
-    // SAFETY: GLib's own calls on a type and a signal both exist in GStreamer 1.x.
-    let ok = unsafe { hook() };
-    crate::player::log(if ok { "truehd: sink hook installed" } else { "truehd: sink hook unavailable" });
+/// libpf's GLib and GStreamer, bound once per process; this never maps a library itself.
+static BOUND: LazyLock<bool> = LazyLock::new(|| {
+    let mapped = [glib::CANDIDATES, gobject::CANDIDATES, gst::CANDIDATES]
+        .into_iter()
+        .all(|names| plx_base::dynlib::Handle::open_loaded(names).is_some());
+    let ok = mapped && glib::load(None).ok() && gobject::load(None).ok() && gst::load(None).ok();
+    if !ok {
+        crate::player::log("truehd: sink hook unavailable: GStreamer is not in the process");
+    }
     ok
 });
+/// Whether GstBin's `element-added` is hooked; unset until GStreamer has built GstBin's class.
+static HOOKED: OnceLock<bool> = OnceLock::new();
+static WATCH: Once = Once::new();
 
+/// Whether the sink hook is in, or goes in as libpf starts GStreamer inside the coming Load.
+/// False when it cannot, and the Load plays the track the carrier displaced.
+///
+/// GstBin's class is never built here: built before `gst_init`, its element metadata is stored
+/// under GStreamer's quarks while they are still zero, and `gst_init` then aborts registering
+/// "bin" (`gst_register_core_elements`, gst.c:617 on the TV). GStreamer 1.24 and older store it
+/// that way; 1.26 keys it by string.
 pub fn install() -> bool {
-    *INSTALLED
-}
-
-unsafe fn hook() -> bool {
-    if !(glib::load(None).ok() && gobject::load(None).ok() && gst::load(None).ok()) {
+    if !*BOUND {
         return false;
     }
-    let bin = gst_bin_get_type();
-    // GstBin's signals exist once its class does; the reference is kept for the process.
-    g_type_class_ref(bin);
-    let signal = g_signal_lookup(c"element-added".as_ptr(), bin);
-    signal != 0 && g_signal_add_emission_hook(signal, 0, element_added, null_mut(), null_mut()) != 0
+    if let Some(&hooked) = HOOKED.get() {
+        return hooked;
+    }
+    // SAFETY: GLib's calls on the libraries libpf mapped; none of them builds a class.
+    unsafe {
+        let bin = g_type_from_name(c"GstBin".as_ptr());
+        if bin != 0 && !g_type_class_peek(bin).is_null() {
+            return add_hook(bin);
+        }
+        // GLib walks its check list unlocked while it builds a class, so the check is added
+        // only while GStreamer, which libpf starts inside a Load, builds none.
+        WATCH.call_once(|| g_type_add_interface_check(null_mut(), on_interface));
+    }
+    crate::player::log("truehd: sink hook goes in as GStreamer starts");
+    true
+}
+
+/// Called as GLib finishes each interface of a class it builds. GStreamer builds GstBin inside
+/// `gst_init`, after its `class_init` made the signal and before any bin exists.
+unsafe extern "C" fn on_interface(_data: *mut c_void, iface: *mut c_void) {
+    if HOOKED.get().is_some() {
+        return;
+    }
+    // GTypeInterface: the interface's type, then the type whose class is being built.
+    let owner = *iface.cast::<usize>().add(1);
+    let name = g_type_name(owner);
+    if !name.is_null() && CStr::from_ptr(name) == c"GstBin" {
+        add_hook(owner);
+    }
+}
+
+unsafe fn add_hook(bin: usize) -> bool {
+    *HOOKED.get_or_init(|| {
+        let signal = g_signal_lookup(c"element-added".as_ptr(), bin);
+        let ok = signal != 0 && g_signal_add_emission_hook(signal, 0, element_added, null_mut(), null_mut()) != 0;
+        crate::player::log(if ok { "truehd: sink hook installed" } else { "truehd: sink hook unavailable" });
+        ok
+    })
 }
 
 /// The hook stays for the process (TRUE); it acts only for a carrier Load.
@@ -406,5 +451,44 @@ mod tests {
         assert!(clears_es(true, ES_FLAG | 1));
         assert!(!clears_es(true, 1));
         assert!(!clears_es(false, ES_FLAG), "a start that leaves the property alone leaves the flags alone");
+    }
+
+    /// libpf maps GStreamer at exec and starts it inside its first Load. The hook waits for that,
+    /// goes in as `gst_init` builds GstBin, and `gst_init` survives it; with GstBin built first,
+    /// GStreamer 1.24 and older aborted registering "bin". Runs in a fresh process, which it starts
+    /// GStreamer in, on the host's GStreamer with no plugins; a host without GStreamer says so.
+    #[test]
+    fn the_hook_goes_in_as_gstreamer_starts_and_gstreamer_survives_it() {
+        const TEST: &str = "truehd::sink::tests::the_hook_goes_in_as_gstreamer_starts_and_gstreamer_survives_it";
+        if plx_base::testheap::is_child() {
+            return start_gstreamer_after_the_hook();
+        }
+        let registry = std::env::temp_dir().join(format!("plx-truehd-gst-{}.bin", std::process::id()));
+        let none = std::ffi::OsStr::new("");
+        let ran = plx_base::testheap::in_fresh_process_with_env(
+            TEST,
+            &[("GST_PLUGIN_SYSTEM_PATH_1_0", none), ("GST_PLUGIN_PATH_1_0", none), ("GST_REGISTRY_1_0", registry.as_os_str())],
+        );
+        let _ = std::fs::remove_file(&registry);
+        if ran["gstreamer"] == 0 {
+            eprintln!("no GStreamer on this host: the hook's wait for gst_init is untested here");
+            return;
+        }
+        assert_eq!(ran["hooked"], 1, "the hook went in as GStreamer started");
+    }
+
+    fn start_gstreamer_after_the_hook() {
+        let Some((lib, _)) = plx_base::dynlib::Handle::open(gst::CANDIDATES) else {
+            return plx_base::testheap::report("gstreamer", 0);
+        };
+        assert!(install(), "the hook waits for GStreamer to start");
+        assert!(HOOKED.get().is_none(), "nothing of GStreamer's is built before gst_init");
+        // SAFETY: gst_init(int *argc, char ***argv) takes NULL for both.
+        unsafe {
+            let init: unsafe extern "C" fn(*mut c_int, *mut c_void) = std::mem::transmute(lib.sym("gst_init").expect("gst_init"));
+            init(null_mut(), null_mut());
+        }
+        plx_base::testheap::report("gstreamer", 1);
+        plx_base::testheap::report("hooked", u64::from(HOOKED.get() == Some(&true)));
     }
 }
