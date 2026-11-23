@@ -39,6 +39,11 @@ impl Shared {
         self.epoch.load(Ordering::Acquire)
     }
 
+    /// The helper has armed the route for the epoch now in force.
+    pub fn armed(&self) -> bool {
+        self.facts().armed_epoch == Some(self.epoch())
+    }
+
     /// The sink saw a flush: the feeder restarts the gate.
     pub fn note_flush(&self) {
         self.flushed.store(true, Ordering::Release);

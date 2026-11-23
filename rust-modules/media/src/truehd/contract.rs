@@ -57,7 +57,8 @@ pub struct Carrier {
     /// `sinkCaps`: caps the sink is re-negotiated to when its caps arrive; `null` leaves LG's own.
     pub sink_caps: Option<String>,
     /// `startAsBitstream`: upstream's `pcm-multi-ch` order, on with the caps, off for the first
-    /// buffer, on from the second. Off leaves the property alone.
+    /// buffer until the route is armed (3 s at most), on from the second, and no ES flag on any
+    /// buffer. Off leaves the property and the flags alone.
     pub start_as_bitstream: bool,
 }
 

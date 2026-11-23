@@ -10,7 +10,7 @@ use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::session;
 
@@ -198,6 +198,33 @@ unsafe extern "C" fn on_probe(_pad: *mut c_void, info: *mut ProbeInfo, data: *mu
     }
 }
 
+/// Upstream configures the bypass converter after the first buffer, with `pcm-multi-ch` off, and
+/// turns the property back on with the second. The recipe that played TrueHD on the set held the
+/// second buffer back until the helper had armed, for at most this long; the arm is that
+/// configuration here.
+const ARM_WINDOW: Duration = Duration::from_secs(3);
+const ARM_POLL: Duration = Duration::from_millis(10);
+
+/// Calls `done` until it holds or `window` has passed in steps of `step`; `sleep` is
+/// `thread::sleep` outside the tests. True when `done` held.
+fn hold_until(window: Duration, step: Duration, mut done: impl FnMut() -> bool, mut sleep: impl FnMut(Duration)) -> bool {
+    let mut waited = Duration::ZERO;
+    while !done() {
+        if waited >= window {
+            return false;
+        }
+        sleep(step);
+        waited += step;
+    }
+    true
+}
+
+/// Whether a buffer's ES flag comes off. The feeder that played the carrier on the set never sets
+/// the flag, on the first buffer or any other: the caps' `es` field declares the bitstream.
+fn clears_es(start_as_bitstream: bool, flags: c_uint) -> bool {
+    start_as_bitstream && flags & ES_FLAG != 0
+}
+
 impl Probe {
     unsafe fn event(&self, info: &mut ProbeInfo) -> c_int {
         match (*info.data.cast::<Event>()).kind {
@@ -224,26 +251,28 @@ impl Probe {
         PROBE_OK
     }
 
-    /// Upstream's order around the first buffer, then zeros unless the route passes it now. A
-    /// buffer after the session ended is the carrier's tail and is zeroed too.
+    /// Upstream's order around the first buffer, then zeros unless the route passes it now. The
+    /// first buffer holds `pcm-multi-ch` off until the helper has armed. A buffer after the
+    /// session ended is the carrier's tail and is zeroed too.
     unsafe fn buffer(&self, info: &mut ProbeInfo) -> c_int {
         let shared = session::active();
-        let mut es = None;
-        if shared.as_ref().is_some_and(|s| s.carrier.start_as_bitstream) {
+        let bitstream = shared.as_ref().is_some_and(|s| s.carrier.start_as_bitstream);
+        if bitstream {
             if self.first.swap(false, Ordering::AcqRel) {
                 self.configured.store(true, Ordering::Release);
                 set_multi_ch(self.sink, false);
-                es = Some(true);
-            } else if self.configured.load(Ordering::Acquire) {
-                if !self.feeding.swap(true, Ordering::AcqRel) {
-                    set_multi_ch(self.sink, true);
+                if let Some(s) = shared.as_deref() {
+                    if !hold_until(ARM_WINDOW, ARM_POLL, || s.armed(), std::thread::sleep) {
+                        crate::player::log("truehd: the route was not armed within 3 s of the first buffer");
+                    }
                 }
-                es = Some(false);
+            } else if self.configured.load(Ordering::Acquire) && !self.feeding.swap(true, Ordering::AcqRel) {
+                set_multi_ch(self.sink, true);
             }
         }
         let zero = !shared.is_some_and(|s| s.facts().safe(Instant::now(), s.epoch()));
         let flags = (*info.data.cast::<MiniObject>()).flags;
-        let flip = es.is_some_and(|on| (flags & ES_FLAG != 0) != on);
+        let flip = clears_es(bitstream, flags);
         if !zero && !flip {
             return PROBE_OK;
         }
@@ -253,8 +282,7 @@ impl Probe {
         }
         info.data = buffer;
         if flip {
-            let head = &mut *buffer.cast::<MiniObject>();
-            head.flags = if es == Some(true) { head.flags | ES_FLAG } else { head.flags & !ES_FLAG };
+            (*buffer.cast::<MiniObject>()).flags &= !ES_FLAG;
         }
         if zero {
             gst_buffer_memset(buffer, 0, 0, gst_buffer_get_size(buffer));
@@ -308,5 +336,24 @@ mod tests {
         assert_eq!(mini, if cfg!(target_pointer_width = "64") { 64 } else { 36 });
         assert_eq!(std::mem::offset_of!(Event, kind), mini);
         assert_eq!(std::mem::offset_of!(ProbeInfo, data), 2 * std::mem::size_of::<usize>());
+    }
+
+    #[test]
+    fn the_second_buffer_waits_for_the_arm_for_at_most_three_seconds() {
+        let mut polls = 0;
+        let mut slept = Duration::ZERO;
+        assert!(hold_until(ARM_WINDOW, ARM_POLL, || { polls += 1; polls > 5 }, |d| slept += d));
+        assert_eq!(slept, 5 * ARM_POLL, "released by the arm, not by the clock");
+        let mut slept = Duration::ZERO;
+        assert!(!hold_until(ARM_WINDOW, ARM_POLL, || false, |d| slept += d));
+        assert_eq!(slept, ARM_WINDOW);
+        assert!(hold_until(ARM_WINDOW, ARM_POLL, || true, |_| unreachable!("already armed")));
+    }
+
+    #[test]
+    fn a_bitstream_start_clears_the_es_flag_and_never_sets_it() {
+        assert!(clears_es(true, ES_FLAG | 1));
+        assert!(!clears_es(true, 1));
+        assert!(!clears_es(false, ES_FLAG), "a start that leaves the property alone leaves the flags alone");
     }
 }
