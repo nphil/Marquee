@@ -21,8 +21,6 @@ const SINK_CLOSE_WAIT: Duration = Duration::from_millis(2500);
 const SINK_CLOSE_POLL: Duration = Duration::from_millis(50);
 /// How long the process waits at exit for a worker to finish its release.
 const EXIT_WAIT: Duration = Duration::from_millis(500);
-/// The highest decoder input the helper accepts.
-const MAX_ADEC: i32 = 7;
 
 /// The decoder input LG's resource manager granted this process's renderer, as its audio sink
 /// reports it.
@@ -44,7 +42,8 @@ impl Granted {
             (_, Some(true)) => Granted::Refused("the audio sink plays through a mixer channel, not a decoder input"),
             (None, _) => Granted::Refused("the audio sink does not name its decoder input"),
             (Some(-1), _) => Granted::Unknown,
-            (Some(i), _) if (0..=MAX_ADEC).contains(&i) => Granted::Decoder(i as u8),
+            // The helper takes ADEC 0 to 7 and answers 400 to anything else.
+            (Some(i), _) if (0..=7).contains(&i) => Granted::Decoder(i as u8),
             (Some(_), _) => Granted::Refused("the audio sink's decoder input is out of range"),
         }
     }
