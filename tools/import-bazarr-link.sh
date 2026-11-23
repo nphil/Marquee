@@ -1,27 +1,32 @@
 #!/bin/sh
-# Hand a television its Bazarr address and API key without typing them there.
+# Hand a television its Bazarr, Radarr or Sonarr address and API key without typing them there.
 #
-#   tools/import-bazarr-link.sh SSH_HOST KEY_FILE [URL]      (URL defaults to https://bazarr.nateshome.net)
-#   tools/import-bazarr-link.sh --dry-run KEY_FILE [URL]     (checks the file and the address, writes nothing)
+#   tools/import-bazarr-link.sh [--app bazarr|radarr|sonarr] SSH_HOST KEY_FILE [URL]
+#       (the app defaults to bazarr; URL defaults to https://<app>.nateshome.net)
+#   tools/import-bazarr-link.sh [--app APP] --dry-run KEY_FILE [URL]   (checks the file and the address, writes nothing)
 #
+# KEY_FILE may be a process substitution, `<(ssh unraid ...)`, so a key never has to sit in a file.
 # Builds {"url": ..., "api_key": ...} from KEY_FILE and writes it, over ssh's stdin, to
-# /tmp/marquee-bazarr-import.json on SSH_HOST, mode 0600, owned by the uid and group of the app's jail
+# /tmp/marquee-<app>-import.json on SSH_HOST, mode 0600, owned by the uid and group of the app's jail
 # directory (/var/palm/jail/com.beb.plxnative, the owner of every file the app creates). The app runs
 # jailed under that uid, not root, and refuses a file it does not own, so a root-owned file would be
 # deleted unread. The key is never on a command line, in an environment variable or in this script's
 # output. The app takes the file ONCE at its next start (sign in first; a signed-out start leaves it for
 # the next one), stores the link in its sealed session record and deletes the file:
-# rust-modules/plex/src/plex/session/bazarr_import.rs. Restart the app after this.
+# rust-modules/plex/src/plex/session/link_import.rs. Restart the app after this.
 set -eu
 
+app=bazarr
+if [ "${1:-}" = "--app" ]; then app=${2:?usage: --app bazarr|radarr|sonarr}; shift 2; fi
+case "$app" in bazarr|radarr|sonarr) ;; *) echo "import-bazarr-link: unknown app" >&2; exit 1 ;; esac
 dry=0
 if [ "${1:-}" = "--dry-run" ]; then dry=1; shift; fi
 if [ "$dry" = 1 ]; then
-  keyfile=${1:?usage: import-bazarr-link.sh --dry-run KEY_FILE [URL]}; url=${2:-https://bazarr.nateshome.net}
+  keyfile=${1:?usage: import-bazarr-link.sh --dry-run KEY_FILE [URL]}; url=${2:-https://$app.nateshome.net}
 else
-  host=${1:?usage: import-bazarr-link.sh SSH_HOST KEY_FILE [URL]}; keyfile=${2:?key file}; url=${3:-https://bazarr.nateshome.net}
+  host=${1:?usage: import-bazarr-link.sh SSH_HOST KEY_FILE [URL]}; keyfile=${2:?key file}; url=${3:-https://$app.nateshome.net}
 fi
-remote=/tmp/marquee-bazarr-import.json
+remote=/tmp/marquee-$app-import.json
 jail=/var/palm/jail/com.beb.plxnative
 
 [ -r "$keyfile" ] || { echo "import-bazarr-link: no readable key file" >&2; exit 1; }

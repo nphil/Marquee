@@ -103,7 +103,7 @@ Player > Subtitles > Wrong subtitles?:
 
 Bazarr's address and API key live in the protected half of the session record, like the Plex tokens, and
 reach only the one kind of request that needs them. `http://` is accepted only for home-network hosts.
-They are loaded once from a file with `tools/import-bazarr-link.sh` (`plex::session::bazarr_import`: a
+They are loaded once from a file with `tools/import-bazarr-link.sh` (`plex::session::link_import`: a
 `0600` file in the runtime directory, read once at start, then deleted). The typed entry is Settings > Integrations > Bazarr (mock `09-integrations.html`;
 `screens/src/settings_bazarr.rs`): the television's own keyboard (the one Search raises), the address in the
 clear and the key as dots, Test connection, Forget. The page never reads the stored key: the app answers

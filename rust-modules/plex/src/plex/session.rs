@@ -60,8 +60,8 @@ mod seerr_link;
 pub use seerr_link::{SeerrChange, SeerrLink};
 mod arr_link;
 pub use arr_link::{ArrChange, ArrKind, ArrLink};
-mod bazarr_import;
-pub use bazarr_import::{import_once as import_bazarr_link_file, IMPORT_FILE as BAZARR_IMPORT_FILE};
+mod link_import;
+pub use link_import::import_once as import_link_files;
 mod subtitle_look;
 pub use subtitle_look::{
     AssMode, LookPreset, Reveal, SubAnchor, SubBack, SubEdge, SubFont, SubtitleLook, BACK_COLORS, BRIGHTNESS_STEPS, COLORS,

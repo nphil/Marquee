@@ -1,8 +1,8 @@
-//! **One-shot import of Bazarr's address and key from a file.**
+//! **One-shot import of Bazarr's, Radarr's and Sonarr's address and key from files.**
 //!
-//! The link is normally typed on the television (Settings > Integrations > Bazarr). For a set that is
+//! The links are normally typed on the television (Settings > Integrations). For a set that is
 //! being provisioned from another machine, this is the other door: a JSON file
-//! `{"url": "https://…", "api_key": "…"}` at [`IMPORT_FILE`] in the runtime directory
+//! `{"url": "https://…", "api_key": "…"}` per app, at [`App::file`] in the runtime directory
 //! (`tools/import-bazarr-link.sh` writes it from a key file without printing the key) is read ONCE, at
 //! start-up, held to exactly the rules the typed values are ([`BazarrLink::normalize_url`],
 //! [`BazarrLink::normalize_key`]), stored in the same sealed session record, and then deleted.
@@ -12,16 +12,49 @@
 //! nobody is signed in, so the next start finds it. Nothing here logs an address or a key: the event log
 //! says only that a link was imported or refused, and why in a word.
 
-use super::BazarrLink;
+use super::{ArrKind, ArrLink, BazarrLink, Session};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
-/// The file's name in the runtime directory (`/tmp` on a television).
-pub const IMPORT_FILE: &str = "marquee-bazarr-import.json";
 /// A link is an address and a key: nothing legitimate is bigger.
 const MAX_BYTES: u64 = 2048;
+
+/// The apps a file can link, each with its own file in the runtime directory (`/tmp` on a television).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum App {
+    Bazarr,
+    Arr(ArrKind),
+}
+
+const APPS: [App; 3] = [App::Bazarr, App::Arr(ArrKind::Radarr), App::Arr(ArrKind::Sonarr)];
+
+impl App {
+    fn name(self) -> &'static str {
+        match self {
+            App::Bazarr => "bazarr",
+            App::Arr(ArrKind::Radarr) => "radarr",
+            App::Arr(ArrKind::Sonarr) => "sonarr",
+        }
+    }
+
+    fn file(self) -> &'static str {
+        match self {
+            App::Bazarr => "marquee-bazarr-import.json",
+            App::Arr(ArrKind::Radarr) => "marquee-radarr-import.json",
+            App::Arr(ArrKind::Sonarr) => "marquee-sonarr-import.json",
+        }
+    }
+
+    /// `session` with this app's link replaced; every other field stays.
+    fn apply(self, session: &Session, link: BazarrLink) -> Session {
+        match self {
+            App::Bazarr => session.with_bazarr(link),
+            App::Arr(kind) => session.with_arr(kind, &ArrLink { url: link.url, api_key: link.api_key }),
+        }
+    }
+}
 
 /// Why a file was not taken. Worded in one word in the event log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,14 +118,16 @@ const KEEP: u8 = 0;
 const APPLIED: u8 = 1;
 const REFUSED: u8 = 2;
 
-/// Import the file at [`IMPORT_FILE`], if there is one. Cheap when there is not (one `stat`).
-/// Called once, at start-up, off the frame loop's hot path; the read and the write both happen on the
-/// storage worker.
+/// Import each app's file, if there is one. Cheap when there is none (one `stat` each). Called once,
+/// at start-up, off the frame loop's hot path; every read and write happens on the storage worker,
+/// one app's edit after another's.
 pub fn import_once() {
-    import_from(plx_base::paths::in_runtime_dir(IMPORT_FILE));
+    for app in APPS {
+        import_from(app, plx_base::paths::in_runtime_dir(app.file()));
+    }
 }
 
-fn import_from(path: PathBuf) {
+fn import_from(app: App, path: PathBuf) {
     if std::fs::symlink_metadata(&path).is_err() {
         return;
     }
@@ -107,10 +142,10 @@ fn import_from(path: PathBuf) {
                     return None;
                 }
                 seen.store(APPLIED, Ordering::Release);
-                Some(current.with_bazarr(link))
+                Some(app.apply(current, link))
             }
             Err(refusal) => {
-                plx_base::eventlog::log(&format!("bazarr: import file refused ({})", refusal.word()));
+                plx_base::eventlog::log(&format!("{}: import file refused ({})", app.name(), refusal.word()));
                 seen.store(REFUSED, Ordering::Release);
                 None
             }
@@ -120,7 +155,7 @@ fn import_from(path: PathBuf) {
             if outcome == REFUSED || (outcome == APPLIED && persisted) {
                 let _ = std::fs::remove_file(&removal);
                 if outcome == APPLIED {
-                    plx_base::eventlog::log("bazarr: link imported from file");
+                    plx_base::eventlog::log(&format!("{}: link imported from file", app.name()));
                 }
             }
         },
@@ -136,11 +171,11 @@ mod tests {
 
     /// One directory per test, removed when the test process exits (`plx_base::testscratch`).
     fn scratch(name: &str) -> PathBuf {
-        plx_base::testscratch::process_dir(&format!("bazarr-import-{name}"))
+        plx_base::testscratch::process_dir(&format!("link-import-{name}"))
     }
 
     fn write(dir: &Path, mode: u32, body: &str) -> PathBuf {
-        let path = dir.join(IMPORT_FILE);
+        let path = dir.join(App::Bazarr.file());
         std::fs::write(&path, body).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
         path
@@ -188,6 +223,17 @@ mod tests {
         assert_eq!(parse(br#"{"url":"http://bazarr.example.net","api_key":"0123456789abcdef"}"#).unwrap_err(), Refusal::Address);
         assert_eq!(parse(br#"{"url":"https://b.example.net","api_key":"has\u0007a bell"}"#).unwrap_err(), Refusal::Key);
         assert_eq!(parse(br#"{"url":"https://b.example.net","api_key":""}"#).unwrap_err(), Refusal::Key);
+    }
+
+    #[test]
+    fn each_app_has_its_own_file_and_edits_only_its_own_link() {
+        let names: std::collections::HashSet<_> = APPS.iter().map(|app| app.file()).collect();
+        assert_eq!(names.len(), APPS.len());
+        let link = || BazarrLink { url: "https://radarr.example.net".into(), api_key: "0123456789abcdef".into() };
+        let session = App::Arr(ArrKind::Radarr).apply(&Session::default(), link());
+        assert_eq!(session.arr(ArrKind::Radarr), ArrLink { url: "https://radarr.example.net".into(), api_key: "0123456789abcdef".into() });
+        assert!(session.arr(ArrKind::Sonarr).is_empty() && session.bazarr().is_empty());
+        assert!(App::Bazarr.apply(&session, link()).bazarr().is_complete());
     }
 
     #[test]
