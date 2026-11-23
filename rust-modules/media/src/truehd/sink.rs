@@ -5,11 +5,13 @@
 //! buffer the route does not pass at that moment, as upstream's `lgroute.c` does.
 //!
 //! The layouts below are GStreamer 1.x's public structs, the same on every webOS release:
-//! `GValue` (24 bytes), the head of `GstPadProbeInfo`, `GstMiniObject` and `GstEvent`.
+//! `GValue` (24 bytes), the heads of `GParamSpec` and `GstPadProbeInfo`, `GstMiniObject` and
+//! `GstEvent`.
 //!
-//! The same sink names the decoder input LG granted the renderer: its `index` property ("Index of
-//! audio resource") reads back the port libpf set, and its `mixer` property says whether that
-//! port is a mixer channel's rather than a decoder's ([`Granted`]).
+//! libpf gives a PCM Load a mixer channel (the sink's `index` 4 with `mixer` on), which the helper
+//! cannot route, so a carrier Load puts the sink on [`CARRIER_ADEC`] off the mixer as it is added,
+//! before it opens. Its `index` property ("Index of audio resource") and `mixer` property ("Set
+//! using mixer") then read back the input it holds ([`Granted`]); only that input is armed.
 use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,6 +52,15 @@ struct Event {
     kind: c_int,
 }
 
+/// The head of `GParamSpec`.
+#[repr(C)]
+struct ParamSpec {
+    _instance: *mut c_void,
+    _name: *const c_char,
+    flags: c_uint,
+    value_type: usize,
+}
+
 type Hook = unsafe extern "C" fn(*mut c_void, c_uint, *const GValue, *mut c_void) -> c_int;
 type InterfaceCheck = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type ProbeFn = unsafe extern "C" fn(*mut c_void, *mut ProbeInfo, *mut c_void) -> c_int;
@@ -57,6 +68,14 @@ type Destroy = unsafe extern "C" fn(*mut c_void);
 
 const G_TYPE_BOOLEAN: usize = 5 << 2;
 const G_TYPE_INT: usize = 6 << 2;
+const G_TYPE_UINT: usize = 7 << 2;
+const PARAM_WRITABLE: c_uint = 1 << 1;
+const PARAM_CONSTRUCT_ONLY: c_uint = 1 << 3;
+/// The decoder input a carrier Load's sink is put on: ADEC1. The proven run (`appsrc format=time
+/// block=true ! audiosink index=1`, 2026-11-22: the receiver showed Dolby Atmos) played from it,
+/// and LG's own AC3 Loads use it too. An HDMI input keeps its decoder: the helper arms only while
+/// no decoder input is connected and this one is not running.
+const CARRIER_ADEC: u8 = 1;
 const PROBE_BUFFER: c_uint = 1 << 4;
 const PROBE_EVENT_DOWNSTREAM: c_uint = 1 << 6;
 /// Flushes are not downstream events; a seek or a resume sends them.
@@ -89,6 +108,7 @@ plx_base::dynlib! {
         fn g_object_class_find_property(class: *mut c_void, name: *const c_char) -> *mut c_void;
         fn g_value_init(v: *mut GValue, t: usize) -> *mut GValue;
         fn g_value_set_boolean(v: *mut GValue, b: c_int);
+        fn g_value_set_int(v: *mut GValue, i: c_int);
         fn g_value_get_boolean(v: *const GValue) -> c_int;
         fn g_value_get_int(v: *const GValue) -> c_int;
         fn g_object_set_property(object: *mut c_void, name: *const c_char, v: *const GValue);
@@ -213,8 +233,10 @@ unsafe fn attach(element: *mut c_void) {
         crate::player::log("truehd: LG's audio sink has no input pad");
         return;
     }
+    let given = give_input(element);
     let probe = Box::into_raw(Box::new(Probe {
         sink: element,
+        given,
         first: AtomicBool::new(false),
         configured: AtomicBool::new(false),
         feeding: AtomicBool::new(false),
@@ -226,9 +248,57 @@ unsafe fn attach(element: *mut c_void) {
     crate::player::log("truehd: probing LG's audio sink");
 }
 
+/// Whether a carrier Load's sink goes on [`CARRIER_ADEC`] off the mixer: only while the helper
+/// still admits this process, which it does only while no decoder input is connected (no HDMI
+/// input or Live TV in front), and only when `index` is an integer and `mixer` a boolean that can
+/// both be set after construction. Each property is its value type and flags.
+fn gives_input(admitted: bool, index: Option<(usize, c_uint)>, mixer: Option<(usize, c_uint)>) -> bool {
+    let settable = |spec: Option<(usize, c_uint)>, types: &[usize]| {
+        spec.is_some_and(|(t, flags)| types.contains(&t) && flags & PARAM_WRITABLE != 0 && flags & PARAM_CONSTRUCT_ONLY == 0)
+    };
+    admitted && settable(index, &[G_TYPE_INT, G_TYPE_UINT]) && settable(mixer, &[G_TYPE_BOOLEAN])
+}
+
+/// The decoder input the sink's `index` and `mixer` read back as. A sink put on [`CARRIER_ADEC`]
+/// arms only while it still holds that input off the mixer: LG moving it anywhere else is a
+/// refusal, never an arm on another input.
+fn read_back(given: bool, index: Option<i32>, mixer: Option<bool>) -> Granted {
+    if !given {
+        Granted::from_sink(index, mixer)
+    } else if index == Some(i32::from(CARRIER_ADEC)) && mixer == Some(false) {
+        Granted::Decoder(CARRIER_ADEC)
+    } else {
+        Granted::Refused("LG's audio sink did not keep the decoder input it was given")
+    }
+}
+
+/// Puts the sink on [`CARRIER_ADEC`] off the mixer as libpf adds it, as the proven run's
+/// `audiosink index=1` was, when [`gives_input`] allows. Whether it did.
+unsafe fn give_input(sink: *mut c_void) -> bool {
+    let spec = |name: &CStr| {
+        // G_OBJECT_GET_CLASS: an instance's first word is its class.
+        let p = g_object_class_find_property(*sink.cast::<*mut c_void>(), name.as_ptr()).cast::<ParamSpec>();
+        (!p.is_null()).then(|| ((*p).value_type, (*p).flags))
+    };
+    let admitted = super::watch::topic().is_some_and(|t| t.admits(std::process::id()));
+    if !gives_input(admitted, spec(c"index"), spec(c"mixer")) {
+        crate::player::log(&format!("truehd: LG's audio sink keeps LG's input (the helper admits this process: {admitted})"));
+        return false;
+    }
+    set_int(sink, c"index", c_int::from(CARRIER_ADEC));
+    set_boolean(sink, c"mixer", false);
+    let (index, mixer) = (read_int(sink, c"index"), read_boolean(sink, c"mixer"));
+    crate::player::log(&format!(
+        "truehd: LG's audio sink put on ADEC{CARRIER_ADEC} off the mixer; it reads index {index:?}, mixer {mixer:?}"
+    ));
+    true
+}
+
 /// One sink's state. `sink` is the pad's element, which outlives its probe.
 struct Probe {
     sink: *mut c_void,
+    /// The sink was put on [`CARRIER_ADEC`].
+    given: bool,
     /// The next buffer is the first since the carrier's caps.
     first: AtomicBool,
     /// The first buffer has passed: the start event announced the bitstream.
@@ -357,7 +427,7 @@ impl Probe {
         }
         let index = read_int(self.sink, c"index");
         let mixer = read_boolean(self.sink, c"mixer");
-        let granted = Granted::from_sink(index, mixer);
+        let granted = read_back(self.given, index, mixer);
         if granted != Granted::Unknown {
             crate::player::log(&format!("truehd: LG's audio sink reports index {index:?}, mixer {mixer:?}"));
         }
@@ -412,12 +482,24 @@ unsafe fn rewrite_caps(info: &mut ProbeInfo, text: &str) {
     }
 }
 
-unsafe fn set_multi_ch(sink: *mut c_void, on: bool) {
+unsafe fn set_property(sink: *mut c_void, name: &CStr, kind: usize, set: impl FnOnce(*mut GValue)) {
     let mut v = GValue { g_type: 0, _data: [0; 2] };
-    g_value_init(&mut v, G_TYPE_BOOLEAN);
-    g_value_set_boolean(&mut v, c_int::from(on));
-    g_object_set_property(sink, c"pcm-multi-ch".as_ptr(), &v);
+    g_value_init(&mut v, kind);
+    set(&mut v);
+    g_object_set_property(sink, name.as_ptr(), &v);
     g_value_unset(&mut v);
+}
+
+unsafe fn set_int(sink: *mut c_void, name: &CStr, value: c_int) {
+    set_property(sink, name, G_TYPE_INT, |v| g_value_set_int(v, value));
+}
+
+unsafe fn set_boolean(sink: *mut c_void, name: &CStr, on: bool) {
+    set_property(sink, name, G_TYPE_BOOLEAN, |v| g_value_set_boolean(v, c_int::from(on)));
+}
+
+unsafe fn set_multi_ch(sink: *mut c_void, on: bool) {
+    set_boolean(sink, c"pcm-multi-ch", on);
     crate::player::log(if on { "truehd: pcm-multi-ch on" } else { "truehd: pcm-multi-ch off" });
 }
 
@@ -432,6 +514,8 @@ mod tests {
         assert_eq!(mini, if cfg!(target_pointer_width = "64") { 64 } else { 36 });
         assert_eq!(std::mem::offset_of!(Event, kind), mini);
         assert_eq!(std::mem::offset_of!(ProbeInfo, data), 2 * std::mem::size_of::<usize>());
+        assert_eq!(std::mem::offset_of!(ParamSpec, flags), 2 * std::mem::size_of::<usize>());
+        assert_eq!(std::mem::offset_of!(ParamSpec, value_type), 3 * std::mem::size_of::<usize>());
     }
 
     #[test]
@@ -451,6 +535,28 @@ mod tests {
         assert!(clears_es(true, ES_FLAG | 1));
         assert!(!clears_es(true, 1));
         assert!(!clears_es(false, ES_FLAG), "a start that leaves the property alone leaves the flags alone");
+    }
+
+    #[test]
+    fn a_carrier_sink_goes_on_adec1_only_while_the_helper_admits_and_both_properties_take_it() {
+        let index = Some((G_TYPE_INT, 1 | PARAM_WRITABLE));
+        let mixer = Some((G_TYPE_BOOLEAN, 1 | PARAM_WRITABLE));
+        assert!(gives_input(true, index, mixer));
+        assert!(gives_input(true, Some((G_TYPE_UINT, PARAM_WRITABLE)), mixer));
+        assert!(!gives_input(false, index, mixer), "a connected decoder: an HDMI input or Live TV may be in front");
+        assert!(!gives_input(true, index, None), "no mixer property");
+        assert!(!gives_input(true, index, Some((G_TYPE_BOOLEAN, 1))), "a read-only mixer property");
+        assert!(!gives_input(true, Some((G_TYPE_INT, PARAM_WRITABLE | PARAM_CONSTRUCT_ONLY)), mixer));
+        assert!(!gives_input(true, Some((G_TYPE_BOOLEAN, PARAM_WRITABLE)), mixer), "an index that is not a number");
+    }
+
+    #[test]
+    fn a_sink_put_on_adec1_arms_only_while_it_reads_that_back() {
+        assert_eq!(read_back(true, Some(1), Some(false)), Granted::Decoder(CARRIER_ADEC));
+        assert!(matches!(read_back(true, Some(4), Some(true)), Granted::Refused(_)), "libpf put it back on its mixer channel");
+        assert!(matches!(read_back(true, Some(4), Some(false)), Granted::Refused(_)), "never an arm on another input");
+        assert!(matches!(read_back(true, Some(1), Some(true)), Granted::Refused(_)));
+        assert_eq!(read_back(false, Some(4), Some(true)), Granted::from_sink(Some(4), Some(true)), "a sink left alone reads as before");
     }
 
     /// libpf maps GStreamer at exec and starts it inside its first Load. The hook waits for that,
