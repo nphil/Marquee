@@ -1,9 +1,11 @@
 //! Runs confirmed media deletions off the frame thread and reports their outcome.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use plx_data::viewstate::{Scope, ViewAt};
 use plx_data::pms::PmsMovie;
-use plx_plex::plex::delete_media::{self, DeleteError, DeleteOutcome, EpisodeParent, Listed, MediaKind, WatchlistOutcome};
+use plx_plex::plex::delete_media::{self, Cleanup, DeleteError, DeleteOutcome, EpisodeParent, Listed, MediaKind, Retried, Step, WatchlistOutcome};
+use plx_plex::plex::session::ArrKind;
 use plx_plex::plex::ServerId;
 
 /// Does an item menu on this server offer Delete? Also starts the background re-read of the
@@ -19,7 +21,15 @@ struct Pending {
     sid: ServerId,
     rk: String,
     kind: MediaKind,
-    answer: Receiver<Result<DeleteOutcome, DeleteError>>,
+    /// The lists were already told the item is gone.
+    applied: bool,
+    answer: Receiver<Update>,
+}
+
+/// What the worker reports: first that the item is gone, later how the cleanup after it went.
+enum Update {
+    Gone { parent: Option<EpisodeParent>, watched: bool },
+    Done(Result<DeleteOutcome, DeleteError>),
 }
 
 #[derive(Default)]
@@ -57,27 +67,63 @@ pub(super) struct Completion {
     pub deleted: Option<Deleted>,
 }
 
-fn notice(text: &'static str) {
+fn notice(text: impl Into<String>) {
+    let text = text.into();
     plx_base::task::spawn_small("media deletion notice", move || {
-        let _ = plx_platform::tv::toast::toast(text);
+        let _ = plx_platform::tv::toast::toast(&text);
     });
+}
+
+/// The app that holds a title of this kind: Radarr keeps movies, Sonarr shows.
+fn arr_name(kind: MediaKind) -> &'static str {
+    if kind == MediaKind::Movie { ArrKind::Radarr.name() } else { ArrKind::Sonarr.name() }
+}
+
+/// Which cleanup steps went wrong, in plain words: a step that failed (retryable) or was refused.
+fn problems(watchlist: WatchlistOutcome, cleanup: Cleanup, kind: MediaKind) -> Option<String> {
+    use plx_platform::i18n::msg;
+    let arr = arr_name(kind);
+    let failed = [(watchlist == WatchlistOutcome::Failed, "Watchlist"), (cleanup.arr == Step::Failed, arr), (cleanup.seerr == Step::Failed, "Seerr")];
+    let failed: Vec<_> = failed.iter().filter(|(failed, _)| *failed).collect();
+    match failed.as_slice() {
+        [] => {}
+        [(_, "Watchlist")] => return Some(msg::media_delete_watchlist_failed().to_owned()),
+        [(_, name)] => return Some(msg::media_delete_step_failed_named(name)),
+        _ => return Some(msg::media_delete_step_failed_many().to_owned()),
+    }
+    if cleanup.arr == Step::Refused {
+        return Some(msg::media_delete_step_refused(arr));
+    }
+    (cleanup.seerr == Step::Refused).then(|| msg::media_delete_step_refused("Seerr"))
 }
 
 /// What the person is told: never a status code, only what they can act on. A deletion that
 /// left the Watchlist alone says nothing about it.
-fn words(result: &Result<DeleteOutcome, DeleteError>) -> &'static str {
+fn words(result: &Result<DeleteOutcome, DeleteError>, kind: MediaKind) -> String {
     use plx_platform::i18n::msg;
     match result {
-        Ok(outcome) => match outcome.watchlist {
-            WatchlistOutcome::Failed => msg::media_delete_watchlist_failed(),
-            WatchlistOutcome::Unknown => msg::media_delete_show_unknown(),
-            _ if outcome.already_gone => msg::media_delete_already(),
-            _ => msg::media_delete_done(),
-        },
-        Err(DeleteError::NotAllowed) => msg::media_delete_not_allowed(),
-        Err(DeleteError::ServerProblem) => msg::media_delete_server_problem(),
-        Err(DeleteError::InvalidItem) => msg::media_delete_invalid(),
+        Ok(outcome) => {
+            if let Some(problem) = problems(outcome.watchlist, outcome.cleanup, kind) {
+                return problem;
+            }
+            let arr = arr_name(kind);
+            match (outcome.cleanup.arr, outcome.watchlist) {
+                (Step::NotConnected, _) => msg::media_delete_arr_not_connected(arr),
+                (Step::Unmatched, _) => msg::media_delete_arr_unmatched(arr),
+                (_, WatchlistOutcome::Unknown) => msg::media_delete_show_unknown().to_owned(),
+                _ if outcome.already_gone => msg::media_delete_already().to_owned(),
+                _ => msg::media_delete_done().to_owned(),
+            }
+        }
+        Err(DeleteError::NotAllowed) => msg::media_delete_not_allowed().to_owned(),
+        Err(DeleteError::ServerProblem) => msg::media_delete_server_problem().to_owned(),
+        Err(DeleteError::InvalidItem) => msg::media_delete_invalid().to_owned(),
     }
+}
+
+fn retry_words(retried: &Retried) -> String {
+    problems(retried.watchlist, retried.cleanup, retried.kind)
+        .unwrap_or_else(|| plx_platform::i18n::msg::media_delete_retry_done().to_owned())
 }
 
 /// The Watchlist identity of the item the menu acted on, for a deletion whose item the server no
@@ -114,12 +160,16 @@ impl Manager {
         let (tx, answer) = mpsc::channel();
         let started = plx_base::task::spawn_small("delete media", move || {
             let account = auth.as_ref().map(|auth| plx_plex::plex::account::AccountClient::new(&auth.client_id, Some(&auth.credential)));
-            let outcome = delete_media::delete(client, client_key, account.as_ref(), &key, kind, listed.as_ref());
-            let _ = tx.send(outcome);
+            let gone = tx.clone();
+            let outcome = delete_media::delete(client, client_key, account.as_ref(), &key, kind, listed.as_ref(), &mut |parent, watched| {
+                let _ = gone.send(Update::Gone { parent: parent.cloned(), watched });
+                plx_machine::idle::invalidate();
+            });
+            let _ = tx.send(Update::Done(outcome));
             plx_machine::idle::invalidate();
         });
         if started {
-            self.pending = Some(Pending { sid, rk, kind, answer });
+            self.pending = Some(Pending { sid, rk, kind, applied: false, answer });
             // The server removes the files before it answers, which on a spinning array takes a while.
             notice(msg::media_delete_working());
         } else {
@@ -127,19 +177,26 @@ impl Manager {
         }
     }
 
-    /// A confirmed deletion carries its identity so every list can drop it at once. A refusal
-    /// changed nothing and asks for nothing; any other failure only requests a refresh. Trying
-    /// again is always allowed: a deletion that did happen reads as already deleted.
+    /// The lists follow a deletion the moment the server has it gone, before any cleanup runs, so a
+    /// slow or failing Radarr or Seerr never keeps the title on screen. A refusal changed nothing and
+    /// asks for nothing; any other failure only requests a refresh. Trying again is always allowed: a
+    /// deletion that did happen reads as already deleted.
     pub(super) fn poll(&mut self) -> Option<Completion> {
-        let pending = self.pending.as_ref()?;
+        let pending = self.pending.as_mut()?;
         let result = match pending.answer.try_recv() {
-            Ok(result) => result,
+            Ok(Update::Gone { parent, watched }) => {
+                pending.applied = true;
+                let deleted = Deleted { rk: pending.rk.clone(), kind: pending.kind, parent, watched };
+                return Some(Completion { sid: pending.sid, deleted: Some(deleted) });
+            }
+            Ok(Update::Done(result)) => result,
             Err(TryRecvError::Empty) => return None,
             Err(TryRecvError::Disconnected) => Err(DeleteError::ServerProblem),
         };
-        let Pending { sid, rk, kind, .. } = self.pending.take()?;
-        notice(words(&result));
+        let Pending { sid, rk, kind, applied, .. } = self.pending.take()?;
+        notice(words(&result, kind));
         match result {
+            Ok(_) if applied => None,
             Ok(outcome) => Some(Completion {
                 sid,
                 deleted: Some(Deleted { rk, kind, parent: outcome.parent, watched: outcome.watched }),
@@ -150,21 +207,47 @@ impl Manager {
     }
 }
 
+/// Run again only what failed after the last deletion (Settings > Finish clean-up) and say how it
+/// went. The Plex delete is never repeated. One at a time.
+pub(super) fn finish_cleanup() {
+    use plx_platform::i18n::msg;
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::AcqRel) {
+        notice(msg::media_delete_busy());
+        return;
+    }
+    let auth = super::bridge::Bridge::watchlist_input().auth().cloned();
+    let started = plx_base::task::spawn_small("finish media clean-up", move || {
+        let account = auth.as_ref().map(|auth| plx_plex::plex::account::AccountClient::new(&auth.client_id, Some(&auth.credential)));
+        let said = match delete_media::retry_pending(account.as_ref()) {
+            Some(retried) => retry_words(&retried),
+            None => msg::media_delete_retry_nothing().to_owned(),
+        };
+        RUNNING.store(false, Ordering::Release);
+        notice(said);
+        plx_machine::idle::invalidate();
+    });
+    if !started {
+        RUNNING.store(false, Ordering::Release);
+        notice(msg::media_delete_not_started());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn complete(result: Result<DeleteOutcome, DeleteError>) -> Option<Completion> {
         let (tx, answer) = mpsc::channel();
-        tx.send(result).unwrap();
+        tx.send(Update::Done(result)).unwrap();
         let mut manager = Manager { pending: Some(Pending {
-            sid: ServerId::from_raw(1), rk: "42".into(), kind: MediaKind::Show, answer,
+            sid: ServerId::from_raw(1), rk: "42".into(), kind: MediaKind::Show, applied: false, answer,
         }) };
         manager.poll()
     }
 
     fn outcome(watchlist: WatchlistOutcome) -> DeleteOutcome {
-        DeleteOutcome { watchlist, parent: None, watched: false, already_gone: false }
+        DeleteOutcome { watchlist, parent: None, watched: false, already_gone: false, cleanup: Cleanup::default() }
     }
 
     #[test]
@@ -178,6 +261,7 @@ mod tests {
             parent: Some(EpisodeParent { show_rk: "7".into(), season_index: 2 }),
             watched: true,
             already_gone: false,
+            cleanup: Cleanup::PARTIAL,
         };
         let done = complete(Ok(episode.clone())).unwrap().deleted.unwrap();
         assert_eq!((done.parent, done.watched), (episode.parent, true));
@@ -189,10 +273,10 @@ mod tests {
 
     #[test]
     fn a_worker_that_died_without_answering_is_a_server_problem() {
-        let (tx, answer) = mpsc::channel::<Result<DeleteOutcome, DeleteError>>();
+        let (tx, answer) = mpsc::channel::<Update>();
         drop(tx);
         let mut manager = Manager { pending: Some(Pending {
-            sid: ServerId::from_raw(1), rk: "42".into(), kind: MediaKind::Movie, answer,
+            sid: ServerId::from_raw(1), rk: "42".into(), kind: MediaKind::Movie, applied: false, answer,
         }) };
         assert!(manager.poll().is_some_and(|c| c.deleted.is_none()));
         assert!(manager.pending.is_none(), "and the next deletion may start");
@@ -201,7 +285,7 @@ mod tests {
     #[test]
     fn each_failure_is_told_in_plain_words_never_as_a_status_code() {
         let _en = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
-        let told = |error| words(&Err(error));
+        let told = |error| words(&Err(error), MediaKind::Movie);
         assert!(told(DeleteError::NotAllowed).contains("owner"), "who can fix it");
         assert!(told(DeleteError::ServerProblem).contains("Try again"));
         assert_eq!(told(DeleteError::InvalidItem), "This item can't be deleted.");
@@ -213,7 +297,7 @@ mod tests {
     #[test]
     fn a_deletion_says_what_happened_to_the_item_and_to_the_watchlist() {
         let _en = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
-        let said = |watchlist, already_gone| words(&Ok(DeleteOutcome { already_gone, ..outcome(watchlist) }));
+        let said = |watchlist, already_gone| words(&Ok(DeleteOutcome { already_gone, cleanup: Cleanup { arr: Step::Removed, seerr: Step::NotConnected }, ..outcome(watchlist) }), MediaKind::Movie);
         for watchlist in [WatchlistOutcome::Removed, WatchlistOutcome::NotListed, WatchlistOutcome::Preserved] {
             assert_eq!(said(watchlist, false), "Deleted.", "{watchlist:?}");
             assert_eq!(said(watchlist, true), "Already deleted.", "{watchlist:?}: the Watchlist is cleaned without a word");
@@ -236,12 +320,18 @@ mod tests {
         const LINES: usize = 3;
         for language in plx_platform::i18n::SHIPPED {
             let _guard = plx_platform::i18n::language_on_this_thread_for_test(language);
-            for text in [
+            let mut texts: Vec<String> = [
                 msg::media_delete_done(), msg::media_delete_already(), msg::media_delete_watchlist_failed(),
                 msg::media_delete_show_unknown(), msg::media_delete_not_allowed(), msg::media_delete_server_problem(),
                 msg::media_delete_invalid(), msg::media_delete_busy(), msg::media_delete_unreachable(),
-                msg::media_delete_working(), msg::media_delete_not_started(),
-            ] {
+                msg::media_delete_working(), msg::media_delete_not_started(), msg::media_delete_step_failed_many(),
+                msg::media_delete_retry_done(), msg::media_delete_retry_nothing(),
+            ].map(str::to_owned).into();
+            texts.extend([
+                msg::media_delete_step_failed_named("Sonarr"), msg::media_delete_step_refused("Sonarr"),
+                msg::media_delete_arr_not_connected("Sonarr"), msg::media_delete_arr_unmatched("Sonarr"),
+            ]);
+            for text in texts.iter().map(String::as_str) {
                 let tag = language.tag();
                 assert!(!text.trim().is_empty(), "{tag}: empty");
                 let length = text.chars().count();
@@ -289,5 +379,43 @@ mod tests {
         assert_eq!(at(MediaKind::Movie, None), Scope::Leaf);
         assert_eq!(at(MediaKind::Episode, parent), Scope::Episode { show_rk: "7".into(), index: 2 });
         assert_eq!(at(MediaKind::Episode, None), Scope::Leaf, "no season known: the refresh settles the counts");
+    }
+
+    #[test]
+    fn the_lists_follow_the_deletion_before_the_cleanup_is_done() {
+        let (tx, answer) = mpsc::channel();
+        let mut manager = Manager { pending: Some(Pending {
+            sid: ServerId::from_raw(1), rk: "42".into(), kind: MediaKind::Movie, applied: false, answer,
+        }) };
+        assert!(manager.poll().is_none(), "nothing yet");
+        tx.send(Update::Gone { parent: None, watched: true }).unwrap();
+        let early = manager.poll().expect("the item is gone: the lists follow now");
+        assert!(early.deleted.is_some_and(|d| d.watched));
+        assert!(manager.pending.is_some(), "the cleanup is still running");
+        let failed = Cleanup { arr: Step::Failed, seerr: Step::Failed };
+        tx.send(Update::Done(Ok(DeleteOutcome { cleanup: failed, ..outcome(WatchlistOutcome::Removed) }))).unwrap();
+        assert!(manager.poll().is_none(), "a failing cleanup never puts the title back or asks the lists again");
+        assert!(manager.pending.is_none());
+    }
+
+    #[test]
+    fn each_cleanup_step_is_told_alone_in_plain_words() {
+        use plx_platform::i18n::msg;
+        let _en = plx_platform::i18n::language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
+        let said = |watchlist, arr, seerr, kind| words(&Ok(DeleteOutcome { cleanup: Cleanup { arr, seerr }, ..outcome(watchlist) }), kind);
+        let (r, s) = (WatchlistOutcome::Removed, Step::Removed);
+        assert_eq!(said(r, s, s, MediaKind::Movie), "Deleted.");
+        assert!(said(r, Step::Failed, s, MediaKind::Movie).contains("Radarr"), "a movie's app is Radarr");
+        assert!(said(r, s, Step::Failed, MediaKind::Show).contains("Seerr"));
+        assert!(said(r, Step::Failed, s, MediaKind::Show).contains("Sonarr"), "a show's app is Sonarr");
+        assert_eq!(said(r, Step::Failed, Step::Failed, MediaKind::Show), msg::media_delete_step_failed_many());
+        assert_eq!(said(WatchlistOutcome::Failed, Step::Failed, s, MediaKind::Show), msg::media_delete_step_failed_many());
+        assert!(said(r, Step::Refused, s, MediaKind::Movie).contains("Radarr"));
+        assert!(said(r, Step::NotConnected, Step::NotConnected, MediaKind::Movie).contains("Radarr isn't set up"), "says Radarr was not asked");
+        assert!(said(r, Step::Unmatched, s, MediaKind::Show).contains("Sonarr"));
+        assert_eq!(said(r, Step::NotApplicable, Step::NotApplicable, MediaKind::Show), "Deleted.", "partial deletes leave the apps alone, silently");
+        let retried = |watchlist, arr, seerr| retry_words(&Retried { kind: MediaKind::Movie, watchlist, cleanup: Cleanup { arr, seerr } });
+        assert_eq!(retried(r, s, s), "Clean-up finished.");
+        assert!(retried(r, Step::Failed, s).contains("Radarr"), "a retry that fails again says so");
     }
 }

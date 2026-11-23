@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Törölt filmek takarítása.",
+  "arr.sonarr_root_detail": "Törölt sorozatok takarítása.",
+  "arr.radarr_copy": "A Radarr kezeli a filmletöltéseit. Adja meg a címét és az API-kulcsát: az itt törölt film a Radarrból is törlődik, és nem tér vissza.",
+  "arr.sonarr_copy": "A Sonarr kezeli a sorozatletöltéseit. Adja meg a címét és az API-kulcsát: az itt törölt sorozat a Sonarrból is törlődik, és nem tér vissza.",
+  "arr.status_unset": "Nincs beállítva. Adja meg a címet és az API-kulcsot. A kulcs ezen a tévén marad, védetten, mint a Plex-bejelentkezés.",
+  "arr.status_set": "Beállítva. Törléskor a cím és fájljai ott is törlődnek, a listák pedig nem adják vissza. Ön újra felveheti."
+}

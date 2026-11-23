@@ -9,5 +9,14 @@
   "media.delete.busy": "Удаление уже выполняется.",
   "media.delete.unreachable": "Не удаётся связаться с этим сервером Plex. Ничего не удалено.",
   "media.delete.working": "Удаление…",
-  "media.delete.not_started": "Не удалось начать удаление. Ничего не удалено."
+  "media.delete.not_started": "Не удалось начать удаление. Ничего не удалено.",
+  "media.delete.step_failed_named": "Удалено, но очистить {name} не удалось. Завершите в Настройках.",
+  "media.delete.step_failed_many": "Удалено, но очистка не завершена. Завершите её в Настройках.",
+  "media.delete.step_refused": "Удалено, но {name} отклонил запрос. Проверьте ключ в Настройках.",
+  "media.delete.arr_not_connected": "Удалено. {name} не настроен в Настройках, поэтому название может вернуться.",
+  "media.delete.arr_unmatched": "Удалено, но у Plex нет ID этого названия, поэтому {name} не опрашивался.",
+  "media.delete.retry_done": "Очистка завершена.",
+  "media.delete.retry_nothing": "Нечего завершать.",
+  "media.delete.finish_title": "Завершить очистку",
+  "media.delete.finish_detail": "Повторяет то, что не удалось после последнего удаления."
 }

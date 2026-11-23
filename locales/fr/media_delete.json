@@ -9,5 +9,14 @@
   "media.delete.busy": "Une suppression est déjà en cours.",
   "media.delete.unreachable": "Impossible de joindre ce serveur Plex. Rien n’a été supprimé.",
   "media.delete.working": "Suppression…",
-  "media.delete.not_started": "Impossible de lancer la suppression. Rien n’a été supprimé."
+  "media.delete.not_started": "Impossible de lancer la suppression. Rien n’a été supprimé.",
+  "media.delete.step_failed_named": "Supprimé, mais {name} n’a pas pu être nettoyé. Terminez dans les Paramètres.",
+  "media.delete.step_failed_many": "Supprimé, mais le nettoyage n’est pas terminé. Terminez-le dans les Paramètres.",
+  "media.delete.step_refused": "Supprimé, mais {name} a refusé la demande. Vérifiez sa clé dans les Paramètres.",
+  "media.delete.arr_not_connected": "Supprimé. {name} n’est pas configuré dans les Paramètres : le titre peut revenir.",
+  "media.delete.arr_unmatched": "Supprimé, mais Plex n’a pas d’ID pour ce titre : {name} n’a pas été sollicité.",
+  "media.delete.retry_done": "Nettoyage terminé.",
+  "media.delete.retry_nothing": "Rien n’est en attente.",
+  "media.delete.finish_title": "Terminer le nettoyage",
+  "media.delete.finish_detail": "Relance ce qui n’a pas abouti après la dernière suppression."
 }

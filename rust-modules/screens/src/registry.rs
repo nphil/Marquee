@@ -218,6 +218,15 @@ pub enum PreferenceCmd {
     /// Ask the stored Bazarr who it is: the app reads the stored address and key itself (a screen
     /// never holds them) and answers with Bazarr's status or why it could not.
     BazarrTest { reply: std::sync::mpsc::Sender<Result<plx_plex::plex::bazarr::Status, plx_plex::plex::bazarr::BazarrError>> },
+    /// Settings > Integrations > Radarr or Sonarr: one edit of the stored address or key, written
+    /// through the session's ticketed update; `reply` learns whether it is durable. The key rides in
+    /// the command and is never printed.
+    ArrLink { kind: plx_plex::plex::session::ArrKind, change: plx_plex::plex::session::ArrChange, reply: std::sync::mpsc::Sender<bool> },
+    /// Read the stored link as the page may know it: the address and whether a key is set.
+    ArrRead { kind: plx_plex::plex::session::ArrKind, reply: std::sync::mpsc::Sender<(String, bool)> },
+    /// Settings > Integrations > Finish clean-up: run again only what failed after the last deletion
+    /// (never the Plex delete itself) and toast how it went.
+    FinishCleanup,
     /// Save a validated SpeechDock origin through the session write door.
     SpeechDockOrigin { origin: String, reply: std::sync::mpsc::Sender<bool> },
     /// Settings > Integrations > Requests: one edit of the stored Seerr link, written through the

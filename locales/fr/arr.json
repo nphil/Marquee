@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Nettoyer les films supprimés.",
+  "arr.sonarr_root_detail": "Nettoyer les séries supprimées.",
+  "arr.radarr_copy": "Radarr gère vos téléchargements de films. Ajoutez son adresse et sa clé d’API : un film supprimé ici l’est aussi dans Radarr et ne revient pas.",
+  "arr.sonarr_copy": "Sonarr gère vos téléchargements de séries. Ajoutez son adresse et sa clé d’API : une série supprimée ici l’est aussi dans Sonarr et ne revient pas.",
+  "arr.status_unset": "Non configuré. Ajoutez l’adresse et la clé d’API. La clé reste sur ce téléviseur, protégée comme la connexion à Plex.",
+  "arr.status_set": "Configuré. Supprimer ici supprime aussi le titre et ses fichiers là-bas, et les listes ne le rajoutent pas. Vous pouvez le rajouter vous-même."
+}

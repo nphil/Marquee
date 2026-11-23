@@ -519,6 +519,8 @@ fn mount_page(
         SettingsPage::TopBar => Box::new(top_bar::TopBarPage::new(entry, cx.views)),
         SettingsPage::Subtitles => Box::new(subtitles::SubtitlesPage::new(entry)),
         SettingsPage::Bazarr => Box::new(bazarr::BazarrPage::new(entry)),
+        SettingsPage::Radarr => Box::new(arr::ArrPage::new(plx_plex::plex::session::ArrKind::Radarr, entry)),
+        SettingsPage::Sonarr => Box::new(arr::ArrPage::new(plx_plex::plex::session::ArrKind::Sonarr, entry)),
         SettingsPage::Seerr => Box::new(seerr::SeerrPage::new(entry)),
         SettingsPage::SpeechDock => Box::new(speechdock::SpeechDockPage::new(entry)),
         SettingsPage::Contribute => Box::new(super::legal::DocumentPage::contribute(entry)),
@@ -1037,6 +1039,10 @@ enum RootId {
     Playback,
     Subtitles,
     Bazarr,
+    Radarr,
+    Sonarr,
+    /// Shown only while a deletion has clean-up that failed and can be tried again.
+    FinishCleanup,
     SpeechDock,
     Seerr,
     AudioSubtitles,
@@ -1078,6 +1084,9 @@ impl FormId for RootId {
             RootId::Bazarr => 13,
             RootId::SpeechDock => 14,
             RootId::Seerr => 22,
+            RootId::Radarr => 24,
+            RootId::Sonarr => 25,
+            RootId::FinishCleanup => 26,
             RootId::PlaybackTrace => 15,
             RootId::TraceExport => 16,
             RootId::TraceDelete => 17,
@@ -1103,6 +1112,8 @@ enum Action {
     PlaybackTrace,
     TraceExport,
     TraceDelete,
+    /// Settings > Integrations > Finish clean-up: run again what failed after the last deletion.
+    FinishCleanup,
     /// A server's "connect without encryption" switch.
     Plaintext(ServerMachineId),
 }
@@ -1150,6 +1161,8 @@ struct RootState {
     subtitle_preset: plx_plex::plex::session::LookPreset,
     bazarr_host: String,
     seerr_host: String,
+    /// Radarr's and Sonarr's host and the title whose clean-up waits, as their rows say them.
+    arr_rows: [String; 3],
     /// Each unencrypted-connection switch, in row order. Written to the canon only when there is
     /// one, so every other root's digest is unchanged.
     plaintext: Vec<bool>,
@@ -1173,6 +1186,11 @@ impl LogicalState for RootState {
         }
         if !self.seerr_host.is_empty() {
             w.u8(0xd3).str(&self.seerr_host);
+        }
+        for (tag, row) in [0xd4u8, 0xd5, 0xd6].into_iter().zip(&self.arr_rows) {
+            if !row.is_empty() {
+                w.u8(tag).str(row);
+            }
         }
         if self.trace != plx_platform::playback_trace::Status::Off { w.u8(0xd1).u8(self.trace as u8); }
         if !self.plaintext.is_empty() {
@@ -1236,9 +1254,19 @@ struct RootInputs {
     subtitle_preset: plx_plex::plex::session::LookPreset,
     bazarr: plx_plex::plex::session::BazarrLink,
     seerr: plx_plex::plex::session::SeerrLink,
+    arr: ArrRoot,
     /// Unencrypted-connection switches, in row order — empty when signed out or when nobody has
     /// an answered/offered plaintext question.
     plaintext: Vec<PlaintextRowInput>,
+}
+
+/// What the Integrations rows say of Radarr and Sonarr, and of a deletion's unfinished clean-up.
+#[derive(Default)]
+struct ArrRoot {
+    radarr: plx_plex::plex::session::ArrLink,
+    sonarr: plx_plex::plex::session::ArrLink,
+    /// The title of the deletion whose failed steps wait to be tried again, if one does.
+    cleanup: Option<String>,
 }
 
 /// The Settings root as a [`Form`], built from plain arguments rather than `&self` — see
@@ -1405,12 +1433,38 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
                 .chevron(true),
         )
         .item(
+            RootId::Radarr,
+            RowKind::Nav(SettingsPage::Radarr),
+            Action::Door,
+            Row::new(plx_plex::plex::session::ArrKind::Radarr.name())
+                .detail(plx_platform::i18n::msg::arr_radarr_root_detail())
+                .value(arr::summary(&inputs.arr.radarr))
+                .chevron(true),
+        )
+        .item(
+            RootId::Sonarr,
+            RowKind::Nav(SettingsPage::Sonarr),
+            Action::Door,
+            Row::new(plx_plex::plex::session::ArrKind::Sonarr.name())
+                .detail(plx_platform::i18n::msg::arr_sonarr_root_detail())
+                .value(arr::summary(&inputs.arr.sonarr))
+                .chevron(true),
+        )
+        .item(
             RootId::SpeechDock,
             RowKind::Nav(SettingsPage::SpeechDock),
             Action::Door,
             Row::new(plx_platform::i18n::msg::speechdock_title())
                 .detail(plx_platform::i18n::msg::speechdock_root_detail())
                 .chevron(true),
+        )
+        .item_if(
+            inputs.arr.cleanup.is_some(),
+            RootId::FinishCleanup,
+            RowKind::Button,
+            Action::FinishCleanup,
+            Row::new(plx_platform::i18n::msg::media_delete_finish_title())
+                .detail(plx_platform::i18n::msg::media_delete_finish_detail()),
         );
     let has_plaintext = signed_in && !inputs.plaintext.is_empty();
     let mut plaintext = FormSection::new(plx_platform::i18n::msg::settings_plaintext_section()).visible(has_plaintext);
@@ -1508,6 +1562,7 @@ impl RootPage {
                 subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
                 bazarr_host: String::new(),
                 seerr_host: String::new(),
+                arr_rows: Default::default(),
                 plaintext: Vec::new(),
                 trace: plx_platform::playback_trace::Status::Off,
             },
@@ -1545,6 +1600,13 @@ impl RootPage {
         self.state.subtitle_preset = plx_media::route::subtitle_look().preset;
         let bazarr = sess.bazarr().clone();
         self.state.bazarr_host = bazarr.host().map(str::to_string).filter(|_| bazarr.is_complete()).unwrap_or_default();
+        let arr = ArrRoot {
+            radarr: sess.arr(plx_plex::plex::session::ArrKind::Radarr),
+            sonarr: sess.arr(plx_plex::plex::session::ArrKind::Sonarr),
+            cleanup: plx_plex::plex::delete_media::pending_title(),
+        };
+        let host = |link: &plx_plex::plex::session::ArrLink| link.host().map(str::to_string).filter(|_| link.is_complete()).unwrap_or_default();
+        self.state.arr_rows = [host(&arr.radarr), host(&arr.sonarr), arr.cleanup.clone().unwrap_or_default()];
         let seerr = sess.seerr().clone();
         self.state.seerr_host = seerr.host().map(str::to_string).filter(|_| seerr.enabled).unwrap_or_default();
         let plaintext = if signed_in { self.plaintext_inputs() } else { Vec::new() };
@@ -1553,7 +1615,7 @@ impl RootPage {
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
             auto_sign_in, trailer_autoplay, spoiler_protection, resolution, resolution_offered, language: self.state.language,
             under_posters: self.state.under_posters, plaintext,
-            subtitle_preset: self.state.subtitle_preset, bazarr, seerr,
+            subtitle_preset: self.state.subtitle_preset, bazarr, seerr, arr,
         });
         let keep = self.form.selected_id().cloned();
         self.form.table.compact = false;
@@ -1648,6 +1710,7 @@ impl RootPage {
                 } else { plx_platform::playback_trace::Command::Start }))),
             Action::TraceExport => fx.push(Fx::App(AppFx::PlaybackTrace(plx_platform::playback_trace::Command::Export))),
             Action::TraceDelete => fx.push(Fx::App(AppFx::PlaybackTrace(plx_platform::playback_trace::Command::Delete))),
+            Action::FinishCleanup => fx.push(Fx::App(AppFx::Preferences(super::registry::PreferenceCmd::FinishCleanup))),
             Action::AutoSignIn => {
                 let on = !self.state.auto_sign_in;
                 if let Ok(ticket) = plx_plex::plex::session::queue_update_ticket(move |current|
@@ -1917,6 +1980,8 @@ mod top_bar;
 mod subtitles;
 #[path = "settings_bazarr.rs"]
 mod bazarr;
+#[path = "settings_arr.rs"]
+mod arr;
 #[path = "settings_seerr.rs"]
 mod seerr;
 #[path = "settings_speechdock.rs"]

@@ -1,0 +1,26 @@
+{
+  "arr.radarr_root_detail": {
+    "value": "Clean up deleted movies.",
+    "description": "Detail line of the Radarr row in Settings > Integrations: Radarr keeps movie downloads. A few words."
+  },
+  "arr.sonarr_root_detail": {
+    "value": "Clean up deleted shows.",
+    "description": "Detail line of the Sonarr row in Settings > Integrations: Sonarr keeps show downloads. A few words."
+  },
+  "arr.radarr_copy": {
+    "value": "Radarr keeps your movie downloads. Add its address and API key, and a movie you delete here is also removed from Radarr and kept from coming back.",
+    "description": "Intro on the Radarr page in Settings > Integrations. Radarr is a third-party app the viewer runs, used only to take a deleted movie out of it, with its files, so it does not come back. The product name stays Radarr."
+  },
+  "arr.sonarr_copy": {
+    "value": "Sonarr keeps your show downloads. Add its address and API key, and a show you delete here is also removed from Sonarr and kept from coming back.",
+    "description": "Intro on the Sonarr page in Settings > Integrations. Sonarr is a third-party app the viewer runs, used only to take a deleted show out of it, with its files, so it does not come back. The product name stays Sonarr."
+  },
+  "arr.status_unset": {
+    "value": "Not set up. Add the address and API key. The key stays on this TV, sealed like the Plex sign-in.",
+    "description": "Radarr or Sonarr page: status line while the address or API key is missing. The key stays on this TV, stored the same protected way as the Plex sign-in."
+  },
+  "arr.status_set": {
+    "value": "Set up. Deleting here also deletes the title and its files there and keeps lists from adding it back. You can still add it yourself.",
+    "description": "Radarr or Sonarr page: status line once address and key are set. Deleting a title in the app also deletes it and its files in that app and stops list syncs adding it back; the viewer can still add or request it again deliberately."
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Czyści usunięte filmy.",
+  "arr.sonarr_root_detail": "Czyści usunięte seriale.",
+  "arr.radarr_copy": "Radarr zarządza pobranymi filmami. Dodaj jego adres i klucz API: film usunięty tutaj zniknie też z Radarr i nie wróci.",
+  "arr.sonarr_copy": "Sonarr zarządza pobranymi serialami. Dodaj jego adres i klucz API: serial usunięty tutaj zniknie też z Sonarr i nie wróci.",
+  "arr.status_unset": "Nieskonfigurowane. Dodaj adres i klucz API. Klucz zostaje na tym telewizorze, chroniony jak logowanie do Plex.",
+  "arr.status_set": "Skonfigurowane. Usunięcie tutaj usuwa tytuł z plikami także tam, a listy nie dodadzą go z powrotem. Możesz dodać go sam."
+}

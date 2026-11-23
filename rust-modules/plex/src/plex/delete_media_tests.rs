@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use cleanup::{WATCHLIST_PAUSE_MS, WATCHLIST_TRIES};
 use std::collections::VecDeque;
 
 const ID: &str = "0123456789abcdef01234567";
@@ -19,12 +20,18 @@ struct Fake {
     current: bool,
     noted: Vec<bool>,
     paused: Vec<u64>,
+    connected: Connected,
+    arr_replies: VecDeque<Result<(), Fail>>,
+    seerr_replies: VecDeque<Result<Cleared, Fail>>,
+    /// Every Radarr, Sonarr and Seerr step asked, in order.
+    apps: Vec<String>,
 }
 impl Fake {
     fn new(reads: Vec<Read>) -> Self {
         Self {
             reads: reads.into(), delete_reply: Some(200), deleted: vec![], watch_reply: Some(true),
             watch_replies: VecDeque::new(), watch_ids: vec![], current: true, noted: vec![], paused: vec![],
+            connected: Connected::default(), arr_replies: VecDeque::new(), seerr_replies: VecDeque::new(), apps: vec![],
         }
     }
 }
@@ -39,12 +46,23 @@ impl Backend for Fake {
         self.deleted.push(path.to_owned());
         self.delete_reply
     }
+    fn note_deletion(&mut self, on: bool) { self.noted.push(on); }
+}
+impl Steps for Fake {
+    fn pause(&mut self, ms: u64) { self.paused.push(ms); }
     fn remove_watchlist(&mut self, hex: &str) -> Option<bool> {
         self.watch_ids.push(hex.to_owned());
         self.watch_replies.pop_front().unwrap_or(self.watch_reply)
     }
-    fn note_deletion(&mut self, on: bool) { self.noted.push(on); }
-    fn pause(&mut self, ms: u64) { self.paused.push(ms); }
+    fn connected(&self) -> Connected { self.connected }
+    fn remove_from_arr(&mut self, _: MediaKind, ids: &Ids) -> Result<(), Fail> {
+        self.apps.push(format!("arr {}", ids.title));
+        self.arr_replies.pop_front().unwrap_or(Ok(()))
+    }
+    fn clear_seerr(&mut self, _: MediaKind, tmdb: i64) -> Result<Cleared, Fail> {
+        self.apps.push(format!("seerr {tmdb}"));
+        self.seerr_replies.pop_front().unwrap_or(Ok(Cleared::Removed))
+    }
 }
 fn ok(value: Value) -> Reply { Some((200, Some(value))) }
 fn permission(value: Value) -> Read {
@@ -71,17 +89,27 @@ fn unreadable_leaves() -> Read { (LEAVES, None) }
 fn listed(guid: &str, show_rk: Option<&str>) -> Listed {
     Listed { guid: guid.to_owned(), show_rk: show_rk.map(str::to_owned) }
 }
-/// What a movie or show deletion reports: nothing about episodes.
+/// What a movie or show deletion reports: nothing about episodes, and nothing set up to clean.
 fn done(watchlist: WatchlistOutcome) -> DeleteOutcome {
-    DeleteOutcome { watchlist, parent: None, watched: false, already_gone: false }
+    DeleteOutcome { watchlist, parent: None, watched: false, already_gone: false, cleanup: Cleanup::default() }
 }
 /// What an item that was already gone reports.
 fn gone_done(watchlist: WatchlistOutcome) -> DeleteOutcome {
-    DeleteOutcome { already_gone: true, ..done(watchlist) }
+    let partial = matches!(watchlist, WatchlistOutcome::Preserved | WatchlistOutcome::Unknown);
+    DeleteOutcome { already_gone: true, cleanup: if partial { Cleanup::PARTIAL } else { Cleanup::default() }, ..done(watchlist) }
 }
 /// What `episode()`'s deletion reports.
 fn episode_done(watchlist: WatchlistOutcome) -> DeleteOutcome {
-    DeleteOutcome { watchlist, parent: Some(EpisodeParent { show_rk: "7".into(), season_index: 2 }), watched: true, already_gone: false }
+    let partial = matches!(watchlist, WatchlistOutcome::Preserved | WatchlistOutcome::Unknown);
+    DeleteOutcome {
+        watchlist, parent: Some(EpisodeParent { show_rk: "7".into(), season_index: 2 }), watched: true, already_gone: false,
+        cleanup: if partial { Cleanup::PARTIAL } else { Cleanup::default() },
+    }
+}
+
+/// Run a deletion with nothing earlier read and nobody listening for the moment it is gone.
+fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind, listed: Option<&Listed>) -> Result<DeleteOutcome, DeleteError> {
+    super::execute(backend, key, kind, listed, &mut Captured::default(), &mut |_, _| {})
 }
 
 #[test]
@@ -213,7 +241,8 @@ fn an_episode_already_gone_leaves_the_watchlist_only_when_its_show_is_gone_or_em
     for show_rk in [None, Some("7/children")] {
         let mut fake = Fake::new(vec![permission(json!(true)), item_status(Some(404))]);
         let screen = listed(&format!("plex://show/{ID}"), show_rk);
-        assert_eq!(execute(&mut fake, "42", MediaKind::Episode, Some(&screen)), Ok(gone_done(WatchlistOutcome::Skipped)), "{show_rk:?}");
+        assert_eq!(execute(&mut fake, "42", MediaKind::Episode, Some(&screen)),
+            Ok(DeleteOutcome { cleanup: Cleanup::PARTIAL, ..gone_done(WatchlistOutcome::Skipped) }), "{show_rk:?}");
         assert!(fake.watch_ids.is_empty());
     }
 }
@@ -319,7 +348,7 @@ fn missing_ownership_never_contacts_server() {
     use crate::plex::{Origin, ServerId};
     let client = Client::new(ServerId::UNSET, "machine", Origin::http("127.0.0.1", 32400), "token", "test-client");
     let key = ClientKey::of(&client);
-    assert_eq!(super::delete(&client, key, None, "42", MediaKind::Movie, None), Err(DeleteError::NotAllowed));
+    assert_eq!(super::delete(&client, key, None, "42", MediaKind::Movie, None, &mut |_, _| {}), Err(DeleteError::NotAllowed));
 }
 
 #[test]
@@ -337,4 +366,91 @@ fn legacy_agent_identity_reports_unresolved_without_wrong_watchlist_write() {
         assert!(fake.watch_ids.is_empty());
         assert!(fake.paused.is_empty(), "an identity that cannot be resolved is not retried");
     }
+}
+
+const MOVIE_GUIDS: &str = "/library/metadata/42?includeGuids=1";
+const SHOW_GUIDS: &str = "/library/metadata/7?includeGuids=1";
+
+/// The movie as Plex records it for the cleanup: external ids, title and year.
+fn the_movie_with_ids(path: &'static str, kind: &str) -> Read {
+    (path, ok(json!({"MediaContainer":{"Metadata":[{
+        "type": kind, "title": "The Matrix", "year": 1999,
+        "Guid": [{"id": "imdb://tt0133093"}, {"id": "tmdb://603"}, {"id": "tvdb://81189"}],
+    }]}})))
+}
+
+fn all_connected() -> Connected { Connected { radarr: true, sonarr: true, seerr: true } }
+
+#[test]
+fn a_connected_title_is_identified_before_the_delete_and_then_cleaned_from_every_app() {
+    let mut fake = Fake::new(vec![permission(json!(true)), the_movie(), the_movie_with_ids(MOVIE_GUIDS, "movie")]);
+    fake.connected = all_connected();
+    let mut order = Vec::new();
+    let mut read = Captured::default();
+    let result = super::execute(&mut fake, "42", MediaKind::Movie, None, &mut read, &mut |_, _| order.push("gone"));
+    let cleanup = Cleanup { arr: Step::Removed, seerr: Step::Removed };
+    assert_eq!(result, Ok(DeleteOutcome { cleanup, ..done(WatchlistOutcome::Removed) }));
+    assert_eq!(fake.deleted, ["/library/metadata/42"], "the Plex delete happens once");
+    assert_eq!(fake.apps, ["arr The Matrix", "seerr 603"]);
+    assert_eq!(order, ["gone"], "the lists hear about the deletion before any cleanup");
+    assert_eq!(read.ids, Ids { tmdb: Some(603), tvdb: Some(81189), title: "The Matrix".into(), year: 1999 });
+}
+
+#[test]
+fn an_identity_that_cannot_be_read_never_blocks_the_delete() {
+    let mut fake = Fake::new(vec![permission(json!(true)), the_movie(), (MOVIE_GUIDS, None), (MOVIE_GUIDS, Some((500, None)))]);
+    fake.connected = all_connected();
+    assert_eq!(execute(&mut fake, "42", MediaKind::Movie, None),
+        Ok(DeleteOutcome { cleanup: Cleanup { arr: Step::Unmatched, seerr: Step::Unmatched }, ..done(WatchlistOutcome::Removed) }));
+    assert_eq!(fake.paused, [1_000], "two reads, a second apart");
+    assert_eq!(fake.deleted.len(), 1);
+    assert!(fake.apps.is_empty(), "no id, no request");
+}
+
+#[test]
+fn only_the_apps_that_are_set_up_are_asked_and_the_rest_say_so() {
+    let mut fake = Fake::new(vec![permission(json!(true)), the_movie(), the_movie_with_ids(MOVIE_GUIDS, "movie")]);
+    fake.connected = Connected { sonarr: true, ..Connected::default() };
+    let outcome = execute(&mut fake, "42", MediaKind::Movie, None).unwrap();
+    assert_eq!(outcome.cleanup, Cleanup { arr: Step::NotConnected, seerr: Step::NotConnected }, "a movie never asks Sonarr");
+    assert!(fake.apps.is_empty());
+}
+
+#[test]
+fn an_episode_is_cleaned_as_its_show_and_only_when_none_of_the_show_is_left() {
+    let reads = |last: u32| vec![permission(json!(true)), episode_with(json!({"parentIndex": 2, "grandparentTitle": "Show"})),
+        show(), the_movie_with_ids(SHOW_GUIDS, "show"), leaves(last + 1), leaves(last)];
+    let mut fake = Fake::new(reads(1));
+    fake.connected = all_connected();
+    assert_eq!(execute(&mut fake, "42", MediaKind::Episode, None).unwrap().cleanup, Cleanup::PARTIAL);
+    assert!(fake.apps.is_empty(), "episodes remain, so the series and its files stay");
+    let mut fake = Fake::new(reads(0));
+    fake.connected = all_connected();
+    let outcome = execute(&mut fake, "42", MediaKind::Episode, None).unwrap();
+    assert_eq!(outcome.cleanup, Cleanup { arr: Step::Removed, seerr: Step::Removed });
+    assert_eq!(fake.apps, ["arr The Matrix", "seerr 603"]);
+}
+
+#[test]
+fn an_app_that_fails_is_reported_alone_and_never_puts_the_title_back() {
+    let mut fake = Fake::new(vec![permission(json!(true)), the_movie(), the_movie_with_ids(MOVIE_GUIDS, "movie")]);
+    fake.connected = all_connected();
+    fake.arr_replies = [Err(Fail::Failed), Err(Fail::Failed)].into();
+    let outcome = execute(&mut fake, "42", MediaKind::Movie, None).unwrap();
+    assert_eq!(outcome.cleanup, Cleanup { arr: Step::Failed, seerr: Step::Removed }, "Seerr is still asked after Radarr failed");
+    assert_eq!(outcome.watchlist, WatchlistOutcome::Removed);
+}
+
+#[test]
+fn an_item_found_gone_after_a_server_problem_is_still_cleaned_from_what_was_read_first() {
+    let mut fake = Fake::new(vec![permission(json!(true)), item_status(Some(404))]);
+    fake.connected = all_connected();
+    let mut read = Captured { ids: Ids { tmdb: Some(603), title: "The Matrix".into(), ..Ids::default() }, watch_id: None };
+    let result = super::execute(&mut fake, "42", MediaKind::Movie, None, &mut read, &mut |_, _| {}).unwrap();
+    assert!(result.already_gone);
+    assert_eq!(result.cleanup, Cleanup { arr: Step::Removed, seerr: Step::Removed });
+    assert!(fake.deleted.is_empty());
+    let mut none = Fake::new(vec![permission(json!(true)), item_status(Some(404))]);
+    none.connected = all_connected();
+    assert_eq!(execute(&mut none, "42", MediaKind::Movie, None).unwrap().cleanup, Cleanup { arr: Step::Unmatched, seerr: Step::Unmatched });
 }

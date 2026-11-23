@@ -1,7 +1,12 @@
-//! Destructive PMS deletion and account Watchlist cleanup. All calls block; use a worker.
+//! Destructive PMS deletion and what follows it: the account Watchlist, Radarr or Sonarr, and Seerr
+//! ([`cleanup`]). All calls block; use a worker.
 use super::{account::AccountClient, catalog_hex_of_guid, Client, ClientKey};
 use super::paging::{paged_path, PageReq};
 use serde_json::Value;
+
+mod cleanup;
+use cleanup::{unlist, Captured, Cleared, Connected, Fail, Ids, Steps};
+pub use cleanup::{pending_title, retry_pending, Cleanup, Retried, Step};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind { Movie, Show, Episode }
@@ -52,26 +57,19 @@ pub struct DeleteOutcome {
     pub watched: bool,
     /// The server no longer had the item when the delete started, so this try deleted nothing.
     pub already_gone: bool,
+    /// What Radarr or Sonarr and Seerr came to.
+    pub cleanup: Cleanup,
 }
 
-impl DeleteOutcome {
-    /// The outcome when the item was already gone: there is no record, so no parent and no play count.
-    fn gone(watchlist: WatchlistOutcome) -> Self {
-        Self { watchlist, parent: None, watched: false, already_gone: true }
-    }
-}
-
-trait Backend {
+trait Backend: Steps {
     fn still_current(&self) -> bool;
     fn get(&mut self, path: &str) -> Option<(i32, Option<Value>)>;
     fn delete(&mut self, path: &str) -> Option<i32>;
-    fn remove_watchlist(&mut self, hex: &str) -> Option<bool>;
     /// What this attempt learned first-hand about the server's "Allow media deletion" setting.
     fn note_deletion(&mut self, on: bool);
-    fn pause(&mut self, ms: u64);
 }
 
-struct Live<'a> { server: Client, original: &'a Client, key: ClientKey, account: Option<&'a AccountClient> }
+struct Live<'a> { server: Client, original: &'a Client, key: ClientKey, reach: cleanup::Reach<'a> }
 impl Backend for Live<'_> {
     fn still_current(&self) -> bool {
         !self.original.data_io_disabled() && ClientKey::of(self.original) == self.key
@@ -85,19 +83,17 @@ impl Backend for Live<'_> {
         let status = self.server.delete_slow(path);
         (status >= 0).then_some(status)
     }
-    fn remove_watchlist(&mut self, hex: &str) -> Option<bool> {
-        let account = self.account?;
-        let state = account.user_state(hex, &mut account.watchlist_transport()).ok()?;
-        if state.watchlisted_at.is_none() { return Some(false); }
-        account.watchlist_remove(hex, &mut account.watchlist_transport()).ok()?;
-        Some(true)
-    }
     fn note_deletion(&mut self, on: bool) {
         super::serverinfo::note_deletion(self.original.id(), on);
     }
-    fn pause(&mut self, ms: u64) {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-    }
+}
+
+impl Steps for Live<'_> {
+    fn pause(&mut self, ms: u64) { self.reach.pause(ms) }
+    fn remove_watchlist(&mut self, hex: &str) -> Option<bool> { self.reach.remove_watchlist(hex) }
+    fn connected(&self) -> Connected { self.reach.connected() }
+    fn remove_from_arr(&mut self, kind: MediaKind, ids: &Ids) -> Result<(), Fail> { self.reach.remove_from_arr(kind, ids) }
+    fn clear_seerr(&mut self, kind: MediaKind, tmdb: i64) -> Result<Cleared, Fail> { self.reach.clear_seerr(kind, tmdb) }
 }
 
 /// `allowMediaDeletion` as PMS spells it (a bool on 1.43; the lenient forms elsewhere). Anything
@@ -213,34 +209,18 @@ fn remove<B: Backend>(backend: &mut B, key: &str) -> Result<(), DeleteError> {
     }
 }
 
-const WATCHLIST_TRIES: u32 = 3;
-const WATCHLIST_PAUSE_MS: u64 = 1_000;
-
-/// Take the item off the account Watchlist. The account service can fail a call for a moment, so an
-/// unanswered try is repeated before the cleanup is reported as failed.
-fn unlist<B: Backend>(backend: &mut B, id: Option<&str>) -> WatchlistOutcome {
-    let Some(id) = id else { return WatchlistOutcome::Failed; };
-    for attempt in 0..WATCHLIST_TRIES {
-        if attempt > 0 { backend.pause(WATCHLIST_PAUSE_MS); }
-        match backend.remove_watchlist(id) {
-            Some(true) => return WatchlistOutcome::Removed,
-            Some(false) => return WatchlistOutcome::NotListed,
-            None => {}
-        }
-    }
-    WatchlistOutcome::Failed
-}
-
 /// The item was already gone when the delete started: an earlier try that reported a server problem
 /// but finished later, or another client. Its Watchlist entry can still be there, so it is cleaned
-/// from the identity the screen holds. An episode only counts when its show is gone or empty too.
-fn gone<B: Backend>(backend: &mut B, kind: MediaKind, listed: Option<&Listed>) -> DeleteOutcome {
+/// from the identity the screen holds, and Radarr, Sonarr and Seerr from what the earlier try read
+/// (`read`), if there was one. An episode only counts when its show is gone or empty too.
+fn gone<B: Backend>(backend: &mut B, kind: MediaKind, listed: Option<&Listed>, read: &mut Captured) -> DeleteOutcome {
     let Some(id) = listed.and_then(|l| catalog_id(&l.guid, kind)) else {
-        return DeleteOutcome::gone(WatchlistOutcome::Skipped);
+        return finish_gone(backend, kind, read, WatchlistOutcome::Skipped);
     };
+    read.watch_id = Some(id.clone());
     if kind == MediaKind::Episode {
         let Some(show) = listed.and_then(|l| l.show_rk.as_deref()).filter(|s| key_ok(s)) else {
-            return DeleteOutcome::gone(WatchlistOutcome::Skipped);
+            return finish_gone(backend, kind, read, WatchlistOutcome::Skipped);
         };
         let remaining = match read_item(backend, show) {
             Ok(None) => Some(false),
@@ -248,32 +228,79 @@ fn gone<B: Backend>(backend: &mut B, kind: MediaKind, listed: Option<&Listed>) -
             Err(_) => None,
         };
         match remaining {
-            Some(true) => return DeleteOutcome::gone(WatchlistOutcome::Preserved),
-            None => return DeleteOutcome::gone(WatchlistOutcome::Unknown),
+            Some(true) => return finish_gone(backend, kind, read, WatchlistOutcome::Preserved),
+            None => return finish_gone(backend, kind, read, WatchlistOutcome::Unknown),
             Some(false) => {}
         }
     }
-    DeleteOutcome::gone(unlist(backend, Some(id.as_str())))
+    let watchlist = unlist(backend, Some(id.as_str()));
+    finish_gone(backend, kind, read, watchlist)
 }
 
-/// Delete one item and then clean up the Watchlist. Call only after explicit user confirmation.
-/// An `Ok` confirms the item is gone, deleted now or already; `Failed` reports that the Watchlist
-/// cleanup that followed was not confirmed. An `Err` is safe to retry. `listed` is the Watchlist
-/// identity the screen holds, used when the server no longer has the item.
+fn finish_gone<B: Backend>(backend: &mut B, kind: MediaKind, read: &Captured, watchlist: WatchlistOutcome) -> DeleteOutcome {
+    // An episode is the last of its show only when the show was read as gone or empty.
+    let whole = kind != MediaKind::Episode
+        || !matches!(watchlist, WatchlistOutcome::Preserved | WatchlistOutcome::Unknown | WatchlistOutcome::Skipped);
+    let cleanup = if !whole {
+        Cleanup::PARTIAL
+    } else if read.ids.tmdb.is_some() || read.ids.tvdb.is_some() {
+        cleanup::run(backend, kind, &read.ids)
+    } else {
+        cleanup::unmatched(backend, kind)
+    };
+    DeleteOutcome { watchlist, parent: None, watched: false, already_gone: true, cleanup }
+}
+
+/// Delete one item, then clean up after it: the Watchlist, Radarr or Sonarr and Seerr, each
+/// reporting alone. Call only after explicit user confirmation. An `Ok` confirms the item is gone,
+/// deleted now or already; a step that failed is in the outcome and waits for [`retry_pending`]. An
+/// `Err` is safe to retry. `listed` is the Watchlist identity the screen holds, used when the server
+/// no longer has the item. `deleted` is called the moment the item is gone, before any cleanup, with
+/// what the lists need to follow it.
 pub fn delete(server: &Client, key: ClientKey, account: Option<&AccountClient>, rating_key: &str, kind: MediaKind,
-              listed: Option<&Listed>) -> Result<DeleteOutcome, DeleteError>
+              listed: Option<&Listed>, deleted: &mut dyn FnMut(Option<&EpisodeParent>, bool)) -> Result<DeleteOutcome, DeleteError>
 {
     if !super::server_facts(server.id()).is_some_and(|facts| facts.owned) { return Err(DeleteError::NotAllowed); }
     let captured = server.captured_for_key(key).ok_or(DeleteError::ServerProblem)?;
-    execute(&mut Live { server: captured, original: server, key, account }, rating_key, kind, listed)
+    let mut read = cleanup::unstash(rating_key).unwrap_or_default();
+    let result = execute(&mut Live { server: captured, original: server, key, reach: cleanup::Reach::read(account) },
+        rating_key, kind, listed, &mut read, deleted);
+    match &result {
+        Ok(done) => {
+            if let Some(ticket) = cleanup::Ticket::after(kind, &read, done.watchlist, done.cleanup) {
+                cleanup::set_pending(Some(ticket));
+            }
+        }
+        // The delete may still finish on the server: a later try finds the item gone and needs this.
+        Err(DeleteError::ServerProblem) if read != Captured::default() => cleanup::stash(rating_key, read),
+        Err(_) => {}
+    }
+    result
 }
 
-fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind, listed: Option<&Listed>)
-    -> Result<DeleteOutcome, DeleteError>
+/// The title's record with its external ids (`includeGuids`). Two tries a second apart; a title that
+/// cannot be read is cleaned up as unmatched and never blocks the delete.
+fn read_guids<B: Backend>(backend: &mut B, key: &str) -> Option<Value> {
+    for attempt in 0..2 {
+        if attempt > 0 { backend.pause(1_000); }
+        match backend.get(&format!("{}?includeGuids=1", item_path(key))) {
+            Some((404, _)) => return None,
+            Some((200..=299, Some(body))) => return first_metadata(&body),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind, listed: Option<&Listed>, read: &mut Captured,
+                       deleted: &mut dyn FnMut(Option<&EpisodeParent>, bool)) -> Result<DeleteOutcome, DeleteError>
 {
     if !key_ok(key) { return Err(DeleteError::InvalidItem); }
     permitted(backend)?;
-    let Some(item) = read_item(backend, key)? else { return Ok(gone(backend, kind, listed)); };
+    let Some(item) = read_item(backend, key)? else {
+        deleted(None, false);
+        return Ok(gone(backend, kind, listed, read));
+    };
     let expected = match kind { MediaKind::Movie => "movie", MediaKind::Show => "show", MediaKind::Episode => "episode" };
     if item.get("type").and_then(Value::as_str) != Some(expected) { return Err(DeleteError::InvalidItem); }
     let parent = if kind == MediaKind::Episode { episode_parent(&item) } else { None };
@@ -288,21 +315,38 @@ fn execute<B: Backend>(backend: &mut B, key: &str, kind: MediaKind, listed: Opti
     } else {
         item.get("guid").and_then(Value::as_str).and_then(|g| catalog_id(g, kind))
     };
+    // The server forgets the title once deleted, so what Radarr, Sonarr and Seerr are asked about is
+    // read now (an episode is cleaned up as its show).
+    let mut ids = Ids::of(&item);
+    if kind == MediaKind::Episode {
+        ids.title = item.get("grandparentTitle").and_then(Value::as_str).unwrap_or_default().to_owned();
+        ids.year = 0;
+    }
+    if backend.connected().any() {
+        let target = if kind == MediaKind::Episode { show.as_deref() } else { Some(key) };
+        if let Some(record) = target.and_then(|t| read_guids(backend, t)) {
+            let known = Ids::of(&record);
+            ids = Ids { title: if known.title.is_empty() { ids.title } else { known.title }, ..known };
+        }
+    }
+    *read = Captured { ids, watch_id: id.clone() };
     // Confirm the endpoint exists before interpreting a later 404 as an emptied/removed show.
     let leaves_known = show.as_deref().and_then(|s| episodes_remain(backend, s, false)).is_some();
     if !backend.still_current() { return Err(DeleteError::ServerProblem); }
     remove(backend, key)?;
-    let outcome = |watchlist| DeleteOutcome { watchlist, parent: parent.clone(), watched, already_gone: false };
+    deleted(parent.as_ref(), watched);
+    let outcome = |watchlist, cleanup| DeleteOutcome { watchlist, parent: parent.clone(), watched, already_gone: false, cleanup };
     if kind == MediaKind::Episode {
         let remaining = if leaves_known { show.as_deref().and_then(|s| episodes_remain(backend, s, true)) } else { None };
         match remaining {
-            Some(true) => return Ok(outcome(WatchlistOutcome::Preserved)),
-            None => return Ok(outcome(WatchlistOutcome::Unknown)),
+            Some(true) => return Ok(outcome(WatchlistOutcome::Preserved, Cleanup::PARTIAL)),
+            None => return Ok(outcome(WatchlistOutcome::Unknown, Cleanup::PARTIAL)),
             Some(false) => {},
         }
     }
     let watchlist = unlist(backend, id.as_deref());
-    Ok(outcome(watchlist))
+    let cleanup = cleanup::run(backend, kind, &read.ids);
+    Ok(outcome(watchlist, cleanup))
 }
 
 #[cfg(test)]

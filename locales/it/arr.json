@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Ripulisci i film eliminati.",
+  "arr.sonarr_root_detail": "Ripulisci le serie eliminate.",
+  "arr.radarr_copy": "Radarr gestisce i download dei film. Aggiungi indirizzo e chiave API: un film eliminato qui viene rimosso anche da Radarr e non torna.",
+  "arr.sonarr_copy": "Sonarr gestisce i download delle serie. Aggiungi indirizzo e chiave API: una serie eliminata qui viene rimossa anche da Sonarr e non torna.",
+  "arr.status_unset": "Non configurato. Aggiungi indirizzo e chiave API. La chiave resta su questa TV, protetta come l'accesso a Plex.",
+  "arr.status_set": "Configurato. Eliminando qui, il titolo e i suoi file vengono eliminati anche lì e le liste non lo riaggiungono. Puoi riaggiungerlo tu."
+}

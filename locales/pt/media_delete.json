@@ -9,5 +9,14 @@
   "media.delete.busy": "Já há uma eliminação em curso.",
   "media.delete.unreachable": "Não foi possível contactar este servidor Plex. Nada foi eliminado.",
   "media.delete.working": "A eliminar…",
-  "media.delete.not_started": "Não foi possível iniciar a eliminação. Nada foi eliminado."
+  "media.delete.not_started": "Não foi possível iniciar a eliminação. Nada foi eliminado.",
+  "media.delete.step_failed_named": "Eliminado, mas não foi possível limpar o {name}. Conclua em Definições.",
+  "media.delete.step_failed_many": "Eliminado, mas a limpeza não terminou. Conclua em Definições.",
+  "media.delete.step_refused": "Eliminado, mas o {name} recusou o pedido. Verifique a chave em Definições.",
+  "media.delete.arr_not_connected": "Eliminado. O {name} não está configurado em Definições, por isso o título pode voltar.",
+  "media.delete.arr_unmatched": "Eliminado, mas o Plex não tem ID para este título, por isso o {name} não foi consultado.",
+  "media.delete.retry_done": "Limpeza concluída.",
+  "media.delete.retry_nothing": "Nada à espera de ser concluído.",
+  "media.delete.finish_title": "Concluir a limpeza",
+  "media.delete.finish_detail": "Repete o que não terminou após a última eliminação."
 }

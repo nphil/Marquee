@@ -36,6 +36,7 @@ use std::cell::RefCell;
 pub enum Verb {
     Get,
     Post,
+    Delete,
 }
 
 /// One request. `path` starts with `/api/v1/` and carries its own query string; `json` is a POST's
@@ -86,6 +87,7 @@ impl Transport for CurlTransport {
         let verb = match request.verb {
             Verb::Get => "GET",
             Verb::Post => "POST",
+            Verb::Delete => "DELETE",
         };
         let reply = |resp: net::Resp| Reply { status: resp.status, body: resp.body, cookies: resp.cookies };
         let failure = match net::request_evidence(&url, &headers, verb, body.as_deref(), net::API, false, Some(MAX_BODY), None) {
@@ -661,6 +663,25 @@ impl<'a, T: Transport> Seerr<'a, T> {
         Detail::of(&v, kind).ok_or(SeerrError::NotSeerr)
     }
 
+    /// The id Seerr gives the title's media record (`mediaInfo.id`), or `None` when it holds none.
+    pub fn media_id(&self, kind: Kind, tmdb: u32) -> Result<Option<u32>, SeerrError> {
+        match self.get(format!("/api/v1/{}/{tmdb}", kind.word())) {
+            Ok(v) => Ok(v.get("mediaInfo").and_then(|m| u32::try_from(int(m, "id")).ok()).filter(|id| *id > 0)),
+            Err(SeerrError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Clear a media record and its requests (`DELETE /api/v1/media/{id}`, which needs the
+    /// manage-requests permission). The title is not blocklisted: that would hide it from every user.
+    /// A record already gone is done.
+    pub fn delete_media(&self, id: u32) -> Result<(), SeerrError> {
+        match self.call(Request { verb: Verb::Delete, path: format!("/api/v1/media/{id}"), json: None }) {
+            Ok(_) | Err(SeerrError::NotFound) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// The requests `user` made, newest first, [`REQUEST_PAGE`] from `skip`; `more` when Seerr holds
     /// further ones.
     pub fn my_requests(&self, user: u32, skip: u32) -> Result<(Vec<MyRequest>, bool), SeerrError> {
@@ -771,6 +792,24 @@ mod tests {
         assert_eq!(seerr.cookie(), "");
         assert_eq!(seerr.status(), Ok(Status { version: "3.5.2".into() }), "status needs no session");
         assert_eq!(Seerr::new("", "", "plex-token", &fake).status(), Err(SeerrError::NotSet));
+    }
+
+    #[test]
+    fn a_media_record_is_found_by_its_title_and_cleared_by_its_own_id() {
+        let fake = Fake::new(&[
+            ("/api/v1/movie/603", 200, r#"{"id":603,"mediaInfo":{"id":14,"status":5}}"#),
+            ("/api/v1/tv/9", 200, r#"{"id":9}"#),
+            ("/api/v1/media/14", 204, ""),
+            ("/api/v1/media/15", 403, "{}"),
+        ]);
+        let seerr = Seerr::new(BASE, SESSION, "plex-token", &fake);
+        assert_eq!(seerr.media_id(Kind::Movie, 603), Ok(Some(14)));
+        assert_eq!(seerr.media_id(Kind::Tv, 9), Ok(None), "Seerr knows the title but holds no media for it");
+        assert_eq!(seerr.media_id(Kind::Movie, 1), Ok(None), "an unknown title is nothing to clear");
+        assert_eq!(seerr.delete_media(14), Ok(()));
+        assert_eq!(seerr.delete_media(99), Ok(()), "already gone");
+        assert_eq!(seerr.delete_media(15), Err(SeerrError::Forbidden));
+        assert!(fake.seen.borrow().iter().any(|(_, r)| r.verb == Verb::Delete && r.path == "/api/v1/media/14"));
     }
 
     #[test]

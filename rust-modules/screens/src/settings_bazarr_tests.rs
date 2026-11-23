@@ -387,6 +387,7 @@ fn the_root_row_opens_the_page() {
         subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
         bazarr: BazarrLink::default(),
         seerr: plx_plex::plex::session::SeerrLink::default(),
+        arr: Default::default(),
         trace: plx_platform::playback_trace::Status::Off,
     }), None);
     let i = form.index_of_key(RootId::Bazarr.key()).expect("the row is on a signed-in root");

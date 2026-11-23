@@ -9,5 +9,14 @@
   "media.delete.busy": "Usuwanie już trwa.",
   "media.delete.unreachable": "Nie można połączyć się z tym serwerem Plex. Nic nie usunięto.",
   "media.delete.working": "Usuwanie…",
-  "media.delete.not_started": "Nie udało się rozpocząć usuwania. Nic nie usunięto."
+  "media.delete.not_started": "Nie udało się rozpocząć usuwania. Nic nie usunięto.",
+  "media.delete.step_failed_named": "Usunięto, ale nie udało się posprzątać w {name}. Dokończ w Ustawieniach.",
+  "media.delete.step_failed_many": "Usunięto, ale nie wszystko posprzątano. Dokończ w Ustawieniach.",
+  "media.delete.step_refused": "Usunięto, ale {name} odrzucił prośbę. Sprawdź klucz w Ustawieniach.",
+  "media.delete.arr_not_connected": "Usunięto. {name} nie jest skonfigurowany w Ustawieniach, więc tytuł może wrócić.",
+  "media.delete.arr_unmatched": "Usunięto, ale Plex nie zna ID tego tytułu, więc nie zapytano {name}.",
+  "media.delete.retry_done": "Sprzątanie zakończone.",
+  "media.delete.retry_nothing": "Nic nie czeka na dokończenie.",
+  "media.delete.finish_title": "Dokończ sprzątanie",
+  "media.delete.finish_detail": "Ponawia to, co nie udało się po ostatnim usunięciu."
 }

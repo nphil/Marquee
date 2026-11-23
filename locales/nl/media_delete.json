@@ -9,5 +9,14 @@
   "media.delete.busy": "Er is al een verwijdering bezig.",
   "media.delete.unreachable": "Deze Plex-server is niet bereikbaar. Er is niets verwijderd.",
   "media.delete.working": "Verwijderen…",
-  "media.delete.not_started": "Het verwijderen kon niet worden gestart. Er is niets verwijderd."
+  "media.delete.not_started": "Het verwijderen kon niet worden gestart. Er is niets verwijderd.",
+  "media.delete.step_failed_named": "Verwijderd, maar {name} kon niet worden opgeschoond. Rond het af in Instellingen.",
+  "media.delete.step_failed_many": "Verwijderd, maar het opruimen is niet af. Rond het af in Instellingen.",
+  "media.delete.step_refused": "Verwijderd, maar {name} weigerde het verzoek. Controleer de sleutel in Instellingen.",
+  "media.delete.arr_not_connected": "Verwijderd. {name} is niet ingesteld in Instellingen, dus de titel kan terugkomen.",
+  "media.delete.arr_unmatched": "Verwijderd, maar Plex heeft geen ID voor deze titel, dus {name} is niet gevraagd.",
+  "media.delete.retry_done": "Opruimen voltooid.",
+  "media.delete.retry_nothing": "Er wacht niets om af te ronden.",
+  "media.delete.finish_title": "Opruimen afronden",
+  "media.delete.finish_detail": "Probeert opnieuw wat na de laatste verwijdering niet lukte."
 }

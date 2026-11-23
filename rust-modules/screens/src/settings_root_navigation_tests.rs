@@ -701,6 +701,7 @@ fn inputs_for(signed_in: bool) -> RootInputs {
         subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
         bazarr: plx_plex::plex::session::BazarrLink::default(),
         seerr: plx_plex::plex::session::SeerrLink::default(),
+        arr: Default::default(),
     }
 }
 
@@ -897,7 +898,7 @@ fn the_common_settings_are_the_first_rows_of_the_root() {
     real.set(root_form(&inputs_for(true)), None);
     let first: Vec<RootId> = [
         RootId::HomeRows, RootId::TopBar, RootId::Playback, RootId::Subtitles, RootId::AudioSubtitles,
-        RootId::Seerr, RootId::Bazarr, RootId::SpeechDock,
+        RootId::Seerr, RootId::Bazarr, RootId::Radarr, RootId::Sonarr, RootId::SpeechDock,
     ].into();
     for (at, id) in first.iter().enumerate() {
         assert_eq!(real.index_of(id), Some(at), "{id:?} is row {at}, so {} presses from the first row", at + 1);

@@ -77,6 +77,21 @@ pub(super) fn execute(command: PreferenceCmd) {
                 },
             );
         }
+        PreferenceCmd::ArrLink { kind, change, reply } => {
+            plx_plex::plex::session::queue_update_settled(
+                move |current| Some(current.with_arr(kind, &change.applied(&current.arr(kind)))),
+                move |durable| {
+                    let _ = reply.send(durable);
+                    plx_machine::idle::invalidate();
+                },
+            );
+        }
+        PreferenceCmd::ArrRead { kind, reply } => {
+            let link = plx_plex::plex::session::peek().arr(kind);
+            let _ = reply.send((link.url.clone(), !link.api_key.is_empty()));
+            plx_machine::idle::invalidate();
+        }
+        PreferenceCmd::FinishCleanup => super::delete_media::finish_cleanup(),
         PreferenceCmd::SpeechDockOrigin { origin, reply } => {
             let Ok(origin) = plx_media::player::speechdock_settings::normalize_origin(&origin) else {
                 let _ = reply.send(false);

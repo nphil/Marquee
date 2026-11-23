@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Gelöschte Filme aufräumen.",
+  "arr.sonarr_root_detail": "Gelöschte Serien aufräumen.",
+  "arr.radarr_copy": "Radarr verwaltet deine Film-Downloads. Gib Adresse und API-Schlüssel ein: Ein hier gelöschter Film wird dann auch aus Radarr entfernt und kommt nicht zurück.",
+  "arr.sonarr_copy": "Sonarr verwaltet deine Serien-Downloads. Gib Adresse und API-Schlüssel ein: Eine hier gelöschte Serie wird dann auch aus Sonarr entfernt und kommt nicht zurück.",
+  "arr.status_unset": "Nicht eingerichtet. Gib Adresse und API-Schlüssel ein. Der Schlüssel bleibt auf diesem Fernseher, verschlüsselt wie die Plex-Anmeldung.",
+  "arr.status_set": "Eingerichtet. Beim Löschen verschwindet der Titel mit seinen Dateien auch dort und wird nicht aus Listen neu hinzugefügt. Du kannst ihn selbst wieder hinzufügen."
+}

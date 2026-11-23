@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Verwijderde films opruimen.",
+  "arr.sonarr_root_detail": "Verwijderde series opruimen.",
+  "arr.radarr_copy": "Radarr beheert je filmdownloads. Voeg het adres en de API-sleutel toe: een film die je hier verwijdert, verdwijnt ook uit Radarr en komt niet terug.",
+  "arr.sonarr_copy": "Sonarr beheert je seriedownloads. Voeg het adres en de API-sleutel toe: een serie die je hier verwijdert, verdwijnt ook uit Sonarr en komt niet terug.",
+  "arr.status_unset": "Niet ingesteld. Voeg het adres en de API-sleutel toe. De sleutel blijft op deze tv, beveiligd zoals de Plex-aanmelding.",
+  "arr.status_set": "Ingesteld. Bij verwijderen verdwijnt de titel met bestanden ook daar en voegen lijsten hem niet opnieuw toe. Je kunt hem zelf weer toevoegen."
+}

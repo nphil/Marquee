@@ -35,6 +35,10 @@ pub enum SettingsPage {
     Subtitles,
     /// Settings > Integrations > Bazarr: the address and API key the player's "Wrong subtitles?" asks.
     Bazarr,
+    /// Settings > Integrations > Radarr: the address and API key a deleted movie is cleaned out of.
+    Radarr,
+    /// Settings > Integrations > Sonarr: the address and API key a deleted show is cleaned out of.
+    Sonarr,
     /// Settings > Integrations > SpeechDock.
     SpeechDock,
     /// Settings > Integrations > Requests: whether the Requests area is on and where Seerr runs.
@@ -146,6 +150,8 @@ impl ScreenArg for SettingsPage {
             SettingsPage::SpeechDock => 117,
             SettingsPage::Seerr => 121,
             SettingsPage::TopBar => 122,
+            SettingsPage::Radarr => 123,
+            SettingsPage::Sonarr => 124,
             SettingsPage::Favourites => 101,
             SettingsPage::Privacy => 102,
             SettingsPage::Legal => 103,
@@ -190,6 +196,8 @@ impl LogicalState for SettingsPage {
             | SettingsPage::HomeRows
             | SettingsPage::Subtitles
             | SettingsPage::Bazarr
+            | SettingsPage::Radarr
+            | SettingsPage::Sonarr
             | SettingsPage::SpeechDock
             | SettingsPage::Seerr
             | SettingsPage::TopBar
@@ -216,6 +224,8 @@ impl LogicalState for SettingsPage {
             SettingsPage::HomeRows => "home-rows",
             SettingsPage::Subtitles => "subtitles",
             SettingsPage::Bazarr => "bazarr",
+            SettingsPage::Radarr => "radarr",
+            SettingsPage::Sonarr => "sonarr",
             SettingsPage::SpeechDock => "speechdock",
             SettingsPage::Seerr => "seerr",
             SettingsPage::TopBar => "top-bar",
@@ -383,6 +393,8 @@ mod tests {
             SettingsPage::HomeRows,
             SettingsPage::Subtitles,
             SettingsPage::Bazarr,
+            SettingsPage::Radarr,
+            SettingsPage::Sonarr,
             SettingsPage::SpeechDock,
             SettingsPage::Seerr,
             SettingsPage::TopBar,

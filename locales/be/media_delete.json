@@ -9,5 +9,14 @@
   "media.delete.busy": "Выдаленне ўжо выконваецца.",
   "media.delete.unreachable": "Не ўдалося злучыцца з гэтым серверам Plex. Нічога не выдалена.",
   "media.delete.working": "Выдаленне…",
-  "media.delete.not_started": "Не ўдалося пачаць выдаленне. Нічога не выдалена."
+  "media.delete.not_started": "Не ўдалося пачаць выдаленне. Нічога не выдалена.",
+  "media.delete.step_failed_named": "Выдалена, але ачысціць {name} не ўдалося. Завяршыце ў Наладах.",
+  "media.delete.step_failed_many": "Выдалена, але ачыстка не завершана. Завяршыце яе ў Наладах.",
+  "media.delete.step_refused": "Выдалена, але {name} адхіліў запыт. Праверце ключ у Наладах.",
+  "media.delete.arr_not_connected": "Выдалена. {name} не наладжаны ў Наладах, таму назва можа вярнуцца.",
+  "media.delete.arr_unmatched": "Выдалена, але ў Plex няма ID гэтай назвы, таму {name} не апытваўся.",
+  "media.delete.retry_done": "Ачыстка завершана.",
+  "media.delete.retry_nothing": "Няма чаго завяршаць.",
+  "media.delete.finish_title": "Завяршыць ачыстку",
+  "media.delete.finish_detail": "Паўтарае тое, што не ўдалося пасля апошняга выдалення."
 }

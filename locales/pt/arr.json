@@ -1,0 +1,8 @@
+{
+  "arr.radarr_root_detail": "Limpar os filmes eliminados.",
+  "arr.sonarr_root_detail": "Limpar as séries eliminadas.",
+  "arr.radarr_copy": "O Radarr guarda as suas transferências de filmes. Adicione o endereço e a chave de API: um filme eliminado aqui também sai do Radarr e não volta.",
+  "arr.sonarr_copy": "O Sonarr guarda as suas transferências de séries. Adicione o endereço e a chave de API: uma série eliminada aqui também sai do Sonarr e não volta.",
+  "arr.status_unset": "Não configurado. Adicione o endereço e a chave de API. A chave fica nesta televisão, protegida como o início de sessão no Plex.",
+  "arr.status_set": "Configurado. Ao eliminar aqui, o título e os seus ficheiros também são eliminados lá e as listas não o voltam a adicionar. Pode adicioná-lo de novo."
+}

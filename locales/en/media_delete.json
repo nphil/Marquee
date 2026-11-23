@@ -42,5 +42,53 @@
   "media.delete.not_started": {
     "value": "Couldn't start the deletion. Nothing was deleted.",
     "description": "Toast when the app could not start the background work for a deletion. Keep it under 120 characters."
+  },
+  "media.delete.step_failed_named": {
+    "value": "Deleted, but {name} couldn't be cleaned up. Finish it in Settings.",
+    "description": "Toast after a deletion where one clean-up step (Radarr, Sonarr or Seerr, named by {name}) did not finish. The title is already gone; the Settings root now offers Finish clean-up. Keep it under 120 characters.",
+    "args": {
+      "name": "str"
+    }
+  },
+  "media.delete.step_failed_many": {
+    "value": "Deleted, but some clean-up didn't finish. Finish it in Settings.",
+    "description": "Toast after a deletion where more than one clean-up step did not finish. The title is already gone; Settings offers Finish clean-up. Keep it under 120 characters."
+  },
+  "media.delete.step_refused": {
+    "value": "Deleted, but {name} refused the request. Check its key in Settings.",
+    "description": "Toast after a deletion where {name} (Radarr, Sonarr or Seerr) refused the request, which means its key or permission is wrong. Asking again changes nothing. Keep it under 120 characters.",
+    "args": {
+      "name": "str"
+    }
+  },
+  "media.delete.arr_not_connected": {
+    "value": "Deleted. {name} isn't set up in Settings, so it wasn't asked and the title may return.",
+    "description": "Toast after a whole movie or show was deleted while Radarr (movies) or Sonarr (shows), named by {name}, is not set up in Settings, so it was not asked and a list sync may add the title again. Keep it under 120 characters.",
+    "args": {
+      "name": "str"
+    }
+  },
+  "media.delete.arr_unmatched": {
+    "value": "Deleted, but Plex has no ID for this title, so {name} wasn't asked.",
+    "description": "Toast after a deletion where Plex had no external ID for the title, so Radarr or Sonarr ({name}) could not be asked which title to remove. Keep it under 120 characters.",
+    "args": {
+      "name": "str"
+    }
+  },
+  "media.delete.retry_done": {
+    "value": "Clean-up finished.",
+    "description": "Toast after Finish clean-up ran the steps that had failed and all of them worked. Keep it short."
+  },
+  "media.delete.retry_nothing": {
+    "value": "Nothing is waiting to be finished.",
+    "description": "Toast when Finish clean-up is chosen but no deletion has unfinished clean-up waiting. Keep it short."
+  },
+  "media.delete.finish_title": {
+    "value": "Finish clean-up",
+    "description": "Settings > Integrations row that tries again the clean-up steps (Watchlist, Radarr, Sonarr, Seerr) that failed after the last deletion. Shown only while some are waiting. A few words."
+  },
+  "media.delete.finish_detail": {
+    "value": "Try again what didn't finish after the last delete.",
+    "description": "Detail line under the Finish clean-up row. Only the failed steps are repeated; the title is not deleted again. Keep it short."
   }
 }

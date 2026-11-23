@@ -9,5 +9,14 @@
   "media.delete.busy": "Már folyamatban van egy törlés.",
   "media.delete.unreachable": "Nem érhető el ez a Plex-szerver. Semmi sem lett törölve.",
   "media.delete.working": "Törlés…",
-  "media.delete.not_started": "A törlést nem sikerült elindítani. Semmi sem lett törölve."
+  "media.delete.not_started": "A törlést nem sikerült elindítani. Semmi sem lett törölve.",
+  "media.delete.step_failed_named": "Törölve, de a(z) {name} takarítása nem sikerült. Fejezze be a Beállításokban.",
+  "media.delete.step_failed_many": "Törölve, de nem minden takarítás fejeződött be. Fejezze be a Beállításokban.",
+  "media.delete.step_refused": "Törölve, de a(z) {name} elutasította a kérést. Ellenőrizze a kulcsot a Beállításokban.",
+  "media.delete.arr_not_connected": "Törölve. A(z) {name} nincs beállítva, így a cím visszatérhet.",
+  "media.delete.arr_unmatched": "Törölve, de a Plexnek nincs azonosítója ehhez, ezért a(z) {name} nem kapott kérést.",
+  "media.delete.retry_done": "A takarítás kész.",
+  "media.delete.retry_nothing": "Nincs befejezetlen takarítás.",
+  "media.delete.finish_title": "Takarítás befejezése",
+  "media.delete.finish_detail": "Megismétli, ami az utolsó törlés után nem sikerült."
 }

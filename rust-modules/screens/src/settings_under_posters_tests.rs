@@ -422,6 +422,7 @@ fn text_fit_inputs() -> RootInputs {
         subtitle_preset: plx_plex::plex::session::LookPreset::Marquee,
         bazarr: plx_plex::plex::session::BazarrLink::default(),
         seerr: plx_plex::plex::session::SeerrLink::default(),
+        arr: Default::default(),
     }
 }
 

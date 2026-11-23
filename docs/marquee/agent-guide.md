@@ -142,4 +142,12 @@ his profile.
   `refresh_deletion_if_due`). 404 counts as deleted; 401/403 means not allowed; a server error or
   timeout re-checks the item three times before reporting a problem. A delete removes the item from
   every list at once through the view-state ledger, and a covered page whose item (or show or
-  season) was deleted leaves when it is uncovered.
+  season) was deleted leaves when it is uncovered. The same contract as the phone apps follows the
+  Plex delete (`plex/delete_media/cleanup.rs`, `plex/arr.rs`, `seerr.rs`): with Radarr, Sonarr or
+  Seerr connected, the ids are read first (`includeGuids=1`, twice), the Watchlist entry is removed
+  (3 tries), and a whole movie or show is deleted from Radarr/Sonarr with its files and an
+  import-list exclusion (or only the exclusion when the app does not hold it) and its Seerr media
+  record cleared. No release is blocklisted, so a deliberate re-add or request still works. Each step
+  reports alone; only `failed` is retryable, through Settings > Integrations > Finish clean-up, which
+  never repeats the Plex delete. A partial episode or season delete leaves the apps alone. Radarr and
+  Sonarr are plugins-by-setting (address and key, off until set) used only for this.

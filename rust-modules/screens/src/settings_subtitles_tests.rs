@@ -55,6 +55,7 @@ fn inputs() -> RootInputs {
         subtitle_preset: LookPreset::Marquee,
         bazarr: plx_plex::plex::session::BazarrLink::default(),
         seerr: plx_plex::plex::session::SeerrLink::default(),
+        arr: Default::default(),
         trace: plx_platform::playback_trace::Status::Off,
     }
 }

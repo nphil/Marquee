@@ -58,6 +58,8 @@ mod bazarr_link;
 pub use bazarr_link::{BazarrChange, BazarrLink, UrlProblem};
 mod seerr_link;
 pub use seerr_link::{SeerrChange, SeerrLink};
+mod arr_link;
+pub use arr_link::{ArrChange, ArrKind, ArrLink};
 mod bazarr_import;
 pub use bazarr_import::{import_once as import_bazarr_link_file, IMPORT_FILE as BAZARR_IMPORT_FILE};
 mod subtitle_look;
@@ -2581,6 +2583,22 @@ impl Session {
             next.extensions.0.remove("seerr");
         } else {
             next.extensions.0.insert("seerr".into(), link.to_value());
+        }
+        next
+    }
+
+    /// The Radarr or Sonarr link (Settings > Integrations); empty until the viewer set it.
+    pub fn arr(&self, kind: ArrKind) -> ArrLink {
+        self.extensions.0.get(kind.key()).map(ArrLink::from_value).unwrap_or_default()
+    }
+
+    /// Preserve every other session field when saving or clearing a Radarr or Sonarr link.
+    pub fn with_arr(&self, kind: ArrKind, link: &ArrLink) -> Self {
+        let mut next = self.clone();
+        if link.is_empty() {
+            next.extensions.0.remove(kind.key());
+        } else {
+            next.extensions.0.insert(kind.key().into(), link.to_value());
         }
         next
     }
