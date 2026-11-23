@@ -9,9 +9,10 @@
 //! `GstEvent`.
 //!
 //! libpf gives a PCM Load a mixer channel (the sink's `index` 4 with `mixer` on), which the helper
-//! cannot route, so a carrier Load puts the sink on [`CARRIER_ADEC`] off the mixer as it is added,
-//! before it opens. Its `index` property ("Index of audio resource") and `mixer` property ("Set
-//! using mixer") then read back the input it holds ([`Granted`]); only that input is armed.
+//! cannot route, so a carrier Load puts the sink on [`CARRIER_ADEC`] off the mixer as it is added
+//! and again once libpf has set its ports, before it opens. Its `index` property ("Index of audio
+//! resource") and `mixer` property ("Set using mixer") then read back the input it holds
+//! ([`Granted`]); only that input is armed.
 use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +66,7 @@ type Hook = unsafe extern "C" fn(*mut c_void, c_uint, *const GValue, *mut c_void
 type InterfaceCheck = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type ProbeFn = unsafe extern "C" fn(*mut c_void, *mut ProbeInfo, *mut c_void) -> c_int;
 type Destroy = unsafe extern "C" fn(*mut c_void);
+type Notify = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
 
 const G_TYPE_BOOLEAN: usize = 5 << 2;
 const G_TYPE_INT: usize = 6 << 2;
@@ -104,6 +106,7 @@ plx_base::dynlib! {
         fn g_type_add_interface_check(data: *mut c_void, check: InterfaceCheck);
         fn g_signal_lookup(name: *const c_char, itype: usize) -> c_uint;
         fn g_signal_add_emission_hook(signal: c_uint, detail: c_uint, hook: Hook, data: *mut c_void, destroy: *mut c_void) -> c_ulong;
+        fn g_signal_connect_data(instance: *mut c_void, signal: *const c_char, handler: Notify, data: *mut c_void, destroy: *mut c_void, flags: c_int) -> c_ulong;
         fn g_value_get_object(v: *const GValue) -> *mut c_void;
         fn g_object_class_find_property(class: *mut c_void, name: *const c_char) -> *mut c_void;
         fn g_value_init(v: *mut GValue, t: usize) -> *mut GValue;
@@ -272,6 +275,10 @@ fn read_back(given: bool, index: Option<i32>, mixer: Option<bool>) -> Granted {
     }
 }
 
+fn admitted() -> bool {
+    super::watch::topic().is_some_and(|t| t.admits(std::process::id()))
+}
+
 /// Puts the sink on [`CARRIER_ADEC`] off the mixer as libpf adds it, as the proven run's
 /// `audiosink index=1` was, when [`gives_input`] allows. Whether it did.
 unsafe fn give_input(sink: *mut c_void) -> bool {
@@ -280,18 +287,37 @@ unsafe fn give_input(sink: *mut c_void) -> bool {
         let p = g_object_class_find_property(*sink.cast::<*mut c_void>(), name.as_ptr()).cast::<ParamSpec>();
         (!p.is_null()).then(|| ((*p).value_type, (*p).flags))
     };
-    let admitted = super::watch::topic().is_some_and(|t| t.admits(std::process::id()));
+    let admitted = admitted();
     if !gives_input(admitted, spec(c"index"), spec(c"mixer")) {
         crate::player::log(&format!("truehd: LG's audio sink keeps LG's input (the helper admits this process: {admitted})"));
         return false;
     }
-    set_int(sink, c"index", c_int::from(CARRIER_ADEC));
-    set_boolean(sink, c"mixer", false);
-    let (index, mixer) = (read_int(sink, c"index"), read_boolean(sink, c"mixer"));
+    put_on_carrier_adec(sink);
+    // libpf sets `resource-info` after adding the sink and before unlocking its state
+    // (`CustomPipeline::setResourcePropertyToSink`, last in `addSinkElement_ES`), and a PCM Load's
+    // ports in it (`audio-port` -1, `mixer-port` 4) put the sink back on the mixer.
+    let notified = g_signal_connect_data(sink, c"notify::resource-info".as_ptr(), on_resource_info, null_mut(), null_mut(), 0) != 0;
     crate::player::log(&format!(
-        "truehd: LG's audio sink put on ADEC{CARRIER_ADEC} off the mixer; it reads index {index:?}, mixer {mixer:?}"
+        "truehd: LG's audio sink put on ADEC{CARRIER_ADEC} off the mixer (again after libpf's resource-info: {notified})"
     ));
     true
+}
+
+unsafe extern "C" fn on_resource_info(sink: *mut c_void, _pspec: *mut c_void, _data: *mut c_void) {
+    if admitted() {
+        put_on_carrier_adec(sink);
+        crate::player::log(&format!("truehd: LG's audio sink put back on ADEC{CARRIER_ADEC} after libpf's resource-info"));
+    } else {
+        crate::player::log("truehd: LG's audio sink keeps libpf's resource-info (the helper no longer admits this process)");
+    }
+}
+
+/// The sink only stores both until it opens. It files `index` under its decoder port or its mixer
+/// port by the `mixer` it holds at the time (`gst_lg_audio_render_set_property`), so `mixer` goes
+/// first.
+unsafe fn put_on_carrier_adec(sink: *mut c_void) {
+    set_boolean(sink, c"mixer", false);
+    set_int(sink, c"index", c_int::from(CARRIER_ADEC));
 }
 
 /// One sink's state. `sink` is the pad's element, which outlives its probe.
