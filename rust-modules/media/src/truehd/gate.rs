@@ -14,12 +14,13 @@ use super::contract::Route;
 /// The helper's route answer, counting its own sample age, may be this old for a burst to carry.
 const ROUTE_FRESH: Duration = Duration::from_millis(300);
 /// While the helper's last word was "bypassing" and no older than this, a stale answer is not
-/// taken as the route lost: the helper's own calls to LG can keep it from sampling for a moment.
+/// taken as the route lost: on a loaded TV the helper or this process can be held up for a moment.
 const BYPASS_HELD: Duration = Duration::from_secs(3);
 /// From the first burst offered until the helper confirms the arm. The arm itself waits up to
 /// 2 s for LG's renderer to join the audio graph and 2 s for the converter.
 const ARM_WAIT: Duration = Duration::from_secs(5);
-/// From the arm until the route bypasses the mixer.
+/// From the arm until the route bypasses the mixer. An answer that is late at the deadline is
+/// waited for up to [`ROUTE_FRESH`] longer: only a current "not bypassing" ends the wait sooner.
 const BYPASS_WAIT: Duration = Duration::from_secs(1);
 /// Zeros in a row, once the carrier has run and while the route is not bypassing, before giving
 /// the carrier up.
@@ -109,9 +110,12 @@ impl Gate {
             Phase::Arming { offered, armed } => {
                 let offered = offered.unwrap_or(now);
                 let armed = armed.or((facts.armed_epoch == Some(self.epoch)).then_some(now));
+                let answered = facts.route_age(now).is_some_and(|age| age < ROUTE_FRESH);
                 match armed {
                     None if now - offered >= ARM_WAIT => Phase::GaveUp("the helper did not arm the route"),
-                    Some(at) if now - at >= BYPASS_WAIT => Phase::GaveUp("the route did not bypass the mixer"),
+                    Some(at) if now - at >= BYPASS_WAIT && (answered || now - at >= BYPASS_WAIT + ROUTE_FRESH) => {
+                        Phase::GaveUp("the route did not bypass the mixer")
+                    }
                     _ => Phase::Arming { offered: Some(offered), armed },
                 }
             }
@@ -145,6 +149,11 @@ mod tests {
         Facts { armed_epoch: Some(epoch), route: Some((BYPASSING, now)) }
     }
 
+    /// Armed for epoch 1, the route answered at `at` and not bypassing yet.
+    fn waiting(at: Instant) -> Facts {
+        Facts { route: Some((Route { bypassing: false, ..BYPASSING }, at)), ..fresh(at, 1) }
+    }
+
     #[test]
     fn zeros_until_the_route_is_confirmed_then_carrier() {
         let t0 = Instant::now();
@@ -164,12 +173,27 @@ mod tests {
         assert!(matches!(g.decide(t0 + ms(5000), &Facts::default()), Decision::GiveUp(_)), "never armed");
 
         let mut g = Gate::new();
-        let armed = Facts { armed_epoch: Some(g.epoch()), ..Facts::default() };
-        g.decide(t0, &armed);
-        assert_eq!(g.decide(t0 + ms(999), &armed), Decision::Zeros);
-        assert!(matches!(g.decide(t0 + ms(1000), &armed), Decision::GiveUp(_)), "armed, never bypassing");
+        g.decide(t0, &waiting(t0));
+        assert_eq!(g.decide(t0 + ms(999), &waiting(t0 + ms(999))), Decision::Zeros);
+        assert!(matches!(g.decide(t0 + ms(1000), &waiting(t0 + ms(1000))), Decision::GiveUp(_)), "armed, never bypassing");
         g.restart();
         assert!(matches!(g.decide(t0 + ms(1100), &fresh(t0 + ms(1100), g.epoch())), Decision::GiveUp(_)), "for good");
+    }
+
+    #[test]
+    fn a_route_answer_late_at_the_bypass_deadline_is_waited_for() {
+        let t0 = Instant::now();
+        let mut g = Gate::new();
+        g.decide(t0, &waiting(t0));
+        // At the deadline the last answer is 400 ms old: one sample is late.
+        let late = waiting(t0 + ms(600));
+        assert_eq!(g.decide(t0 + ms(1000), &late), Decision::Zeros);
+        assert_eq!(g.decide(t0 + ms(1100), &fresh(t0 + ms(1100), 1)), Decision::Carrier);
+
+        let mut g = Gate::new();
+        g.decide(t0, &waiting(t0));
+        assert_eq!(g.decide(t0 + ms(1299), &late), Decision::Zeros);
+        assert!(matches!(g.decide(t0 + ms(1300), &late), Decision::GiveUp(_)), "an answer that stays late is a no");
     }
 
     #[test]

@@ -10,8 +10,8 @@ use super::gate::Facts;
 
 /// The contract's retry period for an arm.
 const ARM_EVERY: Duration = Duration::from_millis(100);
-/// The helper samples the route every 100 ms and its answer counts as stale past 300 ms, so the
-/// route is asked twice as often as it is sampled.
+/// The helper publishes a sample of the route every 50 ms and its answer counts as stale past
+/// 300 ms; asking as often keeps the answer at most about 100 ms old.
 const ROUTE_EVERY: Duration = Duration::from_millis(50);
 /// How often the worker looks for a flush, a stop or a due call.
 const TICK: Duration = Duration::from_millis(50);
@@ -56,6 +56,8 @@ pub struct Shared {
     epoch: AtomicU64,
     /// LG's sink saw a flush the feeder has not restarted for yet.
     flushed: AtomicBool,
+    /// LG's sink has had a buffer of this session's carrier, with `pcm-multi-ch` off on the first.
+    first_buffer: AtomicBool,
     /// The decoder input the sink reported; the worker arms with it.
     granted: Mutex<Granted>,
     stop: Mutex<bool>,
@@ -70,6 +72,7 @@ impl Shared {
             facts: Mutex::new(Facts::default()),
             epoch: AtomicU64::new(1),
             flushed: AtomicBool::new(false),
+            first_buffer: AtomicBool::new(false),
             granted: Mutex::new(Granted::Unknown),
             stop: Mutex::new(false),
             wake: Condvar::new(),
@@ -112,6 +115,17 @@ impl Shared {
         }
         drop(held);
         self.wake.notify_all();
+    }
+
+    pub fn first_buffer(&self) -> bool {
+        self.first_buffer.load(Ordering::Acquire)
+    }
+
+    /// A buffer of the carrier reached LG's sink: the worker may arm now.
+    pub fn note_first_buffer(&self) {
+        if !self.first_buffer.swap(true, Ordering::AcqRel) {
+            self.wake.notify_all();
+        }
     }
 }
 
@@ -182,17 +196,25 @@ fn run(shared: &Shared, helper: &dyn Helper) {
     let _slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
     let mut driver = Driver::new(std::process::id());
     let mut facts = Facts::default();
+    let mut first_buffer = false;
     loop {
         if *shared.stop.lock().unwrap_or_else(|e| e.into_inner()) {
             break;
         }
         let epoch = shared.epoch();
+        if !first_buffer && shared.first_buffer() {
+            // The sink holds that buffer until the arm: it goes out now, not a retry period on.
+            first_buffer = true;
+            driver.next_arm = None;
+        }
         driver.step(Instant::now(), epoch, helper, || renderer(shared, renderer_tail), &mut facts);
         *shared.facts.lock().unwrap_or_else(|e| e.into_inner()) = facts;
         let stop = shared.stop.lock().unwrap_or_else(|e| e.into_inner());
         let _ = shared
             .wake
-            .wait_timeout_while(stop, TICK, |stopped| !*stopped && shared.epoch() == epoch)
+            .wait_timeout_while(stop, TICK, |stopped| {
+                !*stopped && shared.epoch() == epoch && shared.first_buffer() == first_buffer
+            })
             .unwrap_or_else(|e| e.into_inner());
     }
     driver.finish(helper, renderer_open, std::thread::sleep);
@@ -200,6 +222,11 @@ fn run(shared: &Shared, helper: &dyn Helper) {
 
 /// The renderer's bypass tail and the decoder input its sink holds.
 fn renderer(shared: &Shared, tail: impl FnOnce() -> Result<u32, &'static str>) -> Result<(u32, u8), &'static str> {
+    if shared.carrier.start_as_bitstream && !shared.first_buffer() {
+        // Upstream configures LG's converter at the first buffer, with `pcm-multi-ch` off. An arm
+        // at the caps, with it still on, never brought Pass-Through on the set.
+        return Err("LG's audio sink has not had its first buffer yet");
+    }
     let tail = tail()?;
     match shared.granted() {
         Granted::Decoder(adec) => Ok((tail, adec)),
@@ -418,15 +445,20 @@ mod tests {
     }
 
     #[test]
-    fn the_arm_waits_for_the_decoder_input_the_sink_names() {
+    fn the_arm_waits_for_the_sink_s_first_buffer_and_the_decoder_input_it_names() {
         let shared = Shared::new(Carrier::default());
         let tail = || Ok(0x2a);
+        assert_eq!(renderer(&shared, tail), Err("LG's audio sink has not had its first buffer yet"));
+        shared.note_first_buffer();
         assert_eq!(renderer(&shared, tail), Err("the audio sink has not named its decoder input yet"));
         shared.note_granted(Granted::from_sink(Some(1), Some(true)));
         assert!(matches!(renderer(&shared, tail), Err(why) if why.contains("mixer channel")));
         shared.note_granted(Granted::from_sink(Some(1), Some(false)));
         assert_eq!(renderer(&shared, tail), Ok((0x2a, 1)));
         assert_eq!(renderer(&shared, || Err("no audio renderer is open yet")), Err("no audio renderer is open yet"));
+        let pcm = Shared::new(Carrier { start_as_bitstream: false, ..Carrier::default() });
+        pcm.note_granted(Granted::Decoder(1));
+        assert_eq!(renderer(&pcm, tail), Ok((0x2a, 1)), "no first buffer is held for it");
     }
 
     #[test]

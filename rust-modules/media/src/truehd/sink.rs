@@ -332,10 +332,10 @@ unsafe extern "C" fn on_probe(_pad: *mut c_void, info: *mut ProbeInfo, data: *mu
     }
 }
 
-/// Upstream configures the bypass converter after the first buffer, with `pcm-multi-ch` off, and
-/// turns the property back on with the second. The recipe that played TrueHD on the set held the
-/// second buffer back until the helper had armed, for at most this long; the arm is that
-/// configuration here.
+/// Upstream configures the bypass converter at the first buffer, with `pcm-multi-ch` off, and
+/// turns the property back on with the second. The recipe that played TrueHD on the set held that
+/// first buffer, the property off, until the helper had armed, for at most this long; the arm is
+/// that configuration here, so the worker arms only once the first buffer is in.
 const ARM_WINDOW: Duration = Duration::from_secs(5);
 const ARM_POLL: Duration = Duration::from_millis(10);
 
@@ -390,9 +390,9 @@ impl Probe {
         PROBE_OK
     }
 
-    /// Upstream's order around the first buffer, then zeros unless the route passes it now. The
-    /// first buffer holds `pcm-multi-ch` off until the helper has armed. A buffer after the
-    /// session ended is the carrier's tail and is zeroed too.
+    /// Upstream's order around the first buffer, then zeros unless the route passes it now. Any
+    /// buffer lets the worker arm; the first, `pcm-multi-ch` off, waits here until it has. A
+    /// buffer after the session ended is the carrier's tail and is zeroed too.
     unsafe fn buffer(&self, info: &mut ProbeInfo) -> c_int {
         let shared = session::active();
         if let Some(s) = shared.as_deref() {
@@ -400,17 +400,19 @@ impl Probe {
         }
         let bitstream = shared.as_ref().is_some_and(|s| s.carrier.start_as_bitstream);
         if bitstream {
-            if self.first.swap(false, Ordering::AcqRel) {
+            let first = self.first.swap(false, Ordering::AcqRel);
+            if first {
                 self.configured.store(true, Ordering::Release);
                 set_multi_ch(self.sink, false);
-                if let Some(s) = shared.as_deref() {
-                    let named = || s.armed() || matches!(s.granted(), Granted::Refused(_));
-                    if !hold_until(ARM_WINDOW, ARM_POLL, named, std::thread::sleep) {
-                        crate::player::log("truehd: the route was not armed within 5 s of the first buffer");
-                    }
-                }
             } else if self.configured.load(Ordering::Acquire) && !self.feeding.swap(true, Ordering::AcqRel) {
                 set_multi_ch(self.sink, true);
+            }
+            if let Some(s) = shared.as_deref() {
+                s.note_first_buffer();
+                let named = || s.armed() || matches!(s.granted(), Granted::Refused(_));
+                if first && !hold_until(ARM_WINDOW, ARM_POLL, named, std::thread::sleep) {
+                    crate::player::log("truehd: the route was not armed within 5 s of the first buffer");
+                }
             }
         }
         let zero = !shared.is_some_and(|s| s.facts().safe(Instant::now(), s.epoch()));
