@@ -332,10 +332,11 @@ static void crash_handler(int sig, siginfo_t *si, void *uc) {
      * the dev set: two deliberate SIGSEGVs produced the WIFSIGNALED status above and NO report in
      * `/var/log/reports/librdx/`. The reason is structural — `/proc/sys/kernel/core_pattern` on
      * this firmware is the bare string `core`, i.e. the kernel writes a core FILE into the process
-     * cwd and the report chain starts from that file, while `setrlimit(RLIMIT_CORE, 0)` below means
-     * no core is ever written. The two are mutually exclusive, and suppressing cores is the right
-     * choice: the partition is 615.6 MB shared with every app the user has installed and had
-     * 125.9 MB free when this was measured, against a ~200 MB core.
+     * cwd and the report chain starts from that file, while `setrlimit(RLIMIT_CORE, 0)`
+     * (`plx_core_dumps_off`, first thing in `main`) means no core is ever written. The two are
+     * mutually exclusive, and suppressing cores is the right choice: the partition is 615.6 MB
+     * shared with every app the user has installed and had 125.9 MB free when this was measured,
+     * against a ~200 MB core.
      *
      * (Not proven all the way: writing a core to confirm the chain would have needed ~200 MB that
      * was not there, so the core→report link is inference from `core_pattern` rather than a
@@ -513,6 +514,19 @@ static void freeze_handler(int sig, siginfo_t *si, void *uc) {
     __sync_lock_release(&freeze_busy);
 }
 
+void plx_core_dumps_off(void) {
+    /* The jail sets RLIMIT_CORE to INFINITY and `/proc/sys/kernel/core_pattern` is the bare string
+     * "core", relative to the cwd, which is the app's own install directory. Measured on the dev
+     * TV: a 209,965,056-byte core from a single crash, kept by reinstalls, on a 615.6 MB partition
+     * shared with every installed app. A core can also hold sign-in secrets and is mode 0777.
+     *
+     * Soft and hard both go to 0, so nothing this process starts can raise it again, and children
+     * (the Sentry daemon, ffmpeg helpers) inherit it. Called before any thread exists. The tracer
+     * still writes the faulting PC and its maps line to the crash log, which is what
+     * tools/crash-report.sh symbolizes. */
+    setrlimit(RLIMIT_CORE, &(struct rlimit){ 0, 0 });
+}
+
 void plx_crash_install(int ev_fd, int cr_fd) {
     struct sigaction sa;
     /* The sinks first, THEN `sigaction`. Ordering, not style: after the last line of this function
@@ -579,20 +593,5 @@ void plx_crash_install(int ev_fd, int cr_fd) {
        ("SIGPIPE would kill the app", capture.rs); this covers every other socket in one line. */
     signal(SIGPIPE, SIG_IGN);
 
-#ifndef PLX_DEBUG
-    /* No core dumps in a shipping build — this is the other half of the re-raise above, and
-       without it that design is actively hostile to the user's TV. The jail sets RLIMIT_CORE
-       to INFINITY and /proc/sys/kernel/core_pattern is the bare string "core", i.e. relative
-       to cwd = our own app directory. Measured on the dev TV: a 209,965,056-byte core from a
-       single crash, sitting on /dev/mmcblk0p53 — 615.6 MB TOTAL, SHARED with every app the
-       user has installed, and nothing on the device ever cleans it. Two crashes fill it.
-       webosbrew's repository rule 3 ("be considerate to users' TV") is squarely about this.
-
-       What this costs: the kernel's core file, and only that. The tracer above still writes the
-       faulting PC and its /proc/self/maps line to the append-only crash log, which is what
-       tools/crash-report.sh symbolizes and what every triage in this project has actually used;
-       the re-raise still gives SAM a real WIFSIGNALED exit. `make DEBUG=1` keeps cores (and
-       DWARF) for the rare case that wants a full post-mortem. */
-    setrlimit(RLIMIT_CORE, &(struct rlimit){ 0, 0 });
-#endif
+    /* Core dumps are switched off by `plx_core_dumps_off`, the first call in `main`. */
 }

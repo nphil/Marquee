@@ -8,8 +8,8 @@
 
 #include <stddef.h>
 
-/* Arm the handler on SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL/SIGSYS/SIGTRAP, ignore SIGPIPE
- * process-wide, and (in a non-PLX_DEBUG build) suppress core dumps.
+/* Arm the handler on SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL/SIGSYS/SIGTRAP and ignore SIGPIPE
+ * process-wide.
  *
  * It also arms the FREEZE probe on SIGUSR2: the Rust main-loop watchdog `pthread_kill`s the main
  * thread with it when the loop stands still, and the handler writes a `*** FREEZE` record and
@@ -23,6 +23,12 @@
  * Call once. Calling it twice is harmless but pointless.
  */
 void plx_crash_install(int event_fd, int crash_fd);
+
+/* `setrlimit(RLIMIT_CORE, 0)`, soft and hard. SAM starts apps with an unlimited core size and
+ * `core_pattern` "core", so a crash would drop a 160-290 MB, world-readable core in the install
+ * directory. The first call in `main`, before any thread or child exists, so all of them inherit
+ * it. Never conditional: debug builds keep the tracer's crash log instead. */
+void plx_core_dumps_off(void);
 
 /* The most `*** FREEZE` records the handler writes in one process. A backstop against a stray
  * signal storm: the Rust watchdog sends at most `MAX_FREEZE_PROBES` (four), so this is never the

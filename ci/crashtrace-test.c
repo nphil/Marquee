@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -490,6 +491,21 @@ static void freeze_maps_cases(void) {
     unlink(sink);
 }
 
+/* The limit is lowered in a child: a hard limit of 0 cannot be raised again by this process. */
+static void core_limit_case(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        struct rlimit before = { RLIM_INFINITY, RLIM_INFINITY }, after = { 1, 1 };
+        setrlimit(RLIMIT_CORE, &before);
+        plx_core_dumps_off();
+        getrlimit(RLIMIT_CORE, &after);
+        _exit(after.rlim_cur == 0 && after.rlim_max == 0 ? 0 : 1);
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    expect("core limit", WIFEXITED(st) && WEXITSTATUS(st) == 0, "RLIMIT_CORE not 0/0 after plx_core_dumps_off");
+}
+
 int main(void) {
     /* A genuine memory fault first: it is the only case that exercises the kernel-raised path, a
      * real faulting PC and a real si_addr. */
@@ -507,6 +523,7 @@ int main(void) {
 
     /* …and then the maps scan, which the crashes above cannot reach on a host with no /proc. */
     maps_cases();
+    core_limit_case();
 
     /* The freeze probe: a record, and a process that lives. */
     freeze_cases();

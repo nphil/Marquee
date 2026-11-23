@@ -1087,8 +1087,8 @@ Listed because each could change a decision above.
     event log, and `tests/run.py` builds with plain `make`, so the harness never sees a release
     binary and gating the whole surface costs it nothing.
 11. ~~`setrlimit(RLIMIT_CORE, 0)`~~ **DONE** (`src/main.c`, the other half of the tracer's re-raise).
-    `make DEBUG=1` keeps cores via a new `-DPLX_DEBUG`; that is now the only behavioural thing
-    `DEBUG=1` changes.
+    `make DEBUG=1` once kept cores via `-DPLX_DEBUG`; no build does now: `plx_core_dumps_off` is
+    the first call in `main`, and the storage helper sets the limit too.
 12. Sanitize `tests/manifest.json` and the personal-library references in `docs/`. *(Narrower than
     it reads: `docs/` is ~12 lines across 5 files. The concentration is `tests/` — the inventory
     appears twice, in `manifest.json` and `README.md` — plus, unlisted here, real titles in

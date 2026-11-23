@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A crash no longer leaves a 160-290 MB core dump (world-readable, possibly holding sign-in keys) in the TV's app folder, where reinstalls kept it: Marquee and its storage helper set the core size to 0 as the first thing they do, so the Sentry daemon and every child inherit it, and `make DEBUG=1` no longer re-enables cores. The crash log is unchanged. Not yet checked on the TV.
 - Deleting a movie, show or episode now cleans up after itself like the phone apps. With Radarr or Sonarr set up under Settings > Integrations (address and API key; both off until set), a deleted whole movie or show is also deleted there with its files and kept off list syncs, Seerr's record of it is cleared, and the Watchlist entry is removed (three tries). A later deliberate add or request still works. Each step is told in the toast on its own, a step that is not set up says it was not asked, and Settings > Integrations > Finish clean-up tries again only what failed, never the Plex delete. Deleting some episodes of a show leaves the apps alone. Not yet checked on the TV.
 - A slow position update after a seek no longer pauses direct play for a network refill when the decoder already holds both audio and video past its feed threshold. Not yet checked on the TV.
 - Picking an audio track tells the server the subtitle that now plays with it, not the one it replaced, and never turns the subtitle Off: when the automatic rule has none for that audio, the shown one stays. Not yet checked on the TV.

@@ -22,6 +22,14 @@ mod wire;
 mod service;
 
 fn main() {
+    // SAM starts the service with an unlimited core size; a crash must not write a dump (which
+    // can hold keys) into the install directory. Before service::run starts any thread.
+    #[cfg(unix)]
+    // SAFETY: setrlimit with a valid struct has no memory effects.
+    unsafe {
+        let zero = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        libc::setrlimit(libc::RLIMIT_CORE, &zero);
+    }
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     if service::run().is_err() {
         std::process::exit(1);

@@ -319,10 +319,8 @@ CFLAGS_REMAP = -fdebug-prefix-map=$(HOME)=/build -fdebug-prefix-map=$(WEBOS_SDK)
                -fdebug-prefix-map=$(CURDIR)=/plxnative
 
 ifeq ($(DEBUG),1)
-# -DPLX_DEBUG lets the C shim keep core dumps enabled for a post-mortem (src/crashtrace.c's
-# setrlimit(RLIMIT_CORE, 0) — a shipping build must not write 200 MB into the TV's app
-# partition). This is the only thing DEBUG=1 changes about behaviour rather than debuginfo.
-CFLAGS      += -g $(CFLAGS_REMAP) -DPLX_DEBUG
+# DEBUG=1 only adds DWARF; core dumps stay off in every build (src/crashtrace.c plx_core_dumps_off).
+CFLAGS      += -g $(CFLAGS_REMAP)
 RUST_DEBUGINFO = -C debuginfo=2
 endif
 

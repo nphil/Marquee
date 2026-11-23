@@ -155,6 +155,8 @@ static int open_fd_log(const char *path, int flags) {
 }
 
 int main(int argc, char **argv) {
+    /* First, before any thread or child: SAM leaves the core size unlimited. See crashtrace.h. */
+    plx_core_dumps_off();
     /* Sentry Native launches this executable with exactly one envelope path after the crashed
      * process is already beyond saving. Recognise and move it BEFORE opening (and truncating) any
      * ordinary app log, starting SDL, or arming another handler. A lookalike argument returns 0 and
