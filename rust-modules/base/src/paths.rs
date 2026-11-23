@@ -500,8 +500,14 @@ pub mod runtime_file {
     pub const PLAYBACK_DIAGNOSTICS: &str = "plxnative-playback.log";
     pub const GPU_TIME: &str = "plxnative-gputime.jsonl";
     pub const HARDWARE_COUNTERS: &str = "plxnative-hwcnt.jsonl";
+    /// The previous run's copy of each log that grows ([`crate::logcap`], `src/main.c`). Named with
+    /// `.prev` before the `.log` so the dev-trigger scan, which skips `*.log`, never reads one as a
+    /// trigger file.
+    pub const EVENTS_PREV: &str = "plxnative-events.prev.log";
+    pub const CRASH_PREV: &str = "plxnative-crash.prev.log";
+    pub const STDERR_PREV: &str = "plxnative-stderr.prev.log";
 
-    pub const LOGS: [&str; 9] = [
+    pub const LOGS: [&str; 12] = [
         EVENTS,
         CRASH,
         STDERR,
@@ -511,6 +517,9 @@ pub mod runtime_file {
         PLAYBACK_DIAGNOSTICS,
         GPU_TIME,
         HARDWARE_COUNTERS,
+        EVENTS_PREV,
+        CRASH_PREV,
+        STDERR_PREV,
     ];
 }
 

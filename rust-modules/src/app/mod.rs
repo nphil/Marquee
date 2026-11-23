@@ -440,6 +440,7 @@ impl App {
 /// `pre_boot_diagnostics();` would drop it at the end of THIS call, before a single frame ran.
 fn pre_boot_diagnostics() -> plx_telemetry::telemetry::native::Guard {
     install_panic_logger();
+    plx_base::logcap::start();
     // WHICH INSTALL wrote this log. First line, before anything can fail.
     //
     // Two builds can sit on one television — the app users get, and a developer one beside it

@@ -13,6 +13,7 @@ int plx_sentry_spool_external(const char *path) { (void)path; return 0; }
 void plx_crash_write_image_marker(int fd) { (void)fd; }
 void plx_launch_args(const char *json) { (void)json; }
 void plx_crash_install(int event_fd, int crash_fd) { (void)event_fd; (void)crash_fd; }
+void plx_core_dumps_off(void) {}
 
 /* The runtime root `main()` resolves its sinks under. The shipped resolver is Rust; here it is a
  * scratch directory, so booting the shim never touches a real /tmp/plxnative-*.log. */
@@ -48,6 +49,21 @@ static void boot_shim_once(void) {
         close(saved);
     }
     if (elogf) { fclose(elogf); elogf = NULL; }
+}
+
+/* Read a whole small file into `buf`; -1 when it is missing. */
+static long slurp(const char *path, char *buf, size_t cap) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    ssize_t n = read(fd, buf, cap - 1);
+    close(fd);
+    buf[n < 0 ? 0 : n] = 0;
+    return n < 0 ? 0 : (long)n;
+}
+
+static void put(const char *path, const char *text) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0640);
+    if (fd >= 0) { expect(write(fd, text, strlen(text)) == (ssize_t)strlen(text), "seeded"); close(fd); }
 }
 
 static void expect_sink_modes(const char *dir, const char *when) {
@@ -159,9 +175,39 @@ int main(void) {
     expect_sink_modes(dir, "fresh create under umask 777");
     umask(previous_umask);
 
+    /* A relaunch keeps the last run's event log as the one `.prev` twin and starts a fresh one; the
+     * crash log stays put until it passes CRASH_LOG_KEEP, then moves aside whole. */
+    {
+        char live[PATH_MAX], prev[PATH_MAX], crash[PATH_MAX], crash_prev[PATH_MAX], got[64];
+        struct stat pst;
+        snprintf(live, sizeof live, "%s/plxnative-events.log", dir);
+        snprintf(prev, sizeof prev, "%s/plxnative-events.prev.log", dir);
+        snprintf(crash, sizeof crash, "%s/plxnative-crash.log", dir);
+        snprintf(crash_prev, sizeof crash_prev, "%s/plxnative-crash.prev.log", dir);
+        put(live, "last run");
+        put(crash, "one crash");
+        boot_shim_once();
+        expect(slurp(prev, got, sizeof got) == 8 && strcmp(got, "last run") == 0, "last run's events kept as .prev");
+        expect(stat(prev, &pst) == 0 && (pst.st_mode & 07777) == 0640, ".prev is 0640");
+        expect(stat(live, &pst) == 0 && pst.st_size == 0, "this run's event log starts empty");
+        expect(slurp(crash, got, sizeof got) == 9, "a small crash log is kept in place");
+        expect(stat(crash_prev, &pst) != 0, "a small crash log makes no .prev");
+        expect(truncate(crash, CRASH_LOG_KEEP + 1) == 0, "crash log grown past the cap");
+        boot_shim_once();
+        expect(stat(crash_prev, &pst) == 0 && pst.st_size == CRASH_LOG_KEEP + 1, "an oversize crash log moves to .prev");
+        expect(stat(crash, &pst) == 0 && pst.st_size == 0, "and a fresh crash log starts");
+    }
+
     for (size_t i = 0; i < sizeof sinks / sizeof sinks[0]; i++) {
         char path[PATH_MAX];
         snprintf(path, sizeof path, "%s/%s", dir, sinks[i]);
+        unlink(path);
+    }
+    {
+        char path[PATH_MAX];
+        snprintf(path, sizeof path, "%s/plxnative-events.prev.log", dir);
+        unlink(path);
+        snprintf(path, sizeof path, "%s/plxnative-crash.prev.log", dir);
         unlink(path);
     }
     rmdir(dir);

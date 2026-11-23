@@ -219,6 +219,8 @@ RELEASE_LEGITIMATE_TRIGGER_NAMES = {
     # C shim's private logs; `plxnative-diag.log` is the storage worker's group-readable snapshot.
     "plxnative-events.log", "plxnative-crash.log", "plxnative-stderr.log",
     "plxnative-diag.log",
+    # Last run's copy of the three growing logs (`src/main.c`, `base/src/logcap.rs`): create-only too.
+    "plxnative-events.prev.log", "plxnative-crash.prev.log", "plxnative-stderr.prev.log",
     # The remote-key FIFO (`remote.rs`) is a shipped PRODUCTION feature, not a dev trigger, even
     # though `DIAG` also lists it (so that its presence does not suppress the who's-watching
     # picker the way an actual trigger file would).

@@ -154,6 +154,19 @@ static int open_fd_log(const char *path, int flags) {
     return fd;
 }
 
+/* The crash log accumulates across launches on purpose (the next launch's crash reporter reads it,
+ * 4 MiB at most), and a record is about 2 KB, so it only moves aside once past this size. */
+#define CRASH_LOG_KEEP (1 << 20)
+
+/* Rename `path` to `prev` (replacing it) when it is a regular file larger than `only_above`. Only the
+ * name moves, so a symlink or foreign file at `path` is never followed; `open_fd_log` then creates
+ * and vets a fresh file. */
+static void keep_previous(const char *path, const char *prev, off_t only_above) {
+    struct stat st;
+    if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= only_above) return;
+    if (rename(path, prev) == 0) chmod(prev, 0640);
+}
+
 int main(int argc, char **argv) {
     /* First, before any thread or child: SAM leaves the core size unlimited. See crashtrace.h. */
     plx_core_dumps_off();
@@ -162,6 +175,11 @@ int main(int argc, char **argv) {
      * ordinary app log, starting SDL, or arming another handler. A lookalike argument returns 0 and
      * proceeds as a normal launch; Rust validates the exact SDK directory, UUID and file type. */
     if (argc == 2 && plx_sentry_spool_external(argv[1])) return 0;
+    /* Last run's logs become the one `.prev` twin before this run opens (and so recreates) them.
+     * The TV's storage must not bloat: at most the current and previous run are kept. */
+    keep_previous(runtime_path("plxnative-events.log"), runtime_path("plxnative-events.prev.log"), 0);
+    keep_previous(runtime_path("plxnative-stderr.log"), runtime_path("plxnative-stderr.prev.log"), 0);
+    keep_previous(runtime_path("plxnative-crash.log"), runtime_path("plxnative-crash.prev.log"), CRASH_LOG_KEEP);
     elogf = open_event_log();
     /* The crash handler's own descriptors, both opened BEFORE `install_crash_tracer` arms the
      * handler — so a signal can never reach code that has to open something first, which is the
