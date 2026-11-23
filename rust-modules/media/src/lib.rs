@@ -20,6 +20,7 @@ pub mod curlio; // the HTTPS media plane: a remote file pulled by byte range ove
 pub mod ff_pcm; // FLAC decoded in the app and fed as PCM (libpf has no FLAC input)
 #[macro_use]
 pub mod ff; // THE demuxer -- the FFmpeg 9.0 this app BUNDLES and pins (majors 63/63/61), dlopen'd by absolute path beside the binary, never the television's
+pub mod livetune; // a tuner URL's channel change: its capped probe and the one `livetune:` log line
 pub mod hls; // strict parser/auth/timeline for the measured one-variant PMS HLS shape
 pub mod multilink; // a direct-play file fetched in ranges over the links the LumaTV helper offers
 pub mod player; // buffer-feed video engine (was playback.c) -- step 5

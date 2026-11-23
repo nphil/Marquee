@@ -9610,6 +9610,14 @@ pub fn demux(
                     break;
                 }
                 (*fmt).pb = avio;
+                // A tuner channel change is judged on the first picture, so its probe is capped
+                // (`livetune`); a film keeps FFmpeg's defaults.
+                if let Some(limits) = crate::livetune::probe_limits(&path) {
+                    for (name, value) in [(c"probesize", limits.probesize), (c"analyzeduration", limits.analyze_duration_us)] {
+                        let v = std::ffi::CString::new(value.to_string()).unwrap_or_default();
+                        av_opt_set(fmt as *mut c_void, name.as_ptr(), v.as_ptr(), 0);
+                    }
+                }
                 let r = avformat_open_input(
                     &mut fmt,
                     std::ptr::null(),
@@ -9631,7 +9639,10 @@ pub fn demux(
                 // would sit beside the demuxer's own copy for the whole playback. Nothing reads an
                 // attachment's extradata between here and the hand-over to `begin_ass_sources`.
                 let font_attachments = detach_fonts(fmt);
-                if avformat_find_stream_info(fmt, std::ptr::null_mut()) < 0 {
+                let probe_began = std::time::Instant::now();
+                let probed = avformat_find_stream_info(fmt, std::ptr::null_mut());
+                crate::livetune::note_probe(probe_began.elapsed());
+                if probed < 0 {
                     crate::player::log("ff: find_stream_info failed");
                     if !crate::aq::aq_is_aborted(aq_p) {
                         SHARED.note_demux_exit(DemuxExitClass::FindStreamInfoFailed);
@@ -10304,6 +10315,7 @@ pub fn demux(
                             }
                         }
                         if is_key {
+                            crate::livetune::note_keyframe();
                             if let Some(trace) = seek_trace.as_mut() {
                                 trace.key();
                             }

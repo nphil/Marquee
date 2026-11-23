@@ -2122,6 +2122,7 @@ fn start_bufferfeed_inner(
         return Err(crate::route::RouteStartResult::StartFailed);
     }
     let stream = sample.is_none();
+    crate::livetune::begin(&url);
     // dev: /tmp/plxnative-uriprobe — play this URL through `com.webos.media` (URI mode) instead of
     // building an Engine, to learn what webOS 5+ does with it (issue #1064). Taken AFTER the route
     // is prepared and BEFORE anything native is touched (the clock and session guards, the exported
