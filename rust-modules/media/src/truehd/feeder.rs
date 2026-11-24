@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use super::contract::Carrier;
-use super::gate::{Decision, Gate, Hold, PlayHold};
+use super::gate::{Decision, Gate, PlayHold};
 use super::mat::{Packer, ZERO_BURST};
 use super::session::Session;
 
@@ -109,20 +109,12 @@ impl Feeder {
     }
 
     /// Whether the clock must stay stopped: the carrier plays this start, seek or resume and the
-    /// receiver does not hear it yet. The pause lasts until the route is audible; a route that is
-    /// not by [`super::gate::PLAY_HOLD_CAP`] gives the carrier up, which reloads the sibling track
-    /// at the playhead that never moved. False once the carrier is given up.
+    /// receiver does not hear it yet, for [`super::gate::PLAY_HOLD_CAP`] at most. False once the
+    /// carrier is given up; the gate's own give-ups are the only ones.
     pub fn holds_play(&mut self, now: Instant) -> bool {
         let Some(session) = &self.session else { return false };
         let facts = session.shared().facts();
-        match self.hold.judge(now, &facts, self.gate.epoch()) {
-            Hold::Wait => true,
-            Hold::Release => false,
-            Hold::GiveUp(why) => {
-                self.stop(why);
-                false
-            }
-        }
+        self.hold.waits(now, &facts, self.gate.epoch())
     }
 
     /// A seek, a resume or a flush: the packets queued are the old position's, and the route is

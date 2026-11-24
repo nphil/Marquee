@@ -27,12 +27,12 @@ const BYPASS_WAIT: Duration = Duration::from_secs(2);
 /// Zeros in a row, once the carrier has run and while the route is not bypassing, before giving
 /// the carrier up.
 const FORCED_LIMIT: Duration = Duration::from_secs(1);
-/// How long a start, seek or resume holds the clock for the route to be audible before the carrier
-/// is given up. The helper connects the decoder after 3 s of bypass and the receiver hears it
-/// about 6.7 s after `bypassing` ([`Route::audible`]), and the bypass follows the arm by up to
-/// [`BYPASS_WAIT`]: about 8 to 9 s on the helper's current timing. The cap is that plus a margin;
-/// it comes down to 4 s once the helper's `audible` arrives within 3 s of the bypass.
-pub const PLAY_HOLD_CAP: Duration = Duration::from_secs(10);
+/// The longest a start, seek or resume holds the clock for the route to be audible; past it the
+/// clock runs and the carrier stays, since only a route failure the helper reports
+/// ([`Decision::GiveUp`]) gives it up. The helper is being cut to an `audible` within 1.5 s of the
+/// carrier flowing, so the hold is the first frame for that long at most, plus whatever silence
+/// is left.
+pub const PLAY_HOLD_CAP: Duration = Duration::from_millis(1500);
 
 /// What the session knows, each fact stamped with when it arrived.
 #[derive(Clone, Copy, Debug, Default)]
@@ -76,16 +76,6 @@ pub enum Decision {
     GiveUp(&'static str),
 }
 
-/// What the clock does while the carrier's route is not audible.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Hold {
-    /// Keep the picture paused on the position the play starts from.
-    Wait,
-    Release,
-    /// Not audible within [`PLAY_HOLD_CAP`]: release the route and play the title's audio the normal way.
-    GiveUp(&'static str),
-}
-
 /// The clock's hold for a start, a seek or a resume that plays the carrier: nothing runs until the
 /// receiver hears the stream, so no audio is lost to a route that is still coming up.
 #[derive(Debug, Default)]
@@ -94,17 +84,15 @@ pub struct PlayHold {
 }
 
 impl PlayHold {
-    pub fn judge(&mut self, now: Instant, facts: &Facts, epoch: u64) -> Hold {
+    /// Whether the clock stays stopped. The hold runs from the first call to the audible answer or
+    /// to [`PLAY_HOLD_CAP`], and stays released past the cap until the next restart.
+    pub fn waits(&mut self, now: Instant, facts: &Facts, epoch: u64) -> bool {
         if facts.audible(now, epoch) {
             self.since = None;
-            return Hold::Release;
+            return false;
         }
         let since = *self.since.get_or_insert(now);
-        if now.saturating_duration_since(since) >= PLAY_HOLD_CAP {
-            self.since = None;
-            return Hold::GiveUp("the route was not audible in time");
-        }
-        Hold::Wait
+        now.saturating_duration_since(since) < PLAY_HOLD_CAP
     }
 
     /// A seek or flush starts a new hold.
@@ -306,26 +294,28 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_waits_for_an_audible_route_and_gives_the_carrier_up_at_the_cap() {
+    fn the_clock_waits_for_an_audible_route_for_the_cap_and_then_runs() {
         let t0 = Instant::now();
         let audible = Route { audible: true, connected: true, ..BYPASSING };
         let mut hold = PlayHold::default();
         // Bypassing is not enough: the receiver does not hear it yet.
-        assert_eq!(hold.judge(t0, &fresh(t0, 1), 1), Hold::Wait);
-        let later = t0 + ms(6700);
-        assert_eq!(hold.judge(later, &fresh(later, 1), 1), Hold::Wait);
-        let heard = Facts { route: Some((audible, later)), ..fresh(later, 1) };
-        assert_eq!(hold.judge(later, &heard, 1), Hold::Release);
-        // A stale audible answer, or one for an older epoch, does not release.
-        let old = Facts { route: Some((audible, t0)), ..fresh(t0, 1) };
-        assert_eq!(hold.judge(t0 + ms(400), &old, 1), Hold::Wait);
-        assert_eq!(hold.judge(later, &heard, 2), Hold::Wait, "another epoch");
-        // A route that never becomes audible ends the hold at the cap, once; a seek starts it again.
+        assert!(hold.waits(t0, &fresh(t0, 1), 1));
+        let heard_at = t0 + ms(900);
+        let heard = Facts { route: Some((audible, heard_at)), ..fresh(heard_at, 1) };
+        assert!(!hold.waits(heard_at, &heard, 1), "audible releases it");
+        // A stale audible answer, or one for another epoch, does not release.
         let mut hold = PlayHold::default();
-        assert_eq!(hold.judge(t0, &Facts::default(), 1), Hold::Wait);
-        assert_eq!(hold.judge(t0 + PLAY_HOLD_CAP - ms(1), &Facts::default(), 1), Hold::Wait);
-        assert!(matches!(hold.judge(t0 + PLAY_HOLD_CAP, &Facts::default(), 1), Hold::GiveUp(_)));
+        let old = Facts { route: Some((audible, t0)), ..fresh(t0, 1) };
+        assert!(hold.waits(t0 + ms(400), &old, 1));
+        assert!(hold.waits(heard_at, &heard, 2), "another epoch");
+        // A route that is never audible holds for the cap, then runs, and stays released.
+        let mut hold = PlayHold::default();
+        assert!(hold.waits(t0, &Facts::default(), 1));
+        assert!(hold.waits(t0 + PLAY_HOLD_CAP - ms(1), &Facts::default(), 1));
+        assert!(!hold.waits(t0 + PLAY_HOLD_CAP, &Facts::default(), 1));
+        assert!(!hold.waits(t0 + PLAY_HOLD_CAP + ms(50), &Facts::default(), 1));
+        // A seek starts a new hold.
         hold.restart();
-        assert_eq!(hold.judge(t0 + PLAY_HOLD_CAP, &Facts::default(), 2), Hold::Wait);
+        assert!(hold.waits(t0 + PLAY_HOLD_CAP + ms(100), &Facts::default(), 2));
     }
 }
