@@ -156,6 +156,13 @@ fn access_units(mut packet: &[u8]) -> impl Iterator<Item = &[u8]> {
 mod tests {
     use super::*;
 
+    /// The Load's first start does not hold: the route cannot arm until Play builds LG's renderer.
+    #[test]
+    fn the_first_start_is_not_held_for_a_route_that_has_not_armed() {
+        let mut feeder = Feeder::for_test();
+        assert!(!feeder.holds_play(Instant::now()));
+    }
+
     #[test]
     fn a_packet_is_split_at_each_access_unit_s_length() {
         let packet = [0x00, 0x02, 0xaa, 0xbb, 0x00, 0x03, 1, 2, 3, 4];

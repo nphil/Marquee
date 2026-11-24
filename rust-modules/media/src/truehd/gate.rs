@@ -81,13 +81,19 @@ pub enum Decision {
 #[derive(Debug, Default)]
 pub struct PlayHold {
     since: Option<Instant>,
+    /// The helper has armed the route for some epoch of this Load.
+    armed: bool,
 }
 
 impl PlayHold {
-    /// Whether the clock stays stopped. The hold runs from the first call to the audible answer or
+    /// Whether the clock stays stopped. Only a seek, flush or resume holds: on the Load's first
+    /// start the route cannot arm before Play, because LG builds the audio renderer the arm needs
+    /// when the pipeline starts (TV run, 2026-11-24: Play +3330 ms, armed +3500 ms, audible +4270
+    /// ms), so waiting there only freezes the first frame for the cap. The hold runs from the first call to the audible answer or
     /// to [`PLAY_HOLD_CAP`], and stays released past the cap until the next restart.
     pub fn waits(&mut self, now: Instant, facts: &Facts, epoch: u64) -> bool {
-        if facts.audible(now, epoch) {
+        self.armed |= facts.armed_epoch.is_some();
+        if !self.armed || facts.audible(now, epoch) {
             self.since = None;
             return false;
         }
@@ -298,6 +304,7 @@ mod tests {
         let t0 = Instant::now();
         let audible = Route { audible: true, connected: true, ..BYPASSING };
         let mut hold = PlayHold::default();
+        assert!(!hold.waits(t0, &Facts::default(), 1), "the first start plays: the route arms only after Play");
         // Bypassing is not enough: the receiver does not hear it yet.
         assert!(hold.waits(t0, &fresh(t0, 1), 1));
         let heard_at = t0 + ms(900);
@@ -310,11 +317,12 @@ mod tests {
         assert!(hold.waits(heard_at, &heard, 2), "another epoch");
         // A route that is never audible holds for the cap, then runs, and stays released.
         let mut hold = PlayHold::default();
-        assert!(hold.waits(t0, &Facts::default(), 1));
-        assert!(hold.waits(t0 + PLAY_HOLD_CAP - ms(1), &Facts::default(), 1));
-        assert!(!hold.waits(t0 + PLAY_HOLD_CAP, &Facts::default(), 1));
-        assert!(!hold.waits(t0 + PLAY_HOLD_CAP + ms(50), &Facts::default(), 1));
-        // A seek starts a new hold.
+        let armed = Facts { route: None, ..fresh(t0, 1) };
+        assert!(hold.waits(t0, &armed, 1));
+        assert!(hold.waits(t0 + PLAY_HOLD_CAP - ms(1), &armed, 1));
+        assert!(!hold.waits(t0 + PLAY_HOLD_CAP, &armed, 1));
+        assert!(!hold.waits(t0 + PLAY_HOLD_CAP + ms(50), &armed, 1));
+        // A seek starts a new hold, on the route that has armed before.
         hold.restart();
         assert!(hold.waits(t0 + PLAY_HOLD_CAP + ms(100), &Facts::default(), 2));
     }
