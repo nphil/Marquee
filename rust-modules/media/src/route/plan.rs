@@ -1352,9 +1352,9 @@ pub struct ResolveEnv {
     /// The sound chain passes DTS-HD whole to the receiver (`ff::lossless::planned`), read at the
     /// request without a bus call. Turns on the lossless-first ranking ([`audio_rank`]).
     pub lossless_dts: bool,
-    /// The sound chain carries TrueHD to the receiver in the MAT carrier (`truehd::planned`), read at
-    /// the request like `lossless_dts`. A direct play then plays a TrueHD track in place of the one the
-    /// TV would decode ([`truehd_carrier_pick`]).
+    /// The sound chain carries TrueHD to the receiver in the MAT carrier and the helper is ready and
+    /// idle (`truehd::idle`), read at the request like `lossless_dts`. A direct play then plays a TrueHD
+    /// track in place of the one the TV would decode ([`truehd_carrier_pick`]).
     pub truehd_carrier: bool,
     /// The helper's last answer behind [`Self::truehd_carrier`] is missing or stale
     /// (`truehd::reading_stale`) at the normal speed: a plan that meets a TrueHD track reads the
@@ -3431,7 +3431,7 @@ fn carry_truehd(
     }
     // A title with no TrueHD track never waits on the helper.
     let open = if env.truehd_reading_stale && tracks.iter().any(|t| crate::truehd::carries(&t.codec, t.sampling_rate)) {
-        crate::truehd::planned_after_read()
+        crate::truehd::idle_after_read()
     } else {
         env.truehd_carrier
     };

@@ -1092,7 +1092,9 @@ fn retry_truehd(
 /// The carrier gave itself up mid-play ([`crate::truehd::take_gave_up`]): the rest of the request plays
 /// without it, from where the viewer is. The track the pick displaced loads through the viewer's own
 /// native audio switch; with none the server converts the TrueHD as it does for any stream the set cannot
-/// take.
+/// take. The displaced track takes the same reload as the HUD's own audio pick
+/// ([`crate::player::request_audio_track`]): the pipeline's audio decoder is fixed by the Load (the
+/// carrier declares 8-channel PCM, the sibling AC3 a compressed codec), so no switch in place exists.
 fn leave_carrier(ps: &mut crate::route::PlaybackSession, why: &str) {
     crate::truehd::veto();
     super::log(&format!("truehd: the carrier was given up ({why}); reloading without it"));

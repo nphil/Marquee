@@ -8,7 +8,8 @@
 //! sink is put on and reads back ([`sink`], [`session`]). The feeder ([`feeder`]) sends zeros
 //! until the helper has armed the route and confirmed the bypass ([`gate`]), checks every burst,
 //! and gives the carrier up after a second of forced zeros while the route is not bypassing; the
-//! pump then reloads the fallback ([`take_gave_up`]). A debug build's `notruehd` trigger turns it
+//! pump then reloads the fallback ([`take_gave_up`]). A plan picks the carrier only while the helper
+//! reads idle ([`idle`]), so that late give-up is the exception. A debug build's `notruehd` trigger turns it
 //! off.
 pub mod contract;
 pub mod feeder;
@@ -56,21 +57,29 @@ pub(crate) fn planned() -> bool {
 }
 
 /// The helper's last answer is missing or past its validity, while the rest allows the carrier: a
-/// plan that would pick a TrueHD track asks the helper itself first ([`planned_after_read`]). The
+/// plan that would pick a TrueHD track asks the helper itself first ([`idle_after_read`]). The
 /// background read runs every 2 s and, while the helper does not answer, every 10 s, so a play
 /// right after launch or after the plugin was switched on can come before it has seen the plugin.
 pub(crate) fn reading_stale() -> bool {
     possible() && !watch::is_fresh()
 }
 
-/// [`planned`] after one bounded read of the helper when its last answer is stale. Off the frame
+/// What a plan may start a carrier on, without a call: the helper reads ready and idle
+/// ([`contract::Topic::idle`]). Stricter than [`planned`]: a route the helper does not hold free
+/// would make the carrier wait for the bypass and give up, which reloads the film on the track
+/// the TV decodes.
+pub(crate) fn idle() -> bool {
+    possible() && watch::topic().is_some_and(|t| t.idle())
+}
+
+/// [`idle`] after one bounded read of the helper when its last answer is stale. Off the frame
 /// thread only (the resolve worker); a helper that does not answer in time reads as not ready.
-pub(crate) fn planned_after_read() -> bool {
+pub(crate) fn idle_after_read() -> bool {
     if !possible() {
         return false;
     }
     watch::refresh_if_stale();
-    planned()
+    idle()
 }
 
 /// Whether the carrier takes a track: TrueHD in the 48 kHz family of rates, or at a rate PMS did

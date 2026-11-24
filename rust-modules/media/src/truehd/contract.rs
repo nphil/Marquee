@@ -106,6 +106,20 @@ impl Topic {
             _ => false,
         }
     }
+
+    /// A new carrier may be started on this reading: the route is free and ready, and the helper
+    /// holds nothing back: no session, no note on how the TV read after the last one, no reason.
+    /// A route that is anything else (an old session still being put back, a reading that differs)
+    /// would not bypass in time, so the play starts on the track the TV decodes instead of
+    /// waiting for the feeder to give up.
+    pub fn idle(&self) -> bool {
+        self.state == State::Ready
+            && self.ready
+            && self.session_pid.is_none()
+            && self.session_adec.is_none()
+            && self.after.is_none()
+            && self.reason.is_empty()
+    }
 }
 
 /// The helper's answer to an arm.
@@ -310,6 +324,27 @@ mod tests {
             assert!(!parse_topic(body.as_bytes()).unwrap().admits(7), "{state}");
         }
         assert_eq!(parse_topic(br#"{"schema":2,"state":"ready","ready":true}"#), None);
+    }
+
+    /// A play starts the carrier only on a route that is ready and holds nothing back.
+    #[test]
+    fn a_carrier_starts_only_on_an_idle_ready_route() {
+        let idle = br#"{"schema":1,"state":"ready","ready":true,"reason":"","session":null,"after":null}"#;
+        assert!(parse_topic(idle).unwrap().idle());
+        let busy = [
+            r#"{"schema":1,"state":"ready","ready":false}"#,
+            r#"{"schema":1,"state":"ready","ready":true,"reason":"converter loading"}"#,
+            r#"{"schema":1,"state":"ready","ready":true,"after":"the decoder's line differs"}"#,
+            r#"{"schema":1,"state":"ready","ready":true,"session":{"pid":7,"adec":3}}"#,
+            r#"{"schema":1,"state":"armed","ready":false,"session":{"pid":7,"adec":3}}"#,
+            r#"{"schema":1,"state":"not-ready","ready":true}"#,
+        ];
+        for body in busy {
+            let t = parse_topic(body.as_bytes()).unwrap();
+            assert!(!t.idle(), "{body}");
+        }
+        let armed = parse_topic(br#"{"schema":1,"state":"armed","session":{"pid":7,"adec":3}}"#).unwrap();
+        assert!(armed.admits(7), "an armed route is still this process's for a Load that feeds it");
         assert_eq!(parse_topic(br#"{"ok":true,"topic":"network.multi-link","value":{"schema":1,"state":"ready"}}"#), None);
         assert_eq!(parse_topic(b"not json"), None);
     }
