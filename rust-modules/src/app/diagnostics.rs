@@ -835,6 +835,27 @@ fn rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::Diag, pre
     columns(ps, d, prev, now).into_iter().flatten().collect()
 }
 
+/// The Audio row's last stage. A TrueHD carrier Load declares `"audio":"PCM"` because the MAT
+/// bitstream rides in PCM caps (`PcmFormat::TRUEHD_CARRIER`), so the codec table's "PCM (decoded in
+/// the app)" would say the opposite of what happens: nothing is decoded, the receiver is sent the
+/// TrueHD itself.
+fn audio_payload_name(d: &plx_media::player::Diag, carrying: bool) -> &'static str {
+    if d.load_a == 0 {
+        plx_platform::i18n::msg::browse_diagnostics_no_audio_payload()
+    } else if carrying && d.load_a == 5 {
+        "MAT carrier (bitstream)"
+    } else {
+        d.load_a_str()
+    }
+}
+
+/// The APP UI column's caption. While the video plane is bound the present gate answers yes on every
+/// loop pass (`plx_machine::idle::should_present`), so the rate is the loop's, not the picture's
+/// and not "idle normal": a still screen only idles when no plane is bound.
+fn ui_swap_caption(plane_bound: bool) -> &'static [u8] {
+    if plane_bound { b"GL swaps; uncapped in playback\0" } else { b"GL swaps; idle normal\0" }
+}
+
 fn pipeline_rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::Diag, prev: (i64, i64, u32), now: u32) -> Vec<Field> {
     let mut v = Vec::with_capacity(LEFT_ROWS);
     v.push(Field::new(plx_platform::i18n::msg::browse_diagnostics_field_connection(), connection_line(ps)));
@@ -861,11 +882,7 @@ fn pipeline_rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::
     let mut audio = chain(
         plx_media::route::source_acodec(ps),
         plx_media::route::stream_acodec(ps),
-        if d.load_a == 0 {
-            plx_platform::i18n::msg::browse_diagnostics_no_audio_payload()
-        } else {
-            d.load_a_str()
-        },
+        audio_payload_name(d, matches!(plx_media::truehd::status(), plx_media::truehd::Status::Carrying { .. })),
     );
     if plx_media::route::stream_immersive(ps) {
         audio.push_str(" · Dolby Atmos");
@@ -990,7 +1007,10 @@ fn pipeline_rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::
         )
         .fault(!d.pushed_any || (d.fed_v == 0 && d.load_completed) || d.feed_is_fault()),
     );
+    // The limit in force, not the base cap: a progressive direct play reads ahead past the base
+    // caps up to the read-ahead allowance (`player::reserve`), so a lane above its base cap is working as designed.
     let (cv, ca) = plx_media::player::aq_caps();
+    let (cv, ca) = (cv.max(d.aq_video_limit), ca.max(d.aq_audio_limit));
     v.push(Field::new(
         plx_platform::i18n::msg::browse_diagnostics_field_queues(),
         plx_platform::i18n::msg::browse_diagnostics_queues(&decimal(mb_f(d.aq_audio), 2), &decimal(mb_f(ca), 1), &decimal(mb_f(d.aq_video), 1), &decimal(mb_f(cv), 1)),
@@ -1911,7 +1931,7 @@ pub(crate) fn draw(&self) {
     let slot = iw / 3.0;
     for (i, (name, detail)) in [
         (b"VIDEO SOURCE\0".as_slice(), b"file metadata\0".as_slice()),
-        (b"APP UI\0".as_slice(), b"GL swaps; idle normal\0".as_slice()),
+        (b"APP UI\0".as_slice(), ui_swap_caption(plx_machine::idle::video_plane_bound())),
         (b"TV OUTPUT\0".as_slice(), b"measured display sync\0".as_slice()),
     ].iter().enumerate() {
         let x = inner + i as f32 * slot;
@@ -3379,6 +3399,21 @@ mod tests {
             "—",
             "clock went backwards"
         );
+    }
+
+    #[test]
+    fn a_truehd_carrier_is_not_called_decoded_in_the_app() {
+        let d = plx_media::player::Diag { load_a: 5, ..Default::default() };
+        assert_eq!(audio_payload_name(&d, true), "MAT carrier (bitstream)");
+        assert_eq!(audio_payload_name(&d, false), "PCM (decoded in the app)");
+        let ac3 = plx_media::player::Diag { load_a: 1, ..Default::default() };
+        assert_eq!(audio_payload_name(&ac3, true), "AC3");
+    }
+
+    #[test]
+    fn the_ui_swap_caption_says_when_the_rate_is_uncapped() {
+        assert_eq!(ui_swap_caption(false), b"GL swaps; idle normal\0");
+        assert_eq!(ui_swap_caption(true), b"GL swaps; uncapped in playback\0");
     }
 
     #[test]

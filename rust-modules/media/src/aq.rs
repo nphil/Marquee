@@ -703,6 +703,22 @@ pub fn aq_cap(q: *mut AuQueue) -> c_long {
     }
 }
 
+/// The most bytes this queue holds before its producer parks: the cap in force, or the read-ahead
+/// allowance ([`aq_set_reserve`]) when that is larger. A queue past its cap parks only once it is
+/// also over the allowance or holds the allowance's span of media, so with a reserve granted the
+/// byte figure to read a fill against is this one, not [`aq_cap`]. The span may park it sooner.
+pub fn aq_limit(q: *mut AuQueue) -> c_long {
+    if q.is_null() {
+        return 0;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let limit = (*q).max_bytes.max((*q).reserve_bytes);
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+        limit
+    }
+}
+
 /// Would a push made now park? Producer-side, advisory: the consumer can only make the answer
 /// "no" (a pop) between this call and the push. Same predicate `aq_push` waits on.
 pub fn aq_would_park(q: *mut AuQueue) -> bool {
@@ -924,6 +940,22 @@ mod tests {
         assert_eq!(producer.join().unwrap(), 0);
         assert!(!aq_parked(qp));
         assert_eq!(aq_pushes(qp), 2);
+        aq_destroy(qp);
+    }
+
+    /// The limit a fill is read against is the read-ahead allowance once one is granted, and the
+    /// cap otherwise.
+    #[test]
+    fn the_limit_follows_the_read_ahead_allowance() {
+        let mut q = aq_new(100);
+        let qp = &mut *q as *mut AuQueue;
+        assert_eq!(aq_limit(qp), 100);
+        aq_set_reserve(qp, 5_000, 60_000_000_000);
+        assert_eq!(aq_limit(qp), 5_000);
+        aq_set_headroom(qp, 10_000);
+        assert_eq!(aq_limit(qp), 10_100, "a larger cap still wins");
+        aq_set_reserve(qp, 0, 0);
+        assert_eq!(aq_limit(qp), 10_100);
         aq_destroy(qp);
     }
 

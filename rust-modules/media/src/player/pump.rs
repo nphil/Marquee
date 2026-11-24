@@ -641,6 +641,11 @@ fn publish_diag(eng: &Engine, now: u32) {
     });
     SHARED.dg_aq_video.store(qv, Relaxed);
     SHARED.dg_aq_audio.store(qa, Relaxed);
+    let limit = |q: &Option<Box<crate::aq::AuQueue>>| {
+        q.as_ref().map_or(0, |q| crate::aq::aq_limit(&**q as *const _ as *mut _) as i64)
+    };
+    SHARED.dg_aq_video_limit.store(limit(&eng.aq_video), Relaxed);
+    SHARED.dg_aq_audio_limit.store(limit(&eng.aq_audio), Relaxed);
     SHARED.dg_fed_v_pts.store(eng.max_fed_video_pts, Relaxed);
     SHARED.dg_fed_a_pts.store(eng.max_fed_audio_pts, Relaxed);
     // Stamp when the frame count MOVES. The panel needs "how long has it been stuck" and a

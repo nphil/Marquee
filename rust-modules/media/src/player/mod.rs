@@ -1700,6 +1700,9 @@ pub struct Diag {
     pub seen_frame: bool,
     pub aq_video: i64,
     pub aq_audio: i64,
+    /// Each lane's limit in force (`aq::aq_limit`); 0 before the first publish.
+    pub aq_video_limit: i64,
+    pub aq_audio_limit: i64,
     pub fed_v_pts: i64,
     pub fed_a_pts: i64,
     pub load_v: u8,
@@ -1871,6 +1874,8 @@ pub fn diag(ps: &crate::route::PlaybackSession) -> Diag {
         seen_frame: SHARED.seen_frame.load(Relaxed),
         aq_video: SHARED.dg_aq_video.load(Relaxed),
         aq_audio: SHARED.dg_aq_audio.load(Relaxed),
+        aq_video_limit: SHARED.dg_aq_video_limit.load(Relaxed),
+        aq_audio_limit: SHARED.dg_aq_audio_limit.load(Relaxed),
         fed_v_pts: SHARED.dg_fed_v_pts.load(Relaxed),
         fed_a_pts: SHARED.dg_fed_a_pts.load(Relaxed),
         load_v: SHARED.dg_load_v.load(Relaxed),

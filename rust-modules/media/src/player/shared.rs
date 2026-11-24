@@ -980,6 +980,10 @@ pub struct Shared {
     /// Bytes queued in each AU lane at the last tick, against `engine::aq_caps`.
     pub dg_aq_video: AtomicI64,
     pub dg_aq_audio: AtomicI64,
+    /// What each lane may hold before its producer parks (`aq::aq_limit`: the cap, or the
+    /// read-ahead allowance when larger). 0 until published.
+    pub dg_aq_video_limit: AtomicI64,
+    pub dg_aq_audio_limit: AtomicI64,
     /// High-water fed PTS per lane. Their DIFFERENCE is the sharpest instantaneous answer to
     /// "video plays but there is no sound": a snapshot of the fed COUNTS cannot see a lane that
     /// stopped advancing, because a large total stays large. A skew that grows without bound is
@@ -1122,6 +1126,8 @@ impl Shared {
             dg_vpres_gap: AtomicU32::new(0),
             dg_aq_video: AtomicI64::new(0),
             dg_aq_audio: AtomicI64::new(0),
+            dg_aq_video_limit: AtomicI64::new(0),
+            dg_aq_audio_limit: AtomicI64::new(0),
             dg_fed_v_pts: AtomicI64::new(0),
             dg_fed_a_pts: AtomicI64::new(0),
             dg_load_v: AtomicU8::new(0),
@@ -1867,6 +1873,8 @@ impl Shared {
         self.dg_vpres_gap.store(0, Ordering::Relaxed);
         self.dg_aq_video.store(0, Ordering::Relaxed);
         self.dg_aq_audio.store(0, Ordering::Relaxed);
+        self.dg_aq_video_limit.store(0, Ordering::Relaxed);
+        self.dg_aq_audio_limit.store(0, Ordering::Relaxed);
         self.dg_fed_v_pts.store(0, Ordering::Relaxed);
         self.dg_fed_a_pts.store(0, Ordering::Relaxed);
         self.dg_load_v.store(0, Ordering::Relaxed);
