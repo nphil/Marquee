@@ -59,12 +59,13 @@
 //! (the hero billboard's 8 s auto-flip still flips), and async work still lands on schedule. Those
 //! cost ~0.3% of a core between them; the 16% was the draw.
 //!
-//! It is also **not applied while the hardware video plane is bound** — see [`VIDEO_PLANE`],
-//! [`note`] and `Player::video_plane_bound` below, fed by `Player::set_video_plane_bound`'s edges
-//! rather than by which route is on screen. A pre-bind spinner or a post-unbind failure read-out
-//! is an ordinary idle-gated frame; "we stop presenting for seconds while a plane is bound to our
-//! surface" is a claim about this compositor that no amount of reading settles. Home never binds
-//! the plane, which is what makes it the safe place to prove the mechanism.
+//! It applies **while the hardware video plane is bound** as it does everywhere else. The plane
+//! needs nothing per video frame from this surface: the decoded picture is placed through the
+//! exported window and composited by the television (`starfish.c`'s `vp_place`). It needs one
+//! commit on each edge of [`VIDEO_PLANE`] and one after a placement, and their writers
+//! (`Player::set_video_plane_bound`, the pump's `place_video`) raise that damage. Presenting every
+//! bound pass cost ~144 swaps/s under a 24p film, each one a recomposition of this window;
+//! [`set_bound_every_pass`] (`/tmp/plxnative-playnoidle`) restores it for an A/B.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 
@@ -179,16 +180,16 @@ thread_local! {
 }
 
 /// Would [`should_present`] present this frame on what the update phase has reported so far:
-/// motion, the settle frame after it, damage, a wake, the video plane or a closed gate? Speculative
-/// work that must not cost a presented frame runs only when this is false. A report raised later
-/// in the frame can still make it present.
+/// motion, the settle frame after it, damage, a wake, the playback kill switch or a closed gate?
+/// Speculative work that must not cost a presented frame runs only when this is false. A report
+/// raised later in the frame can still make it present.
 pub fn presenting_so_far() -> bool {
     MOVING.with(|m| m.get())
         || WAS_MOVING.with(|w| w.get())
         || DIRTY.load(Relaxed)
         || WAKE.load(Relaxed)
         || PRESENT_DAMAGE_GEN.with(|seen| seen.get() != DAMAGE_GEN.load(Relaxed))
-        || VIDEO_PLANE.load(Relaxed)
+        || bound_every_pass()
         || !ENABLED.load(Relaxed)
 }
 
@@ -216,15 +217,16 @@ static ENABLED: AtomicBool = AtomicBool::new(true);
 /// **Does playback retain video-plane ownership, including unresolved URI-probe ownership?**
 /// Binding and quarantine keep this set; it does not prove a visible picture.
 /// The gate's only non-damage INPUT (spec §4.4,
-/// [`crate::present::PresentEvent::VideoPlane`]). While it is set every frame presents,
-/// unconditionally: the plane is *slaved* to this wayland surface (`system::clear_opaque_region`),
-/// and "we stop presenting while a plane is slaved to it" is a claim about this compositor that
-/// reading cannot settle.
+/// [`crate::present::PresentEvent::VideoPlane`]). On its own it presents nothing: only
+/// [`BOUND_EVERY_PASS`] turns it into a present on every pass.
 ///
 /// **It has exactly ONE writer** — [`crate::player::machine::Player::set_video_plane_bound`], on
 /// the bit's EDGES (spec §16 risk 10: a second formula term here is how the two disagree). The
 /// loop must never poke it, and nothing here re-derives it from the route.
 static VIDEO_PLANE: AtomicBool = AtomicBool::new(false);
+/// Kill switch for the playback cap (`/tmp/plxnative-playnoidle`): while [`VIDEO_PLANE`] is set,
+/// present on every loop pass, as every build before the cap did.
+static BOUND_EVERY_PASS: AtomicBool = AtomicBool::new(false);
 
 /// **Is the host page being served from the frame cache rather than rasterized?**
 ///
@@ -274,6 +276,18 @@ pub fn set_enabled(on: bool) {
 
 pub fn enabled() -> bool {
     ENABLED.load(Relaxed)
+}
+
+/// Present on every loop pass while the video plane is bound. Read once at startup from
+/// `/tmp/plxnative-playnoidle`.
+pub fn set_bound_every_pass(on: bool) {
+    BOUND_EVERY_PASS.store(on, Relaxed);
+}
+
+/// Is the plane bound with [`set_bound_every_pass`] armed, i.e. presenting on every pass?
+#[inline]
+pub fn bound_every_pass() -> bool {
+    VIDEO_PLANE.load(Relaxed) && BOUND_EVERY_PASS.load(Relaxed)
 }
 
 /// **The typed input to the LIVE gate** (spec §4.4). `plx_machine::present::Present` is the machine this
@@ -438,6 +452,8 @@ pub fn note_jump(changed: bool) {
 ///   it rests. A tap's press never reports
 /// - an `Xfade` ramp mid-flight, and a `Spinner` being drawn — the two time-driven animators
 ///   `note_spring` cannot see
+/// - each edge of `Player::set_video_plane_bound` and each placement of the video window
+///   (`place_video`): the commits a bound plane needs from this surface
 ///
 /// **A report raised while the host page is FROZEN is dropped** ([`page_frozen`]).
 /// Two of the call sites above — the focused-title marquee and the spinner — report from inside a
@@ -498,6 +514,7 @@ pub fn reset_for_test() {
     OWN_DAMAGE_N.store(0, Relaxed);
     TAKEN_GEN.store(0, Relaxed);
     VIDEO_PLANE.store(false, Relaxed);
+    BOUND_EVERY_PASS.store(false, Relaxed);
     let _ = take_local_damage();
 }
 
@@ -712,15 +729,11 @@ pub fn should_present(now: u32) -> bool {
         LAST_CHANGE.store(now, Relaxed);
     }
     PRESENT_DIRTY.with(|c| c.set(dirty));
-    // The video-plane term is HERE, below every take-and-clear above it, and not `|| fr.player` at
-    // the call site as it was through phase 8. Two reasons, and the second is the bug: a term on
-    // the right of the caller's `||` short-circuits this whole function away on the frames it is
-    // true for, leaving `DIRTY`/`WAKE` set to fire spuriously on the way back out; and the term
-    // itself was the ROUTE, so the frames before the plane binds and after it unbinds — a spinner,
-    // a HUD fade, the failure read-out — were exempted from the gate for no reason the compositor
-    // knows about. They are ordinary idle frames now, which is what makes every player-side
-    // animator's motion report load-bearing.
-    if changed || VIDEO_PLANE.load(Relaxed) {
+    // The kill switch's term is HERE, below every take-and-clear above it, and not on the right
+    // of the caller's `||`, where it would short-circuit this whole function away and leave
+    // `DIRTY`/`WAKE` set to fire spuriously on the way back out. A bound plane alone is no reason
+    // to present (`VIDEO_PLANE`): the bind, unbind and placement commits arrive as damage.
+    if changed || bound_every_pass() {
         return true;
     }
     let keepalive = KEEPALIVE_MS != 0 && now.wrapping_sub(LAST_PRESENT.load(Relaxed)) >= KEEPALIVE_MS;
@@ -804,57 +817,63 @@ mod tests {
         g
     }
 
-    /// **Spec §9, §4.4, §16 risk 10 — the whole-frame gate is turned off by the PLANE'S BIT, and
-    /// only by it.** This is the gate's half of the claim, graded against the bit's own door
-    /// ([`note`] with [`PresentEvent::VideoPlane`]); the half that needs the player — the bit is
-    /// published on its EDGES only, the false edge raises the damage that presents the unbind frame,
-    /// and the loop asks the compositor from the bit on every frame — is
-    /// `app::run::video_plane_gate_tests`, the one layer that owns a `Player` and the loop's source.
-    ///
-    /// 1. *Only while bound.* The term used to be `|| fr.player` at the call site, i.e. "the
-    ///    player SCREEN is up" — true through the whole pre-bind spinner and the whole post-unbind
-    ///    fade, when the compositor has an ordinary UI surface and nothing is slaved to it.
-    /// 2. *Lowering the bit is not damage.* The frame the plane goes away on is very often one the
-    ///    gate would otherwise skip, which is why the edge's writer raises damage with it; the gate
-    ///    itself adds no term for it (a second formula term feeding the gate is what risk 10 names).
+    /// **The playback cap** (spec §9, §4.4), graded against the bit's own door ([`note`] with
+    /// [`PresentEvent::VideoPlane`]). A bound plane presents what changed on this surface and the
+    /// keepalive, like any other frame; [`set_bound_every_pass`] puts back a present on every pass,
+    /// and only while bound. The half that needs the player — each edge raises the damage that
+    /// presents its frame, and the loop asks the compositor from the bit on every frame — is
+    /// `app::run::video_plane_gate_tests`.
     #[test]
-    fn the_present_gate_answers_true_only_while_the_plane_bit_is_set() {
+    fn a_bound_plane_presents_what_changed_unless_every_pass_is_armed() {
         use crate::present::PresentEvent;
         let _g = fresh();
-        assert!(!video_plane_bound(), "a fresh gate has no plane");
-
-        invalidate();
-        assert!(should_present(0), "the damage just raised selects this frame");
-        assert!(!should_present(16), "settled, inside the keepalive: nothing to send");
-
-        // ---- the TRUE edge, and what it buys ----
         note(PresentEvent::VideoPlane(true));
         assert!(video_plane_bound(), "the bit's own door is the gate's only input");
-        for t in [32u32, 48, 64, 80] {
-            assert!(
-                should_present(t),
-                "while the plane is bound every frame presents, unconditionally — nothing about \
-                 this frame moved",
-            );
-        }
         let _ = take_local_damage();
         note(PresentEvent::VideoPlane(true));
         assert_eq!(take_local_damage(), 0, "publishing the bit raises no damage of its own");
+        assert!(!presenting_so_far());
+        for t in [16u32, 32, 48] {
+            assert!(!should_present(t), "a bound plane alone presents nothing");
+        }
+        invalidate(); // a cue change, a key, an edge's own damage
+        assert!(should_present(64), "damage on this surface presents while bound");
+        assert!(!should_present(80), "…once");
 
-        // ---- the FALSE edge: the bit alone buys nothing, the edge's own damage does ----
+        set_bound_every_pass(true);
+        assert!(presenting_so_far());
+        for t in [96u32, 112, 128] {
+            assert!(should_present(t), "the kill switch presents every bound pass");
+        }
         note(PresentEvent::VideoPlane(false));
-        assert!(!video_plane_bound());
-        assert!(
-            !should_present(96),
-            "lowering the bit adds no term to the gate — the unbind frame is the damage the edge's \
-             writer raises beside it",
-        );
-        invalidate(); // what `Player::set_video_plane_bound(false)` raises on that edge
-        assert!(should_present(112), "the edge's damage presents the unbind frame");
-        assert!(
-            !should_present(128),
-            "…and the frame after it is an ordinary idle frame again, which is the whole point",
-        );
+        assert!(!should_present(144), "…and nothing once the plane is gone");
+    }
+
+    /// Ten seconds of a 24p film under a 144 Hz loop with nothing changing on this surface: the
+    /// keepalive's five presents, at most the content's 240 frames (a stray damage report from
+    /// another test's thread can add one), where the kill switch presents all 1440 passes as every
+    /// build before the cap did.
+    #[test]
+    fn idle_playback_presents_far_below_the_content_cadence() {
+        use crate::present::PresentEvent;
+        let _g = fresh();
+        note(PresentEvent::VideoPlane(true));
+        let ten_seconds = || {
+            let mut presents = 0u32;
+            for pass in 0..1440u32 {
+                let now = 10_000 + pass * 1000 / 144;
+                frame_begin(1.0 / 144.0);
+                if should_present(now) {
+                    note_present(now);
+                    presents += 1;
+                }
+            }
+            presents
+        };
+        let capped = ten_seconds();
+        assert!((5..=240).contains(&capped), "one keepalive per 2 s, at most the content cadence: {capped}");
+        set_bound_every_pass(true);
+        assert_eq!(ten_seconds(), 1440);
     }
 
     /// The host cache's question — did the PAGE change — answered by count: damage raised inside

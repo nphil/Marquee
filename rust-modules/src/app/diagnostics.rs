@@ -849,11 +849,12 @@ fn audio_payload_name(d: &plx_media::player::Diag, carrying: bool) -> &'static s
     }
 }
 
-/// The APP UI column's caption. While the video plane is bound the present gate answers yes on every
-/// loop pass (`plx_machine::idle::should_present`), so the rate is the loop's, not the picture's
-/// and not "idle normal": a still screen only idles when no plane is bound.
-fn ui_swap_caption(plane_bound: bool) -> &'static [u8] {
-    if plane_bound { b"GL swaps; uncapped in playback\0" } else { b"GL swaps; idle normal\0" }
+/// The APP UI column's caption. During playback the present gate applies as on any screen, so the
+/// rate is what changed on this surface (this panel's own 2 Hz refresh included) plus the 2 s
+/// keepalive, unless `/tmp/plxnative-playnoidle` puts back a swap on every loop pass while the
+/// video plane is bound (`plx_machine::idle::bound_every_pass`).
+fn ui_swap_caption(every_pass: bool) -> &'static [u8] {
+    if every_pass { b"GL swaps; uncapped in playback\0" } else { b"GL swaps; idle normal\0" }
 }
 
 fn pipeline_rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::Diag, prev: (i64, i64, u32), now: u32) -> Vec<Field> {
@@ -1931,7 +1932,7 @@ pub(crate) fn draw(&self) {
     let slot = iw / 3.0;
     for (i, (name, detail)) in [
         (b"VIDEO SOURCE\0".as_slice(), b"file metadata\0".as_slice()),
-        (b"APP UI\0".as_slice(), ui_swap_caption(plx_machine::idle::video_plane_bound())),
+        (b"APP UI\0".as_slice(), ui_swap_caption(plx_machine::idle::bound_every_pass())),
         (b"TV OUTPUT\0".as_slice(), b"measured display sync\0".as_slice()),
     ].iter().enumerate() {
         let x = inner + i as f32 * slot;

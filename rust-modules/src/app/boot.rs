@@ -2110,6 +2110,10 @@ pub(crate) unsafe fn construct(
     if let Some(initial) = &initial {
         plx_machine::idle::set_enabled(!plx_base::devtrig::listed(&initial.triggers, "noidle"));
     } else { crate::dev::scenarios::arm_noidle(); }
+    // dev: /tmp/plxnative-playnoidle puts back a present on every loop pass while the video plane
+    // is bound (the rate before the playback cap) and leaves the gate on everywhere else. DIAG,
+    // like noidle, so its A/B boots to the same screen.
+    if !controlled { crate::dev::scenarios::arm_playnoidle(); }
     // dev: /tmp/plxnative-detailosc (read once at boot, like the other triggers) makes the detail scroll
     // perpetually swing hero<->bottom so the FPS heartbeat samples the transition, not the ends.
     let detail_osc = !controlled && crate::dev::scenarios::detailosc_armed();

@@ -19,13 +19,11 @@
 //!   threshold), and the rate is the seconds of such stalls per hour of the visit.
 //!
 //! **The player route is measured like any other.** Its graphics plane is NOT paced at the video's
-//! 24/30/50 Hz: while the video plane is bound the idle gate presents every iteration
-//! (`plx_machine::idle::should_present`), the swap interval is 1 (`SDL_GL_SetSwapInterval`), and
-//! the heartbeat's `fps=` reads 60 through playback (the decoded picture is composited by the
-//! television on a surface this process never touches, `vtick=` is its own ~5 Hz liveness). So a
-//! player frame over the slow edge is as late as any other and no route is exempt. If a device
-//! trace ever shows the plane paced at the video rate, exclude `player` from the slow count
-//! here (keeping frozen and hang), not at the call site.
+//! 24/30/50 Hz: while the video plane is bound the idle gate presents what changed on this surface,
+//! as on any route (`plx_machine::idle::should_present`), at swap interval 1
+//! (`SDL_GL_SetSwapInterval`); the decoded picture is composited by the television on a surface
+//! this process never touches, and `vtick=` is its own ~5 Hz liveness. So a player frame over the
+//! slow edge is as late as any other and no route is exempt.
 //!
 //! It runs in EVERY build, unarmed, because it needs one clock read per presented frame and one
 //! per loop iteration ([`super::now_us`], the performance counter: `clock::now()` is whole

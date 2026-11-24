@@ -66,7 +66,7 @@ pub(crate) mod framedump;
 // `test` as well as the feature: `any_trigger_present` is the only caller and it is cfg'd out of a
 // release build, but the test below asserts this list's contents and runs with default features.
 #[cfg(any(feature = "devtriggers", test))]
-const DIAG: [&str; 51] = [
+const DIAG: [&str; 52] = [
     "plxnative-diag.log",
     "plxnative-hud-text-metrics",
     "plxnative-hud-text-metrics.json",
@@ -89,6 +89,9 @@ const DIAG: [&str; 51] = [
     "plxnative-remote",
     "plxnative-capture",
     "plxnative-noidle",
+    // The playback cap's kill switch (`plx_machine::idle::set_bound_every_pass`): an A/B leg that
+    // must boot to the screen the other leg boots to.
+    "plxnative-playnoidle",
     // The focus fingerprint ([`crate::focusprobe`]). Diagnostic for `noidle`'s reason and one of
     // its own: it only READS focus and writes a log line, and a (route × key) characterization
     // harness has to be able to observe the who's-watching picker, which a non-DIAG trigger would

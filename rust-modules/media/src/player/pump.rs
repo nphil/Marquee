@@ -605,6 +605,9 @@ fn place_video(mt: &MainThread, eng: &mut super::engine::Engine) {
     SHARED.dg_placed_w.store(src.0, Relaxed);
     SHARED.dg_placed_h.store(src.1, Relaxed);
     super::log(&format!("vplane: place {}x{} -> {},{} {}x{} rv={rv}", src.0, src.1, dst.x, dst.y, dst.width, dst.height));
+    // The placement travels on the exported window, not on this surface; one present after it
+    // keeps a commit beside every placement now that a bound plane no longer presents every pass.
+    plx_machine::idle::invalidate();
 }
 
 /// Mirror Engine-confined observations into `Shared` for diagnostics and handled-error context.

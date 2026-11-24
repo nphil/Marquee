@@ -362,6 +362,15 @@ pub(crate) fn arm_noidle() {
     }
 }
 
+/// `/tmp/plxnative-playnoidle` — present on every loop pass while the video plane is bound.
+pub(crate) fn arm_playnoidle() {
+    if plx_base::devtrig::flag("playnoidle") {
+        plx_machine::idle::set_bound_every_pass(true);
+        #[cfg(feature = "devtriggers")]
+        plx_base::eventlog::log("idle: bound plane presents every pass (/tmp/plxnative-playnoidle)");
+    }
+}
+
 /// `/tmp/plxnative-audioenh=off|boost|loudness` — force the Boost Dialog / Normalize Loudness
 /// preference (issue #266) at boot, harness-only.
 ///

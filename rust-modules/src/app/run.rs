@@ -676,20 +676,13 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     // different screens, so it is per-PRESENT, not per-pixel. ~35 points of a core to
     // re-send an unchanged picture, on a fan-less SoC that sits on Home for hours.
     //
-    // **The exclusion is the BOUND PLANE, not the player ROUTE** (spec §9, phase 9).
-    // `system.rs::clear_opaque_region` documents the hardware video plane as *slaved* to this
-    // wayland surface, and "we stop presenting while a plane is slaved to it" is a claim about
-    // this compositor that reading cannot settle — so while the plane is bound the gate
-    // answers `true` unconditionally, and that term now lives INSIDE `should_present`, fed by
-    // `Player::set_video_plane_bound`'s edges and by nothing else.
-    //
-    // What that changes is the frames on either side of a playback. Pre-bind (the spinner
-    // while the route resolves and the Load is in flight) and post-unbind (the HUD fading out,
-    // the failure read-out) are ORDINARY idle frames: nothing is slaved to the surface, so the
-    // 35-points-of-a-core argument applies to them exactly as it does to Home — and every
-    // player-side animator that advances from a clock has to report, or it freezes. Playback
-    // itself still spends ~99% of its time with the HUD auto-hidden, where the frame is
-    // already 0 draw calls.
+    // **A bound plane is no reason to present** (spec §9). The decoded picture is placed through
+    // the exported window and composited by the television; this surface owes it one commit per
+    // edge of `Player::set_video_plane_bound` and one per placement, which their writers raise as
+    // damage. Presenting every bound pass (phase 9 until the playback cap) cost ~144 swaps/s under
+    // a 24p film, each one a recomposition of this window; `/tmp/plxnative-playnoidle` restores
+    // it. Every player-side animator that advances from a clock reports, or it freezes — before,
+    // during and after the bind alike.
     //
     // **The foreground demand is taken ONCE and has TWO terms** (spec §3.3 step 8): the
     // gate above, and whether the frame budget holds queued prepare work. The second term is what makes
@@ -9919,34 +9912,25 @@ mod video_plane_gate_tests {
     //! because it needs three things no lower layer owns together: a `Player` (the bit's one
     //! writer), the gate (`plx_machine::idle`, the machine layer) and this file's own source (the loop is
     //! the one consumer a unit test cannot drive). The gate-only half stayed beside the gate:
-    //! `plx_machine::idle`'s `the_present_gate_answers_true_only_while_the_plane_bit_is_set`.
+    //! `plx_machine::idle`'s `a_bound_plane_presents_what_changed_unless_every_pass_is_armed`.
     use plx_machine::idle::{
         invalidate, reset_for_test, should_present, take_local_damage, video_plane_bound,
     };
 
-    /// **Spec §9, §4.4, §16 risk 10 — the whole-frame gate is turned off by the PLANE'S BIT, not
-    /// by the player route, and both of its edges are carried.**
+    /// **Spec §9, §4.4, §16 risk 10 — the plane's bit, not the player route, and both of its
+    /// edges are carried.**
     ///
-    /// Three separate claims, because three separate things were wrong before phase 9.
-    ///
-    /// 1. *Only while bound.* The term used to be `|| fr.player` at the call site, i.e. "the
-    ///    player SCREEN is up" — true through the whole pre-bind spinner and the whole post-unbind
-    ///    fade, when the compositor has an ordinary UI surface and nothing is slaved to it.
+    /// 1. *A bound plane presents what changed.* No frame presents for the bit alone; the
+    ///    TRUE edge's own damage presents the bind frame — the one commit the plane needs from
+    ///    this surface — and `/tmp/plxnative-playnoidle` puts back every pass while bound.
     /// 2. *The false edge presents.* The frame the plane goes away on is very often one the gate
     ///    would otherwise skip: the picture is gone and no spring is moving. If that frame is not
     ///    presented, the surface keeps whatever the last video frame left and the opaque region is
     ///    asserted for a plane that is no longer there (§3.3 step 9).
     /// 3. *`opaque_route` is asked on every frame, from the bit.* Pinned from the loop's own source
     ///    — this is the one consumer a unit test cannot drive, `run` needing a live SDL window.
-    ///
-    /// Observed RED (simulated — the fix changes the signatures the old code called, so the test
-    /// cannot be compiled against 88841d3e): restoring `idle::should_present`'s pre-phase-9 body by
-    /// deleting the `|| VIDEO_PLANE.load(Relaxed)` term fails claim 1 at
-    /// "while the plane is bound every frame presents"; deleting the `!bound` `invalidate()` in
-    /// `Player::set_video_plane_bound` fails claim 2 at "the unbind frame presents"; and putting
-    /// `fr.player` back as `opaque_route`'s argument fails claim 3.
     #[test]
-    fn the_present_gate_answers_true_only_while_the_plane_is_bound() {
+    fn a_bound_plane_presents_its_edges_and_what_changed() {
         let _g = plx_base::testlock::serial();
         reset_for_test();
         let mut player = plx_media::player::machine::Player::new();
@@ -9959,12 +9943,14 @@ mod video_plane_gate_tests {
         // ---- the TRUE edge, and what it buys ----
         player.set_video_plane_bound(true);
         assert!(video_plane_bound(), "the machine's edge is the gate's only input");
-        for t in [32u32, 48, 64, 80] {
-            assert!(
-                should_present(t),
-                "while the plane is bound every frame presents, unconditionally — nothing about                  this frame moved",
-            );
+        assert!(should_present(32), "the bind frame presents: the commit the plane needs");
+        for t in [48u32, 64, 80] {
+            assert!(!should_present(t), "a bound plane alone presents nothing");
         }
+        plx_machine::idle::set_bound_every_pass(true);
+        assert!(should_present(88), "the kill switch presents every bound pass");
+        plx_machine::idle::set_bound_every_pass(false);
+        assert!(!should_present(90));
 
         // A LEVEL is not an edge. Writing the same value again must publish nothing: a second
         // formula term feeding the gate is exactly what risk 10 names.

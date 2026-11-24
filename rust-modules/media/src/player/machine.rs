@@ -100,18 +100,16 @@ impl Player {
         // region, the capture skip and whether a frame may sample the framebuffer at all — and
         // every one of those is invisible from a log that does not say when the plane arrived.
         plx_base::eventlog::log(if bound {
-            "videoplane: BOUND — the gate presents unconditionally and no frame may snapshot"
+            "videoplane: BOUND — no frame may snapshot"
         } else {
             "videoplane: unbound — ordinary idle rules from here"
         });
         plx_machine::idle::note(plx_machine::present::PresentEvent::VideoPlane(bound));
-        // The FALSE edge has to reach the panel, and the frame it lands on is very often one the
-        // gate would otherwise skip — the picture is gone and nothing is animating (spec §3.3
-        // step 9). `invalidate` is what makes that frame present, so the opaque region is really
-        // cleared and the UI surface really goes back to being blended.
-        if !bound {
-            plx_machine::idle::invalidate();
-        }
+        // Each edge has to reach the panel, and the frame it lands on is very often one the gate
+        // would otherwise skip. The TRUE edge's commit is the one the plane needs from this
+        // surface (the transparent clear, the NULL opaque region); the FALSE edge's clears the
+        // region so the UI surface goes back to being blended (spec §3.3 step 9).
+        plx_machine::idle::invalidate();
         Some(bound)
     }
 
