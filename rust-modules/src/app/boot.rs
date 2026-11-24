@@ -2489,6 +2489,7 @@ pub(crate) unsafe fn construct(
         dev_hud: Default::default(),
         running,
         window_activity: super::window_activity::WindowActivity::new(),
+        vram: Default::default(),
         #[cfg(feature = "devtools")]
         buffer_flip_count,
         down_sym,
