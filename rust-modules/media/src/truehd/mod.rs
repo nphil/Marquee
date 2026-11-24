@@ -136,6 +136,7 @@ pub(crate) fn take_rewind() -> Option<(i64, u64)> {
 
 /// The rest of this request plays without the carrier.
 pub(crate) fn veto() {
+    set_stage(Stage::Off);
     VETO.store(true, Ordering::Release);
     CARRIED.store(false, Ordering::Release);
 }
@@ -209,6 +210,7 @@ pub(crate) fn carrier() -> contract::Carrier {
 
 /// The feeder gave the carrier up.
 pub(crate) fn give_up(why: &'static str) {
+    set_stage(Stage::Off);
     note_fell_back(why);
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
 }

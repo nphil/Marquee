@@ -2752,6 +2752,10 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
                             super::acb_mirror_playstate_at(mt, eng.stage, true);
                         }
                         super::log("SMP Play");
+                        // A Load that is not primed first plays here, not in `try_prime`.
+                        if let Some(f) = eng.truehd.as_mut() {
+                            f.note_played(std::time::Instant::now(), SHARED.playpos_ns.load(Relaxed));
+                        }
                     }
                     super::shared::HlsPlayCompletion::Refused => {
                         eng.prime_play = true;

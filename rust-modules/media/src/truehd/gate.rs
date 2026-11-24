@@ -41,6 +41,9 @@ pub const LOCK_CAP: Duration = Duration::from_secs(4);
 pub const LOCK_WITHOUT_TOPIC: Duration = Duration::from_millis(2500);
 /// A route that is not audible this long after Play leaves the opening as it is.
 const OPENING_GIVE_UP: Duration = Duration::from_secs(8);
+/// A Load whose Play is never reported to the opening leaves it as it is after this long, so the
+/// spinner's text cannot outlive it.
+const PLAY_GIVE_UP: Duration = Duration::from_secs(20);
 
 /// What the session knows, each fact stamped with when it arrived.
 #[derive(Clone, Copy, Debug, Default)]
@@ -111,6 +114,8 @@ pub enum OpeningStep {
 #[derive(Debug, Default)]
 pub struct OpeningRewind {
     played: Option<(Instant, i64)>,
+    /// The first poll, for a Load whose Play is never reported.
+    first_poll: Option<Instant>,
     audible: Option<Instant>,
     done: bool,
 }
@@ -135,10 +140,17 @@ impl OpeningRewind {
 
     /// The outcome, once.
     pub fn poll(&mut self, now: Instant, facts: &Facts, epoch: u64) -> Option<OpeningStep> {
-        let (played, start_ns) = self.played?;
         if self.done {
             return None;
         }
+        let Some((played, start_ns)) = self.played else {
+            let first = *self.first_poll.get_or_insert(now);
+            if now.saturating_duration_since(first) < PLAY_GIVE_UP {
+                return None;
+            }
+            self.done = true;
+            return Some(OpeningStep::Done);
+        };
         let heard = match self.audible {
             Some(at) => at,
             None if facts.audible(now, epoch) => *self.audible.insert(now),
@@ -163,9 +175,11 @@ impl OpeningRewind {
         Some(if silent > REWIND_AFTER { OpeningStep::Rewind { start_ns, silent } } else { OpeningStep::Done })
     }
 
-    /// A seek or flush: the viewer is somewhere else now.
+    /// A seek or flush after the Play: the viewer is somewhere else now. One before the first
+    /// Play is the Load settling and leaves the opening owed, to be taken from where that Play
+    /// starts.
     pub fn end(&mut self) {
-        self.done = true;
+        self.done = self.done || self.played.is_some();
     }
 }
 
@@ -500,6 +514,14 @@ mod tests {
         r.note_played(t0, 0);
         assert_eq!(r.poll(t0 + OPENING_GIVE_UP - ms(1), &fresh(t0, 1), 1), None);
         assert_eq!(r.poll(t0 + OPENING_GIVE_UP, &fresh(t0, 1), 1), Some(OpeningStep::Done));
+        // A Play nobody reports: left after the give-up. A flush before the Play does not end it.
+        let mut r = OpeningRewind::default();
+        r.end();
+        assert!(r.pending());
+        assert_eq!(r.poll(t0, &fresh(t0, 1), 1), None);
+        assert_eq!(r.poll(t0 + PLAY_GIVE_UP - ms(1), &fresh(t0, 1), 1), None);
+        assert_eq!(r.poll(t0 + PLAY_GIVE_UP, &fresh(t0, 1), 1), Some(OpeningStep::Done));
+        assert!(!r.pending());
         // A seek before the lock ends it.
         let mut r = opening_audible(t0);
         r.end();

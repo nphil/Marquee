@@ -146,6 +146,9 @@ impl Feeder {
         self.gate.restart();
         self.hold.restart();
         self.opening.end();
+        if !self.opening.pending() {
+            super::set_stage(super::Stage::Off);
+        }
         if let Some(session) = &self.session {
             session.rearm(self.gate.epoch());
         }
@@ -178,6 +181,17 @@ fn access_units(mut packet: &[u8]) -> impl Iterator<Item = &[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A flush before the Load's first Play is the Load settling; one after it is the viewer's.
+    #[test]
+    fn a_flush_before_the_first_play_leaves_the_opening_owed() {
+        let mut feeder = Feeder::for_test();
+        feeder.restart();
+        assert!(feeder.opening.pending());
+        feeder.note_played(Instant::now(), 7);
+        feeder.restart();
+        assert!(!feeder.opening.pending());
+    }
 
     /// The Load's first start does not hold: the route cannot arm until Play builds LG's renderer.
     #[test]
