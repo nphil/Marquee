@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use super::contract::Carrier;
-use super::gate::{Decision, Gate, HoldStage, OpeningRewind, PlayHold};
+use super::gate::{Decision, Gate, OpeningRewind, OpeningStep, PlayHold};
 use super::mat::{Packer, ZERO_BURST};
 use super::session::Session;
 
@@ -82,8 +82,13 @@ impl Feeder {
             self.restart();
         }
         let facts = self.session.as_ref()?.shared().facts();
-        if let Some((start_ns, silent)) = self.opening.poll(now, &facts, self.gate.epoch()) {
-            super::request_rewind(start_ns, silent.as_millis() as u64);
+        match self.opening.poll(now, &facts, self.gate.epoch()) {
+            Some(OpeningStep::Rewind { start_ns, silent }) => super::request_rewind(start_ns, silent.as_millis() as u64),
+            Some(OpeningStep::Done) => super::set_stage(super::Stage::Off),
+            None => {}
+        }
+        if let Some(session) = &self.session {
+            session.shared().want_receiver(self.opening.wants_receiver());
         }
         let decision = self.gate.decide(now, &facts);
         let carrying = match decision {
@@ -114,28 +119,24 @@ impl Feeder {
     }
 
     /// Whether the clock must stay stopped: the carrier plays this seek or resume and the route is
-    /// not audible yet or the receiver has not locked onto it ([`PlayHold`]). False once the
-    /// carrier is given up; the gate's own give-ups are the only ones. Says what the spinner reads
-    /// while it does ([`super::Stage`]).
+    /// not audible yet ([`PlayHold`]). False once the carrier is given up; the gate's own give-ups
+    /// are the only ones. The spinner reads "Starting Dolby TrueHD…" while it holds, and from the
+    /// Load's start until the opening's outcome ([`super::Stage`]).
     pub fn holds_play(&mut self, now: Instant) -> bool {
         let Some(session) = &self.session else { return false };
         let facts = session.shared().facts();
-        let stage = self.hold.stage(now, &facts, self.gate.epoch());
-        session.shared().want_receiver(stage == Some(HoldStage::Receiver));
-        if stage.is_some() || self.hold.armed() {
-            super::set_stage(match stage {
-                Some(HoldStage::Arming) => super::Stage::Starting,
-                Some(HoldStage::Receiver) => super::Stage::Receiver,
-                None => super::Stage::Off,
-            });
+        let held = self.hold.waits(now, &facts, self.gate.epoch());
+        if held {
+            super::set_stage(super::Stage::Starting);
+        } else if !self.opening.pending() {
+            super::set_stage(super::Stage::Off);
         }
-        stage.is_some()
+        held
     }
 
     /// The pipeline accepted the Load's Play, from `start_ns` in the content's time.
     pub fn note_played(&mut self, now: Instant, start_ns: i64) {
         self.opening.note_played(now, start_ns);
-        super::set_stage(super::Stage::Off);
     }
 
     /// A seek, a resume or a flush: the packets queued are the old position's, and the route is

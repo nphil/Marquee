@@ -260,8 +260,9 @@ pub fn busy_surface(ps: &plx_media::route::PlaybackSession, st: plx_media::playe
 /// viewer's audio-track pick asked for, the read-out says "Switching audio…" instead of
 /// "Buffering…" (`player::busy_caption_with`). Any other rebuild keeps the plain caption.
 /// `truehd` is the Dolby TrueHD carrier's own words ([`plx_media::truehd::busy_text`]): while it
-/// has any, a busy session shows them beside the spinner, over a picture already seen too, since
-/// a seek's hold is exactly that.
+/// has any, a busy session shows them beside the spinner, over a picture already seen too (a
+/// seek's hold), and a playing one shows them as well: the opening's rewind waits for the receiver
+/// while the clock runs.
 pub fn busy_surface_with(
     ps: &plx_media::route::PlaybackSession,
     st: plx_media::player::PlaybackState,
@@ -274,7 +275,9 @@ pub fn busy_surface_with(
         // not `st.caption()`: the Error caption is shaped by WHY (an audio-only stream names the
         // server; see `player::error_shape`), which a method on the bare state cannot know.
         PlaybackState::Error => Busy::Readout(StatusKind::Failed, plx_media::player::error_caption(ps)),
-        s if s.is_busy() && truehd.is_some() => Busy::Readout(StatusKind::Working, truehd.unwrap_or_default()),
+        s if (s.is_busy() || s == PlaybackState::Playing) && truehd.is_some() => {
+            Busy::Readout(StatusKind::Working, truehd.unwrap_or_default())
+        }
         s if s.is_busy() && !seen_frame => Busy::Readout(StatusKind::Working, plx_media::player::busy_caption_with(st, audio_switch)),
         s if s.is_busy() => Busy::Transport,
         _ => Busy::None,

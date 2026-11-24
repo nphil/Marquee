@@ -71,7 +71,6 @@
   "widgets.status.buffering": "Буферизация…",
   "widgets.status.switching_audio": "Смена аудиодорожки…",
   "widgets.status.truehd_starting": "Запуск Dolby TrueHD…",
-  "widgets.status.truehd_receiver": "Ждём ресивер…",
   "widgets.status.truehd_unavailable": "Dolby TrueHD недоступен — воспроизведение в {codec}",
   "widgets.status.seeking": "Перемотка…",
   "widgets.status.failed": "Ошибка воспроизведения",

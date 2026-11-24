@@ -71,7 +71,6 @@
   "widgets.status.buffering": "Buforowanie…",
   "widgets.status.switching_audio": "Zmiana dźwięku…",
   "widgets.status.truehd_starting": "Uruchamianie Dolby TrueHD…",
-  "widgets.status.truehd_receiver": "Czekanie na amplituner…",
   "widgets.status.truehd_unavailable": "Dolby TrueHD niedostępny — odtwarzanie w {codec}",
   "widgets.status.seeking": "Przewijanie…",
   "widgets.status.failed": "Błąd odtwarzania",

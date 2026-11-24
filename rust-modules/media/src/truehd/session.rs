@@ -10,7 +10,7 @@ use super::gate::Facts;
 
 /// The contract's retry period for an arm.
 const ARM_EVERY: Duration = Duration::from_millis(100);
-/// How often the receiver's signal is read while the clock waits for it.
+/// How often the receiver's signal is read while the opening waits for it.
 const RECEIVER_EVERY: Duration = Duration::from_millis(250);
 /// The helper publishes a sample of the route every 50 ms and its answer counts as stale past
 /// 300 ms; asking as often keeps the answer at most about 100 ms old.
@@ -62,7 +62,7 @@ pub struct Shared {
     first_buffer: AtomicBool,
     /// LG's sink has turned `pcm-multi-ch` back on for the data (any buffer, without the toggle).
     feeding: AtomicBool,
-    /// The clock is held for the receiver to lock onto the stream: the worker asks the `receiver`
+    /// The opening waits for the receiver to lock onto the stream: the worker asks the `receiver`
     /// topic, which it does not otherwise.
     want_receiver: AtomicBool,
     /// The decoder input the sink reported; the worker arms with it.
@@ -520,7 +520,7 @@ mod tests {
         let reads = |h: &Fake| h.calls.lock().unwrap().iter().filter(|c| *c == "receiver").count();
         assert_eq!(reads(&helper), 2);
         d.step(at(600), 1, false, false, &helper, || Ok((0x2a, 1)), &mut facts);
-        assert_eq!(reads(&helper), 2, "not asked once the clock runs");
+        assert_eq!(reads(&helper), 2, "not asked once the opening is settled");
     }
 
     #[test]

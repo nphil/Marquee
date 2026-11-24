@@ -71,7 +71,6 @@
   "widgets.status.buffering": "Puffern …",
   "widgets.status.switching_audio": "Audio wird gewechselt …",
   "widgets.status.truehd_starting": "Dolby TrueHD wird gestartet …",
-  "widgets.status.truehd_receiver": "Warten auf den Receiver …",
   "widgets.status.truehd_unavailable": "Dolby TrueHD nicht verfügbar — Wiedergabe mit {codec}",
   "widgets.status.seeking": "Springen …",
   "widgets.status.failed": "Wiedergabe fehlgeschlagen",

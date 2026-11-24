@@ -71,7 +71,6 @@
   "widgets.status.buffering": "Pufferelés…",
   "widgets.status.switching_audio": "Hangsáv váltása…",
   "widgets.status.truehd_starting": "Dolby TrueHD indítása…",
-  "widgets.status.truehd_receiver": "Várakozás a vevőre…",
   "widgets.status.truehd_unavailable": "A Dolby TrueHD nem érhető el — lejátszás: {codec}",
   "widgets.status.seeking": "Ugrás…",
   "widgets.status.failed": "Sikertelen lejátszás",

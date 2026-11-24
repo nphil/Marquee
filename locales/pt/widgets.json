@@ -71,7 +71,6 @@
   "widgets.status.buffering": "A carregar…",
   "widgets.status.switching_audio": "A mudar o áudio…",
   "widgets.status.truehd_starting": "A iniciar o Dolby TrueHD…",
-  "widgets.status.truehd_receiver": "A aguardar o recetor…",
   "widgets.status.truehd_unavailable": "Dolby TrueHD indisponível — a reproduzir {codec}",
   "widgets.status.seeking": "A carregar…",
   "widgets.status.failed": "Falha na reprodução",

@@ -789,17 +789,20 @@ fn an_audio_pick_rebuild_reads_switching_audio_and_nothing_else_does() {
 }
 
 /// **While the Dolby TrueHD carrier has words, a busy session shows them beside the spinner.**
-/// Over a picture already seen too: a seek's hold is exactly that. A failure keeps its caption.
+/// Over a picture already seen too, and while the clock runs: a seek's hold, and the opening's wait
+/// for the receiver. A failure keeps its caption.
 #[test]
 fn the_truehd_carrier_s_words_replace_a_busy_caption_even_over_a_seen_picture() {
     let ps = plx_media::route::PlaybackSession::IDLE;
-    let words = c"Waiting for the receiver\u{2026}";
+    let words = c"Starting Dolby TrueHD\u{2026}";
     let with = |st, seen| busy_surface_with(&ps, st, seen, false, Some(words));
     assert_eq!(with(S::Buffering, false), Busy::Readout(StatusKind::Working, words));
     assert_eq!(with(S::Seeking, true), Busy::Readout(StatusKind::Working, words));
     assert_eq!(busy_surface_with(&ps, S::Seeking, true, false, None), Busy::Transport);
     assert!(matches!(with(S::Error, false), Busy::Readout(StatusKind::Failed, _)));
-    assert_eq!(with(S::Playing, true), Busy::None);
+    assert_eq!(with(S::Playing, true), Busy::Readout(StatusKind::Working, words), "the clock runs while the opening waits");
+    assert_eq!(busy_surface_with(&ps, S::Playing, true, false, None), Busy::None);
+    assert_eq!(with(S::Paused, true), Busy::None);
 }
 
 /// A paused session that is doing no work, driven through the state the HUD really reads

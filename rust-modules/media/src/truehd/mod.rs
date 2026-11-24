@@ -56,10 +56,9 @@ pub(crate) fn new_request() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     Off = 0,
-    /// The Load is arming the route, or a seek or resume waits for it to be audible.
+    /// From the Load's start until the receiver has locked onto the stream and the opening's
+    /// rewind has landed, and while a seek or resume waits for the route to be audible.
     Starting = 1,
-    /// The clock waits for the receiver to lock onto the stream.
-    Receiver = 2,
 }
 
 pub(crate) fn set_stage(stage: Stage) {
@@ -69,7 +68,6 @@ pub(crate) fn set_stage(stage: Stage) {
 fn stage() -> Stage {
     match STAGE.load(Ordering::Acquire) {
         1 => Stage::Starting,
-        2 => Stage::Receiver,
         _ => Stage::Off,
     }
 }
@@ -82,7 +80,6 @@ pub fn stage_text(stage: Stage, carried: bool) -> Option<&'static CStr> {
     match stage {
         Stage::Off => None,
         Stage::Starting => Some(plx_platform::i18n::msg::widgets_status_truehd_starting_c()),
-        Stage::Receiver => Some(plx_platform::i18n::msg::widgets_status_truehd_receiver_c()),
     }
 }
 
@@ -297,9 +294,8 @@ mod status_tests {
     fn the_spinner_reads_the_stage_only_while_the_carrier_is_fed() {
         use plx_platform::i18n::msg;
         assert_eq!(stage_text(Stage::Starting, true), Some(msg::widgets_status_truehd_starting_c()));
-        assert_eq!(stage_text(Stage::Receiver, true), Some(msg::widgets_status_truehd_receiver_c()));
         assert_eq!(stage_text(Stage::Off, true), None);
-        assert_eq!(stage_text(Stage::Receiver, false), None, "a Load without the carrier keeps its own caption");
+        assert_eq!(stage_text(Stage::Starting, false), None, "a Load without the carrier keeps its own caption");
         assert_eq!(codec_name("eac3"), "E-AC3");
         assert_eq!(codec_name("ac3"), "AC3");
         assert_eq!(codec_name("dts"), "DTS");
