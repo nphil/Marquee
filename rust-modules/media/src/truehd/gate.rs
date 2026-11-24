@@ -76,6 +76,45 @@ pub enum Decision {
     GiveUp(&'static str),
 }
 
+/// A first start whose Play came this much before the route was audible repeats its opening: the
+/// seconds before it were fed and played silent.
+pub const REWIND_AFTER: Duration = Duration::from_millis(250);
+
+/// The Load's first start, from Play to the route being audible: when that took longer than
+/// [`REWIND_AFTER`] the opening was played silent, and one seek back to the start position, on a
+/// route that is armed and so stays audible, plays it in full. Once per Load; a seek or flush
+/// before then is the viewer's and ends the chance.
+#[derive(Debug, Default)]
+pub struct OpeningRewind {
+    played: Option<(Instant, i64)>,
+    done: bool,
+}
+
+impl OpeningRewind {
+    /// The first Play of the Load, from `start_ns` in the content's time.
+    pub fn note_played(&mut self, now: Instant, start_ns: i64) {
+        if !self.done && self.played.is_none() {
+            self.played = Some((now, start_ns));
+        }
+    }
+
+    /// The route is audible: where to seek back to and how long the opening ran silent, once.
+    pub fn poll(&mut self, now: Instant, facts: &Facts, epoch: u64) -> Option<(i64, Duration)> {
+        let (at, start_ns) = self.played?;
+        if self.done || !facts.audible(now, epoch) {
+            return None;
+        }
+        self.done = true;
+        let silent = now.saturating_duration_since(at);
+        (silent > REWIND_AFTER).then_some((start_ns, silent))
+    }
+
+    /// A seek or flush: the viewer is somewhere else now.
+    pub fn end(&mut self) {
+        self.done = true;
+    }
+}
+
 /// The clock's hold for a start, a seek or a resume that plays the carrier: nothing runs until the
 /// receiver hears the stream, so no audio is lost to a route that is still coming up.
 #[derive(Debug, Default)]
@@ -325,5 +364,31 @@ mod tests {
         // A seek starts a new hold, on the route that has armed before.
         hold.restart();
         assert!(hold.waits(t0 + PLAY_HOLD_CAP + ms(100), &Facts::default(), 2));
+    }
+
+    #[test]
+    fn the_opening_is_rewound_once_and_only_past_the_threshold() {
+        let t0 = Instant::now();
+        let audible = |at: Instant| Facts { route: Some((Route { audible: true, ..BYPASSING }, at)), ..fresh(at, 1) };
+        let mut r = OpeningRewind::default();
+        let at = t0 + ms(940);
+        assert_eq!(r.poll(at, &audible(at), 1), None, "no Play yet");
+        r.note_played(t0, 5_000);
+        assert_eq!(r.poll(t0 + ms(100), &fresh(t0 + ms(100), 1), 1), None, "not audible yet");
+        assert_eq!(r.poll(at, &audible(at), 1), Some((5_000, ms(940))));
+        assert_eq!(r.poll(at + ms(20), &audible(at + ms(20)), 1), None, "once");
+
+        // Heard within the threshold: nothing to repeat, and no later chance.
+        let mut r = OpeningRewind::default();
+        r.note_played(t0, 0);
+        assert_eq!(r.poll(t0 + REWIND_AFTER, &audible(t0 + REWIND_AFTER), 1), None);
+        r.note_played(t0 + ms(1), 0);
+        assert_eq!(r.poll(at, &audible(at), 1), None);
+
+        // A seek before audible ends it.
+        let mut r = OpeningRewind::default();
+        r.note_played(t0, 0);
+        r.end();
+        assert_eq!(r.poll(at, &audible(at), 1), None);
     }
 }

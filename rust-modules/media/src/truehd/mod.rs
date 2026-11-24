@@ -28,6 +28,8 @@ static VETO: AtomicBool = AtomicBool::new(false);
 static CARRIED: AtomicBool = AtomicBool::new(false);
 /// Why the carrier was given up, until the pump acts on it.
 static GAVE_UP: Mutex<Option<&'static str>> = Mutex::new(None);
+/// A rewind to the Load's start position the pump has not issued yet: `(start_ns, ms silent)`.
+static REWIND: Mutex<Option<(i64, u64)>> = Mutex::new(None);
 /// Why this request's carrier was given up, for the read-out; kept after the pump acted on it.
 static FELL_BACK: Mutex<Option<&'static str>> = Mutex::new(None);
 
@@ -37,6 +39,17 @@ pub(crate) fn new_request() {
     CARRIED.store(false, Ordering::Release);
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *FELL_BACK.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *REWIND.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// The first start's opening played silent: seek back to `start_ns` once.
+pub(crate) fn request_rewind(start_ns: i64, silent_ms: u64) {
+    *REWIND.lock().unwrap_or_else(|e| e.into_inner()) = Some((start_ns, silent_ms));
+}
+
+/// The rewind to issue, once.
+pub(crate) fn take_rewind() -> Option<(i64, u64)> {
+    REWIND.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 /// The rest of this request plays without the carrier.

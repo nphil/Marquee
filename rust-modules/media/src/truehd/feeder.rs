@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use super::contract::Carrier;
-use super::gate::{Decision, Gate, PlayHold};
+use super::gate::{Decision, Gate, OpeningRewind, PlayHold};
 use super::mat::{Packer, ZERO_BURST};
 use super::session::Session;
 
@@ -17,6 +17,8 @@ pub struct Feeder {
     carrying: bool,
     /// The clock's hold while the route is not audible ([`Feeder::holds_play`]).
     hold: PlayHold,
+    /// The first start's repeat of its opening ([`OpeningRewind`]).
+    opening: OpeningRewind,
 }
 
 impl Feeder {
@@ -33,14 +35,14 @@ impl Feeder {
         if session.is_none() {
             super::give_up("the route worker cannot start");
         }
-        Feeder { packer, gate: Gate::new(), session, run: 0, carrying: false, hold: PlayHold::default() }
+        Feeder { packer, gate: Gate::new(), session, run: 0, carrying: false, hold: PlayHold::default(), opening: OpeningRewind::default() }
     }
 
     /// A feeder with a session that has no helper (`Session::for_test`): zeros while the gate arms.
     #[cfg(test)]
     pub fn for_test() -> Feeder {
         let carrier = Carrier::default();
-        Feeder { packer: Packer::new(carrier.order), gate: Gate::new(), session: Some(Session::for_test(carrier)), run: 0, carrying: false, hold: PlayHold::default() }
+        Feeder { packer: Packer::new(carrier.order), gate: Gate::new(), session: Some(Session::for_test(carrier)), run: 0, carrying: false, hold: PlayHold::default(), opening: OpeningRewind::default() }
     }
 
     pub fn gave_up(&self) -> bool {
@@ -80,6 +82,9 @@ impl Feeder {
             self.restart();
         }
         let facts = self.session.as_ref()?.shared().facts();
+        if let Some((start_ns, silent)) = self.opening.poll(now, &facts, self.gate.epoch()) {
+            super::request_rewind(start_ns, silent.as_millis() as u64);
+        }
         let decision = self.gate.decide(now, &facts);
         let carrying = match decision {
             Decision::Carrier => true,
@@ -108,6 +113,11 @@ impl Feeder {
         self.packer.pop();
     }
 
+    /// The pipeline accepted the Load's Play, from `start_ns` in the content's time.
+    pub fn note_played(&mut self, now: Instant, start_ns: i64) {
+        self.opening.note_played(now, start_ns);
+    }
+
     /// Whether the clock must stay stopped: the carrier plays this start, seek or resume and the
     /// receiver does not hear it yet, for [`super::gate::PLAY_HOLD_CAP`] at most. False once the
     /// carrier is given up; the gate's own give-ups are the only ones.
@@ -123,6 +133,7 @@ impl Feeder {
         self.packer.flush();
         self.gate.restart();
         self.hold.restart();
+        self.opening.end();
         if let Some(session) = &self.session {
             session.rearm(self.gate.epoch());
         }

@@ -2005,6 +2005,14 @@ fn pump_engine(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::
             leave_carrier(ps, why);
         }
     }
+    // The first start played its opening before the route was audible: the route is armed now, so a
+    // seek back to the start position plays it in full (the picture repeats under a second).
+    if let Some((start_ns, silent_ms)) = crate::truehd::take_rewind() {
+        if crate::truehd::carried() {
+            super::log(&format!("truehd: rewound {silent_ms} ms to the start so the opening is heard"));
+            super::request_seek(start_ns);
+        }
+    }
     inject_refuse601(ps, eng);
     // A failed open's recovery flight (the Original rollback's rebase, the unopened source's HLS
     // fallback, the refused native audio's conversion): land it, or wait for it. Ahead of every

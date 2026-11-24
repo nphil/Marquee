@@ -4278,6 +4278,9 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
                     super::acb_mirror_playstate_at(mt, eng.stage, true);
                 }
                 eng.prime_play = false;
+                if let Some(f) = eng.truehd.as_mut() {
+                    f.note_played(std::time::Instant::now(), SHARED.playpos_ns.load(Ordering::Relaxed));
+                }
                 match eng.segment_landing.as_mut() {
                     // Play does not land a Segment seek: the spinner and the frozen playhead stay
                     // until the sink shows it (the pump settles that).
