@@ -1082,6 +1082,7 @@ fn retry_truehd(
         return None;
     }
     crate::truehd::veto();
+    crate::truehd::note_fell_back("the pipeline refused the carrier");
     if !crate::route::fall_back_from_truehd(ps) {
         return None;
     }

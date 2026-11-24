@@ -28,12 +28,15 @@ static VETO: AtomicBool = AtomicBool::new(false);
 static CARRIED: AtomicBool = AtomicBool::new(false);
 /// Why the carrier was given up, until the pump acts on it.
 static GAVE_UP: Mutex<Option<&'static str>> = Mutex::new(None);
+/// Why this request's carrier was given up, for the read-out; kept after the pump acted on it.
+static FELL_BACK: Mutex<Option<&'static str>> = Mutex::new(None);
 
 /// A new play request starts: whatever the last one gave up is forgotten.
 pub(crate) fn new_request() {
     VETO.store(false, Ordering::Release);
     CARRIED.store(false, Ordering::Release);
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *FELL_BACK.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// The rest of this request plays without the carrier.
@@ -110,10 +113,100 @@ pub(crate) fn carrier() -> contract::Carrier {
 
 /// The feeder gave the carrier up.
 pub(crate) fn give_up(why: &'static str) {
+    note_fell_back(why);
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
 }
 
 /// Why the carrier was given up, once.
 pub(crate) fn take_gave_up() -> Option<&'static str> {
     GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Why the carrier is off for the read-out, from here on in this request.
+pub(crate) fn note_fell_back(why: &'static str) {
+    *FELL_BACK.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
+}
+
+/// Where the TrueHD carrier stands for a title whose source audio is TrueHD, as Stats for Nerds
+/// tells it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// This Load feeds the carrier; `adec` is the decoder input LG's sink holds, `audible` that the
+    /// receiver is being sent the stream.
+    Carrying { adec: Option<u8>, audible: bool },
+    /// The carrier was given up; the title plays on the track the TV decodes.
+    FellBack(&'static str),
+    /// No carrier was started: the plugin is off or the TV is not ready.
+    Off(String),
+}
+
+/// The carrier's state now.
+pub fn status() -> Status {
+    if carried() {
+        let shared = session::active();
+        let adec = shared.as_ref().and_then(|s| match s.granted() {
+            session::Granted::Decoder(a) => Some(a),
+            _ => None,
+        });
+        let audible = shared.is_some_and(|s| s.facts().route.is_some_and(|(r, _)| r.audible && r.bypassing));
+        return Status::Carrying { adec, audible };
+    }
+    if let Some(why) = *FELL_BACK.lock().unwrap_or_else(|e| e.into_inner()) {
+        return Status::FellBack(why);
+    }
+    if plx_base::devtrig::flag("notruehd") {
+        return Status::Off("plugin off".into());
+    }
+    Status::Off(off_reason(watch::topic().as_ref()))
+}
+
+/// Why no carrier starts on this reading of the helper.
+fn off_reason(topic: Option<&contract::Topic>) -> String {
+    let Some(t) = topic else { return "plugin off".into() };
+    match t.state {
+        contract::State::Off => "plugin off".into(),
+        _ if t.idle() => "not started".into(),
+        _ if !t.reason.is_empty() => format!("not ready: {}", t.reason),
+        _ if t.session_pid.is_some() => "not ready: route in use".into(),
+        _ => "not ready".into(),
+    }
+}
+
+impl Status {
+    /// The Audio row's words. `atmos`: the track carries Dolby Atmos.
+    pub fn line(&self, atmos: bool) -> String {
+        match self {
+            Status::Carrying { adec, audible: true } => {
+                let kind = if atmos { "Atmos" } else { "TrueHD" };
+                match adec {
+                    Some(a) => format!("TrueHD passthrough: {kind} to receiver (ADEC{a}, audible)"),
+                    None => format!("TrueHD passthrough: {kind} to receiver (audible)"),
+                }
+            }
+            Status::Carrying { audible: false, .. } => "TrueHD passthrough: arming…".into(),
+            Status::FellBack(why) => format!("TrueHD passthrough: fell back: {why}"),
+            Status::Off(why) => format!("TrueHD passthrough: off ({why})"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn the_status_reads_as_the_audio_path() {
+        let carrying = |audible| Status::Carrying { adec: Some(1), audible }.line(true);
+        assert_eq!(carrying(true), "TrueHD passthrough: Atmos to receiver (ADEC1, audible)");
+        assert_eq!(carrying(false), "TrueHD passthrough: arming…");
+        assert_eq!(Status::Carrying { adec: None, audible: true }.line(false), "TrueHD passthrough: TrueHD to receiver (audible)");
+        assert_eq!(
+            Status::FellBack("the route was not audible in time").line(true),
+            "TrueHD passthrough: fell back: the route was not audible in time"
+        );
+        assert_eq!(Status::Off("plugin off".into()).line(true), "TrueHD passthrough: off (plugin off)");
+        let busy = contract::parse_topic(br#"{"schema":1,"state":"not-ready","ready":false,"reason":"no converter"}"#).unwrap();
+        assert_eq!(off_reason(Some(&busy)), "not ready: no converter");
+        assert_eq!(off_reason(None), "plugin off");
+    }
 }

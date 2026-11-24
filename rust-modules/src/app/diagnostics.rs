@@ -870,6 +870,11 @@ fn pipeline_rows(ps: &plx_media::route::PlaybackSession, d: &plx_media::player::
     if plx_media::route::stream_immersive(ps) {
         audio.push_str(" · Dolby Atmos");
     }
+    // The chain above names the codecs; this says where the TrueHD actually goes.
+    if plx_media::route::source_acodec(ps).eq_ignore_ascii_case("truehd") {
+        audio.push_str(" · ");
+        audio.push_str(&plx_media::truehd::status().line(plx_media::route::stream_immersive(ps)));
+    }
     // Issue #266: only when the server DEMONSTRABLY applied the DSP — `Unverified`/`Refused`/`Off`
     // say nothing was provably added to this stream, so the row must not claim it.
     let applied = plx_media::route::applied_audio_enhancements(ps);

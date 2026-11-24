@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use super::contract::Carrier;
-use super::gate::{Decision, Gate};
+use super::gate::{Decision, Gate, Hold, PlayHold};
 use super::mat::{Packer, ZERO_BURST};
 use super::session::Session;
 
@@ -15,6 +15,8 @@ pub struct Feeder {
     /// Bursts fed since the gate last changed its answer, for the log.
     run: u32,
     carrying: bool,
+    /// The clock's hold while the route is not audible ([`Feeder::holds_play`]).
+    hold: PlayHold,
 }
 
 impl Feeder {
@@ -31,14 +33,14 @@ impl Feeder {
         if session.is_none() {
             super::give_up("the route worker cannot start");
         }
-        Feeder { packer, gate: Gate::new(), session, run: 0, carrying: false }
+        Feeder { packer, gate: Gate::new(), session, run: 0, carrying: false, hold: PlayHold::default() }
     }
 
     /// A feeder with a session that has no helper (`Session::for_test`): zeros while the gate arms.
     #[cfg(test)]
     pub fn for_test() -> Feeder {
         let carrier = Carrier::default();
-        Feeder { packer: Packer::new(carrier.order), gate: Gate::new(), session: Some(Session::for_test(carrier)), run: 0, carrying: false }
+        Feeder { packer: Packer::new(carrier.order), gate: Gate::new(), session: Some(Session::for_test(carrier)), run: 0, carrying: false, hold: PlayHold::default() }
     }
 
     pub fn gave_up(&self) -> bool {
@@ -106,11 +108,29 @@ impl Feeder {
         self.packer.pop();
     }
 
+    /// Whether the clock must stay stopped: the carrier plays this start, seek or resume and the
+    /// receiver does not hear it yet. The pause lasts until the route is audible; a route that is
+    /// not by [`super::gate::PLAY_HOLD_CAP`] gives the carrier up, which reloads the sibling track
+    /// at the playhead that never moved. False once the carrier is given up.
+    pub fn holds_play(&mut self, now: Instant) -> bool {
+        let Some(session) = &self.session else { return false };
+        let facts = session.shared().facts();
+        match self.hold.judge(now, &facts, self.gate.epoch()) {
+            Hold::Wait => true,
+            Hold::Release => false,
+            Hold::GiveUp(why) => {
+                self.stop(why);
+                false
+            }
+        }
+    }
+
     /// A seek, a resume or a flush: the packets queued are the old position's, and the route is
     /// confirmed again before TrueHD flows.
     pub fn restart(&mut self) {
         self.packer.flush();
         self.gate.restart();
+        self.hold.restart();
         if let Some(session) = &self.session {
             session.rearm(self.gate.epoch());
         }

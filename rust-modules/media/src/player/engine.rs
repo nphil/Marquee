@@ -4254,7 +4254,10 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
         HlsPrimeKind::ProgressiveRebuffer { .. } => progressive_release.is_some(),
         _ => decoder_ready && boundary_ready,
     };
-    if ready && TX.feed_allowed() {
+    // A carrier Load keeps the clock stopped until the receiver hears the stream, so the seconds the
+    // route takes to come up are not played silent.
+    let carrier_holds = ready && eng.truehd.as_mut().is_some_and(|f| f.holds_play(std::time::Instant::now()));
+    if ready && !carrier_holds && TX.feed_allowed() {
         let Some((play_token, recovery)) =
             SHARED.reserve_hls_prime_play(prime_kind, candidate_generation, recovery)
         else {
