@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use super::contract::Carrier;
-use super::gate::{Decision, Gate, OpeningRewind, PlayHold};
+use super::gate::{Decision, Gate, HoldStage, OpeningRewind, PlayHold};
 use super::mat::{Packer, ZERO_BURST};
 use super::session::Session;
 
@@ -113,18 +113,29 @@ impl Feeder {
         self.packer.pop();
     }
 
-    /// The pipeline accepted the Load's Play, from `start_ns` in the content's time.
-    pub fn note_played(&mut self, now: Instant, start_ns: i64) {
-        self.opening.note_played(now, start_ns);
-    }
-
-    /// Whether the clock must stay stopped: the carrier plays this start, seek or resume and the
-    /// receiver does not hear it yet, for [`super::gate::PLAY_HOLD_CAP`] at most. False once the
-    /// carrier is given up; the gate's own give-ups are the only ones.
+    /// Whether the clock must stay stopped: the carrier plays this seek or resume and the route is
+    /// not audible yet or the receiver has not locked onto it ([`PlayHold`]). False once the
+    /// carrier is given up; the gate's own give-ups are the only ones. Says what the spinner reads
+    /// while it does ([`super::Stage`]).
     pub fn holds_play(&mut self, now: Instant) -> bool {
         let Some(session) = &self.session else { return false };
         let facts = session.shared().facts();
-        self.hold.waits(now, &facts, self.gate.epoch())
+        let stage = self.hold.stage(now, &facts, self.gate.epoch());
+        session.shared().want_receiver(stage == Some(HoldStage::Receiver));
+        if stage.is_some() || self.hold.armed() {
+            super::set_stage(match stage {
+                Some(HoldStage::Arming) => super::Stage::Starting,
+                Some(HoldStage::Receiver) => super::Stage::Receiver,
+                None => super::Stage::Off,
+            });
+        }
+        stage.is_some()
+    }
+
+    /// The pipeline accepted the Load's Play, from `start_ns` in the content's time.
+    pub fn note_played(&mut self, now: Instant, start_ns: i64) {
+        self.opening.note_played(now, start_ns);
+        super::set_stage(super::Stage::Off);
     }
 
     /// A seek, a resume or a flush: the packets queued are the old position's, and the route is

@@ -19,8 +19,10 @@ pub mod session;
 pub mod sink;
 pub mod watch;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ffi::CStr;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// The request has given the carrier up.
 static VETO: AtomicBool = AtomicBool::new(false);
@@ -30,6 +32,12 @@ static CARRIED: AtomicBool = AtomicBool::new(false);
 static GAVE_UP: Mutex<Option<&'static str>> = Mutex::new(None);
 /// A rewind to the Load's start position the pump has not issued yet: `(start_ns, ms silent)`.
 static REWIND: Mutex<Option<(i64, u64)>> = Mutex::new(None);
+/// What the spinner says for the carrier ([`Stage`]).
+static STAGE: AtomicU8 = AtomicU8::new(Stage::Off as u8);
+/// The fallback's notice and when it was posted ([`note_unavailable`]).
+static UNAVAILABLE: Mutex<Option<(Instant, &'static CStr)>> = Mutex::new(None);
+/// How long the notice that the carrier is unavailable stays beside the spinner.
+const UNAVAILABLE_SHOWN: Duration = Duration::from_secs(4);
 /// Why this request's carrier was given up, for the read-out; kept after the pump acted on it.
 static FELL_BACK: Mutex<Option<&'static str>> = Mutex::new(None);
 
@@ -40,6 +48,83 @@ pub(crate) fn new_request() {
     *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *FELL_BACK.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *REWIND.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *UNAVAILABLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    set_stage(Stage::Off);
+}
+
+/// What the spinner beside a held or arming carrier says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Off = 0,
+    /// The Load is arming the route, or a seek or resume waits for it to be audible.
+    Starting = 1,
+    /// The clock waits for the receiver to lock onto the stream.
+    Receiver = 2,
+}
+
+pub(crate) fn set_stage(stage: Stage) {
+    STAGE.store(stage as u8, Ordering::Release);
+}
+
+fn stage() -> Stage {
+    match STAGE.load(Ordering::Acquire) {
+        1 => Stage::Starting,
+        2 => Stage::Receiver,
+        _ => Stage::Off,
+    }
+}
+
+/// The spinner's words for `stage` while a Load feeds the carrier.
+pub fn stage_text(stage: Stage, carried: bool) -> Option<&'static CStr> {
+    if !carried {
+        return None;
+    }
+    match stage {
+        Stage::Off => None,
+        Stage::Starting => Some(plx_platform::i18n::msg::widgets_status_truehd_starting_c()),
+        Stage::Receiver => Some(plx_platform::i18n::msg::widgets_status_truehd_receiver_c()),
+    }
+}
+
+/// What the spinner says now because of the carrier, if anything: the fallback's notice for a few
+/// seconds after the carrier was given up, otherwise the stage of a Load that feeds it.
+pub fn busy_text() -> Option<&'static CStr> {
+    let unavailable = *UNAVAILABLE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, text)) = unavailable {
+        if at.elapsed() < UNAVAILABLE_SHOWN {
+            return Some(text);
+        }
+    }
+    stage_text(stage(), carried())
+}
+
+/// The carrier is given up and `codec` plays instead: the spinner says so for a few seconds. One
+/// text per codec is kept for the process, so reading it each frame allocates nothing.
+pub(crate) fn note_unavailable(codec: &str) {
+    static KEPT: Mutex<Vec<(String, &'static CStr)>> = Mutex::new(Vec::new());
+    let name = codec_name(codec);
+    let text = {
+        let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        match kept.iter().find(|(n, _)| *n == name) {
+            Some((_, text)) => *text,
+            None => {
+                let line = plx_platform::i18n::msg::widgets_status_truehd_unavailable(&name);
+                let text: &'static CStr = Box::leak(std::ffi::CString::new(line).unwrap_or_default().into_boxed_c_str());
+                kept.push((name, text));
+                text
+            }
+        }
+    };
+    *UNAVAILABLE.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), text));
+}
+
+/// The codec as a viewer reads it.
+fn codec_name(codec: &str) -> String {
+    match codec.to_ascii_lowercase().as_str() {
+        "eac3" => "E-AC3".into(),
+        "ac3" => "AC3".into(),
+        other => other.to_ascii_uppercase(),
+    }
 }
 
 /// The first start's opening played silent: seek back to `start_ns` once.
@@ -109,6 +194,7 @@ pub(crate) fn carries(codec: &str, sample_rate: i64) -> bool {
 /// this one's.
 pub(crate) fn latch(carried: bool) {
     CARRIED.store(carried, Ordering::Release);
+    set_stage(if carried { Stage::Starting } else { Stage::Off });
     if carried {
         *GAVE_UP.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
@@ -206,6 +292,19 @@ impl Status {
 #[cfg(test)]
 mod status_tests {
     use super::*;
+
+    #[test]
+    fn the_spinner_reads_the_stage_only_while_the_carrier_is_fed() {
+        use plx_platform::i18n::msg;
+        assert_eq!(stage_text(Stage::Starting, true), Some(msg::widgets_status_truehd_starting_c()));
+        assert_eq!(stage_text(Stage::Receiver, true), Some(msg::widgets_status_truehd_receiver_c()));
+        assert_eq!(stage_text(Stage::Off, true), None);
+        assert_eq!(stage_text(Stage::Receiver, false), None, "a Load without the carrier keeps its own caption");
+        assert_eq!(codec_name("eac3"), "E-AC3");
+        assert_eq!(codec_name("ac3"), "AC3");
+        assert_eq!(codec_name("dts"), "DTS");
+        assert_eq!(msg::widgets_status_truehd_unavailable("AC3"), "Dolby TrueHD unavailable \u{2014} playing AC3");
+    }
 
     #[test]
     fn the_status_reads_as_the_audio_path() {

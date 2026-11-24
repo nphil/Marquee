@@ -316,6 +316,21 @@
     "value": "Switching audio…",
     "description": "Short player status beside a spinner while the stream is rebuilt for an audio track the viewer picked."
   },
+  "widgets.status.truehd_starting": {
+    "value": "Starting Dolby TrueHD…",
+    "description": "Short player status beside a spinner while Dolby TrueHD is being routed to the receiver: the audio route is coming up."
+  },
+  "widgets.status.truehd_receiver": {
+    "value": "Waiting for the receiver…",
+    "description": "Short player status beside a spinner while Dolby TrueHD is being routed to the receiver: the picture is held until the AV receiver has locked onto the stream."
+  },
+  "widgets.status.truehd_unavailable": {
+    "value": "Dolby TrueHD unavailable — playing {codec}",
+    "description": "Short player status beside a spinner when the Dolby TrueHD route failed and the title reloads on another audio track. {codec} is that track's codec, e.g. AC3.",
+    "args": {
+      "codec": "str"
+    }
+  },
   "widgets.status.seeking": {
     "value": "Seeking…",
     "description": "Short player status beside a spinner or terminal playback error."

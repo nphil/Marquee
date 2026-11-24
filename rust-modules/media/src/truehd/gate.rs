@@ -9,7 +9,7 @@
 //! that never comes up gives the carrier up.
 use std::time::{Duration, Instant};
 
-use super::contract::Route;
+use super::contract::{Receiver, Route};
 
 /// The helper's route answer, counting its own sample age, may be this old for a burst to carry.
 const ROUTE_FRESH: Duration = Duration::from_millis(300);
@@ -33,6 +33,11 @@ const FORCED_LIMIT: Duration = Duration::from_secs(1);
 /// carrier flowing, so the hold is the first frame for that long at most, plus whatever silence
 /// is left.
 pub const PLAY_HOLD_CAP: Duration = Duration::from_millis(1500);
+/// The longest the held clock then waits for the receiver to report TrueHD.
+pub const RECEIVER_CAP: Duration = Duration::from_millis(3500);
+/// How long it holds when the `receiver` topic is missing: the Denon needs about this long to lock
+/// onto a new TrueHD stream (TV soak, 2026-11-24).
+pub const RECEIVER_WITHOUT_TOPIC: Duration = Duration::from_millis(2000);
 
 /// What the session knows, each fact stamped with when it arrived.
 #[derive(Clone, Copy, Debug, Default)]
@@ -40,6 +45,8 @@ pub struct Facts {
     /// The epoch the helper last confirmed an arm for.
     pub armed_epoch: Option<u64>,
     pub route: Option<(Route, Instant)>,
+    /// The receiver's input signal, read while the clock waits for it.
+    pub receiver: Option<(Receiver, Instant)>,
 }
 
 impl Facts {
@@ -115,34 +122,77 @@ impl OpeningRewind {
     }
 }
 
-/// The clock's hold for a start, a seek or a resume that plays the carrier: nothing runs until the
-/// receiver hears the stream, so no audio is lost to a route that is still coming up.
+/// Where a held clock is waiting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldStage {
+    /// For the route to be audible.
+    Arming,
+    /// For the receiver to report that it has locked onto TrueHD.
+    Receiver,
+}
+
+/// The clock's hold for a seek, a resume or the opening's rewind that plays the carrier: nothing
+/// runs until the route is audible and the receiver has locked onto the stream, so no audio is
+/// lost to a route or a receiver that is still coming up.
 #[derive(Debug, Default)]
 pub struct PlayHold {
     since: Option<Instant>,
     /// The helper has armed the route for some epoch of this Load.
     armed: bool,
+    /// When the route became audible: the receiver wait runs from here.
+    heard: Option<Instant>,
+    released: bool,
 }
 
 impl PlayHold {
-    /// Whether the clock stays stopped. Only a seek, flush or resume holds: on the Load's first
-    /// start the route cannot arm before Play, because LG builds the audio renderer the arm needs
-    /// when the pipeline starts (TV run, 2026-11-24: Play +3330 ms, armed +3500 ms, audible +4270
-    /// ms), so waiting there only freezes the first frame for the cap. The hold runs from the first call to the audible answer or
-    /// to [`PLAY_HOLD_CAP`], and stays released past the cap until the next restart.
-    pub fn waits(&mut self, now: Instant, facts: &Facts, epoch: u64) -> bool {
+    /// Where the clock waits, or `None` once it runs. Only a seek, flush or resume holds: on the
+    /// Load's first start the route cannot arm before Play, because LG builds the audio renderer
+    /// the arm needs when the pipeline starts (TV run, 2026-11-24: Play +3330 ms, armed +3500 ms,
+    /// audible +4270 ms), so waiting there only freezes the first frame.
+    ///
+    /// The route has [`PLAY_HOLD_CAP`] to be audible. The receiver then has until
+    /// [`RECEIVER_CAP`] to report TrueHD in a reading taken since; a missing `receiver` topic
+    /// holds [`RECEIVER_WITHOUT_TOPIC`] instead. Released, it stays released until the next
+    /// restart.
+    pub fn stage(&mut self, now: Instant, facts: &Facts, epoch: u64) -> Option<HoldStage> {
         self.armed |= facts.armed_epoch.is_some();
-        if !self.armed || facts.audible(now, epoch) {
-            self.since = None;
-            return false;
+        if self.released || !self.armed {
+            return None;
         }
         let since = *self.since.get_or_insert(now);
-        now.saturating_duration_since(since) < PLAY_HOLD_CAP
+        let heard = match self.heard {
+            Some(at) => at,
+            None if facts.audible(now, epoch) => *self.heard.insert(now),
+            None if now.saturating_duration_since(since) >= PLAY_HOLD_CAP => {
+                self.released = true;
+                return None;
+            }
+            None => return Some(HoldStage::Arming),
+        };
+        let waited = now.saturating_duration_since(heard);
+        let reading = facts.receiver.and_then(|(r, at)| (at >= heard).then_some(r));
+        let locked = match reading {
+            Some(Receiver::TrueHd) => true,
+            Some(Receiver::Missing) => waited >= RECEIVER_WITHOUT_TOPIC,
+            Some(Receiver::Other) | None => waited >= RECEIVER_CAP,
+        };
+        if locked || waited >= RECEIVER_CAP {
+            self.released = true;
+            return None;
+        }
+        Some(HoldStage::Receiver)
+    }
+
+    /// Whether the route has armed in this Load, so a hold is possible at all.
+    pub fn armed(&self) -> bool {
+        self.armed
     }
 
     /// A seek or flush starts a new hold.
     pub fn restart(&mut self) {
         self.since = None;
+        self.heard = None;
+        self.released = false;
     }
 }
 
@@ -229,7 +279,7 @@ mod tests {
 
     /// Facts as the session would have them at `now`: armed for `epoch`, the route just in.
     fn fresh(now: Instant, epoch: u64) -> Facts {
-        Facts { armed_epoch: Some(epoch), route: Some((BYPASSING, now)) }
+        Facts { armed_epoch: Some(epoch), route: Some((BYPASSING, now)), receiver: None }
     }
 
     /// Armed for epoch 1, the route answered at `at` and not bypassing yet.
@@ -340,30 +390,72 @@ mod tests {
 
     #[test]
     fn the_clock_waits_for_an_audible_route_for_the_cap_and_then_runs() {
+        use HoldStage::Arming;
         let t0 = Instant::now();
         let audible = Route { audible: true, connected: true, ..BYPASSING };
         let mut hold = PlayHold::default();
-        assert!(!hold.waits(t0, &Facts::default(), 1), "the first start plays: the route arms only after Play");
+        assert_eq!(hold.stage(t0, &Facts::default(), 1), None, "the first start plays: the route arms only after Play");
         // Bypassing is not enough: the receiver does not hear it yet.
-        assert!(hold.waits(t0, &fresh(t0, 1), 1));
+        assert_eq!(hold.stage(t0, &fresh(t0, 1), 1), Some(Arming));
         let heard_at = t0 + ms(900);
-        let heard = Facts { route: Some((audible, heard_at)), ..fresh(heard_at, 1) };
-        assert!(!hold.waits(heard_at, &heard, 1), "audible releases it");
+        let heard = Facts { route: Some((audible, heard_at)), receiver: Some((Receiver::TrueHd, heard_at)), ..fresh(heard_at, 1) };
+        assert_eq!(hold.stage(heard_at, &heard, 1), None, "audible and locked releases it");
         // A stale audible answer, or one for another epoch, does not release.
         let mut hold = PlayHold::default();
         let old = Facts { route: Some((audible, t0)), ..fresh(t0, 1) };
-        assert!(hold.waits(t0 + ms(400), &old, 1));
-        assert!(hold.waits(heard_at, &heard, 2), "another epoch");
+        assert_eq!(hold.stage(t0 + ms(400), &old, 1), Some(Arming));
+        assert_eq!(hold.stage(heard_at, &heard, 2), Some(Arming), "another epoch");
         // A route that is never audible holds for the cap, then runs, and stays released.
         let mut hold = PlayHold::default();
         let armed = Facts { route: None, ..fresh(t0, 1) };
-        assert!(hold.waits(t0, &armed, 1));
-        assert!(hold.waits(t0 + PLAY_HOLD_CAP - ms(1), &armed, 1));
-        assert!(!hold.waits(t0 + PLAY_HOLD_CAP, &armed, 1));
-        assert!(!hold.waits(t0 + PLAY_HOLD_CAP + ms(50), &armed, 1));
+        assert_eq!(hold.stage(t0, &armed, 1), Some(Arming));
+        assert_eq!(hold.stage(t0 + PLAY_HOLD_CAP - ms(1), &armed, 1), Some(Arming));
+        assert_eq!(hold.stage(t0 + PLAY_HOLD_CAP, &armed, 1), None);
+        assert_eq!(hold.stage(t0 + PLAY_HOLD_CAP + ms(50), &armed, 1), None);
         // A seek starts a new hold, on the route that has armed before.
         hold.restart();
-        assert!(hold.waits(t0 + PLAY_HOLD_CAP + ms(100), &Facts::default(), 2));
+        assert_eq!(hold.stage(t0 + PLAY_HOLD_CAP + ms(100), &Facts::default(), 2), Some(Arming));
+    }
+
+    /// Audible at `t0 + 100 ms`; `reading` is the receiver's, taken `at` ms after that.
+    fn heard_with(t0: Instant, reading: Option<(Receiver, u64)>) -> Facts {
+        let at = t0 + ms(100);
+        let route = Route { audible: true, connected: true, ..BYPASSING };
+        Facts { route: Some((route, at)), receiver: reading.map(|(r, after)| (r, at + ms(after))), ..fresh(at, 1) }
+    }
+
+    #[test]
+    fn the_receiver_wait_ends_on_truehd_after_the_fixed_time_without_a_topic_or_at_the_cap() {
+        use HoldStage::Receiver as Wait;
+        let t0 = Instant::now();
+        let heard_at = t0 + ms(100);
+        let start = |reading: Option<(Receiver, u64)>| {
+            let mut hold = PlayHold::default();
+            assert_eq!(hold.stage(t0, &fresh(t0, 1), 1), Some(HoldStage::Arming));
+            assert_eq!(hold.stage(heard_at, &heard_with(t0, reading), 1), Some(Wait), "audible: the receiver wait starts");
+            hold
+        };
+        // TrueHD, read after the route was audible, releases at once.
+        let mut hold = start(None);
+        assert_eq!(hold.stage(heard_at + ms(50), &heard_with(t0, Some((Receiver::TrueHd, 20))), 1), None);
+        // A reading from before the route was audible is not this start's.
+        let mut hold = start(None);
+        let stale = Facts { receiver: Some((Receiver::TrueHd, t0)), ..heard_with(t0, None) };
+        assert_eq!(hold.stage(heard_at + ms(50), &stale, 1), Some(Wait));
+        // Another signal holds to the cap.
+        let mut hold = start(None);
+        let other = heard_with(t0, Some((Receiver::Other, 10)));
+        assert_eq!(hold.stage(heard_at + RECEIVER_CAP - ms(1), &other, 1), Some(Wait));
+        assert_eq!(hold.stage(heard_at + RECEIVER_CAP, &other, 1), None);
+        // No topic: 2.0 s.
+        let mut hold = start(None);
+        let missing = heard_with(t0, Some((Receiver::Missing, 10)));
+        assert_eq!(hold.stage(heard_at + RECEIVER_WITHOUT_TOPIC - ms(1), &missing, 1), Some(Wait));
+        assert_eq!(hold.stage(heard_at + RECEIVER_WITHOUT_TOPIC, &missing, 1), None);
+        // No answer yet: the cap.
+        let mut hold = start(None);
+        assert_eq!(hold.stage(heard_at + RECEIVER_CAP - ms(1), &heard_with(t0, None), 1), Some(Wait));
+        assert_eq!(hold.stage(heard_at + RECEIVER_CAP, &heard_with(t0, None), 1), None);
     }
 
     #[test]

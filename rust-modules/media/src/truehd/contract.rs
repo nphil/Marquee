@@ -25,6 +25,7 @@ const ARM_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/arm";
 const ROUTE_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/route";
 const RELEASE_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/release";
 const FLOWING_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/flowing";
+const RECEIVER_URL: &str = "http://127.0.0.1:18731/v1/state/receiver";
 const TOPIC: &str = "audio.passthrough";
 
 /// The topic and the route answer from a snapshot in well under a millisecond; a helper that has
@@ -205,6 +206,27 @@ pub fn parse_arm(body: &[u8]) -> Option<Armed> {
     Some(Armed { armed: v.get("armed")?.as_bool()?, reason: text(&v, "reason") })
 }
 
+/// What the AV receiver's own input signal says, from LumaTV's `receiver` topic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Receiver {
+    /// The receiver has locked onto TrueHD (e.g. "Dolby Atmos - TrueHD").
+    TrueHd,
+    /// Any other input signal, or none yet.
+    Other,
+    /// The topic is missing or reports no signal field: the plugin is off or no receiver is set up.
+    Missing,
+}
+
+pub fn parse_receiver(body: &[u8]) -> Receiver {
+    let Ok(v) = serde_json::from_slice::<Value>(body) else { return Receiver::Missing };
+    let value = v.get("value").unwrap_or(&v);
+    match value.get("signal") {
+        Some(Value::String(s)) if s.to_ascii_lowercase().contains("truehd") => Receiver::TrueHd,
+        Some(Value::String(_)) => Receiver::Other,
+        _ => Receiver::Missing,
+    }
+}
+
 pub fn parse_route(body: &[u8]) -> Option<Route> {
     let v: Value = serde_json::from_slice(body).ok()?;
     Some(Route {
@@ -256,6 +278,8 @@ pub trait Helper: Send + Sync {
     /// The sink has turned `pcm-multi-ch` back on after the arm: the helper un-mixes now.
     /// Whether it did, and why not.
     fn flowing(&self, pid: u32) -> Option<(bool, String)>;
+    /// The AV receiver's input signal.
+    fn receiver(&self) -> Receiver;
     /// Synchronous: the TV is put back before it answers. The sink must be closed first.
     fn release(&self, pid: u32);
 }
@@ -293,6 +317,10 @@ impl Helper for Loopback {
         parse_flowing(&Self::call(FLOWING_URL, Some(&pid_body(pid)), CALL)?)
     }
 
+    fn receiver(&self) -> Receiver {
+        Self::call(RECEIVER_URL, None, WIRE).map_or(Receiver::Missing, |body| parse_receiver(&body))
+    }
+
     fn release(&self, pid: u32) {
         Self::call(RELEASE_URL, Some(&pid_body(pid)), CALL);
     }
@@ -324,6 +352,17 @@ mod tests {
             assert!(!parse_topic(body.as_bytes()).unwrap().admits(7), "{state}");
         }
         assert_eq!(parse_topic(br#"{"schema":2,"state":"ready","ready":true}"#), None);
+    }
+
+    #[test]
+    fn the_receiver_topic_reads_truehd_other_or_missing() {
+        let signal = |s: &str| parse_receiver(format!(r#"{{"ok":true,"topic":"receiver","value":{{"signal":"{s}","soundMode":"DOLBY ATMOS"}}}}"#).as_bytes());
+        assert_eq!(signal("Dolby Atmos - TrueHD"), Receiver::TrueHd);
+        assert_eq!(signal("Dolby Atmos - DD+"), Receiver::Other);
+        assert_eq!(signal(""), Receiver::Other);
+        assert_eq!(parse_receiver(br#"{"ok":true,"value":{"soundMode":"STEREO"}}"#), Receiver::Missing);
+        assert_eq!(parse_receiver(br#"{"signal":"TrueHD"}"#), Receiver::TrueHd, "no value wrapper");
+        assert_eq!(parse_receiver(b"not json"), Receiver::Missing);
     }
 
     /// A play starts the carrier only on a route that is ready and holds nothing back.

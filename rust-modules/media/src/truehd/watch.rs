@@ -139,6 +139,9 @@ mod tests {
         fn flowing(&self, _: u32) -> Option<(bool, String)> {
             None
         }
+        fn receiver(&self) -> super::super::contract::Receiver {
+            super::super::contract::Receiver::Missing
+        }
         fn release(&self, _: u32) {}
     }
 

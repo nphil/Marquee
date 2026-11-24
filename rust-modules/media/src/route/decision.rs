@@ -12183,6 +12183,7 @@ fn commit_audio_route(ps: &mut PlaybackSession, audio: CarriedAudio) -> Option<b
 /// from the next Load on. `false` when the pick has none; the caller then has the server convert it.
 pub fn fall_back_from_truehd(ps: &mut PlaybackSession) -> bool {
     let Some(backup) = ps.truehd_backup.take() else { return false };
+    crate::truehd::note_unavailable(&backup.codec);
     crate::player::log(&format!("audio: the TrueHD carrier is off; track {} ({}) plays instead", backup.sid, backup.codec));
     crate::player::alignment::invalidate();
     crate::player::stage_native_audio(ps, backup.ordinal, &backup.codec);

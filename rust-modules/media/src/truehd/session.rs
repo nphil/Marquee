@@ -10,6 +10,8 @@ use super::gate::Facts;
 
 /// The contract's retry period for an arm.
 const ARM_EVERY: Duration = Duration::from_millis(100);
+/// How often the receiver's signal is read while the clock waits for it.
+const RECEIVER_EVERY: Duration = Duration::from_millis(250);
 /// The helper publishes a sample of the route every 50 ms and its answer counts as stale past
 /// 300 ms; asking as often keeps the answer at most about 100 ms old.
 const ROUTE_EVERY: Duration = Duration::from_millis(50);
@@ -60,6 +62,9 @@ pub struct Shared {
     first_buffer: AtomicBool,
     /// LG's sink has turned `pcm-multi-ch` back on for the data (any buffer, without the toggle).
     feeding: AtomicBool,
+    /// The clock is held for the receiver to lock onto the stream: the worker asks the `receiver`
+    /// topic, which it does not otherwise.
+    want_receiver: AtomicBool,
     /// The decoder input the sink reported; the worker arms with it.
     granted: Mutex<Granted>,
     stop: Mutex<bool>,
@@ -76,6 +81,7 @@ impl Shared {
             flushed: AtomicBool::new(false),
             first_buffer: AtomicBool::new(false),
             feeding: AtomicBool::new(false),
+            want_receiver: AtomicBool::new(false),
             granted: Mutex::new(Granted::Unknown),
             stop: Mutex::new(false),
             wake: Condvar::new(),
@@ -137,6 +143,12 @@ impl Shared {
 
     /// LG's sink has turned `pcm-multi-ch` back on: the worker tells the helper, which un-mixes
     /// LG's eARC words only after that write (LG re-applies them as it is made).
+    pub fn want_receiver(&self, want: bool) {
+        if self.want_receiver.swap(want, Ordering::AcqRel) != want {
+            self.wake.notify_all();
+        }
+    }
+
     pub fn note_feeding(&self) {
         if !self.feeding.swap(true, Ordering::AcqRel) {
             self.wake.notify_all();
@@ -223,13 +235,16 @@ fn run(shared: &Shared, helper: &dyn Helper) {
             driver.next_arm = None;
         }
         let feeding = shared.feeding();
-        driver.step(Instant::now(), epoch, feeding, helper, || renderer(shared, renderer_tail), &mut facts);
+        let want = shared.want_receiver.load(Ordering::Acquire);
+        driver.step(Instant::now(), epoch, feeding, want, helper, || renderer(shared, renderer_tail), &mut facts);
         *shared.facts.lock().unwrap_or_else(|e| e.into_inner()) = facts;
         let stop = shared.stop.lock().unwrap_or_else(|e| e.into_inner());
         let _ = shared
             .wake
             .wait_timeout_while(stop, TICK, |stopped| {
-                !*stopped && shared.epoch() == epoch && shared.first_buffer() == first_buffer && shared.feeding() == feeding
+                !*stopped && shared.epoch() == epoch && shared.first_buffer() == first_buffer
+                    && shared.feeding() == feeding
+                    && shared.want_receiver.load(Ordering::Acquire) == want
             })
             .unwrap_or_else(|e| e.into_inner());
     }
@@ -262,17 +277,18 @@ struct Driver {
     armed_for: Option<u64>,
     next_arm: Option<Instant>,
     next_route: Option<Instant>,
+    next_receiver: Option<Instant>,
     /// The last line logged from the helper, so a repeated one is not.
     said: String,
 }
 
 impl Driver {
     fn new(pid: u32) -> Driver {
-        Driver { pid, held: false, told_flowing: false, armed_for: None, next_arm: None, next_route: None, said: String::new() }
+        Driver { pid, held: false, told_flowing: false, armed_for: None, next_arm: None, next_route: None, next_receiver: None, said: String::new() }
     }
 
     fn step(
-        &mut self, now: Instant, epoch: u64, feeding: bool, helper: &dyn Helper,
+        &mut self, now: Instant, epoch: u64, feeding: bool, want_receiver: bool, helper: &dyn Helper,
         renderer: impl FnOnce() -> Result<(u32, u8), &'static str>, facts: &mut Facts,
     ) {
         if self.armed_for.is_some_and(|armed| armed != epoch) {
@@ -314,6 +330,12 @@ impl Driver {
                 facts.route = Some((route, now));
                 self.say(&note);
             }
+        }
+        if !want_receiver {
+            self.next_receiver = None;
+        } else if self.next_receiver.is_none_or(|t| now >= t) {
+            self.next_receiver = Some(now + RECEIVER_EVERY);
+            facts.receiver = Some((helper.receiver(), now));
         }
     }
 
@@ -412,7 +434,7 @@ pub fn release_at_exit() {
 
 #[cfg(test)]
 mod tests {
-    use super::super::contract::{Armed, Route, Topic};
+    use super::super::contract::{Armed, Receiver, Route, Topic};
     use super::*;
 
     /// A helper that refuses `refusals` arms, then arms, and records what it was asked.
@@ -446,6 +468,11 @@ mod tests {
             Some((true, String::new()))
         }
 
+        fn receiver(&self) -> Receiver {
+            self.calls.lock().unwrap().push("receiver".into());
+            Receiver::TrueHd
+        }
+
         fn release(&self, pid: u32) {
             self.calls.lock().unwrap().push(format!("release {pid}"));
         }
@@ -458,21 +485,42 @@ mod tests {
         let mut facts = Facts::default();
         let t0 = Instant::now();
         let at = |ms| t0 + Duration::from_millis(ms);
-        d.step(at(0), 1, false, &helper, || Err("no audio renderer is open yet"), &mut facts);
-        d.step(at(20), 1, false, &helper, || Ok((0x2a, 1)), &mut facts);
+        d.step(at(0), 1, false, false, &helper, || Err("no audio renderer is open yet"), &mut facts);
+        d.step(at(20), 1, false, false, &helper, || Ok((0x2a, 1)), &mut facts);
         assert!(helper.calls.lock().unwrap().is_empty(), "the next try waits out the period");
-        d.step(at(100), 1, false, &helper, || Ok((0x2a, 1)), &mut facts);
-        d.step(at(200), 1, false, &helper, || Ok((0x2a, 1)), &mut facts);
+        d.step(at(100), 1, false, false, &helper, || Ok((0x2a, 1)), &mut facts);
+        d.step(at(200), 1, false, false, &helper, || Ok((0x2a, 1)), &mut facts);
         assert_eq!(facts.armed_epoch, Some(1));
         assert!(facts.route.is_some(), "the route is sampled straight after the arm");
-        d.step(at(220), 1, true, &helper, || Ok((0x2a, 1)), &mut facts);
-        d.step(at(240), 2, true, &helper, || Ok((0x2b, 1)), &mut facts);
+        d.step(at(220), 1, true, false, &helper, || Ok((0x2a, 1)), &mut facts);
+        d.step(at(240), 2, true, false, &helper, || Ok((0x2b, 1)), &mut facts);
         assert_eq!(facts.armed_epoch, Some(2));
         assert_eq!(
             *helper.calls.lock().unwrap(),
             ["arm 7 0000002a adec1", "arm 7 0000002a adec1", "route", "flowing 7", "arm 7 0000002b adec1", "route"],
             "a flush asks for the arm again and gives nothing back"
         );
+    }
+
+    #[test]
+    fn the_receiver_is_read_only_while_the_clock_waits_for_it() {
+        let helper = Fake::default();
+        let mut d = Driver::new(7);
+        let mut facts = Facts::default();
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        d.step(at(0), 1, false, false, &helper, || Ok((0x2a, 1)), &mut facts);
+        assert!(facts.receiver.is_none());
+        d.step(at(10), 1, false, true, &helper, || Ok((0x2a, 1)), &mut facts);
+        assert_eq!(facts.receiver, Some((Receiver::TrueHd, at(10))), "read at once when asked for");
+        d.step(at(100), 1, false, true, &helper, || Ok((0x2a, 1)), &mut facts);
+        assert_eq!(facts.receiver.map(|r| r.1), Some(at(10)), "then every 250 ms");
+        d.step(at(300), 1, false, true, &helper, || Ok((0x2a, 1)), &mut facts);
+        assert_eq!(facts.receiver.map(|r| r.1), Some(at(300)));
+        let reads = |h: &Fake| h.calls.lock().unwrap().iter().filter(|c| *c == "receiver").count();
+        assert_eq!(reads(&helper), 2);
+        d.step(at(600), 1, false, false, &helper, || Ok((0x2a, 1)), &mut facts);
+        assert_eq!(reads(&helper), 2, "not asked once the clock runs");
     }
 
     #[test]

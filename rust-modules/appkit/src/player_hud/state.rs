@@ -253,23 +253,28 @@ pub enum Busy {
 /// `engine` clears `seeking`, and the first presented frame). Keyed on the state alone, one of
 /// those two flashes the wrong surface every time.
 pub fn busy_surface(ps: &plx_media::route::PlaybackSession, st: plx_media::player::PlaybackState, seen_frame: bool) -> Busy {
-    busy_surface_with(ps, st, seen_frame, plx_media::player::audio_switching())
+    busy_surface_with(ps, st, seen_frame, plx_media::player::audio_switching(), plx_media::truehd::busy_text())
 }
 
 /// [`busy_surface`] with the audio-switch fact given: while the rebuild loading is the one the
 /// viewer's audio-track pick asked for, the read-out says "Switching audio…" instead of
 /// "Buffering…" (`player::busy_caption_with`). Any other rebuild keeps the plain caption.
+/// `truehd` is the Dolby TrueHD carrier's own words ([`plx_media::truehd::busy_text`]): while it
+/// has any, a busy session shows them beside the spinner, over a picture already seen too, since
+/// a seek's hold is exactly that.
 pub fn busy_surface_with(
     ps: &plx_media::route::PlaybackSession,
     st: plx_media::player::PlaybackState,
     seen_frame: bool,
     audio_switch: bool,
+    truehd: Option<&'static std::ffi::CStr>,
 ) -> Busy {
     use plx_media::player::PlaybackState;
     match st {
         // not `st.caption()`: the Error caption is shaped by WHY (an audio-only stream names the
         // server; see `player::error_shape`), which a method on the bare state cannot know.
         PlaybackState::Error => Busy::Readout(StatusKind::Failed, plx_media::player::error_caption(ps)),
+        s if s.is_busy() && truehd.is_some() => Busy::Readout(StatusKind::Working, truehd.unwrap_or_default()),
         s if s.is_busy() && !seen_frame => Busy::Readout(StatusKind::Working, plx_media::player::busy_caption_with(st, audio_switch)),
         s if s.is_busy() => Busy::Transport,
         _ => Busy::None,

@@ -774,18 +774,32 @@ fn the_post_seek_buffering_tail_does_not_flash_the_centre_readout() {
 fn an_audio_pick_rebuild_reads_switching_audio_and_nothing_else_does() {
     let ps = plx_media::route::PlaybackSession::IDLE;
     assert_eq!(
-        busy_surface_with(&ps, S::Buffering, false, true),
+        busy_surface_with(&ps, S::Buffering, false, true, None),
         Busy::Readout(StatusKind::Working, c"Switching audio\u{2026}")
     );
     assert_eq!(
-        busy_surface_with(&ps, S::Buffering, false, false),
+        busy_surface_with(&ps, S::Buffering, false, false, None),
         Busy::Readout(StatusKind::Working, c"Buffering\u{2026}")
     );
     assert_eq!(
-        busy_surface_with(&ps, S::Connecting, false, true),
+        busy_surface_with(&ps, S::Connecting, false, true, None),
         Busy::Readout(StatusKind::Working, c"Connecting\u{2026}")
     );
-    assert_eq!(busy_surface_with(&ps, S::Buffering, true, true), Busy::Transport);
+    assert_eq!(busy_surface_with(&ps, S::Buffering, true, true, None), Busy::Transport);
+}
+
+/// **While the Dolby TrueHD carrier has words, a busy session shows them beside the spinner.**
+/// Over a picture already seen too: a seek's hold is exactly that. A failure keeps its caption.
+#[test]
+fn the_truehd_carrier_s_words_replace_a_busy_caption_even_over_a_seen_picture() {
+    let ps = plx_media::route::PlaybackSession::IDLE;
+    let words = c"Waiting for the receiver\u{2026}";
+    let with = |st, seen| busy_surface_with(&ps, st, seen, false, Some(words));
+    assert_eq!(with(S::Buffering, false), Busy::Readout(StatusKind::Working, words));
+    assert_eq!(with(S::Seeking, true), Busy::Readout(StatusKind::Working, words));
+    assert_eq!(busy_surface_with(&ps, S::Seeking, true, false, None), Busy::Transport);
+    assert!(matches!(with(S::Error, false), Busy::Readout(StatusKind::Failed, _)));
+    assert_eq!(with(S::Playing, true), Busy::None);
 }
 
 /// A paused session that is doing no work, driven through the state the HUD really reads
@@ -798,7 +812,7 @@ fn a_paused_idle_session_with_no_picture_draws_the_paused_transport_not_a_busy_s
     let ps = plx_media::route::PlaybackSession::IDLE;
     let was = plx_media::player::swap_state_for_test(S::Paused);
     let st = plx_media::player::state(&ps);
-    let busy = busy_surface_with(&ps, st, false, false);
+    let busy = busy_surface_with(&ps, st, false, false, None);
     let playing = plx_media::player::is_playing(&ps);
     plx_media::player::restore_state_for_test(was);
     assert_eq!(st, S::Paused);
@@ -820,7 +834,7 @@ fn a_cold_start_and_a_reload_both_own_the_whole_panel() {
         Busy::Readout(StatusKind::Working, c"Connecting\u{2026}")
     );
     assert_eq!(
-        busy_surface_with(&ps, S::Buffering, false, false),
+        busy_surface_with(&ps, S::Buffering, false, false, None),
         Busy::Readout(StatusKind::Working, c"Buffering\u{2026}")
     );
     // tapping RIGHT during pre-roll (or `/tmp/plxnative-autoseek`): no picture to mark up
