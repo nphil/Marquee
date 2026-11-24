@@ -21,7 +21,9 @@ const BYPASS_HELD: Duration = Duration::from_secs(3);
 const ARM_WAIT: Duration = Duration::from_secs(5);
 /// From the arm until the route bypasses the mixer. An answer that is late at the deadline is
 /// waited for up to [`ROUTE_FRESH`] longer: only a current "not bypassing" ends the wait sooner.
-const BYPASS_WAIT: Duration = Duration::from_secs(1);
+/// The helper un-mixes at the sink's second buffer, or 1 s after the arm without word of it, and
+/// the kernel reports `Pass-Through` after that.
+const BYPASS_WAIT: Duration = Duration::from_secs(2);
 /// Zeros in a row, once the carrier has run and while the route is not bypassing, before giving
 /// the carrier up.
 const FORCED_LIMIT: Duration = Duration::from_secs(1);
@@ -174,10 +176,10 @@ mod tests {
 
         let mut g = Gate::new();
         g.decide(t0, &waiting(t0));
-        assert_eq!(g.decide(t0 + ms(999), &waiting(t0 + ms(999))), Decision::Zeros);
-        assert!(matches!(g.decide(t0 + ms(1000), &waiting(t0 + ms(1000))), Decision::GiveUp(_)), "armed, never bypassing");
+        assert_eq!(g.decide(t0 + ms(1999), &waiting(t0 + ms(1999))), Decision::Zeros);
+        assert!(matches!(g.decide(t0 + ms(2000), &waiting(t0 + ms(2000))), Decision::GiveUp(_)), "armed, never bypassing");
         g.restart();
-        assert!(matches!(g.decide(t0 + ms(1100), &fresh(t0 + ms(1100), g.epoch())), Decision::GiveUp(_)), "for good");
+        assert!(matches!(g.decide(t0 + ms(2100), &fresh(t0 + ms(2100), g.epoch())), Decision::GiveUp(_)), "for good");
     }
 
     #[test]
@@ -186,14 +188,14 @@ mod tests {
         let mut g = Gate::new();
         g.decide(t0, &waiting(t0));
         // At the deadline the last answer is 400 ms old: one sample is late.
-        let late = waiting(t0 + ms(600));
-        assert_eq!(g.decide(t0 + ms(1000), &late), Decision::Zeros);
-        assert_eq!(g.decide(t0 + ms(1100), &fresh(t0 + ms(1100), 1)), Decision::Carrier);
+        let late = waiting(t0 + ms(1600));
+        assert_eq!(g.decide(t0 + ms(2000), &late), Decision::Zeros);
+        assert_eq!(g.decide(t0 + ms(2100), &fresh(t0 + ms(2100), 1)), Decision::Carrier);
 
         let mut g = Gate::new();
         g.decide(t0, &waiting(t0));
-        assert_eq!(g.decide(t0 + ms(1299), &late), Decision::Zeros);
-        assert!(matches!(g.decide(t0 + ms(1300), &late), Decision::GiveUp(_)), "an answer that stays late is a no");
+        assert_eq!(g.decide(t0 + ms(2299), &late), Decision::Zeros);
+        assert!(matches!(g.decide(t0 + ms(2300), &late), Decision::GiveUp(_)), "an answer that stays late is a no");
     }
 
     #[test]

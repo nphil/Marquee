@@ -2,9 +2,13 @@
 //!
 //! The `audio.passthrough` topic says whether a client may start the carrier and how the carrier
 //! is shaped ([`Carrier`]). `arm` hands the helper this process's audio renderer (its bypass tail
-//! and the decoder input, ADEC, LG granted it), `route` says whether LG's mixer is bypassed for it
-//! right now, and `release` gives the route back. A missing topic, a refusal or no answer all read
-//! as not ready: the title plays on the normal path.
+//! and the decoder input, ADEC, LG granted it), `flowing` says the sink has turned `pcm-multi-ch`
+//! back on after the arm, `route` says whether LG's mixer is bypassed for it right now, and
+//! `release` gives the route back. A missing topic, a refusal or no answer all read as not ready:
+//! the title plays on the normal path.
+//!
+//! LG re-applies its eARC mix words when the sink's `pcm-multi-ch` is written, so the helper
+//! un-mixes them at `flowing`, or 1 s after the arm when that call never comes.
 //!
 //! The route is the helper's whole side: once the bypass has held for 3 s it connects the granted
 //! ADEC to the main output (`audiooutput` `audio/connect`) and unmutes it, so the carrier is
@@ -20,6 +24,7 @@ const STATE_URL: &str = "http://127.0.0.1:18731/v1/state/audio.passthrough";
 const ARM_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/arm";
 const ROUTE_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/route";
 const RELEASE_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/release";
+const FLOWING_URL: &str = "http://127.0.0.1:18731/v1/audio-passthrough/flowing";
 const TOPIC: &str = "audio.passthrough";
 
 /// The topic and the route answer from a snapshot in well under a millisecond; a helper that has
@@ -215,8 +220,15 @@ pub fn arm_body(pid: u32, tail: u32, adec: u8) -> String {
     format!(r#"{{"pid":{pid},"tail":"{tail:08x}","adec":{adec}}}"#)
 }
 
-pub fn release_body(pid: u32) -> String {
+/// The body of `flowing` and `release`.
+pub fn pid_body(pid: u32) -> String {
     format!(r#"{{"pid":{pid}}}"#)
+}
+
+/// `flowing`'s answer: whether the mix words are off, and why not.
+pub fn parse_flowing(body: &[u8]) -> Option<(bool, String)> {
+    let v: Value = serde_json::from_slice(body).ok()?;
+    Some((v.get("unmixed")?.as_bool()?, text(&v, "reason")))
 }
 
 /// The helper's calls. The session and the readiness watch run against [`Loopback`]; tests run
@@ -227,6 +239,9 @@ pub trait Helper: Send + Sync {
     fn arm(&self, pid: u32, tail: u32, adec: u8) -> Option<Armed>;
     /// The route and its log line.
     fn route(&self) -> Option<(Route, String)>;
+    /// The sink has turned `pcm-multi-ch` back on after the arm: the helper un-mixes now.
+    /// Whether it did, and why not.
+    fn flowing(&self, pid: u32) -> Option<(bool, String)>;
     /// Synchronous: the TV is put back before it answers. The sink must be closed first.
     fn release(&self, pid: u32);
 }
@@ -260,8 +275,12 @@ impl Helper for Loopback {
         Some((parse_route(&body)?, route_note(&body)))
     }
 
+    fn flowing(&self, pid: u32) -> Option<(bool, String)> {
+        parse_flowing(&Self::call(FLOWING_URL, Some(&pid_body(pid)), CALL)?)
+    }
+
     fn release(&self, pid: u32) {
-        Self::call(RELEASE_URL, Some(&release_body(pid)), CALL);
+        Self::call(RELEASE_URL, Some(&pid_body(pid)), CALL);
     }
 }
 

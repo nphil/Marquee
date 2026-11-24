@@ -408,12 +408,18 @@ impl Probe {
                 set_multi_ch(self.sink, true);
             }
             if let Some(s) = shared.as_deref() {
+                if self.feeding.load(Ordering::Acquire) {
+                    s.note_feeding();
+                }
                 s.note_first_buffer();
                 let named = || s.armed() || matches!(s.granted(), Granted::Refused(_));
                 if first && !hold_until(ARM_WINDOW, ARM_POLL, named, std::thread::sleep) {
                     crate::player::log("truehd: the route was not armed within 5 s of the first buffer");
                 }
             }
+        } else if let Some(s) = shared.as_deref() {
+            // No toggle: the property is already as the data needs it.
+            s.note_feeding();
         }
         let zero = !shared.is_some_and(|s| s.facts().safe(Instant::now(), s.epoch()));
         let flags = (*info.data.cast::<MiniObject>()).flags;

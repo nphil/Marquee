@@ -136,6 +136,9 @@ mod tests {
         fn route(&self) -> Option<(super::super::contract::Route, String)> {
             None
         }
+        fn flowing(&self, _: u32) -> Option<(bool, String)> {
+            None
+        }
         fn release(&self, _: u32) {}
     }
 
