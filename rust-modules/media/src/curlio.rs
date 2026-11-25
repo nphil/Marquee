@@ -879,6 +879,8 @@ pub struct CurlSource {
     failure: Option<BodyFailure>,
     /// [`failure`](Self::failure) has not yet been answered by a successful reopen.
     heal_pending: bool,
+    /// Why the last [`seek`](Self::seek) failed; `None` after one that succeeded.
+    seek_failure: Option<OpenErr>,
     /// Whether the attached transfer has been validated at the byte offset in [`Self::off`].
     /// A failed seek leaves this false: reads fail, but a later seek may still recover.
     readable: bool,
@@ -1076,6 +1078,7 @@ impl CurlSource {
             began_off: 0,
             failure: None,
             heal_pending: false,
+            seek_failure: None,
             readable: false,
             poisoned: false,
             conns: ConnLedger::default(),
@@ -2013,6 +2016,7 @@ impl CurlSource {
     /// same invariant `ff.rs`'s `seek_cb` carries for the socket source, and for the same reason.
     pub fn seek(&mut self, to: i64) -> bool {
         if self.abort.is_set() || self.poisoned {
+            self.seek_failure = Some(if self.abort.is_set() { OpenErr::Aborted } else { OpenErr::RangeIgnored });
             if self.poisoned && !self.abort.is_set() {
                 self.note_reopen_refused(to, "the source refuses ranges");
             }
@@ -2027,6 +2031,7 @@ impl CurlSource {
         let after = self.failure.filter(|_| self.heal_pending).map(|f| f.rc);
         match self.start(to) {
             Ok(()) => {
+                self.seek_failure = None;
                 if let Some(rc) = after {
                     crate::player::log(&format!(
                         "curlio: reopened at {to} after body failure rc={rc}"
@@ -2036,6 +2041,7 @@ impl CurlSource {
                 true
             }
             Err(e) => {
+                self.seek_failure = Some(e);
                 // Detach whatever the failed attempt left attached. `start` cleared `readable`, so
                 // reads fail rather than reporting clean EOF, but another seek may recover.
                 self.stop();
@@ -2058,6 +2064,11 @@ impl CurlSource {
                 false
             }
         }
+    }
+
+    /// Why the last [`seek`](Self::seek) failed, for a caller that retries only what may change.
+    pub fn seek_failure(&self) -> Option<OpenErr> {
+        self.seek_failure
     }
 
     /// The reopen of a failed transfer was refused before any request (a source an earlier seek

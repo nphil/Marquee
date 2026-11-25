@@ -45,6 +45,10 @@ enum Reopen {
     Full200,
     /// A 206 whose `Content-Range` starts at byte 0, whatever was asked.
     WrongStart,
+    /// A 503 for the first two reopens (a server stalled behind a slow query), then honest.
+    Busy,
+    /// A 404 for every reopen: the file is gone.
+    Gone,
 }
 
 const SHORT_HEAD: &[u8] =
@@ -65,6 +69,7 @@ impl ShortBody {
         let (heads_t, stop_t, release_t) = (heads.clone(), stop.clone(), release.clone());
         let thread = std::thread::spawn(move || {
             let mut held: Vec<std::net::TcpStream> = Vec::new();
+            let mut reopens = 0;
             while !stop_t.load(Ordering::Acquire) {
                 if release_t.load(Ordering::Acquire) {
                     for mut h in held.drain(..) {
@@ -99,6 +104,16 @@ impl ShortBody {
                     }
                     continue;
                 }
+                reopens += 1;
+                let refused = match reopen {
+                    Reopen::Busy if reopens <= 2 => Some("503 Service Unavailable"),
+                    Reopen::Gone => Some("404 Not Found"),
+                    _ => None,
+                };
+                if let Some(status) = refused {
+                    let _ = s.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+                    continue;
+                }
                 let from = head
                     .split("Range: bytes=")
                     .nth(1)
@@ -108,7 +123,7 @@ impl ShortBody {
                 let rest = match reopen {
                     Reopen::Stuck => &[][..],
                     Reopen::Full200 | Reopen::WrongStart => BODY,
-                    Reopen::Honest => &BODY[from.min(BODY.len())..],
+                    Reopen::Honest | Reopen::Busy | Reopen::Gone => &BODY[from.min(BODY.len())..],
                 };
                 let (status, range_from) = match reopen {
                     Reopen::Full200 => ("200 OK", None),
@@ -270,6 +285,32 @@ fn an_unsized_body_is_not_given_the_silence_deadline() {
     assert_eq!(srv.heads().len(), 1, "a transcode that is slow is not a cut: {:?}", srv.heads());
 }
 
+/// A server that answers the first reopens with a 503 and then recovers: the read waits it out and
+/// resumes at the byte it stopped at, delivering the whole body once.
+#[test]
+fn a_reopen_answered_503_is_retried_until_the_server_recovers() {
+    let _serial = plx_base::testlock::serial();
+    let srv = ShortBody::start_with(SHORT_HEAD, false, Reopen::Busy);
+    let got = with_source(srv.port, |op| read_to_end(op).0);
+    assert_eq!(got, BODY);
+    let heads = srv.heads();
+    assert_eq!(heads.len(), 4, "the open, two refused reopens and the one that held: {heads:?}");
+    assert!(heads[1..].iter().all(|h| h.contains("Range: bytes=4-")), "every retry asks for the byte reached: {heads:?}");
+}
+
+/// A 404 is not worth waiting for: one reopen, then the read fails with the transport error.
+#[test]
+fn a_reopen_answered_404_fails_without_retrying() {
+    let _serial = plx_base::testlock::serial();
+    let srv = ShortBody::start_with(SHORT_HEAD, false, Reopen::Gone);
+    with_source(srv.port, |op| {
+        let (got, end) = read_to_end(op);
+        assert_eq!((got.as_slice(), end), (&b"ABCD"[..], AVERROR_IO));
+        assert!(unsafe { (*(op as *mut AvioState)).io_failed });
+    });
+    assert_eq!(srv.heads().len(), 2, "the open and one refused reopen: {:?}", srv.heads());
+}
+
 /// The reopen of a sized body must come back from the byte asked for. A server that ignores the
 /// Range answers 200 from byte 0; splicing that in as the bytes at the cut is corruption that
 /// looks like success.
@@ -354,7 +395,7 @@ fn a_cut_seen_by_the_drain_whose_reopen_is_refused_fails_without_looping() {
             assert_eq!(read_cb(op, buf.as_mut_ptr(), buf.len() as c_int), AVERROR_IO);
         }
         let reopens = srv.heads().len() - 1;
-        assert!(reopens <= BODY_HEAL_ATTEMPTS as usize, "unbounded reopens: {:?}", srv.heads());
+        assert_eq!(reopens, 1, "a refused Range is permanent, so it is asked once: {:?}", srv.heads());
     });
 }
 
