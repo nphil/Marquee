@@ -1,7 +1,7 @@
 //! **Video memory while hidden.** A Marquee that has drawn and then lost the screen keeps its
 //! window's buffers (three, one screen each) and the driver's context; a freshly preloaded one
 //! keeps only the context. Once the DID background edge (`0x104`) has arrived the window's
-//! `wl_egl_window` is resized to a small surface and swapped three times, so the driver drops the
+//! `wl_egl_window` is resized to a small surface and drawn and swapped three times, so the driver drops the
 //! full-size buffers; the DID foreground edge (`0x106`) puts the full size back before the first
 //! frame. The SDL window and the GL context are never destroyed (`gfx::egl::release_for_exit`
 //! documents what a destroy races with), and the textures and strings are released by
@@ -259,6 +259,9 @@ mod native {
     extern "C" {
         fn SDL_GetWindowWMInfo(window: *mut c_void, info: *mut c_void) -> c_int;
         fn SDL_GetVersion(ver: *mut u8);
+        fn glBindFramebuffer(target: u32, framebuffer: u32);
+        fn glClearColor(r: f32, g: f32, b: f32, a: f32);
+        fn glClear(mask: u32);
     }
 
     /// `SDL_SYSWM_WAYLAND`, and `egl_window`'s place among the pointers of the union's `wl`
@@ -267,8 +270,10 @@ mod native {
     const EGL_WINDOW_SLOT: usize = 3;
     /// The size the surface is shrunk to: small, but a size every driver allocates.
     const SMALL: c_int = 64;
-    /// The driver keeps three buffers and reallocates one per swap at the new size.
+    /// The driver keeps three buffers and reallocates one per drawn swap at the new size.
     const SWAPS: u32 = 3;
+    const GL_FRAMEBUFFER: u32 = 0x8D40;
+    const GL_COLOR_BUFFER_BIT: u32 = 0x4000;
 
     type Resize = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_int);
 
@@ -332,7 +337,15 @@ mod native {
             };
             resize(p, SMALL, SMALL, 0, 0);
             SAVED.set(Some((p as usize, head)));
+            // A swap alone re-posts the buffer the last frame drew into, at its old size: the driver
+            // takes a buffer of the window's new size only when a frame draws, and the compositor
+            // kept the full-size window after a hidden shrink that swapped without drawing
+            // (2026-11-25, `ctl windows` 5.8 s after Home). Each swap follows a clear of the
+            // window's own framebuffer.
             for _ in 0..SWAPS {
+                glBindFramebuffer(GL_FRAMEBUFFER, plx_base::surface::default_fb());
+                glClearColor(0.0, 0.0, 0.0, 0.0);
+                glClear(GL_COLOR_BUFFER_BIT);
                 super::super::SDL_GL_SwapWindow(win);
             }
             // What the window says after the swaps: SDL resizing it back would show here.
@@ -455,6 +468,46 @@ mod native {
             .filter(|p| !p.is_null())
     }
 
+    /// The window's `wl_webos_shell_surface`. `SDL_SysWMinfo`'s `shell_surface` is the plain
+    /// `wl_shell_surface`; LG's SDL 2.0.14 keeps the webOS one in its `SDL_WindowData` at byte 56,
+    /// which `SDL_Window.driverdata` (byte 144 of the window) points to (read from the build's
+    /// `Wayland_MinimizeWindow` and `Wayland_CreateWindow`, 2026-11-25). Nothing is read through a
+    /// pointer until the build is that SDL and the structure shows SDL's own handles in the
+    /// places SDL_WindowData puts them: the window, the `wl_surface`, the `wl_shell_surface` and
+    /// the `wl_egl_window`.
+    unsafe fn shell_surface(win: *mut c_void) -> Result<*mut c_void, &'static str> {
+        const WINDOW_DRIVERDATA: usize = 144;
+        const DATA_SURFACE: usize = 2; // words: sdlwindow, waylandData, surface, shell_surface, egl_window
+        const DATA_SHELL: usize = 3;
+        const DATA_EGL: usize = 4;
+        const DATA_WEBOS_SHELL: usize = 14; // byte 56
+        let mut ver = [0u8; 3];
+        SDL_GetVersion(ver.as_mut_ptr());
+        if ver != [2, 0, 14] {
+            return Err("not the SDL 2.0.14 this layout was read from");
+        }
+        let surface = wm_slot(win, 1)?;
+        let shell = wm_slot(win, SHELL_SURFACE_SLOT)?;
+        let egl = wm_slot(win, EGL_WINDOW_SLOT)?;
+        let data = (win as *const u8).add(WINDOW_DRIVERDATA).cast::<*const usize>().read_unaligned();
+        if data.is_null() || data as usize % std::mem::align_of::<usize>() != 0 {
+            return Err("no SDL_WindowData");
+        }
+        let word = |i: usize| data.add(i).read();
+        if word(0) != win as usize
+            || word(DATA_SURFACE) != surface as usize
+            || word(DATA_SHELL) != shell as usize
+            || word(DATA_EGL) != egl as usize
+        {
+            return Err("SDL_WindowData is not laid out as read");
+        }
+        let proxy = word(DATA_WEBOS_SHELL) as *mut c_void;
+        if proxy.is_null() || proxy as usize % std::mem::align_of::<usize>() != 0 {
+            return Err("the window has no wl_webos_shell_surface");
+        }
+        Ok(proxy)
+    }
+
     /// Listen for the compositor's `exposed` and `state_changed` on the window's shell surface,
     /// before its first buffer. SDL's own handlers keep running: when it has installed a table the
     /// proxy is given a copy with ours in front. Refused unless every step checks out, and then
@@ -466,7 +519,7 @@ mod native {
             if hooked() {
                 return; // wrapping our own table would make it call itself
             }
-            let proxy = match wm_slot(win, SHELL_SURFACE_SLOT) {
+            let proxy = match shell_surface(win) {
                 Ok(p) => p,
                 Err(why) => return log(&format!("vram: shell hook off ({why})")),
             };
@@ -482,7 +535,9 @@ mod native {
             let get: Option<unsafe extern "C" fn(*mut c_void) -> *const c_void> =
                 client_sym("wl_proxy_get_listener").map(|p| std::mem::transmute(p));
             let table = TABLE.as_ptr() as *const c_void;
-            let existing = get.map_or(std::ptr::null(), |g| g(proxy));
+            // `wl_object` is `{ interface, implementation, id }`, the proxy's first field.
+            let slot = (proxy as *mut *const c_void).add(1);
+            let existing = get.map_or_else(|| slot.read(), |g| g(proxy));
             if existing.is_null() {
                 TABLE[EV_STATE].store(on_state as *const () as usize, Ordering::Relaxed);
                 TABLE[EV_EXPOSED].store(on_exposed as *const () as usize, Ordering::Relaxed);
@@ -492,9 +547,7 @@ mod native {
                 HOOKED.store(true, Ordering::Release);
                 return log("vram: shell hook on (own listener)");
             }
-            // SDL listens already: wrap its table. `wl_object` is `{ interface, implementation, id }`,
-            // the proxy's first field, so the implementation pointer is its second word.
-            let slot = (proxy as *mut *const c_void).add(1);
+            // SDL listens already: wrap its table.
             if slot.read() != existing {
                 return log("vram: shell hook off (proxy layout is not the one assumed)");
             }
