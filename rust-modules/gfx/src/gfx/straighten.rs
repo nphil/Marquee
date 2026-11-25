@@ -28,9 +28,9 @@
 //! **Where it runs.** From the application loop (`app/run.rs`'s `present_and_swap`), after the frame's
 //! draw and its one framebuffer readback and before anything else touches the surface, and only when a
 //! surface over the bound video plane (`Player::video_plane_bound`) has coverage to convert.
-//! The gate presents every frame while the plane is bound, and about 99 % of those frames are a
-//! transparent clear with no draw call at all. Two reads of the frame's own state decide it: the plane
-//! bit (a function argument, not gfx state: [`super::video_plane_frame`] is restored to `false` before
+//! Most frames presented over the bound plane are a transparent clear with no draw call at all. Two
+//! reads of the frame's own state decide it: the plane bit (a function argument, not gfx state:
+//! [`super::video_plane_frame`] is restored to `false` before
 //! the draw returns, and it excludes the bound trailer preview, a `RenderStrategy::Page` screen whose
 //! chrome is just as translucent) and [`frame_drew`], whether [`note_draw`] booked a draw onto the
 //! surface since [`frame_begin`].

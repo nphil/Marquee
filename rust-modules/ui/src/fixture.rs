@@ -2210,7 +2210,7 @@ fn a_video_plane_screen_replaces_its_host_and_takes_no_snapshot() {
     let drew_before_the_plane = below_drawn(&d);
     let before = rig.opaque_route_calls.len();
     let r = d.frame(&mut rig, tick(32), vec![], vec![], &mut NoTap);
-    assert!(r.presented, "a bound plane presents every frame, unconditionally");
+    assert!(r.presented, "the bind is a change: its frame presents");
     assert_eq!(
         &rig.opaque_route_calls[before..],
         &[true],

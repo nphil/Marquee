@@ -1564,3 +1564,44 @@ fn activating_a_deck_episode_seeds_the_show_page_on_its_season_and_a_discovery_o
         assert_eq!((seed.rk.as_str(), seed.spot.season), (rk, season), "from_deck {from_deck}");
     }
 }
+
+/// **Idle playback on the television's path** (234 presents/s with captions up, before): every
+/// present the dispatcher decides is reported to the live gate as damage (`frame_with_tap`), so the
+/// player page over a bound plane presents the bind, a caption cue (damage the loop's clock
+/// fingerprint raises) and the keepalive, and nothing between.
+#[test]
+fn a_bound_plane_under_the_player_presents_only_what_changed() {
+    use plx_machine::{idle, present::KEEPALIVE_MS};
+    // one loop pass, in the loop's order: the tree's frame, then the live gate's decision
+    fn pass(d: &mut Dispatcher<AppHost>, rig: &mut Bridge, i: u32) -> bool {
+        idle::frame_begin(1.0 / 60.0);
+        frame(d, rig, AppArg::Player, tick(i), vec![]);
+        let present = idle::should_present(tick(i).ms);
+        if present {
+            idle::note_present(tick(i).ms);
+        }
+        present
+    }
+    let _g = plx_base::testlock::serial();
+    idle::reset_for_test();
+    let mut d = Dispatcher::<AppHost>::new();
+    let mut rig = Bridge::for_test(|| 0);
+    let rest = (0..200).find(|&i| !pass(&mut d, &mut rig, i)).expect("the player page comes to rest");
+
+    let mut player = plx_media::player::machine::Player::new();
+    player.set_video_plane_bound(true);
+    d.present.note(plx_machine::present::PresentEvent::VideoPlane(true));
+    rig.publish_video_plane(true);
+    let bind = rest + 1;
+    assert!(pass(&mut d, &mut rig, bind), "the bind presents");
+    let between: Vec<u32> = (bind + 1..bind + 60).filter(|&i| pass(&mut d, &mut rig, i)).collect();
+    assert!(between.is_empty(), "a bound plane alone owes no frame: {between:?}");
+
+    idle::invalidate();
+    let cue = bind + 60;
+    assert!(pass(&mut d, &mut rig, cue), "the cue's frame presents");
+    let window = cue + 1..=cue + KEEPALIVE_MS / 16;
+    let presents = window.filter(|&i| pass(&mut d, &mut rig, i)).count();
+    assert_eq!(presents, 1, "the keepalive, and nothing else");
+    player.set_video_plane_bound(false);
+}

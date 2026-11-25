@@ -143,29 +143,34 @@ impl Present {
                     self.page_motion = true;
                 }
             }
-            PresentEvent::VideoPlane(b) => self.video_plane = b,
+            // The bind and the unbind each change the picture (the hole punched, or the app's own
+            // picture back): one frame each. Between them the plane owes nothing, as in the live
+            // gate (`idle::should_present`); the television reports every present here as damage
+            // there (`app::bridge`), so a term here would present every pass again.
+            PresentEvent::VideoPlane(b) => {
+                self.dirty |= self.video_plane != b;
+                self.video_plane = b;
+            }
             PresentEvent::Fault(f) => self.fault = Some(f),
         }
     }
 
     /// Side-effect-free: did anything CHANGE since the last take — damage, motion or a worker's
-    /// wake? `peek` without its two unconditional terms (the bound video plane and the keepalive),
-    /// which present a frame without anything on it having moved.
+    /// wake? `peek` without its unconditional term (the keepalive), which presents a frame without
+    /// anything on it having moved.
     pub fn changed(&self) -> bool {
         self.dirty || self.motion || self.door.load(Ordering::Acquire)
     }
 
     /// Side-effect-free: what `take` would answer (the worker door included, un-consumed).
     pub fn peek(&self, tick_ms: u32) -> bool {
-        self.video_plane
-            || self.dirty
+        self.dirty
             || self.motion
             || self.door.load(Ordering::Acquire)
             || tick_ms.wrapping_sub(self.last_present_ms) >= KEEPALIVE_MS
     }
 
-    /// The take-and-clear, once per frame (§3.3 step 8). Answers `true` unconditionally while the
-    /// video plane is bound. Consumes the worker door.
+    /// The take-and-clear, once per frame (§3.3 step 8). Consumes the worker door.
     pub fn take(&mut self, tick_ms: u32) -> bool {
         let will = self.peek(tick_ms);
         self.door.swap(false, Ordering::AcqRel);
@@ -237,6 +242,9 @@ mod tests {
         assert!(!p.take(48));
         assert!(p.take(48 + KEEPALIVE_MS), "the keepalive");
         p.note(PresentEvent::VideoPlane(true));
-        assert!(p.take(3000) && p.take(3016), "bound plane: every frame");
+        assert!(p.take(3000), "the bind is a change");
+        assert!(!p.take(3016), "a bound plane alone presents nothing");
+        p.note(PresentEvent::VideoPlane(false));
+        assert!(p.take(3032), "the unbind is a change");
     }
 }

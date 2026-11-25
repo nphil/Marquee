@@ -3092,12 +3092,7 @@ fn frame_ingest(
     rig.library_page_committed(d, previous, d.nav.top_page().map(|entry| entry.id));
     d.prune(&report.unmounted);
     plx_base::diag::spans::span("dsync", || rig.sync_host(d, tick.dt()));
-    // On the simulator, a frame the video plane alone presented is not reported as damage: the
-    // loop's gate presents it on its own video-plane term anyway, and the report would keep the
-    // settled-capture clock (`plx_machine::idle::last_change_ms`) from ever seeing a paused player at rest
-    // (`FrameReport::video_only`). The television keeps the unconditional report it always had.
-    let video_only = cfg!(feature = "hostsim") && report.video_only;
-    if report.presented && !video_only {
+    if report.presented {
         // The dispatcher's gate wants a frame: the loop's gate presents it. While a surface is up
         // this bump is the PANEL's — `take_page_damage` subtracts the panel's claims BY COUNT, and
         // a page's own landings reach `plx_machine::idle` from the pumps outside this frame (the poster
