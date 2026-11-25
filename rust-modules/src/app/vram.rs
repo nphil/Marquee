@@ -18,13 +18,21 @@ use std::os::raw::c_void;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
     None,
+    /// The app has been hidden by a DID background edge.
     Shrink,
+    /// The app was started hidden and nothing has shown it ([`Hold::step`]).
+    ShrinkQuiet,
     Restore,
 }
 
 /// A failed restore is tried again on the next iterations, this many times in all: a window left
 /// small is a black screen.
 const RESTORE_TRIES: u8 = 5;
+
+/// How long an app that has had no lifecycle event and no event of any kind is taken for a hidden
+/// start. A system keep-alive launch logged no lifecycle event at all (2026-11-24: not even a
+/// foreground edge), so a hidden start is told from a shown one only by that silence.
+const QUIET_MS: u32 = 5_000;
 
 #[derive(Default)]
 pub(crate) struct Hold {
@@ -38,26 +46,58 @@ pub(crate) struct Hold {
     /// Shrinking is given up for this process (it failed, or the platform has no surface).
     off: bool,
     restore_tries: u8,
+    /// A lifecycle event (`0x103`..`0x106`) has arrived, or a hidden start was woken: the app has
+    /// been shown, and silence no longer means hidden.
+    shown: bool,
+    /// The small window is a hidden start's, not a DID background's.
+    quiet: bool,
+    /// Something arrived since a hidden start was shrunk.
+    woke: bool,
+    /// When the silence began: the first iteration, or the last event or launch.
+    silent_since: Option<u32>,
+    /// Launch payloads counted so far ([`Hold::launches`]).
+    launches: u64,
 }
 
 impl Hold {
-    /// A lifecycle event reached the loop. Only the DID edges matter: the WILL edge may be
-    /// followed by a return that never leaves the screen.
-    pub(crate) fn note(&mut self, event: u32) {
+    /// An event reached the loop at `now` (ms). DID edges drive the background shrink (the WILL
+    /// edge may be followed by a return that never leaves the screen); any event at all breaks a
+    /// hidden start's silence and wakes a shrunk one.
+    pub(crate) fn note(&mut self, event: u32, now: u32) {
         match event {
             0x104 => self.did_background = true,
             0x106 => self.did_background = false,
             _ => {}
         }
+        if (0x103..=0x106).contains(&event) {
+            self.shown = true;
+        }
+        self.woke = true;
+        self.silent_since = Some(now);
+    }
+
+    /// The count of launch payloads offered so far; a change is a relaunch, which is the system
+    /// showing the app.
+    pub(crate) fn launches(&mut self, count: u64, now: u32) {
+        if count != std::mem::replace(&mut self.launches, count) {
+            self.woke = true;
+            self.silent_since = Some(now);
+        }
     }
 
     /// This iteration's work. `background`: the loop is parked (the window may not present);
-    /// `enabled`: the kill switch is not armed. Answer it with [`Hold::applied`].
-    pub(crate) fn step(&mut self, background: bool, enabled: bool) -> Step {
+    /// `enabled`: the kill switch is not armed and the run is live (not a recording). Answer it
+    /// with [`Hold::applied`].
+    pub(crate) fn step(&mut self, background: bool, enabled: bool, now: u32) -> Step {
         if !background {
             self.drawn = true;
             self.did_background = false;
-            return if self.shrunk { Step::Restore } else { Step::None };
+            let since = *self.silent_since.get_or_insert(now);
+            if self.shrunk {
+                return if self.quiet && !self.woke { Step::None } else { Step::Restore };
+            }
+            let silent = now.wrapping_sub(since) >= QUIET_MS;
+            return if silent && enabled && !self.off && !self.shown { Step::ShrinkQuiet } else { Step::None };
         }
         if self.did_background && self.drawn && enabled && !self.off && !self.shrunk {
             Step::Shrink
@@ -71,12 +111,19 @@ impl Hold {
     pub(crate) fn applied(&mut self, step: Step, done: bool) {
         match step {
             Step::None => {}
-            Step::Shrink if done => {
+            Step::Shrink | Step::ShrinkQuiet if done => {
                 self.shrunk = true;
+                self.quiet = step == Step::ShrinkQuiet;
+                self.woke = false;
                 self.restore_tries = 0;
             }
-            Step::Shrink => self.off = true,
-            Step::Restore if done => self.shrunk = false,
+            Step::Shrink | Step::ShrinkQuiet => self.off = true,
+            Step::Restore if done => {
+                // A hidden start that woke has been shown: it is never taken for hidden again.
+                self.shown |= self.quiet;
+                self.shrunk = false;
+                self.quiet = false;
+            }
             Step::Restore => {
                 self.restore_tries += 1;
                 if self.restore_tries >= RESTORE_TRIES {
@@ -96,15 +143,16 @@ pub(crate) trait Backing {
     fn restore(&mut self) -> bool;
 }
 
-/// One iteration's work for `hold` on `backing`.
-pub(crate) fn run(hold: &mut Hold, background: bool, enabled: bool, backing: &mut dyn Backing) {
-    let step = hold.step(background, enabled);
+/// One iteration's work for `hold` on `backing`; the step it took.
+pub(crate) fn run(hold: &mut Hold, background: bool, enabled: bool, now: u32, backing: &mut dyn Backing) -> Step {
+    let step = hold.step(background, enabled, now);
     let done = match step {
-        Step::None => return,
-        Step::Shrink => backing.shrink(),
+        Step::None => return step,
+        Step::Shrink | Step::ShrinkQuiet => backing.shrink(),
         Step::Restore => backing.restore(),
     };
     hold.applied(step, done);
+    step
 }
 
 plx_base::devtrig::latched_flag!(
@@ -112,9 +160,16 @@ plx_base::devtrig::latched_flag!(
     pub(crate) fn keep_buffers = "keepvram";
 );
 
-/// The loop's call, on the GL thread, once per iteration before the park or frame work.
-pub(crate) fn apply(hold: &mut Hold, win: *mut c_void, background: bool) {
-    run(hold, background, !keep_buffers(), &mut Window(win));
+/// The loop's call, on the GL thread, once per iteration before the park or frame work. `live`:
+/// not a recording, a replay or a controlled run.
+pub(crate) fn apply(hold: &mut Hold, win: *mut c_void, background: bool, live: bool) {
+    let now = super::clock::now();
+    hold.launches(plx_platform::tv::launch::arrivals(), now);
+    let step = run(hold, background, live && !keep_buffers(), now, &mut Window(win));
+    if step == Step::Restore {
+        // A hidden start that is shown has no other reason to draw its first frame.
+        plx_machine::idle::invalidate();
+    }
 }
 
 /// The SDL window's `wl_egl_window`, on the television. The simulator has none, so reads nothing.
@@ -264,19 +319,21 @@ mod native {
     /// Give the full size back, ahead of the first frame.
     pub(super) fn restore(win: *mut c_void) -> bool {
         let Some((saved, head)) = SAVED.take() else { return true };
-        // SAFETY: as `shrink`; the window is found again and must be the one that was shrunk.
+        // SAFETY: as `shrink`; the window is found again. SDL may have replaced its
+        // `wl_egl_window` while hidden (a new pointer at the full size, which needs nothing);
+        // whichever window is current and still small is the one given its size back.
         unsafe {
             match egl_window(win) {
-                Ok((p, now)) if p as usize == saved && now.w == SMALL && now.h == SMALL => {
+                Ok((p, now)) if now.w == SMALL && now.h == SMALL => {
                     let Some(resize) = resize_fn() else {
                         SAVED.set(Some((saved, head)));
                         return false;
                     };
                     resize(p, head.w, head.h, 0, 0);
-                    log(&format!("vram: restored {}x{}", head.w, head.h));
+                    log(&format!("vram: restored {}x{} on window {:p} (shrunk {:#x})", head.w, head.h, p, saved));
                 }
                 Ok((p, now)) => log(&format!(
-                    "vram: restore skipped (window {:p} is {}x{}; shrunk {:#x})",
+                    "vram: restore not needed (window {:p} is {}x{}; shrunk {:#x})",
                     p, now.w, now.h, saved
                 )),
                 Err(why) => {
@@ -323,27 +380,32 @@ mod tests {
     fn drawn() -> (Hold, Fake) {
         let mut hold = Hold::default();
         let mut fake = Fake::working();
-        run(&mut hold, false, true, &mut fake);
+        run(&mut hold, false, true, 0, &mut fake);
         (hold, fake)
+    }
+
+    /// One iteration at `t` ms.
+    fn at(hold: &mut Hold, fake: &mut Fake, background: bool, t: u32) -> Step {
+        run(hold, background, true, t, fake)
     }
 
     #[test]
     fn a_did_background_shrinks_once_and_the_foreground_restores_once() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x103);
-        run(&mut hold, true, true, &mut fake);
+        hold.note(0x103, 1);
+        at(&mut hold, &mut fake, true, 1);
         assert_eq!(fake.shrinks, 0, "the WILL edge alone is no reason to give the buffers up");
-        hold.note(0x104);
+        hold.note(0x104, 2);
         for _ in 0..3 {
-            run(&mut hold, true, true, &mut fake);
+            at(&mut hold, &mut fake, true, 2);
         }
         assert_eq!((fake.shrinks, fake.restores), (1, 0));
-        hold.note(0x105);
-        run(&mut hold, true, true, &mut fake);
+        hold.note(0x105, 3);
+        at(&mut hold, &mut fake, true, 3);
         assert_eq!(fake.restores, 0, "the WILL foreground edge does not authorize a frame");
-        hold.note(0x106);
+        hold.note(0x106, 4);
         for _ in 0..3 {
-            run(&mut hold, false, true, &mut fake);
+            at(&mut hold, &mut fake, false, 4);
         }
         assert_eq!((fake.shrinks, fake.restores), (1, 1));
     }
@@ -351,9 +413,9 @@ mod tests {
     #[test]
     fn a_return_before_the_loop_parks_never_shrinks() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104);
-        hold.note(0x106);
-        run(&mut hold, false, true, &mut fake);
+        hold.note(0x104, 1);
+        hold.note(0x106, 1);
+        at(&mut hold, &mut fake, false, 1);
         assert_eq!((fake.shrinks, fake.restores), (0, 0));
     }
 
@@ -361,11 +423,11 @@ mod tests {
     fn repeated_toggles_pair_every_shrink_with_a_restore() {
         let (mut hold, mut fake) = drawn();
         for round in 1..=4 {
-            hold.note(0x104);
-            run(&mut hold, true, true, &mut fake);
-            run(&mut hold, true, true, &mut fake);
-            hold.note(0x106);
-            run(&mut hold, false, true, &mut fake);
+            hold.note(0x104, 1);
+            at(&mut hold, &mut fake, true, 1);
+            at(&mut hold, &mut fake, true, 1);
+            hold.note(0x106, 1);
+            at(&mut hold, &mut fake, false, 1);
             assert_eq!((fake.shrinks, fake.restores), (round, round));
         }
     }
@@ -373,9 +435,9 @@ mod tests {
     #[test]
     fn nothing_shrinks_in_front_of_the_viewer() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104); // a stale edge while frames are presenting (a video plays in front)
+        hold.note(0x104, 1); // a stale edge while frames are presenting (a video plays in front)
         for _ in 0..3 {
-            run(&mut hold, false, true, &mut fake);
+            at(&mut hold, &mut fake, false, 1);
         }
         assert_eq!(fake.shrinks, 0);
     }
@@ -384,8 +446,8 @@ mod tests {
     fn a_parked_playback_shrinks_like_any_hidden_app() {
         // The video plane is the player's own; the UI window has nothing on it while hidden.
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104);
-        run(&mut hold, true, true, &mut fake);
+        hold.note(0x104, 1);
+        at(&mut hold, &mut fake, true, 1);
         assert_eq!(fake.shrinks, 1);
     }
 
@@ -393,16 +455,17 @@ mod tests {
     fn an_app_that_never_drew_has_no_buffers_to_give_up() {
         let mut hold = Hold::default();
         let mut fake = Fake::working();
-        hold.note(0x104);
-        run(&mut hold, true, true, &mut fake);
+        hold.note(0x104, 1);
+        at(&mut hold, &mut fake, true, 1);
         assert_eq!(fake.shrinks, 0);
     }
 
     #[test]
     fn the_kill_switch_keeps_the_buffers() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104);
-        run(&mut hold, true, false, &mut fake);
+        hold.note(0x104, 1);
+        run(&mut hold, true, false, 1, &mut fake);
+        run(&mut hold, false, false, 60_000, &mut fake);
         assert_eq!(fake.shrinks, 0);
     }
 
@@ -410,29 +473,97 @@ mod tests {
     fn a_refused_shrink_is_not_tried_again() {
         let (mut hold, mut fake) = drawn();
         fake.shrink_ok = false;
-        hold.note(0x104);
+        hold.note(0x104, 1);
         for _ in 0..3 {
-            run(&mut hold, true, true, &mut fake);
+            at(&mut hold, &mut fake, true, 1);
         }
-        hold.note(0x106);
-        run(&mut hold, false, true, &mut fake);
+        hold.note(0x106, 2);
+        at(&mut hold, &mut fake, false, 2);
         assert_eq!((fake.shrinks, fake.restores), (1, 0), "nothing was shrunk, so nothing is restored");
     }
 
     #[test]
     fn a_failed_restore_is_retried_then_given_up() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104);
-        run(&mut hold, true, true, &mut fake);
+        hold.note(0x104, 1);
+        at(&mut hold, &mut fake, true, 1);
         fake.restore_ok = false;
-        hold.note(0x106);
+        hold.note(0x106, 2);
         for _ in 0..10 {
-            run(&mut hold, false, true, &mut fake);
+            at(&mut hold, &mut fake, false, 2);
         }
         assert_eq!(fake.restores, u32::from(RESTORE_TRIES));
-        hold.note(0x104);
-        run(&mut hold, true, true, &mut fake);
+        hold.note(0x104, 3);
+        at(&mut hold, &mut fake, true, 3);
         assert_eq!(fake.shrinks, 1, "a window that would not restore is never shrunk again");
+    }
+
+    #[test]
+    fn a_start_that_stays_silent_is_taken_for_hidden_and_shrunk_after_the_dwell() {
+        let (mut hold, mut fake) = drawn();
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS - 1), Step::None);
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS), Step::ShrinkQuiet);
+        for t in 1..4 {
+            assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + t), Step::None, "small, and nothing woke it");
+        }
+        assert_eq!((fake.shrinks, fake.restores), (1, 0));
+    }
+
+    #[test]
+    fn any_event_restarts_the_silence() {
+        let (mut hold, mut fake) = drawn();
+        hold.note(0x200, 3_000);
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 2_999), Step::None);
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 3_000), Step::ShrinkQuiet);
+    }
+
+    #[test]
+    fn a_lifecycle_event_means_the_app_was_shown_so_silence_is_not_hidden() {
+        let (mut hold, mut fake) = drawn();
+        hold.note(0x106, 10);
+        at(&mut hold, &mut fake, false, 60_000);
+        assert_eq!(fake.shrinks, 0);
+    }
+
+    #[test]
+    fn a_hidden_start_is_restored_by_an_event_and_never_shrunk_that_way_again() {
+        let (mut hold, mut fake) = drawn();
+        at(&mut hold, &mut fake, false, QUIET_MS);
+        hold.note(0x300, QUIET_MS + 10); // a key
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 10), Step::Restore);
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 11), Step::None);
+        assert_eq!(at(&mut hold, &mut fake, false, 10 * QUIET_MS), Step::None, "a shown app idles in front");
+        assert_eq!((fake.shrinks, fake.restores), (1, 1));
+    }
+
+    #[test]
+    fn a_relaunch_restores_a_hidden_start() {
+        let (mut hold, mut fake) = drawn();
+        hold.launches(0, QUIET_MS - 1);
+        at(&mut hold, &mut fake, false, QUIET_MS);
+        hold.launches(1, QUIET_MS + 1);
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 1), Step::Restore);
+    }
+
+    #[test]
+    fn a_hidden_start_that_is_then_backgrounded_and_returned_ends_full_size() {
+        let (mut hold, mut fake) = drawn();
+        at(&mut hold, &mut fake, false, QUIET_MS);
+        hold.note(0x104, QUIET_MS + 1);
+        assert_eq!(at(&mut hold, &mut fake, true, QUIET_MS + 1), Step::None, "already small");
+        hold.note(0x106, QUIET_MS + 2);
+        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 2), Step::Restore);
+        assert_eq!((fake.shrinks, fake.restores), (1, 1));
+    }
+
+    #[test]
+    fn a_refused_hidden_start_shrink_is_not_tried_again() {
+        let (mut hold, mut fake) = drawn();
+        fake.shrink_ok = false;
+        for t in 0..5 {
+            at(&mut hold, &mut fake, false, QUIET_MS + t);
+        }
+        assert_eq!(fake.shrinks, 1);
     }
 
     #[test]

@@ -14,7 +14,7 @@
 //! carries parameters, and a caller closes the app first.
 //!
 //! The payload is kept raw here: what it MEANS (a Plex title to open) is the app's business.
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// How many payloads wait for the next frame. The app takes them every frame; more than a handful
@@ -26,6 +26,8 @@ const MAX_PENDING: usize = 8;
 static PENDING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// Set with `PENDING`, so the per-frame [`take_all`] skips the lock while nothing has arrived.
 static WAITING: AtomicBool = AtomicBool::new(false);
+/// Payloads ever offered, for a reader that must notice a launch without taking it.
+static OFFERED: AtomicU64 = AtomicU64::new(0);
 
 /// A launch payload: a cold start's `argv[1]`, or a relaunch event from any thread. The app decides
 /// what it means; payloads queue in arrival order so a link-less relaunch cannot erase a link that
@@ -37,6 +39,12 @@ pub fn offer(raw: &str) {
     }
     pending.push(raw.to_owned());
     WAITING.store(true, Ordering::Release);
+    OFFERED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// How many payloads have been offered since start.
+pub fn arrivals() -> u64 {
+    OFFERED.load(Ordering::Relaxed)
 }
 
 /// Every launch payload not yet acted on, oldest first, once. Cheap enough for every frame.

@@ -316,12 +316,12 @@ unsafe fn begin_iteration(app: &mut App, park: &mut super::park::Park,
     watchdog.advance();
     plx_telemetry::telemetry::session::tick(matches!(app.route(), AppArg::Player));
     // A recording, a replay or a controlled run is driven frame by frame and never parks.
-    let background = !app.window_activity.allow_present(true)
-        && matches!(app.rec, super::recorder::Recplay::Off) && app.boot_initial.is_none();
+    let live = matches!(app.rec, super::recorder::Recplay::Off) && app.boot_initial.is_none();
+    let background = !app.window_activity.allow_present(true) && live;
     let turn = park.turn(background);
     // Before the frame or the park work: the window is full size again ahead of the first frame
     // after a return, and small only once the DID background edge has arrived.
-    super::vram::apply(&mut app.vram, app.win, background);
+    super::vram::apply(&mut app.vram, app.win, background, live);
     match turn {
         Turn::Frame => return false,
         Turn::Resume => {
@@ -1160,7 +1160,7 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
     restore_window: impl FnOnce(*mut c_void)) {
     let et = rd_u32(&app.ev, 0);
     app.window_activity.event(et);
-    app.vram.note(et);
+    app.vram.note(et, clock::now());
     let playing = matches!(app.route(), AppArg::Player);
     plx_telemetry::telemetry::window::lifecycle(et, playing);
     // Release health: the foreground edge begins a session (the background edge ends it further
