@@ -1,7 +1,7 @@
 //! **Video memory while hidden.** A Marquee that has drawn and then lost the screen keeps its
 //! window's buffers (three, one screen each) and the driver's context; a freshly preloaded one
 //! keeps only the context. Once the DID background edge (`0x104`) has arrived the window's
-//! `wl_egl_window` is resized to a small surface and swapped once, so the driver drops the
+//! `wl_egl_window` is resized to a small surface and swapped three times, so the driver drops the
 //! full-size buffers; the DID foreground edge (`0x106`) puts the full size back before the first
 //! frame. The SDL window and the GL context are never destroyed (`gfx::egl::release_for_exit`
 //! documents what a destroy races with), and the textures and strings are released by
@@ -189,6 +189,8 @@ mod native {
     const EGL_WINDOW_SLOT: usize = 3;
     /// The size the surface is shrunk to: small, but a size every driver allocates.
     const SMALL: c_int = 64;
+    /// The driver keeps three buffers and reallocates one per swap at the new size.
+    const SWAPS: u32 = 3;
 
     type Resize = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_int);
 
@@ -246,8 +248,15 @@ mod native {
             };
             resize(p, SMALL, SMALL, 0, 0);
             SAVED.set(Some((p as usize, head)));
-            super::super::SDL_GL_SwapWindow(win);
-            log(&format!("vram: shrunk {}x{} to {SMALL}x{SMALL}", head.w, head.h));
+            for _ in 0..SWAPS {
+                super::super::SDL_GL_SwapWindow(win);
+            }
+            // What the window says after the swaps: SDL resizing it back would show here.
+            let after = Head::read(p as *const u8);
+            log(&format!(
+                "vram: shrunk {}x{} to {SMALL}x{SMALL} ({SWAPS} swaps; header now {}x{})",
+                head.w, head.h, after.w, after.h
+            ));
             true
         }
     }
@@ -266,7 +275,10 @@ mod native {
                     resize(p, head.w, head.h, 0, 0);
                     log(&format!("vram: restored {}x{}", head.w, head.h));
                 }
-                Ok(_) => log("vram: restore skipped (the window is not the one shrunk)"),
+                Ok((p, now)) => log(&format!(
+                    "vram: restore skipped (window {:p} is {}x{}; shrunk {:#x})",
+                    p, now.w, now.h, saved
+                )),
                 Err(why) => {
                     SAVED.set(Some((saved, head)));
                     log(&format!("vram: restore waits ({why})"));
