@@ -190,7 +190,7 @@ fn with_sized_source<R>(port: u16, size: i64, f: impl FnOnce(*mut c_void) -> R) 
         bounce: Vec::new(),
         bounce_pos: 0,
         parked_at_end: false,
-        heal: HealBudget::default(),
+        heal: HealBudget::ticking(std::time::Duration::from_millis(1)),
         multi: None,
     };
     let op = &mut state as *mut AvioState as *mut c_void;

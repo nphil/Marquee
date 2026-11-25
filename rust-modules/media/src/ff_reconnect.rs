@@ -15,11 +15,9 @@ use plx_net::stream::redirect::FollowError;
 use plx_net::stream::HttpOpenError;
 use std::time::{Duration, Instant};
 
-/// The wait unit. Tests shrink it so a real source can be driven through the whole schedule.
-#[cfg(not(test))]
-pub(super) const TICK: Duration = Duration::from_millis(500);
-#[cfg(test)]
-pub(super) const TICK: Duration = Duration::from_millis(1);
+/// The wait unit. A budget carries its own ([`HealBudget::ticking`]) so a test can drive a real
+/// source through the whole schedule without waiting it out.
+const TICK: Duration = Duration::from_millis(500);
 
 /// Ticks waited before each attempt at one byte: the first is immediate. 51 ticks, 25.5 s.
 pub(super) const WAITS: [u32; 9] = [0, 1, 2, 4, 6, 8, 10, 10, 10];
@@ -31,25 +29,41 @@ const WALL: Duration = Duration::from_secs(30);
 /// Reopens spent at one byte of a cut body, across calls: libavformat retries a failed read with a
 /// fresh call, so a budget per call let a cut no reopen crosses be reopened round after round and
 /// then read as the end of the file. A byte read refills it.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(super) struct HealBudget {
     at: i64,
     spent: u8,
     first: Option<Instant>,
+    tick: Duration,
     /// Set by the reopen when its refusal is one waiting cannot change (see [`status_is_permanent`]).
     pub(super) permanent: bool,
 }
 
+impl Default for HealBudget {
+    fn default() -> Self {
+        Self::ticking(TICK)
+    }
+}
+
 impl HealBudget {
+    pub(super) fn ticking(tick: Duration) -> Self {
+        HealBudget { at: 0, spent: 0, first: None, tick, permanent: false }
+    }
+
+    /// A byte was read: the budget is whole again.
+    pub(super) fn refill(&mut self) {
+        *self = Self::ticking(self.tick);
+    }
+
     /// Charge one attempt at byte `at` made at `now`: how long to wait before it, or `None` when
     /// the budget at that byte is spent.
     fn next(&mut self, at: i64, now: Instant) -> Option<Duration> {
         if self.at != at {
-            *self = HealBudget { at, ..HealBudget::default() };
+            *self = HealBudget { at, ..HealBudget::ticking(self.tick) };
         }
         let first = *self.first.get_or_insert(now);
         let left = WALL.checked_sub(now.saturating_duration_since(first)).filter(|left| !left.is_zero())?;
-        let wait = TICK * *WAITS.get(usize::from(self.spent))?;
+        let wait = self.tick * *WAITS.get(usize::from(self.spent))?;
         self.spent += 1;
         Some(wait.min(left))
     }
@@ -209,8 +223,7 @@ mod tests {
         let mut r = rig(vec![Reopen::Transient; 100]);
         assert!(!heal(&mut r, 5));
         assert_eq!(r.tried.len(), WAITS.len());
-        assert_eq!(r.elapsed, TICK * WAITS.iter().sum::<u32>());
-        assert_eq!(r.elapsed.as_millis() * 500 / TICK.as_millis(), 25_500);
+        assert_eq!(r.elapsed, Duration::from_millis(25_500));
         assert!(!heal(&mut r, 5), "the spent budget holds across read calls");
         assert_eq!(r.tried.len(), WAITS.len());
     }

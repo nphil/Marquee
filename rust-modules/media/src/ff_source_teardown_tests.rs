@@ -911,7 +911,7 @@ fn read_all_through_read_cb(port: u16) -> (Vec<u8>, c_int, bool, Option<c_int>) 
         bounce: Vec::new(),
         bounce_pos: 0,
         parked_at_end: false,
-        heal: HealBudget::default(),
+        heal: HealBudget::ticking(std::time::Duration::from_millis(1)),
         multi: None,
     };
     let op = &mut st as *mut AvioState as *mut c_void;

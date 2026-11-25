@@ -2735,7 +2735,7 @@ fn read_ranges(s: &mut AvioState, dst: &mut [u8]) -> Option<c_int> {
     let began = std::time::Instant::now();
     match multi.read(dst, &|| unsafe { crate::aq::aq_is_aborted(aq) }) {
         Read::Bytes(n) => {
-            s.heal = HealBudget::default();
+            s.heal.refill();
             s.body_active_us = s.body_active_us.saturating_add(elapsed_since(began).as_micros().max(1) as u64);
             if s.first_byte_at.is_none() {
                 s.first_byte_at = Some(std::time::Instant::now());
@@ -3129,7 +3129,7 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
             if let Some(watchdog) = &mut s.transport_watchdog {
                 watchdog.reset();
             }
-            s.heal = HealBudget::default();
+            s.heal.refill();
             s.body_active_us = s
                 .body_active_us
                 .saturating_add(elapsed_since(read_started).as_micros().max(1) as u64);
