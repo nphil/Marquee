@@ -66,7 +66,7 @@ pub(crate) mod framedump;
 // `test` as well as the feature: `any_trigger_present` is the only caller and it is cfg'd out of a
 // release build, but the test below asserts this list's contents and runs with default features.
 #[cfg(any(feature = "devtriggers", test))]
-const DIAG: [&str; 53] = [
+const DIAG: [&str; 52] = [
     "plxnative-diag.log",
     "plxnative-hud-text-metrics",
     "plxnative-hud-text-metrics.json",
@@ -159,9 +159,6 @@ const DIAG: [&str; 53] = [
     "plxnative-framering",
     // libwayland's own protocol log ([`arm_wayland_debug`]): an observer of the present path.
     "plxnative-wldebug",
-    // Keeps the window's buffers while the app is hidden (`app::vram`), for a memory A/B. It
-    // changes no screen, so a boot that arms it stays on the one it was going to.
-    "plxnative-keepvram",
     // The poster pipeline's observers: the cache counters and the per-image timeline
     // (`app/adapters/poster/trace.rs`). Both only READ the store and write log lines, and the boot
     // they exist to trace is the owner's everyday one — who's-watching picker, then Home. A

@@ -126,7 +126,6 @@ mod memory_guard;
 mod tour;
 mod recorder;
 mod window_activity;
-pub(crate) mod vram;
 pub(crate) mod park;
 pub(crate) mod events;
 pub(crate) mod lifecycle;
@@ -256,8 +255,6 @@ pub(crate) struct App {
     dev_hud: plx_appkit::player_hud::loaded::DevHud,
     running: bool,
     window_activity: window_activity::WindowActivity,
-    /// The window's buffers while the app is hidden ([`vram`]).
-    vram: vram::Hold,
     #[cfg(feature = "devtools")]
     buffer_flip_count: u8,
     /// The sym we believe is PHYSICALLY DOWN right now — set by a fresh key-down, cleared by its
