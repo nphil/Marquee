@@ -1160,7 +1160,7 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
     restore_window: impl FnOnce(*mut c_void)) {
     let et = rd_u32(&app.ev, 0);
     app.window_activity.event(et);
-    app.vram.note(et, clock::now());
+    app.vram.note(et);
     let playing = matches!(app.route(), AppArg::Player);
     plx_telemetry::telemetry::window::lifecycle(et, playing);
     // Release health: the foreground edge begins a session (the background edge ends it further

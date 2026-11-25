@@ -7,8 +7,15 @@
 //! documents what a destroy races with), and the textures and strings are released by
 //! [`super::park::release`] on the same edge.
 //!
-//! Only ever hidden: a frame iteration that may present never shrinks, so a video in front is
-//! untouched. `/tmp/plxnative-keepvram` (dev builds) keeps the buffers.
+//! A launch the system started hidden (a keep-alive preload) never gets a lifecycle edge, so the
+//! compositor's own word is read: `wl_webos_shell_surface.exposed` carries the visible rectangles
+//! (none when covered or minimized, sent on change only) and `state_changed` carries fullscreen or
+//! minimized. A window that has been told neither is hidden, shrunk after its first iteration, and
+//! given its size back on the first non-empty `exposed` or fullscreen ([`shell`]).
+//!
+//! Only ever hidden: a window the compositor has not said is in front never presents full size,
+//! and a frame iteration that may present never shrinks one that is. `/tmp/plxnative-keepvram`
+//! (dev builds) keeps the buffers.
 //!
 //! [`Hold`] is the state machine and holds no handle, so the edges, fast toggles and the kill
 //! switch are tested on the host; [`Window`] is the one place that touches Wayland.
@@ -18,10 +25,7 @@ use std::os::raw::c_void;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
     None,
-    /// The app has been hidden by a DID background edge.
     Shrink,
-    /// The app was started hidden and nothing has shown it ([`Hold::step`]).
-    ShrinkQuiet,
     Restore,
 }
 
@@ -29,10 +33,10 @@ pub(crate) enum Step {
 /// small is a black screen.
 const RESTORE_TRIES: u8 = 5;
 
-/// How long an app that has had no lifecycle event and no event of any kind is taken for a hidden
-/// start. A system keep-alive launch logged no lifecycle event at all (2026-11-24: not even a
-/// foreground edge), so a hidden start is told from a shown one only by that silence.
-const QUIET_MS: u32 = 5_000;
+/// How long after the shell hook is installed a window that has been told nothing is believed
+/// hidden. The first `exposed` of a window in front follows its first buffer, which is a few
+/// frames after the hook; a window never in front is told nothing at all.
+const GRACE_MS: u32 = 2_000;
 
 #[derive(Default)]
 pub(crate) struct Hold {
@@ -46,42 +50,47 @@ pub(crate) struct Hold {
     /// Shrinking is given up for this process (it failed, or the platform has no surface).
     off: bool,
     restore_tries: u8,
-    /// A lifecycle event (`0x103`..`0x106`) has arrived, or a hidden start was woken: the app has
-    /// been shown, and silence no longer means hidden.
-    shown: bool,
-    /// The small window is a hidden start's, not a DID background's.
-    quiet: bool,
-    /// Something arrived since a hidden start was shrunk.
-    woke: bool,
-    /// When the silence began: the first iteration, or the last event or launch.
-    silent_since: Option<u32>,
-    /// Launch payloads counted so far ([`Hold::launches`]).
-    launches: u64,
+    /// When the shell hook began to report; `None` where the compositor cannot be heard, and the
+    /// lifecycle edges alone decide.
+    hook_at: Option<u32>,
+    /// The compositor's latest word: in front (`Some(true)`), covered or minimized
+    /// (`Some(false)`), or nothing yet.
+    front: Option<bool>,
 }
 
 impl Hold {
-    /// An event reached the loop at `now` (ms). DID edges drive the background shrink (the WILL
-    /// edge may be followed by a return that never leaves the screen); any event at all breaks a
-    /// hidden start's silence and wakes a shrunk one.
-    pub(crate) fn note(&mut self, event: u32, now: u32) {
+    /// An event reached the loop. DID edges drive the background shrink (the WILL edge may be
+    /// followed by a return that never leaves the screen). A foreground edge or a key means the
+    /// app is in front whatever the shell has said, so a compositor that never reports cannot
+    /// leave a shown window small.
+    pub(crate) fn note(&mut self, event: u32) {
         match event {
             0x104 => self.did_background = true,
             0x106 => self.did_background = false,
             _ => {}
         }
-        if (0x103..=0x106).contains(&event) {
-            self.shown = true;
+        if matches!(event, 0x105 | 0x106 | 0x300 | 0x301 | 0x400..=0x403) {
+            self.front = Some(true);
         }
-        self.woke = true;
-        self.silent_since = Some(now);
     }
 
-    /// The count of launch payloads offered so far; a change is a relaunch, which is the system
-    /// showing the app.
-    pub(crate) fn launches(&mut self, count: u64, now: u32) {
-        if count != std::mem::replace(&mut self.launches, count) {
-            self.woke = true;
-            self.silent_since = Some(now);
+    /// The shell hook is installed and reporting.
+    pub(crate) fn hooked(&mut self, now: u32) {
+        self.hook_at.get_or_insert(now);
+    }
+
+    /// The compositor said the window is in front (`true`) or not.
+    pub(crate) fn shell(&mut self, front: bool) {
+        self.front = Some(front);
+    }
+
+    /// Hidden by the compositor's word: covered, minimized, or never told anything once the hook
+    /// has had [`GRACE_MS`] to hear the first `exposed`.
+    fn hidden_by_shell(&self, now: u32) -> bool {
+        match (self.hook_at, self.front) {
+            (None, _) | (_, Some(true)) => false,
+            (Some(_), Some(false)) => true,
+            (Some(at), None) => now.wrapping_sub(at) >= GRACE_MS,
         }
     }
 
@@ -89,17 +98,16 @@ impl Hold {
     /// `enabled`: the kill switch is not armed and the run is live (not a recording). Answer it
     /// with [`Hold::applied`].
     pub(crate) fn step(&mut self, background: bool, enabled: bool, now: u32) -> Step {
+        let hidden = self.hidden_by_shell(now);
         if !background {
             self.drawn = true;
             self.did_background = false;
-            let since = *self.silent_since.get_or_insert(now);
             if self.shrunk {
-                return if self.quiet && !self.woke { Step::None } else { Step::Restore };
+                return if hidden { Step::None } else { Step::Restore };
             }
-            let silent = now.wrapping_sub(since) >= QUIET_MS;
-            return if silent && enabled && !self.off && !self.shown { Step::ShrinkQuiet } else { Step::None };
+            return if hidden && enabled && !self.off { Step::Shrink } else { Step::None };
         }
-        if self.did_background && self.drawn && enabled && !self.off && !self.shrunk {
+        if (self.did_background || hidden) && self.drawn && enabled && !self.off && !self.shrunk {
             Step::Shrink
         } else {
             Step::None
@@ -111,19 +119,12 @@ impl Hold {
     pub(crate) fn applied(&mut self, step: Step, done: bool) {
         match step {
             Step::None => {}
-            Step::Shrink | Step::ShrinkQuiet if done => {
+            Step::Shrink if done => {
                 self.shrunk = true;
-                self.quiet = step == Step::ShrinkQuiet;
-                self.woke = false;
                 self.restore_tries = 0;
             }
-            Step::Shrink | Step::ShrinkQuiet => self.off = true,
-            Step::Restore if done => {
-                // A hidden start that woke has been shown: it is never taken for hidden again.
-                self.shown |= self.quiet;
-                self.shrunk = false;
-                self.quiet = false;
-            }
+            Step::Shrink => self.off = true,
+            Step::Restore if done => self.shrunk = false,
             Step::Restore => {
                 self.restore_tries += 1;
                 if self.restore_tries >= RESTORE_TRIES {
@@ -148,7 +149,7 @@ pub(crate) fn run(hold: &mut Hold, background: bool, enabled: bool, now: u32, ba
     let step = hold.step(background, enabled, now);
     let done = match step {
         Step::None => return step,
-        Step::Shrink | Step::ShrinkQuiet => backing.shrink(),
+        Step::Shrink => backing.shrink(),
         Step::Restore => backing.restore(),
     };
     hold.applied(step, done);
@@ -164,10 +165,15 @@ plx_base::devtrig::latched_flag!(
 /// not a recording, a replay or a controlled run.
 pub(crate) fn apply(hold: &mut Hold, win: *mut c_void, background: bool, live: bool) {
     let now = super::clock::now();
-    hold.launches(plx_platform::tv::launch::arrivals(), now);
+    if shell::hooked() {
+        hold.hooked(now);
+    }
+    if let Some(front) = shell::take_change() {
+        hold.shell(front);
+    }
     let step = run(hold, background, live && !keep_buffers(), now, &mut Window(win));
     if step == Step::Restore {
-        // A hidden start that is shown has no other reason to draw its first frame.
+        // A window shown after a hidden start has no other reason to draw its first frame.
         plx_machine::idle::invalidate();
     }
 }
@@ -225,6 +231,22 @@ impl Head {
     }
 }
 
+#[cfg(feature = "hostsim")]
+mod shell {
+    use std::os::raw::c_void;
+
+    pub(crate) fn watch(_win: *mut c_void) {}
+    pub(super) fn hooked() -> bool {
+        false
+    }
+    pub(super) fn take_change() -> Option<bool> {
+        None
+    }
+}
+#[cfg(not(feature = "hostsim"))]
+use native as shell;
+pub(crate) use shell::watch;
+
 #[cfg(not(feature = "hostsim"))]
 mod native {
     use super::Head;
@@ -232,6 +254,7 @@ mod native {
     use plx_base::eventlog::log;
     use std::cell::Cell;
     use std::os::raw::{c_int, c_void};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
     extern "C" {
         fn SDL_GetWindowWMInfo(window: *mut c_void, info: *mut c_void) -> c_int;
@@ -265,8 +288,8 @@ mod native {
         Some(unsafe { std::mem::transmute::<*mut c_void, Resize>(p) })
     }
 
-    /// The window's `wl_egl_window` and its head, or why not.
-    unsafe fn egl_window(win: *mut c_void) -> Result<(*mut c_void, Head), &'static str> {
+    /// One pointer of `SDL_SysWMinfo`'s Wayland member (the union begins at byte 8).
+    unsafe fn wm_slot(win: *mut c_void, slot: usize) -> Result<*mut c_void, &'static str> {
         let mut info = [0u8; 512]; // the television's SDL writes more than the header declares
         SDL_GetVersion(info.as_mut_ptr());
         if SDL_GetWindowWMInfo(win, info.as_mut_ptr().cast()) == 0 {
@@ -275,10 +298,16 @@ mod native {
         if i32::from_ne_bytes(info[4..8].try_into().unwrap()) != SYSWM_WAYLAND {
             return Err("not a Wayland window");
         }
-        let p = (info.as_ptr().add(8) as *const *mut c_void).add(EGL_WINDOW_SLOT).read_unaligned();
+        let p = (info.as_ptr().add(8) as *const *mut c_void).add(slot).read_unaligned();
         if p.is_null() || p as usize % std::mem::align_of::<isize>() != 0 {
-            return Err("no egl_window in SDL_SysWMinfo");
+            return Err("empty slot in SDL_SysWMinfo");
         }
+        Ok(p)
+    }
+
+    /// The window's `wl_egl_window` and its head, or why not.
+    unsafe fn egl_window(win: *mut c_void) -> Result<(*mut c_void, Head), &'static str> {
+        let p = wm_slot(win, EGL_WINDOW_SLOT)?;
         let head = Head::read(p as *const u8);
         if !head.plausible() {
             return Err("egl_window slot does not hold a wl_egl_window");
@@ -345,6 +374,146 @@ mod native {
         }
         true
     }
+
+    // ---- the compositor's word: wl_webos_shell_surface ------------------------------------------
+
+    /// `SDL_SysWMinfo`'s `shell_surface` slot.
+    const SHELL_SURFACE_SLOT: usize = 2;
+    /// `wl_webos_shell_surface`'s events in protocol order: state_changed, position_changed, close,
+    /// exposed, state_about_to_change, addon_status_changed.
+    const EVENTS: usize = 6;
+    const EV_STATE: usize = 0;
+    const EV_EXPOSED: usize = 3;
+    /// `wl_webos_shell_surface.state`.
+    const STATE_MINIMIZED: u32 = 1;
+    const STATE_FULLSCREEN: u32 = 3;
+
+    static HOOKED: AtomicBool = AtomicBool::new(false);
+    /// The latest word, and a count of words so the loop sees each change once.
+    static FRONT: AtomicBool = AtomicBool::new(false);
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    static SEEN: AtomicU32 = AtomicU32::new(0);
+    /// SDL's own handlers, called after ours, and the table the proxy is given.
+    static ORIG: [AtomicUsize; EVENTS] = [const { AtomicUsize::new(0) }; EVENTS];
+    static TABLE: [AtomicUsize; EVENTS] = [const { AtomicUsize::new(0) }; EVENTS];
+
+    /// `struct wl_array`.
+    #[repr(C)]
+    struct WlArray {
+        size: usize,
+        alloc: usize,
+        data: *const i32,
+    }
+
+    pub(crate) fn hooked() -> bool {
+        HOOKED.load(Ordering::Acquire)
+    }
+
+    /// The compositor's word since the last call, if it changed.
+    pub(crate) fn take_change() -> Option<bool> {
+        let seq = SEQ.load(Ordering::Acquire);
+        (SEEN.swap(seq, Ordering::Relaxed) != seq).then(|| FRONT.load(Ordering::Acquire))
+    }
+
+    fn report(front: bool, what: &str) {
+        FRONT.store(front, Ordering::Release);
+        SEQ.fetch_add(1, Ordering::Release);
+        log(&format!("vram: shell {what}"));
+    }
+
+    unsafe extern "C" fn on_state(data: *mut c_void, proxy: *mut c_void, state: u32) {
+        match state {
+            STATE_FULLSCREEN => report(true, "state fullscreen"),
+            STATE_MINIMIZED => report(false, "state minimized"),
+            _ => {}
+        }
+        type F = unsafe extern "C" fn(*mut c_void, *mut c_void, u32);
+        let orig = ORIG[EV_STATE].load(Ordering::Relaxed);
+        if orig != 0 {
+            std::mem::transmute::<usize, F>(orig)(data, proxy, state);
+        }
+    }
+
+    unsafe extern "C" fn on_exposed(data: *mut c_void, proxy: *mut c_void, rects: *const WlArray) {
+        // `x,y,w,h,...,-1`: an empty list is the terminator alone.
+        let visible = !rects.is_null() && {
+            let a = &*rects;
+            a.size >= 4 * std::mem::size_of::<i32>() && !a.data.is_null() && a.data.read_unaligned() != -1
+        };
+        report(visible, if visible { "exposed" } else { "exposed nothing" });
+        type F = unsafe extern "C" fn(*mut c_void, *mut c_void, *const WlArray);
+        let orig = ORIG[EV_EXPOSED].load(Ordering::Relaxed);
+        if orig != 0 {
+            std::mem::transmute::<usize, F>(orig)(data, proxy, rects);
+        }
+    }
+
+    fn client_sym(name: &str) -> Option<*mut c_void> {
+        Handle::self_handle()
+            .sym(name)
+            .or_else(|| Handle::open_loaded(&["libwayland-client.so.0", "libwayland-client.so"]).and_then(|(h, _)| h.sym(name)))
+            .filter(|p| !p.is_null())
+    }
+
+    /// Listen for the compositor's `exposed` and `state_changed` on the window's shell surface,
+    /// before its first buffer. SDL's own handlers keep running: when it has installed a table the
+    /// proxy is given a copy with ours in front. Refused unless every step checks out, and then
+    /// nothing is hidden by the shell's word (the lifecycle edges alone decide).
+    pub(crate) fn watch(win: *mut c_void) {
+        // SAFETY: the main thread right after the window exists, before events are pumped; every
+        // pointer is checked against the library's own answers before a write.
+        unsafe {
+            if hooked() {
+                return; // wrapping our own table would make it call itself
+            }
+            let proxy = match wm_slot(win, SHELL_SURFACE_SLOT) {
+                Ok(p) => p,
+                Err(why) => return log(&format!("vram: shell hook off ({why})")),
+            };
+            let (Some(class), Some(add)) = (client_sym("wl_proxy_get_class"), client_sym("wl_proxy_add_listener")) else {
+                return log("vram: shell hook off (no libwayland-client symbols)");
+            };
+            let class: unsafe extern "C" fn(*mut c_void) -> *const std::os::raw::c_char = std::mem::transmute(class);
+            let add: unsafe extern "C" fn(*mut c_void, *const c_void, *mut c_void) -> c_int = std::mem::transmute(add);
+            let name = std::ffi::CStr::from_ptr(class(proxy)).to_string_lossy().into_owned();
+            if name != "wl_webos_shell_surface" {
+                return log(&format!("vram: shell hook off (the slot holds {name})"));
+            }
+            let get: Option<unsafe extern "C" fn(*mut c_void) -> *const c_void> =
+                client_sym("wl_proxy_get_listener").map(|p| std::mem::transmute(p));
+            let table = TABLE.as_ptr() as *const c_void;
+            let existing = get.map_or(std::ptr::null(), |g| g(proxy));
+            if existing.is_null() {
+                TABLE[EV_STATE].store(on_state as *const () as usize, Ordering::Relaxed);
+                TABLE[EV_EXPOSED].store(on_exposed as *const () as usize, Ordering::Relaxed);
+                if add(proxy, table, std::ptr::null_mut()) != 0 {
+                    return log("vram: shell hook off (the proxy refused a listener)");
+                }
+                HOOKED.store(true, Ordering::Release);
+                return log("vram: shell hook on (own listener)");
+            }
+            // SDL listens already: wrap its table. `wl_object` is `{ interface, implementation, id }`,
+            // the proxy's first field, so the implementation pointer is its second word.
+            let slot = (proxy as *mut *const c_void).add(1);
+            if slot.read() != existing {
+                return log("vram: shell hook off (proxy layout is not the one assumed)");
+            }
+            for i in 0..EVENTS {
+                let orig = (existing as *const usize).add(i).read();
+                ORIG[i].store(orig, Ordering::Relaxed);
+                TABLE[i].store(orig, Ordering::Relaxed);
+            }
+            TABLE[EV_STATE].store(on_state as *const () as usize, Ordering::Release);
+            TABLE[EV_EXPOSED].store(on_exposed as *const () as usize, Ordering::Release);
+            slot.write(table);
+            if get.is_some_and(|g| g(proxy) != table) {
+                slot.write(existing);
+                return log("vram: shell hook off (the swap did not take)");
+            }
+            HOOKED.store(true, Ordering::Release);
+            log("vram: shell hook on (wrapping SDL's listener)");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -392,18 +561,18 @@ mod tests {
     #[test]
     fn a_did_background_shrinks_once_and_the_foreground_restores_once() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x103, 1);
+        hold.note(0x103);
         at(&mut hold, &mut fake, true, 1);
         assert_eq!(fake.shrinks, 0, "the WILL edge alone is no reason to give the buffers up");
-        hold.note(0x104, 2);
+        hold.note(0x104);
         for _ in 0..3 {
             at(&mut hold, &mut fake, true, 2);
         }
         assert_eq!((fake.shrinks, fake.restores), (1, 0));
-        hold.note(0x105, 3);
+        hold.note(0x105);
         at(&mut hold, &mut fake, true, 3);
         assert_eq!(fake.restores, 0, "the WILL foreground edge does not authorize a frame");
-        hold.note(0x106, 4);
+        hold.note(0x106);
         for _ in 0..3 {
             at(&mut hold, &mut fake, false, 4);
         }
@@ -413,8 +582,8 @@ mod tests {
     #[test]
     fn a_return_before_the_loop_parks_never_shrinks() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104, 1);
-        hold.note(0x106, 1);
+        hold.note(0x104);
+        hold.note(0x106);
         at(&mut hold, &mut fake, false, 1);
         assert_eq!((fake.shrinks, fake.restores), (0, 0));
     }
@@ -423,10 +592,10 @@ mod tests {
     fn repeated_toggles_pair_every_shrink_with_a_restore() {
         let (mut hold, mut fake) = drawn();
         for round in 1..=4 {
-            hold.note(0x104, 1);
+            hold.note(0x104);
             at(&mut hold, &mut fake, true, 1);
             at(&mut hold, &mut fake, true, 1);
-            hold.note(0x106, 1);
+            hold.note(0x106);
             at(&mut hold, &mut fake, false, 1);
             assert_eq!((fake.shrinks, fake.restores), (round, round));
         }
@@ -435,7 +604,7 @@ mod tests {
     #[test]
     fn nothing_shrinks_in_front_of_the_viewer() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104, 1); // a stale edge while frames are presenting (a video plays in front)
+        hold.note(0x104); // a stale edge while frames are presenting (a video plays in front)
         for _ in 0..3 {
             at(&mut hold, &mut fake, false, 1);
         }
@@ -446,7 +615,7 @@ mod tests {
     fn a_parked_playback_shrinks_like_any_hidden_app() {
         // The video plane is the player's own; the UI window has nothing on it while hidden.
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104, 1);
+        hold.note(0x104);
         at(&mut hold, &mut fake, true, 1);
         assert_eq!(fake.shrinks, 1);
     }
@@ -455,7 +624,7 @@ mod tests {
     fn an_app_that_never_drew_has_no_buffers_to_give_up() {
         let mut hold = Hold::default();
         let mut fake = Fake::working();
-        hold.note(0x104, 1);
+        hold.note(0x104);
         at(&mut hold, &mut fake, true, 1);
         assert_eq!(fake.shrinks, 0);
     }
@@ -463,7 +632,7 @@ mod tests {
     #[test]
     fn the_kill_switch_keeps_the_buffers() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104, 1);
+        hold.note(0x104);
         run(&mut hold, true, false, 1, &mut fake);
         run(&mut hold, false, false, 60_000, &mut fake);
         assert_eq!(fake.shrinks, 0);
@@ -473,11 +642,11 @@ mod tests {
     fn a_refused_shrink_is_not_tried_again() {
         let (mut hold, mut fake) = drawn();
         fake.shrink_ok = false;
-        hold.note(0x104, 1);
+        hold.note(0x104);
         for _ in 0..3 {
             at(&mut hold, &mut fake, true, 1);
         }
-        hold.note(0x106, 2);
+        hold.note(0x106);
         at(&mut hold, &mut fake, false, 2);
         assert_eq!((fake.shrinks, fake.restores), (1, 0), "nothing was shrunk, so nothing is restored");
     }
@@ -485,85 +654,118 @@ mod tests {
     #[test]
     fn a_failed_restore_is_retried_then_given_up() {
         let (mut hold, mut fake) = drawn();
-        hold.note(0x104, 1);
+        hold.note(0x104);
         at(&mut hold, &mut fake, true, 1);
         fake.restore_ok = false;
-        hold.note(0x106, 2);
+        hold.note(0x106);
         for _ in 0..10 {
             at(&mut hold, &mut fake, false, 2);
         }
         assert_eq!(fake.restores, u32::from(RESTORE_TRIES));
-        hold.note(0x104, 3);
+        hold.note(0x104);
         at(&mut hold, &mut fake, true, 3);
         assert_eq!(fake.shrinks, 1, "a window that would not restore is never shrunk again");
     }
 
+    const G: u32 = GRACE_MS;
+
+    /// A hold whose shell hook began to report at 0 and that has drawn once.
+    fn hooked() -> (Hold, Fake) {
+        let (mut hold, fake) = drawn();
+        hold.hooked(0);
+        (hold, fake)
+    }
+
     #[test]
-    fn a_start_that_stays_silent_is_taken_for_hidden_and_shrunk_after_the_dwell() {
-        let (mut hold, mut fake) = drawn();
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS - 1), Step::None);
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS), Step::ShrinkQuiet);
+    fn a_window_the_compositor_never_mentions_is_hidden_after_the_grace_and_shrunk_once() {
+        let (mut hold, mut fake) = hooked();
+        assert_eq!(at(&mut hold, &mut fake, false, G - 1), Step::None, "its first exposed may still come");
+        assert_eq!(at(&mut hold, &mut fake, false, G), Step::Shrink);
         for t in 1..4 {
-            assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + t), Step::None, "small, and nothing woke it");
+            assert_eq!(at(&mut hold, &mut fake, false, G + t), Step::None);
         }
         assert_eq!((fake.shrinks, fake.restores), (1, 0));
     }
 
     #[test]
-    fn any_event_restarts_the_silence() {
-        let (mut hold, mut fake) = drawn();
-        hold.note(0x200, 3_000);
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 2_999), Step::None);
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 3_000), Step::ShrinkQuiet);
-    }
-
-    #[test]
-    fn a_lifecycle_event_means_the_app_was_shown_so_silence_is_not_hidden() {
-        let (mut hold, mut fake) = drawn();
-        hold.note(0x106, 10);
+    fn a_window_that_is_told_it_is_in_front_is_never_shrunk() {
+        let (mut hold, mut fake) = hooked();
+        hold.shell(true);
         at(&mut hold, &mut fake, false, 60_000);
         assert_eq!(fake.shrinks, 0);
     }
 
     #[test]
-    fn a_hidden_start_is_restored_by_an_event_and_never_shrunk_that_way_again() {
+    fn without_a_hook_silence_means_nothing() {
         let (mut hold, mut fake) = drawn();
-        at(&mut hold, &mut fake, false, QUIET_MS);
-        hold.note(0x300, QUIET_MS + 10); // a key
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 10), Step::Restore);
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 11), Step::None);
-        assert_eq!(at(&mut hold, &mut fake, false, 10 * QUIET_MS), Step::None, "a shown app idles in front");
+        at(&mut hold, &mut fake, false, 600_000);
+        assert_eq!(fake.shrinks, 0);
+    }
+
+    #[test]
+    fn the_first_exposure_or_fullscreen_restores_a_hidden_start() {
+        let (mut hold, mut fake) = hooked();
+        at(&mut hold, &mut fake, false, G);
+        hold.shell(true);
+        assert_eq!(at(&mut hold, &mut fake, false, G + 1), Step::Restore);
+        assert_eq!(at(&mut hold, &mut fake, false, G + 2), Step::None);
         assert_eq!((fake.shrinks, fake.restores), (1, 1));
     }
 
     #[test]
-    fn a_relaunch_restores_a_hidden_start() {
-        let (mut hold, mut fake) = drawn();
-        hold.launches(0, QUIET_MS - 1);
-        at(&mut hold, &mut fake, false, QUIET_MS);
-        hold.launches(1, QUIET_MS + 1);
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 1), Step::Restore);
+    fn covered_shrinks_at_once_and_front_restores_every_time() {
+        let (mut hold, mut fake) = hooked();
+        hold.shell(true);
+        for round in 1..=3 {
+            hold.shell(false);
+            at(&mut hold, &mut fake, false, 100);
+            at(&mut hold, &mut fake, false, 101);
+            hold.shell(true);
+            at(&mut hold, &mut fake, false, 102);
+            assert_eq!((fake.shrinks, fake.restores), (round, round));
+        }
     }
 
     #[test]
-    fn a_hidden_start_that_is_then_backgrounded_and_returned_ends_full_size() {
-        let (mut hold, mut fake) = drawn();
-        at(&mut hold, &mut fake, false, QUIET_MS);
-        hold.note(0x104, QUIET_MS + 1);
-        assert_eq!(at(&mut hold, &mut fake, true, QUIET_MS + 1), Step::None, "already small");
-        hold.note(0x106, QUIET_MS + 2);
-        assert_eq!(at(&mut hold, &mut fake, false, QUIET_MS + 2), Step::Restore);
-        assert_eq!((fake.shrinks, fake.restores), (1, 1));
+    fn a_hidden_report_shrinks_a_parked_loop_too_and_the_foreground_edge_overrides_it() {
+        let (mut hold, mut fake) = hooked();
+        hold.shell(false);
+        assert_eq!(at(&mut hold, &mut fake, true, 5), Step::Shrink);
+        hold.note(0x106); // the edge says shown before the compositor's word arrives
+        assert_eq!(at(&mut hold, &mut fake, false, 6), Step::Restore);
     }
 
     #[test]
-    fn a_refused_hidden_start_shrink_is_not_tried_again() {
-        let (mut hold, mut fake) = drawn();
+    fn a_key_proves_the_window_is_in_front_when_the_compositor_never_reported() {
+        let (mut hold, mut fake) = hooked();
+        at(&mut hold, &mut fake, false, G);
+        hold.note(0x300);
+        assert_eq!(at(&mut hold, &mut fake, false, G + 1), Step::Restore);
+    }
+
+    #[test]
+    fn a_hidden_start_that_is_backgrounded_after_it_was_shown_ends_full_size() {
+        let (mut hold, mut fake) = hooked();
+        at(&mut hold, &mut fake, false, G);
+        hold.shell(true);
+        at(&mut hold, &mut fake, false, G + 1);
+        hold.note(0x104);
+        at(&mut hold, &mut fake, true, G + 2);
+        hold.note(0x106);
+        at(&mut hold, &mut fake, false, G + 3);
+        assert_eq!((fake.shrinks, fake.restores), (2, 2));
+    }
+
+    #[test]
+    fn the_kill_switch_and_a_refusal_also_hold_for_a_hidden_start() {
+        let (mut hold, mut fake) = hooked();
+        run(&mut hold, false, false, G, &mut fake);
+        assert_eq!(fake.shrinks, 0);
         fake.shrink_ok = false;
         for t in 0..5 {
-            at(&mut hold, &mut fake, false, QUIET_MS + t);
+            at(&mut hold, &mut fake, false, G + t);
         }
-        assert_eq!(fake.shrinks, 1);
+        assert_eq!(fake.shrinks, 1, "a refused shrink is not tried again");
     }
 
     #[test]

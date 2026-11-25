@@ -227,6 +227,8 @@ pub(crate) fn sys_grab_wayland(winp: *mut c_void) {
         update_wayland_info(SDL_GetWindowWMInfo(winp, wmbuf.as_mut_ptr() as *mut c_void), &wmbuf);
         #[cfg(feature = "hostsim")]
         let _ = winp;
+        // Before the first buffer, so the compositor's first word about the window is heard.
+        crate::app::vram::watch(winp);
         let subsystem = i32::from_ne_bytes([wmbuf[4], wmbuf[5], wmbuf[6], wmbuf[7]]);
         let (surf, disp) = (G_WL_SURFACE, G_WL_DISPLAY);
         // The version bytes are still in wmbuf[0..3] — SDL_GetWindowWMInfo validates them and
