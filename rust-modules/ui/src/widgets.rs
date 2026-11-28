@@ -8266,6 +8266,8 @@ pub enum ControlStyle {
     /// two-stop focused face and a dark idle face); over video focus is flat ACCENT and idle is a
     /// white film. Dark ink on focus, white ink at rest in both cases.
     Accent,
+    /// Navigation glass: selection brightens the resting plate; only focus raises it.
+    Glass { selected: bool },
     /// caller supplies the exact fill + ink.
     Custom { fill: [f32; 4], ink: [f32; 4] },
     /// The **keyline** pill — idle, a hairline outline ([`theme::PILL_KEYLINE`]) knocked out over
@@ -8677,6 +8679,16 @@ impl ControlStyle {
                 spent: palette.spent,
             },
             ControlStyle::Accent => flat(palette.idle, theme::CONTROL_IDLE_INK, palette.spent),
+            ControlStyle::Glass { selected } => {
+                let fill = if focused {
+                    theme::TAB_PLATE_SELECTED
+                } else if selected {
+                    theme::TAB_PLATE_SELECTED_OVER
+                } else {
+                    theme::TAB_PLATE_IDLE
+                };
+                flat(fill, theme::TEXT_PRIMARY, fill)
+            }
             ControlStyle::Custom { fill, ink } => flat(fill, ink, theme::CONTROL_SPENT_FILL),
             ControlStyle::Keyline if focused && ground == ControlGround::Keyed => ControlFace {
                 top: palette.focus_top,
@@ -9055,7 +9067,11 @@ impl<'a> Button<'a> {
             if self.accent_focus() {
                 control_cast_at(p, b, rad, self.focus.unwrap_or(1.0));
             }
-            control_rim(p, b, rad, face.top, face.body, self.accent_focus(), self.ground);
+            if matches!(self.style, ControlStyle::Glass { .. }) {
+                p.rrect(b, rad, rad, face.top);
+            } else {
+                control_rim(p, b, rad, face.top, face.body, self.accent_focus(), self.ground);
+            }
         }
         if self.enabled && self.focused && self.focus_face == TransportFocus::Ring {
             let o = theme::CONTROL_FOCUS_RING_GAP + theme::CONTROL_FOCUS_RING_W * 0.5;

@@ -230,6 +230,25 @@ fn a_series_shows_a_still_shelf_only_after_real_art_arrives() {
 }
 
 #[test]
+fn about_shows_facts_and_only_repeats_plot_when_the_preview_cuts_it() {
+    let mut page = movie(Have::Nothing, false);
+    page.detail.title.overview = "A short plot already readable in the hero.".into();
+    page.detail.info.directors.push("Ian Hubert".into());
+    let screen = opened(page);
+    let ready = screen.ready().unwrap();
+    assert!(ready.about(), "credits keep About available");
+    assert_eq!(ready.about_overview(), None);
+
+    let mut page = movie(Have::Nothing, false);
+    let plot = "A long plot with more than three lines to read. ".repeat(12);
+    page.detail.title.overview.clone_from(&plot);
+    let screen = opened(page);
+    let ready = screen.ready().unwrap();
+    assert!(ready.about(), "the full plot is reachable even without credits");
+    assert_eq!(ready.about_overview(), Some(plot.trim()));
+}
+
+#[test]
 fn translated_title_controls_and_feedback_fit() {
     let _guard = plx_base::testlock::serial();
     let mut in_plex = movie(Have::All, false);

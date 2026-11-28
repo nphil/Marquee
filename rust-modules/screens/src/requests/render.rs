@@ -2,7 +2,7 @@
 use super::*;
 use plx_ui::consts::MARGIN_X;
 use plx_ui::icons::Icon;
-use plx_ui::widgets::{Button, StatusKind, StatusOverlay, TransportFocus, TransportRest, BTN_PILL_AIR};
+use plx_ui::widgets::{focus_pill, Button, ControlStyle, StatusKind, StatusOverlay, BTN_PILL_AIR};
 use plx_ui::{theme, Env, Painter, View};
 use std::ffi::CString;
 use std::rc::Rc;
@@ -73,16 +73,20 @@ fn field<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, 
     let rect = Rect::new(layout::FIELD.x, layout::FIELD.y - screen.stack.scroll(), layout::FIELD.w, layout::FIELD.h);
     let hot = screen.editing || f.cx.focus.current == Some(screen.key(FIELD));
     if let Some(run) = &screen.render.run {
-        Button::new(run.as_ptr(), theme::size::BODY, rect).icon(Icon::Search).focused(hot).draw(&Env::inert(), p);
+        let face = if hot { focus_pill(rect) } else { rect };
+        Button::new(run.as_ptr(), theme::size::BODY, face)
+            .style(ControlStyle::Glass { selected: false })
+            .icon(Icon::Search)
+            .focused(hot)
+            .draw(&Env::inert(), p);
         if screen.editing && screen.blink_us < BLINK_US {
             let (cap_top, cap_base) = plx_gfx::text::text_cap_band(theme::size::BODY, 1);
             let text_y = plx_gfx::text::text_vcenter_y(theme::size::BODY, 1, rect.cy());
-            // The pill is focused while it is edited, so it wears the focused face's dark ink.
             p.rect(
                 Rect::new(rect.cx() + screen.render.caret_dx, text_y + cap_top, CARET_W, cap_base - cap_top),
                 0.0,
-                theme::ACCENT_INK,
-                theme::ACCENT_INK,
+                theme::TEXT_PRIMARY,
+                theme::TEXT_PRIMARY,
                 0.0,
             );
         }
@@ -93,7 +97,7 @@ fn field<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, 
 /// What the page says where its rows would be: it is reaching Seerr, it could not, or nothing is there.
 fn status(screen: &RequestsScreen, p: Painter) {
     use plx_platform::i18n::msg;
-    let mut rect = layout::status_band(screen.editing);
+    let mut rect = layout::status_band(screen.editing, screen.bar_shown());
     rect.y -= screen.stack.scroll();
     let env = Env::inert();
     if screen.results.is_some() {
@@ -131,8 +135,7 @@ fn note_read(screen: &RequestsScreen, note: filters::Note, p: Painter) {
     }
 }
 
-/// The filter bar: a control for each filter, or the choices of the one being set. A control that
-/// holds a value wears the accent plate at rest, so what is filtering the rows reads at a glance.
+/// The filter bar: one glass control for each filter, or the choices of the one being set.
 fn bar<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p: Painter) {
     let section = Rect::new(0.0, layout::HEAD_H - screen.stack.scroll(), SCR_W, layout::BAR_H);
     if section.y > SCR_H || section.y + section.h < 0.0 {
@@ -146,11 +149,12 @@ fn bar<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p:
         if rect.x + rect.w < 0.0 || rect.x > SCR_W {
             continue;
         }
-        let mut button = Button::new(label.as_ptr(), theme::size::BODY, rect).focused(focus == Some(elem));
-        if screen.bar_lit(n) {
-            button = button.rest_face(TransportRest::Solid).focus_face(TransportFocus::Ring);
-        }
-        button.draw(&env, p);
+        let focused = focus == Some(elem);
+        let face = if focused { focus_pill(rect) } else { rect };
+        Button::new(label.as_ptr(), theme::size::BODY, face)
+            .style(ControlStyle::Glass { selected: screen.bar_lit(n) })
+            .focused(focused)
+            .draw(&env, p);
         stop(screen, f, p, elem);
     }
 }

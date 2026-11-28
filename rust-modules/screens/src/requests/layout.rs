@@ -10,10 +10,11 @@ pub(super) const FIELD: Rect = Rect { x: MARGIN_X, y: 160.0, w: 560.0, h: Status
 /// The head: the search pill's band. The filter bar sits under it.
 pub(super) const HEAD_H: f32 = 228.0;
 /// The filter bar's section; its controls are `StatusOverlay::CTRL_H` tall, `BAR_PILL_Y` below its top.
-pub(super) const BAR_H: f32 = 84.0;
+pub(super) const BAR_H: f32 = StatusOverlay::CTRL_H + plx_ui::theme::space::MD + plx_ui::theme::space::SM;
 pub(super) const BAR_PILL_Y: f32 = 8.0;
 /// Where the first row's heading sits: under the head and the bar.
 pub(super) const CONTENT_TOP: f32 = HEAD_H + BAR_H;
+pub(super) const SEARCH_CONTENT_TOP: f32 = HEAD_H + StatusOverlay::CTRL_H + plx_ui::theme::space::MD;
 /// The read-out under the bar while the filtered rows have nothing to show.
 pub(super) const NOTE_H: f32 = 220.0;
 pub(super) const HEAD_TO_ROW: f32 = 60.0;
@@ -27,9 +28,10 @@ pub(super) fn block_h(band: f32) -> f32 {
 }
 
 /// Where the page's status reads (loading, nothing found), clear of the keyboard when it is up.
-pub(super) fn status_band(editing: bool) -> Rect {
+pub(super) fn status_band(editing: bool, bar_shown: bool) -> Rect {
     let bottom = if editing { SCR_H - KEYBOARD_H } else { SCR_H };
-    Rect::new(0.0, CONTENT_TOP, SCR_W, bottom - CONTENT_TOP)
+    let top = if bar_shown { CONTENT_TOP } else { SEARCH_CONTENT_TOP };
+    Rect::new(0.0, top, SCR_W, bottom - top)
 }
 
 #[cfg(test)]

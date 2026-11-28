@@ -846,7 +846,7 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
                 out.push(SectionSpec::new(Sec::Note, plx_ui::cards::Kind::Custom { height: layout::NOTE_H, focusable: false }, filters::NOTE_GROUP));
             }
         } else {
-            out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::CONTENT_TOP, focusable: true }, FIELD_GROUP));
+            out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::SEARCH_CONTENT_TOP, focusable: true }, FIELD_GROUP));
         }
         for row in self.shown() {
             out.push(
@@ -934,7 +934,7 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
         (k == Sec::Filters).then_some(Sec::Head)
     }
     fn reveal_margin(&self, _k: Sec) -> f32 {
-        layout::CONTENT_TOP
+        if self.bar_shown() { layout::CONTENT_TOP } else { layout::SEARCH_CONTENT_TOP }
     }
     fn shelf_foot(&self, _cx: &Cx<'_, H>, _k: Sec) -> f32 {
         plx_ui::consts::UNDER_LABEL_AIR

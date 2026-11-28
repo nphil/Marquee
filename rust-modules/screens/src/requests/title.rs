@@ -70,13 +70,14 @@ struct Ready {
     length: String,
     stage: &'static str,
     facts: Vec<facts::Fact>,
+    overflow_overview: bool,
     seasons: Vec<shelves::Card>,
     cast: Vec<shelves::Card>,
     videos: Vec<shelves::Card>,
 }
 
 impl Ready {
-    fn new(page: TitlePage, ask: Ask, picked: &[u32], sending: bool) -> Self {
+    fn new(page: TitlePage, ask: Ask, picked: &[u32], sending: bool, measure: &dyn plx_machine::machine::Measure) -> Self {
         let poster = tmdb_image(&page.detail.title.poster, "w342");
         let backdrop = tmdb_image(&page.detail.title.backdrop, "w1280");
         let seasons = facts::announced(&page).take((CAST - SEASON) as usize).enumerate()
@@ -86,12 +87,17 @@ impl Ready {
             length: facts::length(&page),
             stage: page.detail.info.stage.map_or("", facts::stage_word),
             facts: facts::about_facts(&page),
+            overflow_overview: paint::preview(&page.detail.title.overview, measure).truncates(theme::hero::TEXT_W),
             cast: shelves::cast(&page), videos: shelves::videos(&page),
             page, ask, poster, backdrop, seasons,
         }
     }
 
-    fn about(&self) -> bool { !self.facts.is_empty() || !self.page.detail.title.overview.trim().is_empty() }
+    fn about(&self) -> bool { !self.facts.is_empty() || self.overflow_overview }
+
+    fn about_overview(&self) -> Option<&str> {
+        self.overflow_overview.then(|| self.page.detail.title.overview.trim())
+    }
 }
 
 pub struct TitleScreen {
@@ -187,7 +193,7 @@ impl TitleScreen {
         self.snapshot = Some(snapshot);
         true
     }
-    fn receive<H: ContentLike>(&mut self, reply: RequestsReply, now: u32, fx: &mut Effects<'_, H>) -> bool {
+    fn receive<H: ContentLike>(&mut self, reply: RequestsReply, now: u32, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> bool {
         match reply {
             RequestsReply::Detail { kind, tmdb, result } if kind == self.kind && tmdb == self.tmdb => {
                 match result {
@@ -202,7 +208,7 @@ impl TitleScreen {
                         self.picked.sort_unstable();
                         if first { self.read_stills(&page, fx); }
                         let disabled = matches!(self.sent, Sent::Sending | Sent::Done);
-                        self.load = Load::Ready(Box::new(Ready::new(page, ask, &self.picked, disabled)));
+                        self.load = Load::Ready(Box::new(Ready::new(page, ask, &self.picked, disabled, cx.measure)));
                         self.revision += 1;
                     }
                     Err(error) if self.ready().is_none() => self.load = Load::Failed(error),
@@ -236,10 +242,10 @@ impl TitleScreen {
             _ => false,
         }
     }
-    fn tick<H: ContentLike>(&mut self, t: Tick, fx: &mut Effects<'_, H>) -> bool {
+    fn tick<H: ContentLike>(&mut self, t: Tick, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> bool {
         let first = self.ready().is_none();
         let mut changed = false;
-        while let Ok(reply) = self.inbox.try_recv() { changed |= self.receive(reply, t.ms, fx); }
+        while let Ok(reply) = self.inbox.try_recv() { changed |= self.receive(reply, t.ms, cx, fx); }
         if let Some(order) = self.tracker.advance(t.ms) {
             self.ask(RequestsCmd::Progress { order, reply: self.tx.clone() }, fx);
         }
@@ -313,7 +319,7 @@ impl TitleScreen {
 impl<H: ContentLike> Machine<H> for TitleScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
-        let first = if let ScreenEvent::Tick(t) = ev { self.tick(*t, fx) } else { false };
+        let first = if let ScreenEvent::Tick(t) = ev { self.tick(*t, cx, fx) } else { false };
         let stack = self.stack_on(ev, cx, fx);
         if first {
             if let Some(k) = self.focus_sections().next() {

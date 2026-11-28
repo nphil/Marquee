@@ -83,7 +83,7 @@ pub(super) fn hero(p: Painter, top: f32, ready: &Ready, hot: Option<u32>, sent: 
         line(p, note, size::CAPTION, theme::TEXT_PRIMARY, Rect::new(MARGIN_X, y, hero::TEXT_W, ABOUT_LEAD), measure);
     }
     if !title.overview.trim().is_empty() {
-        bottom_text(p, &mut y, plx_ui::hero_synopsis(&title.overview, "").with_measure(measure));
+        bottom_text(p, &mut y, preview(&title.overview, measure));
     }
     if !title.year.is_empty() || !ready.length.is_empty() || !ready.stage.is_empty() {
         y -= hero::FACTS_H + space::SM;
@@ -111,6 +111,10 @@ fn bottom_text(p: Painter, y: &mut f32, text: TextView<'_>) {
     text.draw(p, Rect::new(MARGIN_X, *y, hero::TEXT_W, h));
 }
 
+pub(super) fn preview<'a>(text: &'a str, measure: &'a dyn Measure) -> TextView<'a> {
+    plx_ui::hero_synopsis(text.trim(), "").break_long_words().with_measure(measure)
+}
+
 fn synopsis<'a>(text: &'a str, measure: &'a dyn Measure) -> TextView<'a> {
     TextView::new(text, size::LABEL, theme::TEXT_READING).leading(ABOUT_LEAD).break_long_words().with_measure(measure)
 }
@@ -120,8 +124,7 @@ fn about_w(ready: &Ready) -> f32 {
 }
 
 pub(super) fn about_h(ready: &Ready, measure: &dyn Measure) -> f32 {
-    let text = ready.page.detail.title.overview.trim();
-    let syn_h = if text.is_empty() { 0.0 } else { synopsis(text, measure).measure_h(about_w(ready)) };
+    let syn_h = ready.about_overview().map_or(0.0, |text| synopsis(text, measure).measure_h(about_w(ready)));
     ABOUT_HEAD + syn_h.max(ABOUT_LEAD * ready.facts.len() as f32) + 2.0 * space::LG
 }
 
@@ -137,13 +140,12 @@ pub(super) fn about(p: Painter, r: Rect, ready: &Ready, hot: bool, measure: &dyn
     }
     let x = plate.x + space::LG;
     let y = plate.y + space::MD;
-    let text = ready.page.detail.title.overview.trim();
-    let has_text = !text.is_empty();
+    let text = ready.about_overview();
     plx_ui::cards::draw_heading_c(p.translate(0.0, y), msg::browse_detail_about_c(), c"", c"", x, 0.0, 1.0, measure);
-    if has_text {
+    if let Some(text) = text {
         synopsis(text, measure).draw(p, Rect::new(x, y + ABOUT_HEAD, about_w(ready), plate.h - ABOUT_HEAD));
     }
-    let fact_x = if has_text { x + hero::TEXT_W + space::LG } else { x };
+    let fact_x = if text.is_some() { x + hero::TEXT_W + space::LG } else { x };
     let label_w = FACT_W * 0.38;
     for (i, fact) in ready.facts.iter().enumerate() {
         let fy = y + ABOUT_HEAD + i as f32 * ABOUT_LEAD;
