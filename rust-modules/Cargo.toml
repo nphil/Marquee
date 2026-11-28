@@ -288,6 +288,11 @@ opt-level = 2
 lto = "fat"
 codegen-units = 1
 
+# The Plex/Seerr service layer is mostly request parsing and persistence. Optimize its
+# release code for size without reducing the renderer's or playback engine's optimization level.
+[profile.release.package.plx_plex]
+opt-level = "z"
+
 # The LOCAL ARM development profile: what a plain `make` / `make deploy` builds, so the edit-rebuild
 # loop does not pay for the size work above. Same `opt-level`, same `panic` (unwind), same debug info
 # (none) and no symbol stripping, so it is the same program with the same codegen flags from
@@ -300,6 +305,9 @@ codegen-units = 1
 inherits = "release"
 lto = "off"
 codegen-units = 16
+
+[profile.tvdev.package.plx_plex]
+opt-level = 2
 
 [dev-dependencies]
 # The `cfg(test)` fixtures of the base layer (`testlock`, `testnet`, ...): a dependency is never
