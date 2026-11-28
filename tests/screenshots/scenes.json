@@ -104,11 +104,12 @@
         "right", "ok", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "ok",
         "right", "right", "ok", "right", "right", "right", "right", "right", "right", "right", "ok"
       ]},
-      "expect_focus": {"route": "requests", "rows": "3"},
-      "expect_http": [{
-        "path": "/api/v1/discover/movies",
-        "query": {"genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}
-      }],
+      "expect_focus": {"route": "requests", "phase": "Ready", "rows": "7", "elem": "5"},
+      "expect_http": [
+        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}},
+        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "vote_average.desc", "voteCountGte": "100", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}},
+        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "primary_release_date.desc", "voteCountGte": "5", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}}
+      ],
       "outputs": [{"file": "ux-discover-filtered.jpg", "size": "1920x1080"}]
     },
     {
