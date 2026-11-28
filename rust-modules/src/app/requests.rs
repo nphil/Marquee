@@ -12,7 +12,8 @@
 //! A request is never sent blind: [`Seerr::request`] reads the title's status first and answers
 //! `AlreadyRequested` when Seerr (or Pulsarr, which asks for every Watchlist add) already has it.
 use super::*;
-use plx_plex::plex::seerr::{CurlTransport, Seerr, SeerrError};
+use plx_plex::plex::seerr::{Browse, CurlTransport, Kind, Seerr, SeerrError, Shelf, Sort};
+use plx_plex::plex::ServerId;
 use plx_plex::plex::seerr_cache::{self, Hub, Key, Login, Part, Piece, Sink, Work};
 use plx_plex::plex::session::SeerrChange;
 #[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
@@ -73,24 +74,102 @@ impl Link {
     }
 }
 
-/// Run `work` against Seerr on a worker. A link that cannot be read, or a worker that cannot be
-/// spawned, answers `fail(error)` so the page never waits on nothing.
-fn run<W, F>(reply: Sender<RequestsReply>, fail: F, work: W)
-where
-    W: FnOnce(&Seerr<'_, CurlTransport>, &Sender<RequestsReply>) + Send + 'static,
-    F: Fn(SeerrError) -> RequestsReply + Send + 'static,
-{
-    let refused = fail(SeerrError::Unreachable);
+/// A concrete job keeps the worker launch and login code shared across Seerr commands.
+enum SeerrJob {
+    Shelf { shelf: Shelf, page: u32 },
+    Mine { skip: u32 },
+    Search { query: String, page: u32 },
+    Detail { kind: Kind, tmdb: u32, art: Option<ServerId> },
+    Stills { tmdb: u32, seasons: Vec<u32> },
+    Request { kind: Kind, tmdb: u32, seasons: Vec<u32> },
+    Browse { filter: Browse, sort: Sort, page: u32, gen: u32 },
+    Genres,
+}
+
+impl SeerrJob {
+    fn failed(&self, error: SeerrError) -> RequestsReply {
+        match *self {
+            Self::Shelf { shelf, page } => RequestsReply::Shelf { shelf, page, result: Err(error) },
+            Self::Mine { skip } => RequestsReply::Mine { skip, result: Err(error) },
+            Self::Search { ref query, page } => RequestsReply::Search { query: query.clone(), page, result: Err(error) },
+            Self::Detail { kind, tmdb, .. } => RequestsReply::Detail { kind, tmdb, result: Err(error) },
+            Self::Stills { tmdb, .. } => RequestsReply::Stills { tmdb, result: Err(error) },
+            Self::Request { kind, tmdb, .. } => RequestsReply::Requested { kind, tmdb, result: Err(error) },
+            Self::Browse { gen, sort, page, .. } => RequestsReply::Browse { gen, sort, page, result: Err(error) },
+            Self::Genres => RequestsReply::Genres(Err(error)),
+        }
+    }
+
+    fn answer(self, seerr: &Seerr<'_, CurlTransport>) -> RequestsReply {
+        match self {
+            Self::Shelf { shelf, page } => RequestsReply::Shelf { shelf, page, result: seerr.discover(shelf, page) },
+            Self::Mine { skip } => {
+                let now = seerr_cache::now();
+                let known = HUB.snapshot(now);
+                let result = seerr_cache::mine_page(seerr, skip, known.as_ref(), now).map(|mine| (mine.items, mine.more));
+                RequestsReply::Mine { skip, result }
+            }
+            Self::Search { query, page } => {
+                let result = seerr.search(&query, page);
+                RequestsReply::Search { query, page, result }
+            }
+            Self::Detail { kind, tmdb, art } => {
+                let result = seerr.detail(kind, tmdb).and_then(|detail| {
+                    let rules = seerr.rules()?;
+                    let plex = detail.plex.as_ref().and_then(|found| {
+                        plx_plex::plex::id_of_machine(&found.machine).map(|sid| (sid, found.rating_key.clone()))
+                    });
+                    Ok(TitlePage { detail, plex, rules, art })
+                });
+                RequestsReply::Detail { kind, tmdb, result }
+            }
+            Self::Stills { tmdb, seasons } => {
+                // A season that cannot be read leaves the others' stills standing.
+                let per_season = plx_plex::plex::seerr::SHELF_CAP / seasons.len().max(1);
+                let mut stills = Vec::new();
+                let mut failure = None;
+                for season in seasons {
+                    match seerr.stills(tmdb, season) {
+                        Ok(read) => stills.extend(read.into_iter().take(per_season)),
+                        Err(error) => failure = Some(error),
+                    }
+                }
+                let result = match failure {
+                    Some(error) if stills.is_empty() => Err(error),
+                    _ => Ok(stills),
+                };
+                RequestsReply::Stills { tmdb, result }
+            }
+            Self::Request { kind, tmdb, seasons } => {
+                let result = seerr.rules().and_then(|rules| seerr.request(kind, tmdb, &seasons, rules));
+                // Asked now, or found already asked: every poster of the title says so at once.
+                if matches!(result, Ok(()) | Err(SeerrError::AlreadyRequested)) {
+                    HUB.requested(kind, tmdb);
+                }
+                RequestsReply::Requested { kind, tmdb, result }
+            }
+            Self::Browse { filter, sort, page, gen } => {
+                let result = seerr.browse(&filter, sort, page, &today());
+                RequestsReply::Browse { gen, sort, page, result }
+            }
+            Self::Genres => RequestsReply::Genres(seerr.genres()),
+        }
+    }
+}
+
+/// Answer even if neither a usable link nor a worker is available.
+fn run(job: SeerrJob, reply: Sender<RequestsReply>) {
+    let refused = job.failed(SeerrError::Unreachable);
     let back = reply.clone();
     let spawned = plx_base::task::spawn_small("seerr", move || {
         match Link::read(true) {
             Ok(link) => {
                 let seerr = Seerr::new(&link.base, &link.cookie, &link.plex_token, &CurlTransport);
-                work(&seerr, &reply);
+                say(&reply, job.answer(&seerr));
                 link.keep(seerr.cookie());
             }
             Err(error) => {
-                let _ = reply.send(fail(error));
+                let _ = reply.send(job.failed(error));
             }
         }
         plx_machine::idle::invalidate();
@@ -126,24 +205,40 @@ impl Drop for ProgressSlot {
     }
 }
 
-/// Run `work` on a worker if no other progress call is out; otherwise, or when no worker can be
-/// spawned, answer `refused(Busy)` / `refused(Failed)` at once so the page asks again later.
-fn progress_worker<W, F>(reply: Sender<RequestsReply>, work: W, refused: F)
-where
-    W: FnOnce(&Sender<RequestsReply>) + Send + 'static,
-    F: Fn(ProgressFail) -> RequestsReply,
-{
+enum ProgressJob {
+    Title(progress::Order),
+    List { gen: u32, kind: Kind },
+}
+
+impl ProgressJob {
+    fn answer(&self, blocked: Option<ProgressFail>) -> RequestsReply {
+        match self {
+            Self::Title(order) => {
+                let outcome = blocked.map_or_else(|| progress_call(order), Err);
+                RequestsReply::Progress { gen: order.gen, step: order.step, outcome }
+            }
+            Self::List { gen, kind } => {
+                let result = blocked.map_or_else(|| progress_list(*kind), Err);
+                RequestsReply::ProgressList { gen: *gen, kind: *kind, result }
+            }
+        }
+    }
+}
+
+/// Progress uses a single slot; an occupied slot or failed spawn answers immediately.
+fn progress_worker(job: ProgressJob, reply: Sender<RequestsReply>) {
     let Some(slot) = ProgressSlot::take() else {
-        say(&reply, refused(ProgressFail::Busy));
+        say(&reply, job.answer(Some(ProgressFail::Busy)));
         return;
     };
+    let refused = job.answer(Some(ProgressFail::Failed));
     let back = reply.clone();
     let spawned = plx_base::task::spawn_small("progress", move || {
         let _slot = slot;
-        work(&reply);
+        say(&reply, job.answer(None));
     });
     if !spawned {
-        say(&back, refused(ProgressFail::Failed));
+        say(&back, refused);
     }
 }
 
@@ -356,70 +451,14 @@ impl Bridge {
                     open_hub(&key, None);
                 }
             }
-            RequestsCmd::Shelf { shelf, page, reply } => run(
-                reply,
-                move |error| RequestsReply::Shelf { shelf, page, result: Err(error) },
-                move |seerr, reply| say(reply, RequestsReply::Shelf { shelf, page, result: seerr.discover(shelf, page) }),
-            ),
-            RequestsCmd::Mine { skip, reply } => run(
-                reply,
-                move |error| RequestsReply::Mine { skip, result: Err(error) },
-                move |seerr, reply| {
-                    let now = seerr_cache::now();
-                    let known = HUB.snapshot(now);
-                    let result = seerr_cache::mine_page(seerr, skip, known.as_ref(), now).map(|mine| (mine.items, mine.more));
-                    say(reply, RequestsReply::Mine { skip, result });
-                },
-            ),
-            RequestsCmd::Search { query, page, reply } => {
-                let failed = query.clone();
-                run(
-                    reply,
-                    move |error| RequestsReply::Search { query: failed.clone(), page, result: Err(error) },
-                    move |seerr, reply| {
-                        let result = seerr.search(&query, page);
-                        say(reply, RequestsReply::Search { query, page, result });
-                    },
-                );
-            }
+            RequestsCmd::Shelf { shelf, page, reply } => run(SeerrJob::Shelf { shelf, page }, reply),
+            RequestsCmd::Mine { skip, reply } => run(SeerrJob::Mine { skip }, reply),
+            RequestsCmd::Search { query, page, reply } => run(SeerrJob::Search { query, page }, reply),
             RequestsCmd::Detail { kind, tmdb, reply } => {
                 let art = self.stores.watchlist.view().art_server();
-                run(
-                    reply,
-                    move |error| RequestsReply::Detail { kind, tmdb, result: Err(error) },
-                    move |seerr, reply| {
-                        let result = seerr.detail(kind, tmdb).and_then(|detail| {
-                            let rules = seerr.rules()?;
-                            let plex = detail.plex.as_ref().and_then(|found| {
-                                plx_plex::plex::id_of_machine(&found.machine).map(|sid| (sid, found.rating_key.clone()))
-                            });
-                            Ok(TitlePage { detail, plex, rules, art })
-                        });
-                        say(reply, RequestsReply::Detail { kind, tmdb, result });
-                    },
-                );
+                run(SeerrJob::Detail { kind, tmdb, art }, reply);
             }
-            RequestsCmd::Stills { tmdb, seasons, reply } => run(
-                reply,
-                move |error| RequestsReply::Stills { tmdb, result: Err(error) },
-                move |seerr, reply| {
-                    // A season that cannot be read leaves the others' stills standing.
-                    let per_season = plx_plex::plex::seerr::SHELF_CAP / seasons.len().max(1);
-                    let mut stills = Vec::new();
-                    let mut failure = None;
-                    for season in seasons {
-                        match seerr.stills(tmdb, season) {
-                            Ok(read) => stills.extend(read.into_iter().take(per_season)),
-                            Err(error) => failure = Some(error),
-                        }
-                    }
-                    let result = match failure {
-                        Some(error) if stills.is_empty() => Err(error),
-                        _ => Ok(stills),
-                    };
-                    say(reply, RequestsReply::Stills { tmdb, result });
-                },
-            ),
+            RequestsCmd::Stills { tmdb, seasons, reply } => run(SeerrJob::Stills { tmdb, seasons }, reply),
             RequestsCmd::Trailer { video, reply } => {
                 // The launch waits for the system's answer: off the frame thread, like every Seerr call.
                 let back = reply.clone();
@@ -431,40 +470,11 @@ impl Bridge {
                     say(&back, RequestsReply::Trailer { opened: false });
                 }
             }
-            RequestsCmd::Request { kind, tmdb, seasons, reply } => run(
-                reply,
-                move |error| RequestsReply::Requested { kind, tmdb, result: Err(error) },
-                move |seerr, reply| {
-                    let result = seerr.rules().and_then(|rules| seerr.request(kind, tmdb, &seasons, rules));
-                    // Asked now, or found already asked: every poster of the title says so at once.
-                    if matches!(result, Ok(()) | Err(SeerrError::AlreadyRequested)) {
-                        HUB.requested(kind, tmdb);
-                    }
-                    say(reply, RequestsReply::Requested { kind, tmdb, result });
-                },
-            ),
-            RequestsCmd::Browse { filter, sort, page, gen, reply } => run(
-                reply,
-                move |error| RequestsReply::Browse { gen, sort, page, result: Err(error) },
-                move |seerr, reply| {
-                    let result = seerr.browse(&filter, sort, page, &today());
-                    say(reply, RequestsReply::Browse { gen, sort, page, result });
-                },
-            ),
-            RequestsCmd::Genres { reply } => run(
-                reply,
-                |error| RequestsReply::Genres(Err(error)),
-                move |seerr, reply| say(reply, RequestsReply::Genres(seerr.genres())),
-            ),
-            RequestsCmd::Progress { order, reply } => {
-                let (gen, step) = (order.gen, order.step);
-                let answer = move |outcome| RequestsReply::Progress { gen, step, outcome };
-                progress_worker(reply, move |reply| say(reply, answer(progress_call(&order))), move |busy| answer(Err(busy)));
-            }
-            RequestsCmd::ProgressList { gen, kind, reply } => {
-                let answer = move |result| RequestsReply::ProgressList { gen, kind, result };
-                progress_worker(reply, move |reply| say(reply, answer(progress_list(kind))), move |busy| answer(Err(busy)));
-            }
+            RequestsCmd::Request { kind, tmdb, seasons, reply } => run(SeerrJob::Request { kind, tmdb, seasons }, reply),
+            RequestsCmd::Browse { filter, sort, page, gen, reply } => run(SeerrJob::Browse { filter, sort, page, gen }, reply),
+            RequestsCmd::Genres { reply } => run(SeerrJob::Genres, reply),
+            RequestsCmd::Progress { order, reply } => progress_worker(ProgressJob::Title(order), reply),
+            RequestsCmd::ProgressList { gen, kind, reply } => progress_worker(ProgressJob::List { gen, kind }, reply),
         }
     }
 
