@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.12.0
+
+- Discover filters movies by genre, release years, themes, original language and runtime. Highlights stay in a short row; All matches opens the full list with sorting and paging. Not yet checked on the TV.
+- Requests title pages show the full synopsis once, in About. Long plots can be read with the remote without losing the title page. Not yet checked on the TV.
+
 ## 0.11.0
 
 - Requests title pages show a synopsis, credits, film or series facts, and artwork. Trailer opens YouTube only when selected; episode stills appear when available.

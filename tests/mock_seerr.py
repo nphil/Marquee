@@ -33,6 +33,7 @@ KEYWORDS = {
     4565: ("dystopia", ["Tears of Steel", "Elephants Dream", "Charge", "Metropolis"]),
     4379: ("time travel", ["A Trip to the Moon", "Tears of Steel", "Hero"]),
     10051: ("heist", ["Sherlock Jr.", "The Kid", "Safety Last!", "The General", "Wing It!"]),
+    10123: ("dark comedy", ["Sherlock Jr.", "The Kid", "The General", "Sprite Fright"]),
     207268: ("neo-noir", ["Night of the Living Dead", "Plan 9 from Outer Space", "His Girl Friday", "Charge"]),
 }
 
@@ -48,6 +49,19 @@ TV_QUEUE = {"Caminandes": [((1, 1), 1_200_000_000, 480_000_000, "00:06:10"),
                            ((1, 2), 1_150_000_000, 1_150_000_000, "00:00:00")]}
 UPCOMING_FROM = 2021
 
+TEARS_OF_STEEL_PLOT = (
+    "\n\nYears later, Amsterdam is under siege. Thom joins a small team of scientists and fighters "
+    "who have turned a former church into a last-ditch research lab. They believe that one conversation "
+    "from his past might change what happened, if they can reconstruct it closely enough. While machines "
+    "close in, the team rebuilds the old meeting place and asks Thom to face the moment he walked away."
+    "\n\nTheir experiment offers no clean reset. Thom must decide what to say to Celia without knowing "
+    "whether she will hear him, or whether his friends can hold the lab long enough for it to matter. "
+    "The chase through the city gives way to an unlikely second chance, built on the simple act of listening."
+    "\n\nOutside, the ruined streets bear little resemblance to the city they remember. The team can "
+    "only guess at how a single choice led from that quiet afternoon to a battle at the church doors. "
+    "Inside the reconstruction, there is finally time for both of them to finish the conversation."
+)
+
 
 def _json(obj, status=200, headers=None):
     return (status, "application/json", json.dumps(obj).encode(), headers or {})
@@ -57,6 +71,7 @@ class SeerrFixture:
     def __init__(self, catalog, lib=None):
         """`catalog` is the parsed demo catalog.json; `lib` the CatalogLibrary (artwork + rating keys)."""
         self.lib = lib
+        self.page_size = PAGE
         self.titles = []
         for kind, rows, base in (("movie", catalog["movies"], 700_000), ("tv", catalog["shows"], 800_000)):
             for n, row in enumerate(rows):
@@ -146,8 +161,8 @@ class SeerrFixture:
 
     def _page(self, rows, q):
         page = max(1, int(q.get("page", "1") or 1))
-        pages = max(1, -(-len(rows) // PAGE))
-        chunk = rows[(page - 1) * PAGE:page * PAGE]
+        pages = -(-len(rows) // self.page_size)
+        chunk = rows[(page - 1) * self.page_size:page * self.page_size]
         return {"page": page, "totalPages": pages if rows else 0, "totalResults": len(rows),
                 "results": [self._row(t) for t in chunk]}
 
@@ -180,6 +195,8 @@ class SeerrFixture:
     def _detail(self, t):
         body = self._row(t)
         body.pop("genreIds"), body.pop("popularity")
+        if t["kind"] == "movie" and t["title"] == "Tears of Steel":
+            body["overview"] += TEARS_OF_STEEL_PLOT
         body.update(genres=self._genre_objs(t), tagline=t.get("tagline", ""), status="Released",
                     externalIds={"imdbId": None, "tvdbId": t["tvdb"]},
                     credits={"cast": [{"id": 5000 + n, "name": c["name"], "character": c.get("role", ""),
@@ -340,6 +357,11 @@ class SeerrFixture:
             rows = sorted([t for t in self.titles if t["kind"] == "movie" and t["year"] >= UPCOMING_FROM],
                           key=lambda t: t["year"])
             return _json(self._page(rows, q))
+        if rest == "search/keyword":
+            needle = q.get("query", "").casefold()
+            rows = [{"id": k, "name": name} for k, (name, _) in KEYWORDS.items()
+                    if needle and needle in name.casefold()]
+            return _json({"page": 1, "totalPages": int(bool(rows)), "totalResults": len(rows), "results": rows})
         if rest == "search":
             needle = q.get("query", "").lower()
             return _json(self._page([t for t in self.titles if needle and needle in t["title"].lower()], q))

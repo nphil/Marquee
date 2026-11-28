@@ -1,7 +1,7 @@
 {
   "requests.filter_pill": {
     "value": "{name}: {value}",
-    "description": "Requests area, filter bar above the rows. A control showing its current value, such as Genre: Comedy. {name} is the control's name (Genre, From, To, Mood); {value} is what it is set to, or the word for any.",
+    "description": "The current value of a filter or sort, such as Genre: Comedy.",
     "args": {
       "name": "str",
       "value": "str"
@@ -11,40 +11,38 @@
     "value": "Genre",
     "description": "Requests area, filter bar. Name of the control that picks a movie genre. One short word."
   },
-  "requests.filter_from": {
-    "value": "From",
-    "description": "Requests area, filter bar. Name of the control that picks the first release year of a range. One short word."
-  },
-  "requests.filter_to": {
-    "value": "To",
-    "description": "Requests area, filter bar. Name of the control that picks the last release year of a range. One short word."
-  },
-  "requests.filter_mood": {
-    "value": "Mood",
-    "description": "Requests area, filter bar. Name of the control that picks a subgenre or mood such as Heist or Time travel. One short word."
-  },
-  "requests.filter_any": {
-    "value": "Any",
-    "description": "Requests area, filter bar. The value a control shows while it filters nothing."
-  },
+  "requests.filter_years": { "value": "Years", "description": "Filter label: movie release years." },
+  "requests.filter_themes": { "value": "Themes", "description": "Filter label: themes such as Heist or Time travel." },
+  "requests.filter_language": { "value": "Original language", "description": "Filter label: language a movie was made in." },
+  "requests.filter_runtime": { "value": "Runtime", "description": "Filter label: movie length." },
   "requests.filter_any_genre": {
     "value": "Any genre",
     "description": "Requests area, filter bar choices. First choice of the genre list: no genre filter."
   },
-  "requests.filter_any_from": {
-    "value": "Any start",
-    "description": "Requests area, filter bar choices. First choice of the first-year list: no earliest year."
-  },
-  "requests.filter_any_to": {
-    "value": "Any end",
-    "description": "Requests area, filter bar choices. First choice of the last-year list: no latest year."
-  },
-  "requests.filter_any_mood": {
-    "value": "Any mood",
-    "description": "Requests area, filter bar choices. First choice of the mood list: no mood filter."
-  },
+  "requests.filter_any_year": { "value": "Any year", "description": "Clear the release year restriction." },
+  "requests.filter_open_bound": { "value": "No limit", "description": "Clear one end of a custom year range." },
+  "requests.filter_this_year": { "value": "This year", "description": "Release year preset." },
+  "requests.filter_last_five": { "value": "Last 5 years", "description": "Release year preset including the current year." },
+  "requests.filter_custom_years": { "value": "Custom range", "description": "Open the editor for an inclusive range of release years." },
+  "requests.filter_apply_years": { "value": "Apply range", "description": "Apply the chosen inclusive release year range." },
+  "requests.filter_start_year": { "value": "Start year", "description": "Lower bound of the release year range." },
+  "requests.filter_end_year": { "value": "End year", "description": "Upper bound of the release year range." },
+  "requests.filter_year_range": { "value": "{first}–{last}", "description": "An inclusive release year range.", "args": { "first": "str", "last": "str" } },
+  "requests.filter_year_since": { "value": "{year} onward", "description": "An open-ended release year range.", "args": { "year": "str" } },
+  "requests.filter_year_until": { "value": "Through {year}", "description": "A release year range with only an upper bound.", "args": { "year": "str" } },
+  "requests.filter_find_theme": { "value": "Find a theme", "description": "Search the full theme catalog by name." },
+  "requests.filter_clear_themes": { "value": "Clear themes", "description": "Remove all chosen themes." },
+  "requests.filter_theme_rule": { "value": "Movies must match every selected theme.", "description": "Explains how multiple themes are combined." },
+  "requests.filter_theme_count": { "value": "{count} selected", "description": "Count of chosen themes.", "args": { "count": "str" } },
+  "requests.filter_no_themes": { "value": "No themes found", "description": "The keyword search came back empty." },
+  "requests.filter_default_language": { "value": "Seerr default", "description": "Inherit the original language restriction set in the Seerr profile." },
+  "requests.filter_any_language": { "value": "Any language", "description": "Ignore the original language restriction set in the Seerr profile." },
+  "requests.filter_any_runtime": { "value": "Any length", "description": "Clear the movie length restriction." },
+  "requests.filter_short": { "value": "90 min or less", "description": "Movie runtime preset through 90 minutes, inclusive." },
+  "requests.filter_medium": { "value": "91–120 min", "description": "Movie runtime preset from 91 to 120 minutes, inclusive." },
+  "requests.filter_long": { "value": "121 min or more", "description": "Movie runtime preset from 121 minutes upward." },
   "requests.filter_reset": {
-    "value": "Reset filters",
+    "value": "Clear filters",
     "description": "Requests area, filter bar. Button that clears every filter at once. Shown only while a filter is set."
   },
   "requests.filter_decade": {
@@ -56,44 +54,32 @@
   },
   "requests.filter_retry": {
     "value": "Try again",
-    "description": "Requests area, filter bar choices. Choice in the genre list when the genres could not be loaded: asks for them again."
+    "description": "Retry loading choices or results after an error."
   },
   "requests.filter_none": {
     "value": "No movies match these filters",
-    "description": "Requests area. Read-out under the filter bar when the chosen genre, years and mood together match no movie."
+    "description": "Read-out when no movie matches the active discovery filters."
   },
   "requests.filter_none_reason": {
-    "value": "Try a wider range of years or a different mood.",
+    "value": "Remove a filter or choose a wider year range.",
     "description": "Requests area. Second line under the no-match read-out: what to change. One short sentence."
   },
   "requests.popular": {
     "value": "Popular matches",
     "description": "Requests area. Heading of the row of movies matching the filters, most popular first."
   },
-  "requests.top_rated": {
-    "value": "Top rated matches",
-    "description": "Requests area. Heading of the row of movies matching the filters, best rated first."
-  },
-  "requests.newest": {
-    "value": "Newest matches",
-    "description": "Requests area. Heading of the row of movies matching the filters, most recent release first."
-  },
-  "requests.unfiltered_mine": {
-    "value": "My requests (not filtered)",
-    "description": "Requests area. Heading of the viewer's own requests while a filter is set; the filter does not apply to this row."
-  },
-  "requests.unfiltered_trending": {
-    "value": "Trending (not filtered)",
-    "description": "Requests area. Heading of the trending row while a filter is set; the filter does not apply to this row."
-  },
-  "requests.unfiltered_shows": {
-    "value": "Popular shows (not filtered)",
-    "description": "Requests area. Heading of the popular shows row while a filter is set; the filter does not apply to this row."
-  },
-  "requests.unfiltered_upcoming": {
-    "value": "Coming soon (not filtered)",
-    "description": "Requests area. Heading of the coming-soon row while a filter is set; the filter does not apply to this row."
-  },
+  "requests.all_movies": { "value": "All movies", "description": "Open all movies from the Requests browse page." },
+  "requests.all_matches": { "value": "All matches", "description": "Open all movies matching the current filters." },
+  "requests.all_matches_count": { "value": "All matches ({count})", "description": "Open the results grid and show the server's match count.", "args": { "count": "str" } },
+  "requests.matches_count": { "value": "{count} matches", "description": "Total number of movies matching the current filters.", "args": { "count": "str" } },
+  "requests.matches_page": { "value": "Page {page} of {pages}", "description": "Current page in a paginated listing.", "args": { "page": "str", "pages": "str" } },
+  "requests.matches_page_limit": { "value": "Page {page} of {pages} available", "description": "Current page when the catalog's paging limit is reached by these filters.", "args": { "page": "str", "pages": "str" } },
+  "requests.matches_sort": { "value": "Sort", "description": "Sort order of the results grid." },
+  "requests.sort_popular": { "value": "Popular", "description": "Sort movies by descending popularity." },
+  "requests.sort_rated": { "value": "Top rated", "description": "Sort movies by descending average rating." },
+  "requests.sort_released": { "value": "Release date", "description": "Sort by date, most recent first." },
+  "requests.matches_previous": { "value": "Previous page", "description": "Go to the previous page of results." },
+  "requests.matches_next": { "value": "Next page", "description": "Go to the next page of results." },
   "requests.mood_neo_noir": {
     "value": "Neo-noir",
     "description": "Requests area, mood list. A movie subgenre."

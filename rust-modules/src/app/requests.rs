@@ -84,6 +84,7 @@ enum SeerrJob {
     Request { kind: Kind, tmdb: u32, seasons: Vec<u32> },
     Browse { filter: Browse, sort: Sort, page: u32, gen: u32 },
     Genres,
+    Keywords { query: String, page: u32, gen: u32 },
 }
 
 impl SeerrJob {
@@ -97,6 +98,7 @@ impl SeerrJob {
             Self::Request { kind, tmdb, .. } => RequestsReply::Requested { kind, tmdb, result: Err(error) },
             Self::Browse { gen, sort, page, .. } => RequestsReply::Browse { gen, sort, page, result: Err(error) },
             Self::Genres => RequestsReply::Genres(Err(error)),
+            Self::Keywords { gen, page, .. } => RequestsReply::Keywords { gen, page, result: Err(error) },
         }
     }
 
@@ -148,10 +150,11 @@ impl SeerrJob {
                 RequestsReply::Requested { kind, tmdb, result }
             }
             Self::Browse { filter, sort, page, gen } => {
-                let result = seerr.browse(&filter, sort, page, &today());
+                let result = seerr.browse(&filter, sort, page);
                 RequestsReply::Browse { gen, sort, page, result }
             }
             Self::Genres => RequestsReply::Genres(seerr.genres()),
+            Self::Keywords { query, page, gen } => RequestsReply::Keywords { gen, page, result: seerr.keywords(&query, page) },
         }
     }
 }
@@ -268,14 +271,6 @@ fn progress_list(kind: plx_plex::plex::seerr::Kind) -> Result<Vec<progress::Live
     progress::run_list(&link, &ArrCurl, kind)
 }
 
-/// Today's date in the TV's timezone, `YYYY-MM-DD`: the upper bound of a newest-first listing.
-fn today() -> String {
-    let [year, month, day] = i64::try_from(seerr_cache::now())
-        .ok()
-        .and_then(plx_platform::i18n::local_calendar_date)
-        .unwrap_or([2100, 1, 1]);
-    format!("{year:04}-{month:02}-{day:02}")
-}
 
 /// A Requests page listening to the hub: its answers become the replies the page reads on its tick.
 struct Listener {
@@ -472,6 +467,7 @@ impl Bridge {
             RequestsCmd::Request { kind, tmdb, seasons, reply } => run(SeerrJob::Request { kind, tmdb, seasons }, reply),
             RequestsCmd::Browse { filter, sort, page, gen, reply } => run(SeerrJob::Browse { filter, sort, page, gen }, reply),
             RequestsCmd::Genres { reply } => run(SeerrJob::Genres, reply),
+            RequestsCmd::Keywords { query, page, gen, reply } => run(SeerrJob::Keywords { query, page, gen }, reply),
             RequestsCmd::Progress { order, reply } => progress_worker(ProgressJob::Title(order), reply),
             RequestsCmd::ProgressList { gen, kind, reply } => progress_worker(ProgressJob::List { gen, kind }, reply),
         }

@@ -187,6 +187,8 @@ def clean_env(rt, shot, scene, defaults, assets=None):
                     "PLXNATIVE_DUMP_PREROLL": str(cfg["preroll"]),
                     "PLXNATIVE_DUMP_KEYS": cfg.get("keys", ""),
                     "PLXNATIVE_DUMP_CLICKS": cfg.get("clicks", "")})
+        if "text" in cfg:
+            env["PLXNATIVE_DUMP_TEXT"] = cfg["text"]
         if cfg.get("overlay"):
             env["PLXNATIVE_DUMP_ALLOW_OVERLAY"] = "1"
     if render_scale(scene) > 1:
@@ -197,7 +199,7 @@ def clean_env(rt, shot, scene, defaults, assets=None):
 def virtual_spec(scene):
     """A virtual-clock capture selects one written frame; all input still releases before exit."""
     cfg = {"frames": 1, "select": 0, "preroll": 900, **scene["virtual"]}
-    if set(cfg) - {"frames", "select", "preroll", "keys", "clicks", "overlay", "press"}:
+    if set(cfg) - {"frames", "select", "preroll", "keys", "clicks", "overlay", "press", "text"}:
         raise ValueError("unknown virtual capture option")
     if "press" in cfg:
         if "keys" in cfg:
@@ -269,6 +271,9 @@ def capture(binary, scene, defaults, hero, keep, *, prepare=None, assets=None):
     try:
         if prepare is not None:
             prepare(pms, rt)
+        if "seerr_page_size" in scene:
+            # Keep real demo posters and distinct titles, even in a deliberately small paging fixture.
+            pms.seerr.page_size = scene["seerr_page_size"]
         triggers = {"plextv": f"http://127.0.0.1:{port}", "discover": f"http://127.0.0.1:{port}", "stillclock": str(defaults["stillclock_ms"])}
         if not scene.get("no_token"):
             triggers["token"] = PLACEHOLDER_TOKEN
@@ -332,7 +337,7 @@ def capture(binary, scene, defaults, hero, keep, *, prepare=None, assets=None):
             replies = [urllib.parse.urlsplit(path) for path, status in pms.requests if 200 <= status < 300]
             for expected in scene["expect_http"]:
                 if not any(r.path == expected["path"]
-                           and all(urllib.parse.parse_qs(r.query).get(k) == [v]
+                           and all(urllib.parse.parse_qs(r.query).get(k) == (None if v is None else [v])
                                    for k, v in expected.get("query", {}).items()) for r in replies):
                     problems.append(f"no successful response for {expected}")
         # The boot line proves the person-page and Watchlist reads reach the mock, not the real provider.

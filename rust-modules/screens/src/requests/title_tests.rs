@@ -1,7 +1,7 @@
 //! Commands, focus and words of the Requests title page. No command reaches a server.
 use super::super::cards_harness::{title, ReqHost};
 use super::*;
-use plx_machine::machine::{InputOwner, InstanceId, MachineId, Measure, Stamped};
+use plx_machine::machine::{FocusKey, FocusRead, InputEvent, InputOwner, InstanceId, MachineId, Measure, Source, Stamped};
 use plx_plex::plex::seerr::{Detail, Have, InPlex, MediaState, Rules, Season, Still, Video, VideoKind};
 use plx_plex::plex::ServerId;
 use plx_platform::i18n::{language_on_this_thread_for_test, Preference, SHIPPED};
@@ -34,14 +34,19 @@ fn movie(have: Have, requested: bool) -> TitlePage { page(Kind::Movie, have, req
 fn show(seasons: Vec<Season>, rules: Rules) -> TitlePage { page(Kind::Tv, Have::Nothing, false, seasons, rules) }
 
 fn step(screen: &mut TitleScreen, ev: ScreenEvent<ReqHost>) -> Vec<Stamped<ReqHost>> {
+    step_with_focus(screen, ev, None).1
+}
+
+fn step_with_focus(screen: &mut TitleScreen, ev: ScreenEvent<ReqHost>, elem: Option<u32>) -> (Handled, Vec<Stamped<ReqHost>>) {
     let mut out = Vec::new();
     let mut present = plx_machine::present::Present::new();
     let cx = Cx::<ReqHost> {
-        views: (), tick: NOW, measure: &FixtureMeasure, press: Default::default(), focus: Default::default(), owner: InputOwner::Entry(ENTRY),
+        views: (), tick: NOW, measure: &FixtureMeasure, press: Default::default(), owner: InputOwner::Entry(ENTRY),
+        focus: FocusRead { current: elem.map(|elem| FocusKey { entry: ENTRY, elem }), ..Default::default() },
     };
     let mut fx = Effects::new(&mut out, MachineId::Instance(InstanceId(1)), &mut present);
-    Machine::<ReqHost>::step(screen, &ev, &cx, &mut fx);
-    out
+    let handled = Machine::<ReqHost>::step(screen, &ev, &cx, &mut fx);
+    (handled, out)
 }
 
 fn commands(out: &[Stamped<ReqHost>]) -> Vec<&RequestsCmd> {
@@ -230,22 +235,58 @@ fn a_series_shows_a_still_shelf_only_after_real_art_arrives() {
 }
 
 #[test]
-fn about_shows_facts_and_only_repeats_plot_when_the_preview_cuts_it() {
-    let mut page = movie(Have::Nothing, false);
-    page.detail.title.overview = "A short plot already readable in the hero.".into();
-    page.detail.info.directors.push("Ian Hubert".into());
-    let screen = opened(page);
-    let ready = screen.ready().unwrap();
-    assert!(ready.about(), "credits keep About available");
-    assert_eq!(ready.about_overview(), None);
+fn about_owns_the_plot_and_hero_only_shows_a_distinct_tagline() {
+    for (plot, pages) in [
+        ("A short plot.".to_owned(), false),
+        (format!("{}Final sentence.", "A long plot with several details to read. ".repeat(60)), true),
+    ] {
+        let mut page = movie(Have::Nothing, false);
+        page.detail.title.overview = plot.clone();
+        page.detail.info.tagline = format!("  {}  ", plot.replace(' ', "  "));
+        let screen = opened(page.clone());
+        let ready = screen.ready().unwrap();
+        assert!(ready.about(), "the plot makes About reachable even without credits");
+        assert_eq!(ready.about_overview(), Some(plot.as_str()));
+        assert!(!ready.show_tagline, "do not repeat the plot as a tagline");
+        assert_eq!(ready.about_flow.pages > 1, pages);
 
-    let mut page = movie(Have::Nothing, false);
-    let plot = "A long plot with more than three lines to read. ".repeat(12);
-    page.detail.title.overview.clone_from(&plot);
-    let screen = opened(page);
-    let ready = screen.ready().unwrap();
-    assert!(ready.about(), "the full plot is reachable even without credits");
-    assert_eq!(ready.about_overview(), Some(plot.trim()));
+        page.detail.info.tagline = "A distinct tagline.".into();
+        page.detail.info.directors.push("Ian Hubert".into());
+        let screen = opened(page);
+        let ready = screen.ready().unwrap();
+        assert!(ready.show_tagline);
+        assert!(ready.facts.iter().any(|fact| fact.value == "Ian Hubert"));
+    }
+}
+
+#[test]
+fn about_pages_to_the_end_and_yields_to_focus_at_both_edges() {
+    let mut page = show(vec![season(1, Have::Nothing)], PARTIAL);
+    page.detail.title.overview = format!("{}Final sentence.", "A long plot with several details to read. ".repeat(60));
+    let mut screen = opened(page);
+    let flow = screen.ready().unwrap().about_flow;
+    assert!(flow.pages > 2);
+    assert_eq!(screen.focus_sections().collect::<Vec<_>>(), [Sec::Hero, Sec::About, Sec::Seasons]);
+
+    let arrow = |screen: &mut TitleScreen, key, elem| {
+        let ev = ScreenEvent::Input(InputEvent {
+            at: NOW, source: Source::Sdl,
+            kind: InputKind::Key { key, sym: 0, wcode: 0, edge: Edge::Down, at_edge: false },
+        });
+        step_with_focus(screen, ev, Some(elem)).0
+    };
+    assert!(matches!(arrow(&mut screen, Key::Down, REQUEST), Handled::No));
+    for n in 2..=flow.pages {
+        assert!(matches!(arrow(&mut screen, Key::Down, ABOUT), Handled::Yes));
+        assert_eq!(screen.about_scroll.page, n);
+    }
+    assert_eq!(prose_scroll::scroll_at(screen.about_scroll.page, flow.max_scroll, paint::ABOUT_STEP), flow.max_scroll);
+    assert!(matches!(arrow(&mut screen, Key::Down, ABOUT), Handled::No));
+    for n in (1..flow.pages).rev() {
+        assert!(matches!(arrow(&mut screen, Key::Up, ABOUT), Handled::Yes));
+        assert_eq!(screen.about_scroll.page, n);
+    }
+    assert!(matches!(arrow(&mut screen, Key::Up, ABOUT), Handled::No));
 }
 
 #[test]

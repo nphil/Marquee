@@ -2,6 +2,7 @@ use super::{facts, Ready, Sent};
 use plx_machine::machine::Measure;
 use plx_platform::i18n::msg;
 use plx_ui::consts::{CARD_H, CARD_W, MARGIN_X, SCR_W};
+use plx_ui::prose_scroll::{self, ProseScroll};
 use plx_ui::text_view::TextView;
 use plx_ui::theme::{self, hero, size, space};
 use plx_ui::widgets::{self, Art, Button};
@@ -13,6 +14,28 @@ const ACTION_Y: f32 = HERO_H - space::LG - ACTION_H;
 const FACT_W: f32 = SCR_W - 2.0 * MARGIN_X - 3.0 * space::LG - hero::TEXT_W;
 const ABOUT_LEAD: f32 = plx_ui::HERO_SYN_LEAD;
 const ABOUT_HEAD: f32 = space::XL;
+const ABOUT_VIEW_MAX: f32 = 12.0 * ABOUT_LEAD;
+pub(super) const ABOUT_STEP: f32 = prose_scroll::step_for(ABOUT_LEAD);
+
+#[derive(Clone, Copy)]
+pub(super) struct AboutFlow {
+    w: f32,
+    h: f32,
+    pub max_scroll: f32,
+    pub pages: usize,
+}
+
+impl AboutFlow {
+    pub(super) fn new(text: &str, measure: &dyn Measure) -> Self {
+        let w = prose_scroll::text_w(hero::TEXT_W);
+        let h = if text.is_empty() { 0.0 } else { synopsis(text, measure).measure_h(w) };
+        if h <= ABOUT_VIEW_MAX {
+            return Self { w, h, max_scroll: 0.0, pages: 1 };
+        }
+        let (max_scroll, pages) = prose_scroll::paging(h + prose_scroll::BODY_TAIL, ABOUT_VIEW_MAX, ABOUT_STEP);
+        Self { w, h: ABOUT_VIEW_MAX, max_scroll, pages }
+    }
+}
 
 pub(super) fn pills<'a>(actions: &'a [facts::Action], top: f32, measure: &'a dyn Measure) -> impl Iterator<Item = (&'a facts::Action, Rect)> {
     let mut x = MARGIN_X;
@@ -82,16 +105,13 @@ pub(super) fn hero(p: Painter, top: f32, ready: &Ready, hot: Option<u32>, sent: 
         y -= ABOUT_LEAD;
         line(p, note, size::CAPTION, theme::TEXT_PRIMARY, Rect::new(MARGIN_X, y, hero::TEXT_W, ABOUT_LEAD), measure);
     }
-    if !title.overview.trim().is_empty() {
-        bottom_text(p, &mut y, preview(&title.overview, measure));
-    }
     if !title.year.is_empty() || !ready.length.is_empty() || !ready.stage.is_empty() {
         y -= hero::FACTS_H + space::SM;
         widgets::hero_facts(p, Rect::new(MARGIN_X, y, hero::TEXT_W, hero::FACTS_H), &title.year,
             &ready.length, false, ready.stage, measure);
     }
-    if !info.tagline.is_empty() {
-        bottom_text(p, &mut y, TextView::new(&info.tagline, size::LABEL, theme::TEXT_SECONDARY)
+    if ready.show_tagline {
+        bottom_text(p, &mut y, TextView::new(info.tagline.trim(), size::LABEL, theme::TEXT_SECONDARY)
             .max_lines(1).leading(ABOUT_LEAD).with_measure(measure));
     }
     bottom_text(p, &mut y, TextView::new(&title.name, size::DISPLAY, theme::TEXT_PRIMARY).bold()
@@ -111,29 +131,21 @@ fn bottom_text(p: Painter, y: &mut f32, text: TextView<'_>) {
     text.draw(p, Rect::new(MARGIN_X, *y, hero::TEXT_W, h));
 }
 
-pub(super) fn preview<'a>(text: &'a str, measure: &'a dyn Measure) -> TextView<'a> {
-    plx_ui::hero_synopsis(text.trim(), "").break_long_words().with_measure(measure)
-}
-
 fn synopsis<'a>(text: &'a str, measure: &'a dyn Measure) -> TextView<'a> {
     TextView::new(text, size::LABEL, theme::TEXT_READING).leading(ABOUT_LEAD).break_long_words().with_measure(measure)
 }
 
-fn about_w(ready: &Ready) -> f32 {
-    if ready.facts.is_empty() { SCR_W - 2.0 * MARGIN_X - 2.0 * space::LG } else { hero::TEXT_W }
+pub(super) fn about_h(ready: &Ready) -> f32 {
+    ABOUT_HEAD + ready.about_flow.h.max(ABOUT_LEAD * ready.facts.len() as f32) + 3.0 * space::MD
 }
 
-pub(super) fn about_h(ready: &Ready, measure: &dyn Measure) -> f32 {
-    let syn_h = ready.about_overview().map_or(0.0, |text| synopsis(text, measure).measure_h(about_w(ready)));
-    ABOUT_HEAD + syn_h.max(ABOUT_LEAD * ready.facts.len() as f32) + 2.0 * space::LG
+pub(super) fn about_rect(r: Rect, ready: &Ready) -> Rect {
+    let w = if ready.facts.is_empty() { hero::TEXT_W + 2.0 * space::LG } else { SCR_W - 2.0 * MARGIN_X };
+    Rect::new(MARGIN_X, r.y, w, r.h - space::MD)
 }
 
-pub(super) fn about_rect(r: Rect) -> Rect {
-    Rect::new(MARGIN_X, r.y, SCR_W - 2.0 * MARGIN_X, r.h - space::MD)
-}
-
-pub(super) fn about(p: Painter, r: Rect, ready: &Ready, hot: bool, measure: &dyn Measure) {
-    let plate = about_rect(r);
+pub(super) fn about(p: Painter, r: Rect, ready: &Ready, hot: bool, scroll: &ProseScroll, measure: &dyn Measure) {
+    let plate = about_rect(r, ready);
     if hot {
         let ink = theme::OVERLAY_FOCUS_PILL;
         p.rect(plate, theme::CARD_RING_RAD, ink, ink, 0.0);
@@ -143,7 +155,21 @@ pub(super) fn about(p: Painter, r: Rect, ready: &Ready, hot: bool, measure: &dyn
     let text = ready.about_overview();
     plx_ui::cards::draw_heading_c(p.translate(0.0, y), msg::browse_detail_about_c(), c"", c"", x, 0.0, 1.0, measure);
     if let Some(text) = text {
-        synopsis(text, measure).draw(p, Rect::new(x, y + ABOUT_HEAD, about_w(ready), plate.h - ABOUT_HEAD));
+        let flow = ready.about_flow;
+        let view = Rect::new(x, y + ABOUT_HEAD, flow.w, flow.h);
+        let prose = synopsis(text, measure);
+        if flow.pages == 1 {
+            prose.draw(p, view);
+        } else {
+            let offset = scroll.offset(flow.max_scroll);
+            let top = (offset > 0.5).then_some((view.y, view.y + prose_scroll::FEATHER));
+            let bottom = (offset < flow.max_scroll - 0.5)
+                .then_some((view.y + view.h - prose_scroll::FEATHER, view.y + view.h));
+            p.clip(view);
+            prose.edge_fade(top, bottom).draw(p, Rect::new(view.x, view.y - offset, view.w, 0.0));
+            p.clip_clear();
+            prose_scroll::draw_rail(p, view, x + hero::TEXT_W, scroll.page, flow.pages);
+        }
     }
     let fact_x = if text.is_some() { x + hero::TEXT_W + space::LG } else { x };
     let label_w = FACT_W * 0.38;

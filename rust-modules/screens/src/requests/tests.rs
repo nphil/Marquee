@@ -224,74 +224,84 @@ fn the_page_state_moves_with_what_lands() {
     assert!(probe.starts_with("requests "));
 }
 
-fn matches_page(gen: u32, sort: Sort, page: u32, pages: u32, ids: &[u32]) -> RequestsReply {
+fn matches_page(gen: u32, sort: Sort, page: u32, pages: u32, total: u32, ids: &[u32]) -> RequestsReply {
     RequestsReply::Browse {
         gen,
         sort,
         page,
-        result: Ok(Page { items: ids.iter().map(|id| title(*id)).collect(), page, pages }),
+        result: Ok(plx_plex::plex::seerr::BrowsePage {
+            titles: Page { items: ids.iter().map(|id| title(*id)).collect(), page, pages },
+            total,
+            capped: false,
+        }),
     }
 }
 
-#[test]
-fn combined_filters_ask_for_all_three_movie_rows_and_page_the_selected_row() {
-    let mut h = Harness::new(vec![1]);
-    let filter = Browse { genre: Some(35), keyword: Some(10051), from: Some(1920), to: Some(1929) };
-    let out = with_fx(&mut h, |s, fx| s.set_filter(filter, fx));
-    let gen = h.screen.filter_gen;
-    let asks: Vec<_> = app(&out)
-        .into_iter()
-        .map(|a| match a {
-            AppFx::Requests(RequestsCmd::Browse { gen, filter, sort, page, .. }) => (*gen, *filter, *sort, *page),
-            _ => panic!("unexpected effect"),
-        })
-        .collect();
-    assert_eq!(asks, Sort::ALL.map(|sort| (gen, filter, sort, 1)));
-    h.screen.receive(shelf(Discover::Movies, 1, 1, &[2]));
-    h.screen.receive(matches_page(gen, Sort::Popular, 1, 2, &[3]));
-    h.screen.receive(matches_page(gen, Sort::TopRated, 1, 1, &[4]));
-    h.screen.receive(matches_page(gen, Sort::Newest, 1, 1, &[5]));
-    assert_eq!(names(&h), [(Lane::Popular, vec![3]), (Lane::TopRated, vec![4]), (Lane::Newest, vec![5]), (Lane::Trending, vec![1])]);
-    assert_eq!(Lane::Trending.heading(true), plx_platform::i18n::msg::requests_unfiltered_trending_c());
-    let out = with_fx(&mut h, |s, fx| {
-        s.want(Lane::Popular, fx);
-        s.want(Lane::Popular, fx);
-    });
-    assert!(matches!(app(&out).as_slice(), [AppFx::Requests(RequestsCmd::Browse {
-        gen: got_gen, filter: got_filter, sort: Sort::Popular, page: 2, ..
-    })] if *got_gen == gen && *got_filter == filter));
-    h.screen.receive(matches_page(gen, Sort::Popular, 2, 2, &[3, 6]));
-    assert_eq!(names(&h)[0], (Lane::Popular, vec![3, 6]));
+fn seats(out: &[Stamped<ReqHost>], elem: u32) -> bool {
+    out.iter().any(|e| matches!(&e.fx, Fx::Deliver(_, Delivery::Screen(ScreenEvent::Enter(Enter::Fresh {
+        focus: FocusTarget::Elem(key)
+    }))) if key.elem == elem))
 }
 
 #[test]
-fn reset_drops_filtered_rails_and_a_previous_generation_cannot_land_when_reapplied() {
+fn combined_filters_use_one_preview_and_page_the_full_grid() {
+    let mut h = Harness::new(vec![1]);
+    let filter = Browse { genre: Some(35), keywords: vec![10051, 10123], from: Some(1920), to: Some(1929),
+        language: Some("fr"), runtime_min: Some(1), runtime_max: Some(90) };
+    let out = with_fx(&mut h, |s, fx| s.set_filter(filter.clone(), fx));
+    let preview_gen = h.screen.browse_gen;
+    assert!(matches!(app(&out).as_slice(), [AppFx::Requests(RequestsCmd::Browse {
+        gen, filter: sent, sort: Sort::Popular, page: 1, ..
+    })] if *gen == preview_gen && *sent == filter));
+    h.screen.receive(matches_page(preview_gen, Sort::Popular, 1, 2, 21, &[3, 4]));
+    assert_eq!(names(&h), [(Lane::Popular, vec![3, 4])]);
+    assert!(h.screen.matches.actions[0].label.to_string_lossy().contains("21"));
+
+    let (out, _) = h.step_fx(ScreenEvent::Activate(matches::ALL));
+    assert!(app(&out).is_empty(), "grid reuses the identical first page");
+    assert!(seats(&out, matches::SORT));
+    let next = h.screen.matches.actions[1].elem;
+    let (out, _) = h.step_fx(ScreenEvent::Activate(next));
+    let next_gen = h.screen.browse_gen;
+    assert!(matches!(app(&out).as_slice(), [AppFx::Requests(RequestsCmd::Browse {
+        gen, filter: sent, sort: Sort::Popular, page: 2, ..
+    })] if *gen == next_gen && *sent == filter));
+    assert!(!h.screen.receive(matches_page(next_gen, Sort::Newest, 2, 2, 21, &[99])));
+    h.screen.receive(matches_page(next_gen, Sort::Popular, 2, 2, 21, &[6]));
+    assert_eq!(names(&h), [(Lane::Matches, vec![6])]);
+    assert_eq!(h.screen.matches.shown_page(true), 2);
+
+    let (out, _) = h.step_fx(key(Key::Back));
+    assert!(app(&out).is_empty() && seats(&out, matches::ALL));
+    assert_eq!(names(&h), [(Lane::Popular, vec![3, 4])]);
+    let (out, _) = h.step_fx(ScreenEvent::Activate(matches::ALL));
+    assert!(app(&out).is_empty());
+    assert_eq!(names(&h), [(Lane::Matches, vec![6])]);
+    let out = with_fx(&mut h, |s, fx| s.change_sort(Sort::TopRated, fx));
+    assert!(matches!(app(&out).as_slice(), [AppFx::Requests(RequestsCmd::Browse {
+        filter: sent, sort: Sort::TopRated, page: 1, ..
+    })] if *sent == filter));
+    assert!(!h.screen.receive(matches_page(next_gen, Sort::Popular, 2, 2, 21, &[99])));
+}
+
+#[test]
+fn reset_restores_the_unfiltered_rows_and_drops_a_reply_from_the_old_filter() {
     let mut h = Harness::new(vec![1]);
     let filter = Browse { genre: Some(35), ..Browse::default() };
-    with_fx(&mut h, |s, fx| s.set_filter(filter, fx));
-    let old = h.screen.filter_gen;
-    h.screen.receive(matches_page(old, Sort::Popular, 1, 1, &[2]));
-    let (out, _) = h.step_fx(ScreenEvent::Activate(filters::RESET));
-    assert!(app(&out).is_empty());
-    assert_eq!(h.screen.browse, Browse::default());
-    assert_eq!(h.screen.bar_len(), 4);
-    assert_eq!(names(&h), [(Lane::Trending, vec![1])]);
-    with_fx(&mut h, |s, fx| s.set_filter(filter, fx));
-    assert!(!h.screen.receive(matches_page(old, Sort::Popular, 1, 1, &[2])));
-    assert_eq!(names(&h), [(Lane::Trending, vec![1])]);
-}
-
-#[test]
-fn no_matches_is_distinct_from_waiting_and_leaves_unfiltered_rails_available() {
-    let mut h = Harness::new(vec![1]);
-    with_fx(&mut h, |s, fx| s.set_filter(Browse { keyword: Some(10051), ..Browse::default() }, fx));
+    with_fx(&mut h, |s, fx| s.set_filter(filter.clone(), fx));
+    let old = h.screen.browse_gen;
     assert_eq!(h.screen.note(), Some(filters::Note::Working));
-    let gen = h.screen.filter_gen;
-    for sort in Sort::ALL {
-        h.screen.receive(matches_page(gen, sort, 1, 1, &[]));
-    }
-    assert_eq!(h.screen.note(), Some(filters::Note::Empty));
+    let (out, _) = h.step_fx(ScreenEvent::Activate(filters::RESET));
+    assert!(app(&out).is_empty() && seats(&out, filters::GENRE));
+    assert_eq!(h.screen.browse, Browse::default());
+    assert_eq!(h.screen.pills.len(), 5);
     assert_eq!(names(&h), [(Lane::Trending, vec![1])]);
+    with_fx(&mut h, |s, fx| s.set_filter(filter, fx));
+    assert!(!h.screen.receive(matches_page(old, Sort::Popular, 1, 1, 1, &[2])));
+    assert!(names(&h).is_empty());
+    h.screen.receive(matches_page(h.screen.browse_gen, Sort::Popular, 1, 0, 0, &[]));
+    assert_eq!(h.screen.note(), Some(filters::Note::Empty));
+    assert_eq!(h.screen.matches.total(true), Some(0));
 }
 
 fn choose(h: &mut Harness, value: filters::Value) {
@@ -300,17 +310,60 @@ fn choose(h: &mut Harness, value: filters::Value) {
 }
 
 #[test]
-fn a_decade_sets_both_years_and_a_later_crossing_bound_adjusts_the_other() {
+fn a_year_preset_applies_at_once_but_custom_bounds_wait_for_apply() {
+    use filters::{Bound::{End, Start}, Value};
     let mut h = Harness::new(vec![]);
-    h.step(ScreenEvent::Activate(filters::FROM));
-    choose(&mut h, filters::Value::Decade(1920));
+    h.step(ScreenEvent::Activate(filters::YEARS));
+    choose(&mut h, Value::Years((Some(1920), Some(1929))));
     assert_eq!((h.screen.browse.from, h.screen.browse.to), (Some(1920), Some(1929)));
-    h.step(ScreenEvent::Activate(filters::FROM));
-    choose(&mut h, filters::Value::Year(2000));
-    assert_eq!((h.screen.browse.from, h.screen.browse.to), (Some(2000), Some(2000)));
-    h.step(ScreenEvent::Activate(filters::TO));
-    choose(&mut h, filters::Value::Year(1999));
-    assert_eq!((h.screen.browse.from, h.screen.browse.to), (Some(1999), Some(1999)));
+    let original = h.screen.browse_gen;
+    h.step(ScreenEvent::Activate(filters::YEARS));
+    choose(&mut h, Value::Range);
+    choose(&mut h, Value::Bound(Start));
+    choose(&mut h, Value::Decade(Start, 2000));
+    choose(&mut h, Value::Year(Start, Some(2000)));
+    choose(&mut h, Value::Bound(End));
+    choose(&mut h, Value::Decade(End, 2010));
+    choose(&mut h, Value::Year(End, Some(2014)));
+    assert_eq!(h.screen.browse_gen, original);
+    choose(&mut h, Value::ApplyRange);
+    assert_eq!((h.screen.browse.from, h.screen.browse.to), (Some(2000), Some(2014)));
+    assert_eq!(h.screen.browse_gen, original + 1);
+}
+
+#[test]
+fn theme_search_ignores_old_queries_and_search_hits_can_be_removed_without_typing() {
+    use filters::Value;
+    use plx_plex::plex::seerr::Keyword;
+    let mut h = Harness::new(vec![]);
+    h.step(ScreenEvent::Activate(filters::THEMES));
+    choose(&mut h, Value::Theme(10123));
+    choose(&mut h, Value::Theme(10051));
+    assert_eq!(h.screen.browse.keywords, [10051, 10123]);
+    let search = |h: &mut Harness, words: &str| {
+        choose(h, Value::FindTheme);
+        assert!(h.screen.editing);
+        h.screen.theme_input = TextBuffer::new(words.into(), words.len());
+        h.step_fx(key(Key::Ok)).0
+    };
+    search(&mut h, "old");
+    let old = h.screen.keyword_gen;
+    let out = search(&mut h, "sea");
+    let reply = |gen| RequestsReply::Keywords {
+        gen, page: 1,
+        result: Ok(Page { items: vec![Keyword { id: 18, name: "Sea".into() }], page: 1, pages: 2 }),
+    };
+    assert!(matches!(app(&out).as_slice(), [AppFx::Requests(RequestsCmd::Keywords { query, page: 1, .. })] if query == "sea"));
+    assert!(!h.screen.receive(reply(old)));
+    assert!(h.screen.receive(reply(h.screen.keyword_gen)));
+    choose(&mut h, Value::Theme(18));
+    assert_eq!(h.screen.browse.keywords, [18, 10051, 10123]);
+    h.step(key(Key::Back));
+    choose(&mut h, Value::Theme(18));
+    assert_eq!(h.screen.browse.keywords, [10051, 10123]);
+    choose(&mut h, Value::ClearThemes);
+    assert!(h.screen.browse.is_empty());
+    assert!(seats(&h.step_fx(key(Key::Back)).0, filters::THEMES));
 }
 
 #[test]
@@ -318,9 +371,9 @@ fn genre_choices_arrive_from_seerr_and_back_closes_the_chooser_without_leaving()
     let mut h = Harness::new(vec![]);
     h.step(ScreenEvent::Activate(filters::GENRE));
     h.screen.receive(RequestsReply::Genres(Ok(vec![plx_plex::plex::seerr::Genre { id: 35, name: "Comedy".into() }])));
-    choose(&mut h, filters::Value::Id(35));
+    choose(&mut h, filters::Value::Genre(Some(35)));
     assert_eq!(h.screen.browse.genre, Some(35));
-    assert!(h.screen.bar_lit(0));
+    assert!(matches!(h.screen.pills[0].icon, Some(plx_ui::icons::Icon::Check)));
     h.step(ScreenEvent::Activate(filters::GENRE));
     assert_eq!(h.screen.chooser.as_ref().unwrap().start, 1);
     let (out, _) = h.step_fx(key(Key::Back));

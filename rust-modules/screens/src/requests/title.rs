@@ -15,6 +15,7 @@ use plx_plex::plex::progress::{self, Snapshot, Tracker};
 use plx_plex::plex::seerr::{tmdb_image, Ask, Kind, SeerrError};
 use plx_ui::cards::{CardEvent, Kind as Section, RowStyle, SectionSpec, Stack, StackEvent, StackPage};
 use plx_ui::consts::{MARGIN_X, SCR_W, UNDER_LABEL_AIR};
+use plx_ui::prose_scroll::{self, ProseScroll};
 use plx_ui::screen::{AxisMask, Dir, DrawFrame, EdgeRule, ElemKind, Enter, FocusSource, FocusTarget, GroupKind, GroupSpec, HitSource, Link, RenderStrategy, Screen, ScreenEvent, Seat};
 use plx_ui::theme;
 use plx_ui::widgets::{StatusKind, StatusOverlay};
@@ -71,7 +72,8 @@ struct Ready {
     length: String,
     stage: &'static str,
     facts: Vec<facts::Fact>,
-    overflow_overview: bool,
+    show_tagline: bool,
+    about_flow: paint::AboutFlow,
     seasons: Vec<shelves::Card>,
     cast: Vec<shelves::Card>,
     videos: Vec<shelves::Card>,
@@ -83,21 +85,26 @@ impl Ready {
         let backdrop = tmdb_image(&page.detail.title.backdrop, "w1280");
         let seasons = facts::announced(&page).enumerate()
             .map(|(i, s)| shelves::season(s, &page, &poster, i)).collect();
+        let overview = page.detail.title.overview.trim();
+        let tagline = page.detail.info.tagline.trim();
+        let show_tagline = !tagline.is_empty() && !tagline.split_whitespace().eq(overview.split_whitespace());
+        let about_flow = paint::AboutFlow::new(overview, measure);
         Self {
             actions: facts::actions(&page, picked, sending),
             length: facts::length(&page),
             stage: page.detail.info.stage.map_or("", facts::stage_word),
             facts: facts::about_facts(&page),
-            overflow_overview: paint::preview(&page.detail.title.overview, measure).truncates(theme::hero::TEXT_W),
             cast: shelves::cast(&page), videos: shelves::videos(&page),
+            show_tagline, about_flow,
             page, ask, poster, backdrop, seasons,
         }
     }
 
-    fn about(&self) -> bool { !self.facts.is_empty() || self.overflow_overview }
+    fn about(&self) -> bool { !self.facts.is_empty() || self.about_overview().is_some() }
 
     fn about_overview(&self) -> Option<&str> {
-        self.overflow_overview.then(|| self.page.detail.title.overview.trim())
+        let text = self.page.detail.title.overview.trim();
+        (!text.is_empty()).then_some(text)
     }
 }
 
@@ -107,6 +114,7 @@ pub struct TitleScreen {
     tmdb: u32,
     stack: Stack<Sec>,
     revision: u64,
+    about_scroll: ProseScroll,
     tx: Sender<RequestsReply>,
     inbox: Receiver<RequestsReply>,
     load: Load,
@@ -128,6 +136,7 @@ impl TitleScreen {
         let (tx, inbox) = channel();
         Self {
             entry, kind, tmdb, stack: Stack::new(entry).reveal_on_move(true), revision: 0, tx, inbox,
+            about_scroll: ProseScroll::new(),
             load: Load::Loading, sent: Sent::Idle, picked: Vec::new(), stills: Vec::new(),
             trailer_pending: false, trailer_failed: false,
             tracker: Tracker::new(progress::Key { kind, tmdb }, entry.0), progress_at: 0,
@@ -209,7 +218,13 @@ impl TitleScreen {
                         self.picked.sort_unstable();
                         if first { self.read_stills(&page, fx); }
                         let disabled = matches!(self.sent, Sent::Sending | Sent::Done);
-                        self.load = Load::Ready(Box::new(Ready::new(page, ask, &self.picked, disabled, cx.measure)));
+                        let ready = Ready::new(page, ask, &self.picked, disabled, cx.measure);
+                        if ready.about_flow.pages == 1 {
+                            self.about_scroll = ProseScroll::new();
+                        } else {
+                            self.about_scroll.page = self.about_scroll.page.min(ready.about_flow.pages);
+                        }
+                        self.load = Load::Ready(Box::new(ready));
                         self.revision += 1;
                     }
                     Err(error) if self.ready().is_none() => self.load = Load::Failed(error),
@@ -241,6 +256,31 @@ impl TitleScreen {
                 self.tracker.land(gen, step, outcome) && self.progress_readout()
             }
             _ => false,
+        }
+    }
+    fn scroll_about<H: ContentLike>(&mut self, key: Key, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> bool {
+        if !cx.focus.current.is_some_and(|k| k.entry == self.entry && k.elem == ABOUT) {
+            return false;
+        }
+        let Some(ready) = self.ready() else { return false };
+        let page = self.about_scroll.page;
+        self.about_scroll.page = match key {
+            Key::Down if page < ready.about_flow.pages => page + 1,
+            Key::Up if page > 1 => page - 1,
+            // At either end the same direction continues through the title's normal focus order.
+            _ => return false,
+        };
+        fx.invalidate(Provenance::Input);
+        true
+    }
+
+    fn tick_about(&mut self, t: Tick) {
+        let Some(flow) = self.ready().map(|r| r.about_flow).filter(|f| f.pages > 1) else { return };
+        let scroll = &mut self.about_scroll;
+        let want = prose_scroll::scroll_at(scroll.page, flow.max_scroll, paint::ABOUT_STEP);
+        if scroll.scroll.pos != want || scroll.scroll.vel != 0.0 {
+            scroll.follow(t.dt(), flow.max_scroll, flow.pages, paint::ABOUT_STEP, "request_title.about");
+            scroll.scroll.land_if_still(want, t.dt());
         }
     }
     fn tick<H: ContentLike>(&mut self, t: Tick, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> bool {
@@ -320,7 +360,11 @@ impl TitleScreen {
 impl<H: ContentLike> Machine<H> for TitleScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
-        let first = if let ScreenEvent::Tick(t) = ev { self.tick(*t, cx, fx) } else { false };
+        let first = if let ScreenEvent::Tick(t) = ev {
+            let first = self.tick(*t, cx, fx);
+            self.tick_about(*t);
+            first
+        } else { false };
         let stack = self.stack_on(ev, cx, fx);
         if first {
             if let Some(k) = self.focus_sections().next() {
@@ -343,6 +387,11 @@ impl<H: ContentLike> Machine<H> for TitleScreen {
                 if let Some(StackEvent::Card(_, CardEvent::Activate(elem))) = stack { return self.activate(elem, fx); }
                 if let Some(key) = cx.focus.current { return self.activate(key.elem, fx); }
             }
+            ScreenEvent::Input(plx_machine::machine::InputEvent {
+                kind: InputKind::Key { key: key @ (Key::Up | Key::Down), edge: Edge::Down | Edge::Repeat, .. }, ..
+            }) => {
+                if !self.scroll_about(*key, cx, fx) { return Handled::No; }
+            }
             ScreenEvent::Input(input) if matches!(input.kind, InputKind::Key { key: Key::Back, edge: Edge::Down, .. }) => {
                 self.visible = false;
                 self.tracker.hide();
@@ -358,12 +407,12 @@ impl<H: ContentLike> StackPage<H> for TitleScreen {
     type Key = Sec;
     type Cards<'a> = shelves::Cards<'a>;
     fn revision(&self, _: &Cx<'_, H>) -> u64 { self.revision }
-    fn sections(&self, cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
+    fn sections(&self, _: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
         let Some(ready) = self.ready() else { return };
         let hero = Section::Custom { height: paint::HERO_H, focusable: true };
         out.push(SectionSpec::new(Sec::Hero, hero, Sec::Hero.group()));
         if ready.about() {
-            let about = Section::Custom { height: paint::about_h(ready, cx.measure), focusable: true };
+            let about = Section::Custom { height: paint::about_h(ready), focusable: true };
             out.push(SectionSpec::new(Sec::About, about, Sec::About.group()));
         }
         for k in [Sec::Seasons, Sec::Cast, Sec::Videos, Sec::Episodes] {
@@ -395,7 +444,7 @@ impl<H: ContentLike> StackPage<H> for TitleScreen {
         }
     }
     fn focus_rect(&self, _: &Cx<'_, H>, k: Sec, section: Rect) -> Rect {
-        if k == Sec::About { paint::about_rect(section) } else { section }
+        self.ready().filter(|_| k == Sec::About).map_or(section, |r| paint::about_rect(section, r))
     }
     fn element_rect(&self, cx: &Cx<'_, H>, k: Sec, n: usize, section: Rect) -> Rect {
         if k == Sec::Hero {
@@ -429,7 +478,8 @@ impl<H: ContentLike> StackPage<H> for TitleScreen {
         let hot = f.cx.focus.current.filter(|key| key.entry == self.entry).map(|key| key.elem);
         match k {
             Sec::Hero => paint::hero(p, r.y, ready, hot, self.sent, self.trailer_failed, self.progress.as_ref(), f.cx.measure),
-            Sec::About => paint::about(p, r, ready, hot == Some(ABOUT), f.cx.measure),
+            Sec::About if plx_ui::on_axis(r.y, r.h, plx_ui::consts::SCR_H, 0.0) =>
+                paint::about(p, r, ready, hot == Some(ABOUT), &self.about_scroll, f.cx.measure),
             _ => {}
         }
     }
@@ -480,6 +530,7 @@ impl LogicalState for TitleScreen {
         c.u32(match self.sent { Sent::Idle => 0, Sent::Sending => 1, Sent::Done => 2, Sent::Failed(_) => 3 });
         c.seq(self.picked.len());
         for n in &self.picked { c.u32(*n); }
+        self.about_scroll.write(c);
         self.stack.write_scroll(c);
         for k in Sec::ALL {
             if let Some(shelf) = self.stack.shelf(k) { shelf.write(c); }
@@ -488,8 +539,9 @@ impl LogicalState for TitleScreen {
     fn probe(&self, out: &mut String) {
         use std::fmt::Write;
         let percent = self.snapshot.as_ref().and_then(|snap| snap.percent).map_or(-1, i16::from);
-        let _ = write!(out, "request-title entry={} tmdb={} sections={} ready={} percent={percent}",
-            self.entry.0, self.tmdb, self.focus_sections().count(), u8::from(self.ready().is_some()));
+        let pages = self.ready().map_or(1, |r| r.about_flow.pages);
+        let _ = write!(out, "request-title entry={} tmdb={} sections={} ready={} percent={percent} about_page={}/{pages}",
+            self.entry.0, self.tmdb, self.focus_sections().count(), u8::from(self.ready().is_some()), self.about_scroll.page);
     }
 }
 

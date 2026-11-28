@@ -5,6 +5,7 @@
 mod cards;
 mod filters;
 mod layout;
+mod matches;
 mod progress;
 mod progress_text;
 mod render;
@@ -45,8 +46,7 @@ const BLINK_US: u32 = 530_000;
 /// The first element number a card is given; the field and the strip keep the ones below.
 const FIRST_ELEM: u32 = 10;
 
-/// The rows of the page. `Results` stands alone while a search is shown; `Popular`, `TopRated` and
-/// `Newest` are one listing of the filtered movies in three orders, shown while a filter is set.
+/// Browse carousels, title search, and filtered movie results.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lane {
     Mine,
@@ -56,49 +56,29 @@ pub enum Lane {
     Upcoming,
     Results,
     Popular,
-    TopRated,
-    Newest,
+    Matches,
 }
 
 impl Lane {
     /// The browse rows, top to bottom.
     const BROWSE: [Lane; 5] = [Lane::Mine, Lane::Trending, Lane::Movies, Lane::Shows, Lane::Upcoming];
-    /// The filtered rows, top to bottom.
-    const FILTERED: [Lane; 3] = [Lane::Popular, Lane::TopRated, Lane::Newest];
-    /// Every row the page keeps: the browse rows first.
-    const ROWS: [Lane; 8] = [
-        Lane::Mine,
-        Lane::Trending,
-        Lane::Movies,
-        Lane::Shows,
-        Lane::Upcoming,
-        Lane::Popular,
-        Lane::TopRated,
-        Lane::Newest,
-    ];
+    const ROWS: [Lane; 6] = [Lane::Mine, Lane::Trending, Lane::Movies, Lane::Shows, Lane::Upcoming, Lane::Popular];
     fn ordinal(self) -> u32 {
         self as u32
     }
     fn group(self) -> GroupId {
         GroupId(0x5251_0100 + self.ordinal())
     }
-    /// The heading. While a filter is set the rows it does not touch say so.
-    fn heading(self, filtered: bool) -> &'static std::ffi::CStr {
+    fn heading(self) -> &'static std::ffi::CStr {
         use plx_platform::i18n::msg;
-        match (self, filtered) {
-            (Lane::Mine, true) => msg::requests_unfiltered_mine_c(),
-            (Lane::Trending, true) => msg::requests_unfiltered_trending_c(),
-            (Lane::Shows, true) => msg::requests_unfiltered_shows_c(),
-            (Lane::Upcoming, true) => msg::requests_unfiltered_upcoming_c(),
-            (Lane::Mine, _) => msg::requests_mine_c(),
-            (Lane::Trending, _) => msg::requests_trending_c(),
-            (Lane::Movies, _) => msg::requests_movies_c(),
-            (Lane::Shows, _) => msg::requests_shows_c(),
-            (Lane::Upcoming, _) => msg::requests_upcoming_c(),
-            (Lane::Results, _) => msg::requests_results_c(),
-            (Lane::Popular, _) => msg::requests_popular_c(),
-            (Lane::TopRated, _) => msg::requests_top_rated_c(),
-            (Lane::Newest, _) => msg::requests_newest_c(),
+        match self {
+            Lane::Mine => msg::requests_mine_c(),
+            Lane::Trending => msg::requests_trending_c(),
+            Lane::Movies => msg::requests_movies_c(),
+            Lane::Shows => msg::requests_shows_c(),
+            Lane::Upcoming => msg::requests_upcoming_c(),
+            Lane::Results | Lane::Matches => msg::requests_results_c(),
+            Lane::Popular => msg::requests_popular_c(),
         }
     }
     fn discover(self) -> Option<Discover> {
@@ -107,7 +87,7 @@ impl Lane {
             Lane::Movies => Some(Discover::Movies),
             Lane::Shows => Some(Discover::Shows),
             Lane::Upcoming => Some(Discover::Upcoming),
-            Lane::Mine | Lane::Results | Lane::Popular | Lane::TopRated | Lane::Newest => None,
+            Lane::Mine | Lane::Results | Lane::Popular | Lane::Matches => None,
         }
     }
     fn of(shelf: Discover) -> Lane {
@@ -118,21 +98,8 @@ impl Lane {
             Discover::Upcoming => Lane::Upcoming,
         }
     }
-    /// The order a filtered row reads its movies in.
-    fn sort(self) -> Option<Sort> {
-        match self {
-            Lane::Popular => Some(Sort::Popular),
-            Lane::TopRated => Some(Sort::TopRated),
-            Lane::Newest => Some(Sort::Newest),
-            _ => None,
-        }
-    }
-    fn of_sort(sort: Sort) -> Lane {
-        match sort {
-            Sort::Popular => Lane::Popular,
-            Sort::TopRated => Lane::TopRated,
-            Sort::Newest => Lane::Newest,
-        }
+    fn is_movies_filter(self) -> bool {
+        matches!(self, Lane::Popular | Lane::Matches)
     }
 }
 
@@ -189,6 +156,9 @@ pub enum Sec {
     Head,
     /// The filter bar under the search pill.
     Filters,
+    Chooser,
+    Actions,
+    Grid(u32),
     /// What the filtered rows say while they have nothing to show.
     Note,
     Row(Lane, u32),
@@ -211,7 +181,7 @@ pub struct RequestsScreen {
     searched: String,
     /// A search is out and has not answered.
     searching: bool,
-    rows: [Row; 8],
+    rows: [Row; 6],
     progress: progress::Poll,
     results: Option<Row>,
     keys: Vec<(Lane, Kind, u32, u32)>,
@@ -223,8 +193,15 @@ pub struct RequestsScreen {
     render: render::Resources,
     /// The filter the bar holds; empty shows the unfiltered rows.
     browse: Browse,
-    /// Moves whenever the filter changes: the filtered rows are new sections each time.
+    /// Separate identities keep turning grid pages from resetting the preview shelf.
     filter_gen: u32,
+    grid_gen: u32,
+    browse_gen: u32,
+    matches: matches::Matches,
+    selected_themes: Vec<plx_plex::plex::seerr::Keyword>,
+    theme_input: TextBuffer,
+    keyword_search: Option<filters::ThemeSearch>,
+    keyword_gen: u32,
     genres: filters::Genres,
     /// The choices of a control, while one is being set.
     chooser: Option<filters::Chooser>,
@@ -232,7 +209,7 @@ pub struct RequestsScreen {
     pills: Vec<filters::Pill>,
     /// Moves whenever the bar's words change, which is when its measure is stale.
     bar_stamp: u64,
-    bar_layout: filters::LayoutCache,
+    bar_layout: std::cell::RefCell<(u64, Vec<(f32, f32)>)>,
 }
 
 impl RequestsScreen {
@@ -262,6 +239,13 @@ impl RequestsScreen {
             render: Default::default(),
             browse: Browse::default(),
             filter_gen: 0,
+            grid_gen: 0,
+            browse_gen: 0,
+            matches: matches::Matches::new(Sort::Popular),
+            selected_themes: Vec::new(),
+            theme_input: TextBuffer::new(String::new(), 0),
+            keyword_search: None,
+            keyword_gen: 0,
             genres: filters::Genres::Unknown,
             chooser: None,
             pills: Vec::new(),
@@ -289,42 +273,46 @@ impl RequestsScreen {
     fn row_mut(&mut self, lane: Lane) -> Option<&mut Row> {
         match lane {
             Lane::Results => self.results.as_mut(),
+            Lane::Matches => Some(&mut self.matches.row),
             _ => self.rows.iter_mut().find(|r| r.lane == lane),
         }
     }
 
-    /// The rows on show, top to bottom: the search's alone while one is shown; else the filtered rows
-    /// while a filter is set (they replace Popular movies), then the browse rows that hold something.
+    /// A filter replaces the discovery rows, rather than mixing matches and unrelated titles.
     fn shown(&self) -> impl Iterator<Item = &Row> + '_ {
         let browse = self.results.is_none();
+        let grid = browse && self.matches.open;
         let filtered = !self.browse.is_empty();
-        let (base, extra) = self.rows.split_at(Lane::BROWSE.len());
-        self.results
-            .iter()
-            .chain(extra.iter().filter(move |_| browse))
-            .chain(base.iter().filter(move |r| browse && !(filtered && r.lane == Lane::Movies)))
+        let (base, preview) = self.rows.split_at(Lane::BROWSE.len());
+        self.results.iter()
+            .chain(grid.then_some(self.match_row()))
+            .chain(preview.iter().filter(move |_| browse && !grid && filtered))
+            .chain(base.iter().filter(move |_| browse && !grid && !filtered))
             .filter(|r| !r.cards.is_empty())
     }
 
     fn first_content(&self) -> Option<GroupId> {
-        self.shown().next().map(|r| r.lane.group())
+        self.shown().next().map(|r| if self.matches.open && self.results.is_none() { Lane::Matches.group() } else { r.lane.group() })
     }
 
     fn cards_of(&self, k: Sec) -> Option<RowCards<'_>> {
-        let Sec::Row(lane, _) = k else { return None };
-        let row = self.shown().find(|r| r.lane == lane)?;
+        let row = match k {
+            Sec::Grid(_) => self.match_row(),
+            Sec::Row(lane, _) => self.shown().find(|r| r.lane == lane)?,
+            _ => return None,
+        };
         Some(RowCards { row, art: self.art, progress: &self.progress })
     }
 
     /// The section of `lane`'s row: a filtered row is a new section whenever the filter changes.
     fn sec(&self, lane: Lane) -> Sec {
-        Sec::Row(lane, if Lane::FILTERED.contains(&lane) { self.filter_gen } else { self.rows_gen })
+        Sec::Row(lane, if lane.is_movies_filter() { self.filter_gen } else { self.rows_gen })
     }
-
     fn row_frame<H: ContentLike>(&self, cx: &Cx<'_, H>, lane: Lane) -> Option<(SectionFrame, &Shelf)> {
         let k = self.sec(lane);
         Some((self.stack.shelf_frame(self, cx, k)?, self.stack.shelf(k)?))
     }
+
 
     /// Whether every browse row has had its first answer, so that an empty page is the truth.
     fn settled(&self) -> bool {
@@ -400,27 +388,15 @@ impl RequestsScreen {
                 }
                 true
             }
-            RequestsReply::Browse { gen, sort, page, result } => {
-                if gen != self.filter_gen || self.browse.is_empty() {
-                    return false;
-                }
-                let lane = Lane::of_sort(sort);
-                match result {
-                    Ok(p) => {
-                        let more = p.more();
-                        let cards = p.items.iter().map(|t| (t, None)).collect();
-                        self.land(lane, page <= 1, cards, more, page, 0)
-                    }
-                    Err(_) => self.fail(lane),
-                }
-            }
+            RequestsReply::Browse { gen, sort, page, result } => self.land_movies(gen, sort, page, result),
+            RequestsReply::Keywords { gen, page, result } => self.land_keywords(gen, page, result),
             RequestsReply::Genres(result) => {
                 self.genres = match result {
                     Ok(list) => filters::Genres::Loaded(list),
                     Err(_) => filters::Genres::Failed,
                 };
-                if let Some(chooser) = self.chooser.as_ref().filter(|c| c.pick == filters::Pick::Genre) {
-                    self.chooser = Some(filters::chooser(chooser.pick, &self.browse, &self.genres));
+                if self.chooser.as_ref().is_some_and(|c| c.pick == filters::Pick::Genre) {
+                    self.build_choices(None);
                 }
                 self.relabel();
                 true
@@ -515,19 +491,17 @@ impl RequestsScreen {
     /// The row's next page, asked for once.
     fn want<H: ContentLike>(&mut self, lane: Lane, fx: &mut Effects<'_, H>) {
         let reply = self.tx.clone();
-        let gen = self.filter_gen;
-        let filter = self.browse;
+        if lane.is_movies_filter() { return; }
         let Some(row) = self.row_mut(lane) else { return };
         if !row.more || row.asked {
             return;
         }
         row.asked = true;
         let page = row.pages + 1;
-        let cmd = match (lane.discover(), lane.sort()) {
-            (Some(shelf), _) => RequestsCmd::Shelf { shelf, page, reply },
-            (None, Some(sort)) => RequestsCmd::Browse { filter, sort, page, gen, reply },
-            (None, None) if lane == Lane::Mine => RequestsCmd::Mine { skip: row.skip, reply },
-            (None, None) => RequestsCmd::Search { query: self.searched.clone(), page, reply },
+        let cmd = match lane.discover() {
+            Some(shelf) => RequestsCmd::Shelf { shelf, page, reply },
+            None if lane == Lane::Mine => RequestsCmd::Mine { skip: row.skip, reply },
+            None => RequestsCmd::Search { query: self.searched.clone(), page, reply },
         };
         self.ask(cmd, fx);
     }
@@ -568,14 +542,21 @@ impl RequestsScreen {
             return;
         }
         if !up && commit {
-            self.commit(fx);
+            if self.theme_editing() { self.commit_theme(fx); } else { self.commit(fx); }
+        } else if !up && self.theme_editing() {
+            let held = self.keyword_search.as_ref().map_or("", |s| s.query.as_str()).to_owned();
+            let end = held.len();
+            self.theme_input = TextBuffer::new(held, end);
+            self.update_theme_field();
         }
         self.editing = up;
         self.blink_us = 0;
         if up {
-            let text = self.query.text().to_string();
-            let end = text.len();
-            self.query = TextBuffer::new(text, end);
+            if !self.theme_editing() {
+                let text = self.query.text().to_string();
+                let end = text.len();
+                self.query = TextBuffer::new(text, end);
+            }
             self.stack.scroll_to(0.0);
         }
         fx.push(Fx::Deliver(MachineId::Instance(self.instance), Delivery::Keyboard { up }));
@@ -583,7 +564,12 @@ impl RequestsScreen {
     }
 
     fn edit<H: ContentLike>(&mut self, edit: &TextEdit, fx: &mut Effects<'_, H>) {
-        self.query.edit(edit);
+        if self.theme_editing() {
+            self.theme_input.edit(edit);
+            self.update_theme_field();
+        } else {
+            self.query.edit(edit);
+        }
         self.blink_us = 0;
         fx.invalidate(Provenance::Input);
     }
@@ -608,12 +594,22 @@ impl RequestsScreen {
             fx.push(Fx::App(AppFx::Search(request)));
             return Handled::Yes;
         }
+        if self.editing && self.theme_editing() && elem != filters::CHIP_BASE {
+            self.keyboard(false, false, fx);
+        }
         if let Some(pick) = filters::Pick::of(elem) {
+            if self.chooser.as_ref().is_some_and(|c| c.pick == pick) {
+                self.close_chooser(fx);
+                return Handled::Yes;
+            }
             self.open_chooser(pick, fx);
             return Handled::Yes;
         }
         if elem == filters::RESET {
             self.reset(fx);
+            return Handled::Yes;
+        }
+        if self.bar_shown() && self.match_action(elem, fx) {
             return Handled::Yes;
         }
         if filters::is_chip(elem) {
@@ -643,7 +639,7 @@ impl RequestsScreen {
             self.rev = self.rev.wrapping_add(1);
             changed = true;
         }
-        if self.results.is_none() {
+        if self.results.is_none() && !self.matches.open && self.browse.is_empty() {
             let rows = &self.rows;
             if let Some((kind, gen)) = self.progress.advance(|kind| {
                 rows.iter().find(|r| r.lane == Lane::Mine).is_some_and(|r| {
@@ -694,12 +690,17 @@ impl RequestsScreen {
     /// The probe line the app's focus read-out prints.
     pub fn probe_line(&self) -> String {
         format!(
-            "requests entry={} editing={} phase={:?} rows={} searching={}",
+            "requests entry={} editing={} phase={:?} rows={} searching={} chooser={} grid={} page={} matches={} keyword_results={}",
             self.entry.0,
             self.editing,
             self.phase,
             self.shown().count(),
-            self.searching
+            self.searching,
+            self.chooser.as_ref().map_or_else(|| "None".to_owned(), |c| format!("{:?}", c.pick)),
+            self.matches.open,
+            self.matches.shown_page(!self.browse.is_empty()),
+            self.matches.total(!self.browse.is_empty()).map_or_else(|| "-".to_owned(), |n| n.to_string()),
+            self.keyword_search.as_ref().and_then(|s| s.found.as_ref()).map_or(0, |p| p.items.len()),
         )
     }
 }
@@ -768,9 +769,12 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
                             Key::Back => self.keyboard(false, false, fx),
                             Key::Ok => self.keyboard(false, true, fx),
                             Key::Down => {
+                                let theme = self.theme_editing();
                                 self.keyboard(false, true, fx);
-                                if let Some(group) = self.below_field() {
-                                    self.reseat(FocusTarget::ContainerGroup(group), fx);
+                                if !theme {
+                                    if let Some(group) = self.below_field() {
+                                        self.reseat(FocusTarget::ContainerGroup(group), fx);
+                                    }
                                 }
                             }
                             _ => {}
@@ -783,11 +787,13 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
                     }
                     if *key == Key::Back {
                         // Back closes the innermost thing: a control's choices, a shown search, then the page.
-                        if self.close_chooser(fx) {
+                        if self.back_in_chooser(fx) {
                             return Handled::Yes;
                         }
                         if self.results.is_some() || !self.query.text().is_empty() {
                             self.clear(fx);
+                        } else if self.close_matches(fx) {
+                            return Handled::Yes;
                         } else {
                             fx.push(Fx::App(AppFx::Search(SearchReq::Back)));
                         }
@@ -799,11 +805,13 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
             },
             ScreenEvent::Tick(tick) => self.tick(*tick, fx),
             ScreenEvent::FocusMoved { to, .. } => {
-                if self.chooser.is_some() && !filters::is_chip(to.elem) {
-                    self.chooser = None;
-                    self.relabel();
+                if self.editing && self.theme_editing() && to.elem != filters::CHIP_BASE {
+                    self.keyboard(false, false, fx);
                 }
-                if to.elem != FIELD {
+                if self.chooser.is_some() && !filters::is_chip(to.elem) {
+                    self.dismiss_chooser();
+                }
+                if to.elem != FIELD && to.elem != filters::CHIP_BASE {
                     self.keyboard(false, true, fx);
                 }
                 if self.editing {
@@ -842,11 +850,26 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
         if self.bar_shown() {
             out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::HEAD_H, focusable: true }, FIELD_GROUP));
             out.push(SectionSpec::new(Sec::Filters, plx_ui::cards::Kind::Custom { height: layout::BAR_H, focusable: true }, filters::GROUP));
+            let actions = SectionSpec::new(Sec::Actions, plx_ui::cards::Kind::Custom { height: layout::ACTION_H, focusable: true }, matches::GROUP);
+            if self.matches.open { out.push(actions); }
+            if let Some(c) = &self.chooser {
+                out.push(SectionSpec::new(Sec::Chooser, plx_ui::cards::Kind::Custom { height: c.height(), focusable: true }, filters::CHOICE_GROUP));
+            }
+            if !self.matches.open { out.push(actions); }
             if self.note().is_some() {
                 out.push(SectionSpec::new(Sec::Note, plx_ui::cards::Kind::Custom { height: layout::NOTE_H, focusable: false }, filters::NOTE_GROUP));
             }
         } else {
             out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::SEARCH_CONTENT_TOP, focusable: true }, FIELD_GROUP));
+        }
+        if self.results.is_none() && self.matches.open {
+            if !self.match_row().cards.is_empty() {
+                let top = self.movie_content_top();
+                out.push(SectionSpec::new(Sec::Grid(self.grid_gen),
+                    plx_ui::cards::Kind::Grid { spec: plx_ui::cards::GridSpec::new(top, layout::GRID_EDGE) }, Lane::Matches.group())
+                    .of_kind(ElemKind::Card));
+            }
+            return;
         }
         for row in self.shown() {
             out.push(
@@ -875,53 +898,75 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
     }
     fn plain_len(&self, k: Sec) -> usize {
         match k {
-            Sec::Filters => self.bar_len(),
+            Sec::Filters => self.pills.len(),
+            Sec::Actions => self.matches.actions.len(),
+            Sec::Chooser => self.chooser.as_ref().map_or(0, filters::Chooser::len),
             Sec::Head => 1,
             _ => 0,
         }
     }
     fn plain_elem(&self, k: Sec, n: usize) -> Option<u32> {
         match k {
-            Sec::Filters => self.bar_elem(n),
+            Sec::Filters => self.pills.get(n).map(|p| p.elem),
+            Sec::Actions => self.matches.actions.get(n).map(|p| p.elem),
+            Sec::Chooser => (n < <Self as StackPage<H>>::plain_len(self, k)).then_some(filters::CHIP_BASE + n as u32),
             Sec::Head => (n == 0).then_some(FIELD),
             _ => None,
         }
     }
     fn plain_step(&self, k: Sec, at: usize, dir: Dir) -> Option<usize> {
-        if k == Sec::Filters { self.bar_step(at, dir) } else { None }
+        match k {
+            Sec::Chooser => self.chooser.as_ref()?.step(at, dir),
+            Sec::Filters | Sec::Actions => match dir {
+                Dir::Left => at.checked_sub(1),
+                Dir::Right => (at + 1 < <Self as StackPage<H>>::plain_len(self, k)).then_some(at + 1),
+                _ => None,
+            },
+            _ => None,
+        }
     }
     fn focus_rect(&self, _cx: &Cx<'_, H>, k: Sec, section: Rect) -> Rect {
         match k {
-            Sec::Filters => section,
+            Sec::Filters | Sec::Actions | Sec::Chooser => section,
             _ => Rect::new(layout::FIELD.x, layout::FIELD.y + section.y, layout::FIELD.w, layout::FIELD.h),
         }
     }
     fn element_rect(&self, cx: &Cx<'_, H>, k: Sec, n: usize, section: Rect) -> Rect {
         match k {
-            Sec::Filters => self.bar_rect(cx.measure, cx.focus.current.map(|key| key.elem), n, section),
+            Sec::Filters => self.bar_rect(cx.measure, n, section),
+            Sec::Actions => self.action_rect(cx.measure, section, n),
+            Sec::Chooser => self.choice_rect(cx.focus.current.map(|key| key.elem), n, section).unwrap_or_else(|| {
+                self.choice_rect(Some(filters::CHIP_BASE + n as u32), n, section).unwrap_or_default()
+            }),
             _ => self.focus_rect(cx, k, section),
         }
     }
     fn plain_group(&self, _cx: &Cx<'_, H>, k: Sec, id: GroupId, extent: Rect) -> GroupSpec {
         GroupSpec {
             id,
-            kind: GroupKind::Row { wrap: false },
+            kind: if k == Sec::Chooser { GroupKind::Grid { cols: filters::COLS, holes: &[] } } else { GroupKind::Row { wrap: false } },
             seat: Seat::First,
             reachable: AxisMask::BOTH,
             edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop, EdgeRule::Stop],
             extent,
-            len: if k == Sec::Filters { self.bar_len() } else { 1 },
+            len: <Self as StackPage<H>>::plain_len(self, k),
             elem: ElemKind::Bare,
         }
     }
-    /// Entered from the field or the bar, a row takes the card focus last left on in it, else its
-    /// first; the bar takes the control last left on, else Genre.
     fn seat_override(&self, cx: &Cx<'_, H>, k: Sec, _from: Placed) -> Option<u32> {
-        if k == Sec::Filters {
-            let here = |elem: &u32| (0..self.bar_len()).any(|n| self.bar_elem(n) == Some(*elem));
-            return Some(cx.focus.remembered(filters::GROUP).filter(here).or(self.bar_elem(0)).unwrap_or(filters::GENRE));
+        if k == Sec::Filters && cx.focus.current.is_some_and(|key| filters::is_chip(key.elem)) {
+            if let Some(chooser) = &self.chooser {
+                if chooser.pick != filters::Pick::Sort { return Some(chooser.pick.elem()); }
+            }
         }
-        if !cx.focus.current.is_some_and(|key| key.elem == FIELD || filters::is_bar(key.elem)) {
+        if let Some(group) = match k { Sec::Filters => Some(filters::GROUP), Sec::Actions => Some(matches::GROUP), _ => None } {
+            let here = |elem: &u32| (0..<Self as StackPage<H>>::plain_len(self, k)).any(|n| <Self as StackPage<H>>::plain_elem(self, k, n) == Some(*elem));
+            return cx.focus.remembered(group).filter(here).or_else(|| <Self as StackPage<H>>::plain_elem(self, k, 0));
+        }
+        if k == Sec::Chooser {
+            return self.chooser.as_ref().map(|c| filters::CHIP_BASE + c.start as u32);
+        }
+        if !cx.focus.current.is_some_and(|key| key.elem == FIELD || filters::is_bar(key.elem) || self.matches.actions.iter().any(|a| a.elem == key.elem)) {
             return None;
         }
         let Sec::Row(lane, _) = k else { return None };
@@ -931,10 +976,10 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
     }
     /// The bar belongs to the header block: the search pill stays in view above it.
     fn reveal_with(&self, k: Sec) -> Option<Sec> {
-        (k == Sec::Filters).then_some(Sec::Head)
+        matches!(k, Sec::Filters | Sec::Actions | Sec::Chooser).then_some(Sec::Head)
     }
     fn reveal_margin(&self, _k: Sec) -> f32 {
-        if self.bar_shown() { layout::CONTENT_TOP } else { layout::SEARCH_CONTENT_TOP }
+        if self.bar_shown() { self.movie_content_top() } else { layout::SEARCH_CONTENT_TOP }
     }
     fn shelf_foot(&self, _cx: &Cx<'_, H>, _k: Sec) -> f32 {
         plx_ui::consts::UNDER_LABEL_AIR
@@ -944,7 +989,8 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
     }
     /// A card that went away (a page replaced its row) is replaced by the field.
     fn recover(&self, _cx: &Cx<'_, H>, _want: &u32) -> Option<u32> {
-        Some(FIELD)
+        if let Some(c) = &self.chooser { return Some(filters::CHIP_BASE + c.start as u32); }
+        Some(if self.matches.open && self.results.is_none() { matches::SORT } else { FIELD })
     }
 }
 
@@ -981,19 +1027,33 @@ impl<H: ContentLike> Screen<H> for RequestsScreen {
     fn links(&self, out: &mut Vec<Link>) {
         out.push(Link { from: STRIP, dir: Dir::Down, to: FIELD_GROUP });
         out.push(Link { from: FIELD_GROUP, dir: Dir::Up, to: STRIP });
-        let above = if self.bar_shown() { filters::GROUP } else { FIELD_GROUP };
-        if self.bar_shown() {
-            out.push(Link { from: FIELD_GROUP, dir: Dir::Down, to: filters::GROUP });
-            out.push(Link { from: filters::GROUP, dir: Dir::Up, to: FIELD_GROUP });
+        let mut link = |above, below| {
+            out.push(Link { from: above, dir: Dir::Down, to: below });
+            out.push(Link { from: below, dir: Dir::Up, to: above });
+        };
+        if !self.bar_shown() {
+            if let Some(first) = self.first_content() { link(FIELD_GROUP, first); }
+            return;
         }
-        if let Some(first) = self.first_content() {
-            out.push(Link { from: above, dir: Dir::Down, to: first });
-            out.push(Link { from: first, dir: Dir::Up, to: above });
+        link(FIELD_GROUP, filters::GROUP);
+        if self.chooser.as_ref().is_some_and(|c| c.pick != filters::Pick::Sort) {
+            link(filters::GROUP, filters::CHOICE_GROUP);
+            return;
         }
-        let groups: Vec<GroupId> = self.shown().map(|r| r.lane.group()).collect();
-        for pair in groups.windows(2) {
-            out.push(Link { from: pair[0], dir: Dir::Down, to: pair[1] });
-            out.push(Link { from: pair[1], dir: Dir::Up, to: pair[0] });
+        link(filters::GROUP, matches::GROUP);
+        if self.chooser.is_some() {
+            link(matches::GROUP, filters::CHOICE_GROUP);
+            return;
+        }
+        let mut above = matches::GROUP;
+        if self.matches.open {
+            if let Some(first) = self.first_content() { link(above, first); }
+        } else {
+            for row in self.shown() {
+                let below = row.lane.group();
+                link(above, below);
+                above = below;
+            }
         }
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -1013,11 +1073,37 @@ impl LogicalState for RequestsScreen {
         c.u32(self.phase as u32).bool(self.editing).u32(self.blink_us).bool(self.searching);
         c.str(self.query.text()).u64(self.query.caret() as u64).str(&self.searched);
         self.stack.write_scroll(c);
-        c.u32(self.next_elem).u32(self.rows_gen).u32(self.filter_gen).u64(self.bar_stamp);
+        c.u32(self.next_elem).u32(self.rows_gen).u32(self.filter_gen).u32(self.grid_gen).u64(self.bar_stamp);
         let b = &self.browse;
-        c.u32(b.genre.unwrap_or(0)).u32(b.keyword.unwrap_or(0)).u32(u32::from(b.from.unwrap_or(0))).u32(u32::from(b.to.unwrap_or(0)));
-        c.u32(self.chooser.as_ref().map_or(0, |ch| ch.pick.elem()));
-        let rows = self.rows.iter().chain(self.results.iter());
+        c.u32(b.genre.unwrap_or(0)).u32(u32::from(b.from.unwrap_or(0))).u32(u32::from(b.to.unwrap_or(0)));
+        c.str(b.language.unwrap_or("")).u32(u32::from(b.runtime_min.unwrap_or(0))).u32(u32::from(b.runtime_max.unwrap_or(0)));
+        c.seq(b.keywords.len());
+        for id in &b.keywords { c.u32(*id); }
+        c.u32(self.browse_gen).u32(self.keyword_gen).str(self.theme_input.text()).u64(self.theme_input.caret() as u64);
+        if let Some(ch) = &self.chooser {
+            c.u32(ch.pick.elem()).u32(ch.start as u32).u32(u32::from(ch.years.0.unwrap_or(0))).u32(u32::from(ch.years.1.unwrap_or(0)));
+            match ch.stage {
+                filters::Stage::Main => { c.u32(0); }
+                filters::Stage::Range => { c.u32(1); }
+                filters::Stage::Decades(bound) => { c.u32(2).u32(bound as u32); }
+                filters::Stage::Year(bound, first) => { c.u32(3).u32(bound as u32).u32(u32::from(first)); }
+            }
+        } else {
+            c.u32(0);
+        }
+        if let Some(search) = &self.keyword_search {
+            c.str(&search.query).u32(search.page).bool(search.waiting).bool(search.failed);
+            if let Some(page) = &search.found {
+                c.u32(page.pages).seq(page.items.len());
+                for word in &page.items { c.u32(word.id).str(&word.name); }
+            } else {
+                c.u32(0).seq(0);
+            }
+        } else {
+            c.str("");
+        }
+        self.matches.write(c);
+        let rows = self.rows.iter().chain(self.results.iter()).chain([&self.matches.row]);
         c.seq(rows.clone().count());
         for row in rows {
             c.u32(row.lane.ordinal()).bool(row.loaded).bool(row.failed).bool(row.more).bool(row.asked).u32(row.pages).u32(row.skip);
@@ -1028,6 +1114,10 @@ impl LogicalState for RequestsScreen {
             if let Some(shelf) = self.stack.shelf(self.sec(row.lane)) {
                 shelf.write(c);
             }
+        }
+        if let Some(grid) = self.stack.grid(Sec::Grid(self.grid_gen)) {
+            grid.write_bands(c);
+            grid.write_pop(c);
         }
     }
     fn probe(&self, out: &mut String) {

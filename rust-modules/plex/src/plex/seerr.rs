@@ -307,6 +307,24 @@ pub struct Genre {
     pub name: String,
 }
 
+/// A TMDB theme returned by Seerr's keyword search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Keyword {
+    pub id: u32,
+    pub name: String,
+}
+
+/// A movie listing and the number of matches before pagination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowsePage {
+    pub titles: Page<Title>,
+    pub total: u32,
+    pub capped: bool,
+}
+
+/// TMDB accepts page numbers 1–500 even when it reports more matches.
+const DISCOVER_MAX_PAGES: u32 = 500;
+
 /// The order a filtered movie listing is read in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Sort {
@@ -319,14 +337,18 @@ impl Sort {
     pub const ALL: [Sort; 3] = [Sort::Popular, Sort::TopRated, Sort::Newest];
 }
 
-/// The filters of a movie listing, all of which TMDB applies before it pages: a genre, a keyword (a
-/// mood such as "heist"), and an inclusive range of release years. `None` leaves that side open.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+/// Filters that Seerr passes to TMDB before paging. Keywords match all selected themes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Browse {
     pub genre: Option<u32>,
-    pub keyword: Option<u32>,
+    /// Kept in numeric order so the same themes always make the same query.
+    pub keywords: Vec<u32>,
     pub from: Option<u16>,
     pub to: Option<u16>,
+    /// `None` inherits the Seerr profile; `"all"` explicitly clears that restriction.
+    pub language: Option<&'static str>,
+    pub runtime_min: Option<u16>,
+    pub runtime_max: Option<u16>,
 }
 
 impl Browse {
@@ -334,12 +356,9 @@ impl Browse {
         *self == Browse::default()
     }
 
-    /// `GET /api/v1/discover/movies` for one page (from 1) in `sort` order. `today` is `YYYY-MM-DD`:
-    /// the upper bound that keeps unreleased titles out of the newest-first order, and the end of a
-    /// range that has only a first year. A last year alone starts at 1900. Top rated needs a vote floor,
-    /// as otherwise a title with a handful of perfect votes leads; newest-first needs a small one for
-    /// the same reason. The `language` parameter is never sent: Seerr reads it as the ORIGINAL language.
-    pub fn path(&self, sort: Sort, page: u32, today: &str) -> String {
+    /// `GET /api/v1/discover/movies` for one page (from 1), with identical filters in every order.
+    pub fn path(&self, sort: Sort, page: u32) -> String {
+        use std::fmt::Write;
         let order = match sort {
             Sort::Popular => "popularity.desc",
             Sort::TopRated => "vote_average.desc",
@@ -347,28 +366,28 @@ impl Browse {
         };
         let mut path = format!("/api/v1/discover/movies?page={page}&sortBy={order}");
         if let Some(genre) = self.genre {
-            path.push_str(&format!("&genre={genre}"));
+            let _ = write!(path, "&genre={genre}");
         }
-        if let Some(keyword) = self.keyword {
-            path.push_str(&format!("&keywords={keyword}"));
+        if let Some((first, rest)) = self.keywords.split_first() {
+            let _ = write!(path, "&keywords={first}");
+            for keyword in rest {
+                let _ = write!(path, ",{keyword}");
+            }
         }
-        let from = self.from.map(|y| format!("{y:04}-01-01"));
-        let to = self.to.map(|y| format!("{y:04}-12-31"));
-        let first = from.clone().or_else(|| to.is_some().then(|| "1900-01-01".to_string()));
-        let last = match sort {
-            Sort::Newest => Some(to.filter(|end| end.as_str() < today).unwrap_or_else(|| today.to_string())),
-            _ => to.or_else(|| from.is_some().then(|| today.to_string())),
-        };
-        if let Some(first) = first {
-            path.push_str(&format!("&primaryReleaseDateGte={first}"));
+        // Seerr injects 1900 or a near-future cutoff if the other bound is missing.
+        if self.from.is_some() || self.to.is_some() {
+            let from = self.from.unwrap_or(1800);
+            let to = self.to.unwrap_or(9999);
+            let _ = write!(path, "&primaryReleaseDateGte={from:04}-01-01&primaryReleaseDateLte={to:04}-12-31");
         }
-        if let Some(last) = last {
-            path.push_str(&format!("&primaryReleaseDateLte={last}"));
+        if let Some(language) = self.language {
+            let _ = write!(path, "&language={language}");
         }
-        match sort {
-            Sort::Popular => {}
-            Sort::TopRated => path.push_str("&voteCountGte=100"),
-            Sort::Newest => path.push_str("&voteCountGte=5"),
+        if let Some(minutes) = self.runtime_min {
+            let _ = write!(path, "&withRuntimeGte={minutes}");
+        }
+        if let Some(minutes) = self.runtime_max {
+            let _ = write!(path, "&withRuntimeLte={minutes}");
         }
         path
     }
@@ -719,12 +738,15 @@ impl<'a, T: Transport> Seerr<'a, T> {
     }
 
     fn titles(&self, path: String) -> Result<Page<Title>, SeerrError> {
-        let v = self.get(path)?;
+        Self::title_page(&self.get(path)?)
+    }
+
+    fn title_page(v: &Value) -> Result<Page<Title>, SeerrError> {
         let results = v.get("results").and_then(Value::as_array).ok_or(SeerrError::NotSeerr)?;
         Ok(Page {
             items: results.iter().filter_map(Title::of_result).collect(),
-            page: u32::try_from(int(&v, "page")).unwrap_or(1),
-            pages: u32::try_from(int(&v, "totalPages")).unwrap_or(1),
+            page: u32::try_from(int(v, "page")).unwrap_or(1),
+            pages: u32::try_from(int(v, "totalPages")).unwrap_or(1),
         })
     }
 
@@ -734,8 +756,30 @@ impl<'a, T: Transport> Seerr<'a, T> {
     }
 
     /// One page (from 1) of movies under `filter`, in `sort` order; see [`Browse::path`].
-    pub fn browse(&self, filter: &Browse, sort: Sort, page: u32, today: &str) -> Result<Page<Title>, SeerrError> {
-        self.titles(filter.path(sort, page, today))
+    pub fn browse(&self, filter: &Browse, sort: Sort, page: u32) -> Result<BrowsePage, SeerrError> {
+        let v = self.get(filter.path(sort, page))?;
+        let mut titles = Self::title_page(&v)?;
+        let capped = titles.pages > DISCOVER_MAX_PAGES;
+        titles.pages = titles.pages.min(DISCOVER_MAX_PAGES);
+        let total = v.get("totalResults").and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok()).ok_or(SeerrError::NotSeerr)?;
+        Ok(BrowsePage { titles, total, capped })
+    }
+
+    /// Seerr exposes the TMDB keyword search with TMDB's snake_case page fields unchanged.
+    pub fn keywords(&self, query: &str, page: u32) -> Result<Page<Keyword>, SeerrError> {
+        let v = self.get(format!("/api/v1/search/keyword?query={}&page={page}", enc(query.trim())))?;
+        let items = v.get("results").and_then(Value::as_array).ok_or(SeerrError::NotSeerr)?
+            .iter().filter_map(|item| {
+                let id = u32::try_from(int(item, "id")).ok().filter(|id| *id != 0)?;
+                let name = text(item, "name");
+                (!name.trim().is_empty() && !name.contains('\0')).then_some(Keyword { id, name })
+            }).collect();
+        Ok(Page {
+            items,
+            page: u32::try_from(int(&v, "page")).unwrap_or(1),
+            pages: u32::try_from(int(&v, "total_pages")).unwrap_or(1).min(DISCOVER_MAX_PAGES),
+        })
     }
 
     /// The movie genres Seerr offers, with the ids `Browse::genre` takes.
@@ -1013,36 +1057,25 @@ mod tests {
         assert_eq!(seerr.rules(), Ok(Rules { partial: true, specials: false }));
     }
 
-    const TODAY: &str = "2026-08-15";
-
     #[test]
-    fn a_filtered_listing_sends_genre_keyword_and_inclusive_year_bounds_to_seerr() {
-        let all = Browse { genre: Some(28), keyword: Some(779), from: Some(1990), to: Some(1999) };
-        assert_eq!(
-            all.path(Sort::Popular, 2, TODAY),
-            "/api/v1/discover/movies?page=2&sortBy=popularity.desc&genre=28&keywords=779&primaryReleaseDateGte=1990-01-01&primaryReleaseDateLte=1999-12-31"
-        );
-        assert!(all.path(Sort::TopRated, 1, TODAY).ends_with("&voteCountGte=100"));
-        assert!(all.path(Sort::TopRated, 1, TODAY).contains("sortBy=vote_average.desc"));
-        let one_year = Browse { from: Some(2005), to: Some(2005), ..Browse::default() };
-        assert!(one_year.path(Sort::Popular, 1, TODAY).ends_with("&primaryReleaseDateGte=2005-01-01&primaryReleaseDateLte=2005-12-31"));
-        assert_eq!(Browse::default().path(Sort::Popular, 1, TODAY), "/api/v1/discover/movies?page=1&sortBy=popularity.desc");
-    }
-
-    #[test]
-    fn a_range_with_one_end_is_closed_and_newest_never_lists_the_unreleased() {
-        let from = Browse { from: Some(2010), ..Browse::default() };
-        assert!(from.path(Sort::Popular, 1, TODAY).ends_with("&primaryReleaseDateGte=2010-01-01&primaryReleaseDateLte=2026-08-15"));
-        let to = Browse { to: Some(1979), ..Browse::default() };
-        assert!(to.path(Sort::Popular, 1, TODAY).ends_with("&primaryReleaseDateGte=1900-01-01&primaryReleaseDateLte=1979-12-31"));
-        let newest = Browse::default().path(Sort::Newest, 1, TODAY);
-        assert_eq!(
-            newest,
-            "/api/v1/discover/movies?page=1&sortBy=primary_release_date.desc&primaryReleaseDateLte=2026-08-15&voteCountGte=5"
-        );
-        assert!(to.path(Sort::Newest, 1, TODAY).contains("&primaryReleaseDateLte=1979-12-31&"), "an earlier end wins over today");
-        let future = Browse { to: Some(2030), ..Browse::default() };
-        assert!(future.path(Sort::Newest, 1, TODAY).contains("&primaryReleaseDateLte=2026-08-15&"), "a later end is cut at today");
+    fn discover_sorts_the_same_combined_filters_without_discarding_niche_titles() {
+        let filter = Browse {
+            genre: Some(35),
+            keywords: vec![10051, 10123],
+            from: Some(1999),
+            to: Some(1999),
+            language: Some("ko"),
+            runtime_min: Some(91),
+            runtime_max: Some(120),
+        };
+        let filters = "&genre=35&keywords=10051,10123&primaryReleaseDateGte=1999-01-01&primaryReleaseDateLte=1999-12-31&language=ko&withRuntimeGte=91&withRuntimeLte=120";
+        for (sort, order) in Sort::ALL.into_iter().zip(["popularity.desc", "vote_average.desc", "primary_release_date.desc"]) {
+            assert_eq!(filter.path(sort, 2), format!("/api/v1/discover/movies?page=2&sortBy={order}{filters}"));
+        }
+        let open = Browse { from: Some(2010), language: Some("all"), ..Browse::default() };
+        assert!(open.path(Sort::Popular, 1).ends_with("&primaryReleaseDateGte=2010-01-01&primaryReleaseDateLte=9999-12-31&language=all"));
+        let until = Browse { to: Some(1899), ..Browse::default() };
+        assert!(until.path(Sort::Newest, 1).ends_with("&primaryReleaseDateGte=1800-01-01&primaryReleaseDateLte=1899-12-31"));
     }
 
     #[test]
@@ -1051,18 +1084,26 @@ mod tests {
             {"id":603,"mediaType":"movie","title":"The Matrix","releaseDate":"1999-03-30","posterPath":"/m.jpg","mediaInfo":{"status":5,"tmdbId":603}},
             {"id":8,"mediaType":"movie","title":"Another","releaseDate":"1998-01-01","posterPath":"/a.jpg"}]}"#;
         let none = r#"{"page":1,"totalPages":0,"totalResults":0,"keywords":[],"results":[]}"#;
-        let hit = Browse { genre: Some(28), keyword: Some(779), from: Some(1990), to: Some(1999) };
-        let miss = Browse { genre: Some(99), keyword: Some(12339), from: Some(1930), to: Some(1939) };
+        let hit = Browse { genre: Some(28), keywords: vec![779], from: Some(1990), to: Some(1999), ..Browse::default() };
+        let miss = Browse { genre: Some(99), keywords: vec![12339], from: Some(1930), to: Some(1939), ..Browse::default() };
         let fake = Fake::new(&[
             ("/api/v1/discover/movies?page=1&sortBy=popularity.desc&genre=28&keywords=779&primaryReleaseDateGte=1990-01-01&primaryReleaseDateLte=1999-12-31", 200, found),
             ("/api/v1/discover/movies?page=1&sortBy=popularity.desc&genre=99&keywords=12339&primaryReleaseDateGte=1930-01-01&primaryReleaseDateLte=1939-12-31", 200, none),
         ]);
         let seerr = Seerr::new(BASE, SESSION, "plex-token", &fake);
-        let page = seerr.browse(&hit, Sort::Popular, 1, TODAY).unwrap();
-        assert_eq!((page.items.len(), page.page, page.pages, page.more()), (2, 1, 14, true));
-        assert_eq!((page.items[0].tmdb, page.items[0].year.as_str()), (603, "1999"));
-        let empty = seerr.browse(&miss, Sort::Popular, 1, TODAY).unwrap();
-        assert_eq!((empty.items.len(), empty.more()), (0, false));
+        let BrowsePage { titles: page, total, capped } = seerr.browse(&hit, Sort::Popular, 1).unwrap();
+        assert_eq!((page.items.len(), page.page, page.pages, page.more(), total), (2, 1, 14, true, 272));
+        assert!(!capped);
+        let BrowsePage { titles: empty, total, .. } = seerr.browse(&miss, Sort::Popular, 1).unwrap();
+        assert_eq!((empty.items.len(), empty.more(), total), (0, false, 0));
+    }
+
+    #[test]
+    fn keyword_search_uses_tmdb_paging_and_rejects_invalid_choices() {
+        let fake = Fake::new(&[("/api/v1/search/keyword?query=sea%20%26%20sand&page=2", 200,
+            r#"{"page":2,"total_pages":3,"total_results":22,"results":[{"id":18,"name":"sea"},{"id":0,"name":"bad"},{"id":22,"name":" "} ]}"#)]);
+        let found = Seerr::new(BASE, SESSION, "plex-token", &fake).keywords(" sea & sand ", 2).unwrap();
+        assert_eq!(found, Page { items: vec![Keyword { id: 18, name: "sea".into() }], page: 2, pages: 3 });
     }
 
     #[test]

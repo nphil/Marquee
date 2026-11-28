@@ -17,6 +17,7 @@
 //! | `PLXNATIVE_DUMP_NO_HOLD=1` | write every frame whatever the debt (a negative-test switch, never a render) |
 //! | `PLXNATIVE_DUMP_ALLOW_ABSENT=1` | do not fail on a settled-absent hero logo, a never-resolving card or a failed art request (a proof switch) |
 //! | `PLXNATIVE_DUMP_KEYS=<v>:<key>,...` | press `up`/`down`/`left`/`right`/`ok`/`back`: the down edge at the first iteration of virtual frame `<v>`, the up edge [`KEY_UP_AFTER`] frames later (the storyboard's compiled key schedule, `tests/video/feel.json`, arrives through this variable). `hold` is OK held for [`HOLD_UP_AFTER`] frames (the long press that opens an item's context menu) |
+//! | `PLXNATIVE_DUMP_TEXT=<v>:<text>` | one desktop text commit on virtual frame `<v>`; schedule the usual OK keys to open and submit the keyboard |
 //! | `PLXNATIVE_DUMP_CLICKS=<v>:<x>:<y>,...` | native pointer click at canvas coordinates on virtual frame `<v>`, released six frames later |
 //! | `PLXNATIVE_DUMP_ALLOW_OVERLAY=1` | do not fail when a modal or popover is open. A MOTION-REVIEW switch: the underlay's dim field is cadenced by presented iterations, so such a frame is not guaranteed to be hold-independent (the hold-injection gate does not cover it) and the render is never a film deliverable (registry still previews may use it) |
 //! | `PLXNATIVE_DUMP_EXTRA_HOLDS=<k>` or `r<seed>` | force `k` (or a seeded 0..=3) EXTRA held repeats on every clean virtual frame: the hold-injection gate's switch |
@@ -513,6 +514,7 @@ struct Cfg {
     allow_absent: bool,
     keys: Vec<(u64, Key, u64)>,
     clicks: Vec<(u64, f32, f32)>,
+    text: Option<(u64, String)>,
     allow_overlay: bool,
     extra_holds: ExtraHolds,
 }
@@ -536,6 +538,10 @@ impl Cfg {
             allow_overlay: std::env::var_os("PLXNATIVE_DUMP_ALLOW_OVERLAY").is_some(),
             keys: std::env::var("PLXNATIVE_DUMP_KEYS").map_or_else(|_| Ok(Vec::new()), |s| parse_keys(&s)).unwrap_or_else(|e| panic!("framedump: {e}")),
             clicks: std::env::var("PLXNATIVE_DUMP_CLICKS").map_or_else(|_| Ok(Vec::new()), |s| parse_clicks(&s)).unwrap_or_else(|e| panic!("framedump: {e}")),
+            text: std::env::var("PLXNATIVE_DUMP_TEXT").ok().filter(|s| !s.is_empty()).map(|s| {
+                let (at, text) = s.split_once(':').expect("framedump: DUMP_TEXT needs <frame>:<text>");
+                (at.parse().expect("framedump: DUMP_TEXT frame is not a number"), text.to_owned())
+            }),
             extra_holds: std::env::var("PLXNATIVE_DUMP_EXTRA_HOLDS")
                 .map_or(Ok(ExtraHolds::Fixed(0)), |s| ExtraHolds::parse(&s))
                 .unwrap_or_else(|e| panic!("framedump: {e}")),
@@ -543,6 +549,10 @@ impl Cfg {
         check_key_schedule(&cfg.keys, cfg.preroll, cfg.frames).unwrap_or_else(|e| panic!("framedump: {e}"));
         let clicks: Vec<_> = cfg.clicks.iter().map(|&(at,_,_)| (at,Key::Ok,KEY_UP_AFTER)).collect();
         check_key_schedule(&clicks, cfg.preroll, cfg.frames).unwrap_or_else(|e| panic!("framedump: {e}"));
+        if let Some((at, text)) = &cfg.text {
+            assert!(!text.is_empty() && *at < u64::from(cfg.preroll) + u64::from(cfg.frames),
+                "framedump: DUMP_TEXT needs nonempty text on a frame inside the run");
+        }
         Some(cfg)
     }
 }
@@ -749,6 +759,13 @@ pub(crate) fn iteration_begin(app: &mut App) {
         // frame took.
         if d.holds_run == 0 {
             let at = Tick { ms: ORIGIN_MS + virtual_ms(d.v), dt_us: 0 };
+            if let Some((frame, text)) = &d.cfg.text {
+                if *frame == d.v {
+                    app.inputs.extend(crate::app::events::text_inputs(
+                        text, false, at, plx_machine::machine::Source::Sdl,
+                    ));
+                }
+            }
             while d.keys_next < d.cfg.keys.len() && d.cfg.keys[d.keys_next].0 <= d.v {
                 let (_, key, up_after) = d.cfg.keys[d.keys_next];
                 d.keys_next += 1;

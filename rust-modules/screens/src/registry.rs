@@ -122,6 +122,8 @@ pub enum RequestsCmd {
     },
     /// The movie genres Seerr offers.
     Genres { reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// One page of TMDB theme names matching the typed words.
+    Keywords { query: String, page: u32, gen: u32, reply: std::sync::mpsc::Sender<RequestsReply> },
     /// The episode stills of a series' title page: these seasons', in the order given.
     Stills { tmdb: u32, seasons: Vec<u32>, reply: std::sync::mpsc::Sender<RequestsReply> },
     /// Open a YouTube video in the TV's YouTube app (the title page's Trailer action).
@@ -171,9 +173,14 @@ pub enum RequestsReply {
         gen: u32,
         sort: plx_plex::plex::seerr::Sort,
         page: u32,
-        result: Result<plx_plex::plex::seerr::Page<plx_plex::plex::seerr::Title>, plx_plex::plex::seerr::SeerrError>,
+        result: Result<plx_plex::plex::seerr::BrowsePage, plx_plex::plex::seerr::SeerrError>,
     },
     Genres(Result<Vec<plx_plex::plex::seerr::Genre>, plx_plex::plex::seerr::SeerrError>),
+    Keywords {
+        gen: u32,
+        page: u32,
+        result: Result<plx_plex::plex::seerr::Page<plx_plex::plex::seerr::Keyword>, plx_plex::plex::seerr::SeerrError>,
+    },
     Stills { tmdb: u32, result: Result<Vec<plx_plex::plex::seerr::Still>, plx_plex::plex::seerr::SeerrError> },
     /// Whether the YouTube app took the video.
     Trailer { opened: bool },

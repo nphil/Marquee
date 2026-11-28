@@ -1,29 +1,31 @@
-//! The Requests page's filter bar: genre, first and last release year and a mood, set from a row of
-//! controls under the search pill. Picking a value swaps the bar for a strip of choices in place (no
-//! menu over the page); the choice is a filter Seerr hands to TMDB, so the rows under the bar are the
-//! filtered listing, page after page, not a filtered copy of the first page.
+//! Movie filters for Requests. The bar keeps its values visible while a choice panel is open.
+//! The panel is a D-pad grid, while the existing TV keyboard optionally searches Seerr for themes.
 use super::*;
-use plx_plex::plex::seerr::{Browse, Genre};
-use std::cell::RefCell;
-use std::ffi::{CStr, CString};
+use plx_plex::plex::seerr::{Genre, Keyword, Page, SeerrError};
+use plx_platform::i18n::msg;
+use plx_ui::icons::Icon;
+use plx_ui::theme::{size, space};
+use std::ffi::CString;
 
 pub(super) const GENRE: u32 = 2;
-pub(super) const FROM: u32 = 3;
-pub(super) const TO: u32 = 4;
-pub(super) const MOOD: u32 = 5;
-pub(super) const RESET: u32 = 6;
+pub(super) const YEARS: u32 = 3;
+pub(super) const THEMES: u32 = 4;
+pub(super) const LANGUAGE: u32 = 5;
+pub(super) const RUNTIME: u32 = 6;
+pub(super) const RESET: u32 = 7;
 pub(super) const GROUP: GroupId = GroupId(0x5251_0001);
 pub(super) const NOTE_GROUP: GroupId = GroupId(0x5251_0002);
-/// The first element of the choice strip; below the top bar's tabs and above the page's own numbers.
+pub(super) const CHOICE_GROUP: GroupId = GroupId(0x5251_0003);
 pub(super) const CHIP_BASE: u32 = 0x2000_0000;
-/// The oldest year the strip offers.
-const OLDEST: u16 = 1920;
-/// The gap between two controls.
-const GAP: f32 = plx_ui::theme::space::SM;
+pub(super) const COLS: usize = 4;
+const VISIBLE_ROWS: usize = 4;
+const OLDEST: u16 = 1890;
+const GAP: f32 = space::SM;
+pub(super) const HEIGHT: f32 = plx_ui::widgets::StatusOverlay::CTRL_H + space::SM;
+const TITLE_H: f32 = space::XL;
 
-/// Whether `elem` is a control of the bar or a choice of its strip.
 pub(super) fn is_bar(elem: u32) -> bool {
-    (GENRE..=RESET).contains(&elem) || is_chip(elem)
+    (GENRE..=RESET).contains(&elem)
 }
 
 pub(super) fn is_chip(elem: u32) -> bool {
@@ -34,112 +36,147 @@ pub(super) fn is_chip(elem: u32) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Pick {
     Genre,
-    From,
-    To,
-    Mood,
+    Years,
+    Themes,
+    Language,
+    Runtime,
+    Sort,
 }
 
 impl Pick {
-    const ALL: [Pick; 4] = [Pick::Genre, Pick::From, Pick::To, Pick::Mood];
+    const FILTERS: [Self; 5] = [Self::Genre, Self::Years, Self::Themes, Self::Language, Self::Runtime];
 
     pub(super) fn elem(self) -> u32 {
         match self {
-            Pick::Genre => GENRE,
-            Pick::From => FROM,
-            Pick::To => TO,
-            Pick::Mood => MOOD,
+            Self::Genre => GENRE,
+            Self::Years => YEARS,
+            Self::Themes => THEMES,
+            Self::Language => LANGUAGE,
+            Self::Runtime => RUNTIME,
+            Self::Sort => matches::SORT,
         }
     }
 
-    pub(super) fn of(elem: u32) -> Option<Pick> {
-        Pick::ALL.into_iter().find(|p| p.elem() == elem)
+    pub(super) fn of(elem: u32) -> Option<Self> {
+        Self::FILTERS.into_iter().chain([Self::Sort]).find(|p| p.elem() == elem)
     }
 
-    fn name(self) -> &'static str {
-        use plx_platform::i18n::msg;
+    pub(super) fn name(self) -> &'static str {
         match self {
-            Pick::Genre => msg::requests_filter_genre(),
-            Pick::From => msg::requests_filter_from(),
-            Pick::To => msg::requests_filter_to(),
-            Pick::Mood => msg::requests_filter_mood(),
-        }
-    }
-
-    fn any_label(self) -> &'static str {
-        use plx_platform::i18n::msg;
-        match self {
-            Pick::Genre => msg::requests_filter_any_genre(),
-            Pick::From => msg::requests_filter_any_from(),
-            Pick::To => msg::requests_filter_any_to(),
-            Pick::Mood => msg::requests_filter_any_mood(),
-        }
-    }
-
-    /// The filter with this control set to `value`. A first year after the last, or a last before the
-    /// first, drags the other end along so the range is never empty by construction; a decade sets both.
-    fn set(self, mut browse: Browse, value: Value) -> Browse {
-        match (self, value) {
-            (Pick::Genre, Value::Any) => browse.genre = None,
-            (Pick::Genre, Value::Id(id)) => browse.genre = Some(id),
-            (Pick::Mood, Value::Any) => browse.keyword = None,
-            (Pick::Mood, Value::Id(id)) => browse.keyword = Some(id),
-            (Pick::From, Value::Any) => browse.from = None,
-            (Pick::From, Value::Year(year)) => {
-                browse.from = Some(year);
-                browse.to = browse.to.map(|to| to.max(year));
-            }
-            (Pick::From, Value::Decade(start)) => (browse.from, browse.to) = (Some(start), Some(start + 9)),
-            (Pick::To, Value::Any) => browse.to = None,
-            (Pick::To, Value::Year(year)) => {
-                browse.to = Some(year);
-                browse.from = browse.from.map(|from| from.min(year));
-            }
-            _ => {}
-        }
-        browse
-    }
-
-    /// The choice that stands for this control's current value, if the strip has one.
-    fn is_current(self, browse: &Browse, value: Value) -> bool {
-        match (self, value) {
-            (Pick::Genre, Value::Any) => browse.genre.is_none(),
-            (Pick::Genre, Value::Id(id)) => browse.genre == Some(id),
-            (Pick::Mood, Value::Any) => browse.keyword.is_none(),
-            (Pick::Mood, Value::Id(id)) => browse.keyword == Some(id),
-            (Pick::From, Value::Any) => browse.from.is_none(),
-            (Pick::From, Value::Year(year)) => browse.from == Some(year),
-            (Pick::To, Value::Any) => browse.to.is_none(),
-            (Pick::To, Value::Year(year)) => browse.to == Some(year),
-            _ => false,
+            Self::Genre => msg::requests_filter_genre(),
+            Self::Years => msg::requests_filter_years(),
+            Self::Themes => msg::requests_filter_themes(),
+            Self::Language => msg::requests_filter_language(),
+            Self::Runtime => msg::requests_filter_runtime(),
+            Self::Sort => msg::requests_matches_sort(),
         }
     }
 }
 
-/// What a choice of the strip sets.
+type Years = (Option<u16>, Option<u16>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Bound {
+    Start,
+    End,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Stage {
+    #[default]
+    Main,
+    Range,
+    Decades(Bound),
+    Year(Bound, u16),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Value {
-    Any,
-    Id(u32),
-    Year(u16),
-    /// A whole decade, named by its first year: sets the first and the last year together.
-    Decade(u16),
-    /// Not a choice: asks for the genres again.
-    Retry,
-    /// Not a choice: the genres are on their way.
-    Waiting,
+    Genre(Option<u32>),
+    Years(Years),
+    Range,
+    ApplyRange,
+    Bound(Bound),
+    Decade(Bound, u16),
+    Year(Bound, Option<u16>),
+    Theme(u32),
+    FindTheme,
+    ClearThemes,
+    ThemePage(u32),
+    Language(Option<&'static str>),
+    Runtime(Option<u16>, Option<u16>),
+    Sort(Sort),
+    RetryGenres,
+    Note(Note),
 }
 
 pub(super) struct Choice {
     pub(super) label: CString,
     pub(super) value: Value,
+    pub(super) selected: bool,
 }
 
-/// The strip that replaces the bar while a value is being picked.
 pub(super) struct Chooser {
     pub(super) pick: Pick,
+    pub(super) stage: Stage,
     pub(super) choices: Vec<Choice>,
-    /// The choice that stands for the value now, where the strip opens.
     pub(super) start: usize,
+    /// Custom changes are not sent until Apply.
+    pub(super) years: Years,
+}
+
+impl Chooser {
+    pub(super) fn title(&self) -> &'static std::ffi::CStr {
+        match self.stage {
+            Stage::Range => msg::requests_filter_custom_years_c(),
+            Stage::Decades(Bound::Start) | Stage::Year(Bound::Start, _) => msg::requests_filter_start_year_c(),
+            Stage::Decades(Bound::End) | Stage::Year(Bound::End, _) => msg::requests_filter_end_year_c(),
+            Stage::Main => match self.pick {
+                Pick::Genre => msg::requests_filter_genre_c(),
+                Pick::Years => msg::requests_filter_years_c(),
+                Pick::Themes => msg::requests_filter_themes_c(),
+                Pick::Language => msg::requests_filter_language_c(),
+                Pick::Runtime => msg::requests_filter_runtime_c(),
+                Pick::Sort => msg::requests_matches_sort_c(),
+            },
+        }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.choices.len() - usize::from(self.choices.last().is_some_and(|c| matches!(c.value, Value::Note(_))))
+    }
+
+    pub(super) fn height(&self) -> f32 {
+        let rows = self.choices.len().div_ceil(COLS).min(VISIBLE_ROWS);
+        TITLE_H + rows as f32 * (HEIGHT + GAP)
+    }
+
+    pub(super) fn visible(&self, focus: Option<usize>) -> std::ops::Range<usize> {
+        let max_start = self.choices.len().div_ceil(COLS).saturating_sub(VISIBLE_ROWS);
+        let first = (focus.unwrap_or(self.start) / COLS).saturating_sub(1).min(max_start);
+        first * COLS..((first + VISIBLE_ROWS) * COLS).min(self.choices.len())
+    }
+
+    pub(super) fn rect(&self, focus: Option<usize>, n: usize, section: Rect) -> Option<Rect> {
+        let visible = self.visible(focus);
+        if !visible.contains(&n) { return None; }
+        let row = (n - visible.start) / COLS;
+        let w = (SCR_W - 2.0 * plx_ui::consts::MARGIN_X - (COLS - 1) as f32 * GAP) / COLS as f32;
+        let y = section.y + TITLE_H + row as f32 * (HEIGHT + GAP);
+        Some(Rect::new(plx_ui::consts::MARGIN_X + (n % COLS) as f32 * (w + GAP), y, w, HEIGHT))
+    }
+
+    pub(super) fn step(&self, at: usize, dir: Dir) -> Option<usize> {
+        let len = self.len();
+        let target = match dir {
+            Dir::Left if at % COLS != 0 => at.checked_sub(1)?,
+            Dir::Right if at % COLS + 1 < COLS => at + 1,
+            Dir::Up => at.checked_sub(COLS)?,
+            Dir::Down if (at / COLS + 1) * COLS < len => (at + COLS).min(len - 1),
+            _ => return None,
+        };
+        (target < len).then_some(target)
+    }
 }
 
 /// Where the genres Seerr offers stand.
@@ -151,18 +188,17 @@ pub(super) enum Genres {
     Failed,
 }
 
-/// The moods: a keyword TMDB tags films with, and its name. Ids are TMDB's own and stay put; each has
-/// over 250 films, so a mood never filters to a handful.
+/// The first choices don't require typing. Everything else is searchable on Seerr.
 pub(super) const MOODS: [(u32, fn() -> &'static str); 27] = {
     use plx_platform::i18n::msg;
     [
+        (10051, msg::requests_mood_heist),
+        (10123, msg::requests_mood_dark_comedy),
         (207268, msg::requests_mood_neo_noir),
         (9807, msg::requests_mood_film_noir),
-        (10123, msg::requests_mood_dark_comedy),
         (4565, msg::requests_mood_dystopia),
         (12190, msg::requests_mood_cyberpunk),
         (4379, msg::requests_mood_time_travel),
-        (10051, msg::requests_mood_heist),
         (9672, msg::requests_mood_true_story),
         (10683, msg::requests_mood_coming_of_age),
         (4458, msg::requests_mood_post_apocalyptic),
@@ -186,192 +222,151 @@ pub(super) const MOODS: [(u32, fn() -> &'static str); 27] = {
     ]
 };
 
-fn label(text: &str) -> Option<CString> {
-    CString::new(text).ok()
-}
-
-/// A bar control: what it says and whether it holds a filter.
 pub(super) struct Pill {
     pub(super) elem: u32,
     pub(super) label: CString,
-    pub(super) active: bool,
+    pub(super) icon: Option<Icon>,
 }
 
-/// The controls for `browse`: each with its value, then Reset while any is set.
-pub(super) fn pills(browse: &Browse, genres: &Genres) -> Vec<Pill> {
-    use plx_platform::i18n::msg;
-    let any = msg::requests_filter_any();
-    let genre = browse.genre.and_then(|id| match genres {
-        Genres::Loaded(list) => list.iter().find(|g| g.id == id).map(|g| g.name.as_str()),
-        _ => None,
-    });
-    let mood = browse.keyword.and_then(|id| MOODS.iter().find(|m| m.0 == id)).map(|m| (m.1)());
-    let from = browse.from.map(|y| y.to_string());
-    let to = browse.to.map(|y| y.to_string());
-    let mut out = Vec::with_capacity(5);
-    for pick in Pick::ALL {
-        let value = match pick {
-            Pick::Genre => genre,
-            Pick::From => from.as_deref(),
-            Pick::To => to.as_deref(),
-            Pick::Mood => mood,
-        };
-        let active = value.is_some();
-        let text = msg::requests_filter_pill(pick.name(), value.unwrap_or(any));
-        out.extend(label(&text).map(|label| Pill { elem: pick.elem(), label, active }));
+impl Pill {
+    pub(super) fn new(elem: u32, label: &str, icon: Option<Icon>) -> Self {
+        Self { elem, label: CString::new(label).unwrap_or_default(), icon }
     }
-    if !browse.is_empty() {
-        out.push(Pill { elem: RESET, label: msg::requests_filter_reset_c().to_owned(), active: false });
-    }
-    out
 }
 
-/// This year, for the top of the year strip.
+/// A single page of theme names; the query generation belongs to the screen, not to the panel.
+pub(super) struct ThemeSearch {
+    pub(super) query: String,
+    pub(super) page: u32,
+    pub(super) waiting: bool,
+    pub(super) failed: bool,
+    pub(super) found: Option<Page<Keyword>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Note {
+    Working,
+    Empty,
+    Failed,
+}
+
+type RuntimeChoice = (Option<u16>, Option<u16>, fn() -> &'static str);
+const RUNTIMES: [RuntimeChoice; 4] = [
+    (None, None, msg::requests_filter_any_runtime),
+    (Some(1), Some(90), msg::requests_filter_short),
+    (Some(91), Some(120), msg::requests_filter_medium),
+    (Some(121), None, msg::requests_filter_long),
+];
+
+fn year_label(years: Years) -> Option<String> {
+    match years {
+        (None, None) => None,
+        (Some(start), Some(end)) if start == end => Some(start.to_string()),
+        (Some(start), Some(end)) => Some(msg::requests_filter_year_range(&start.to_string(), &end.to_string())),
+        (Some(start), None) => Some(msg::requests_filter_year_since(&start.to_string())),
+        (None, Some(end)) => Some(msg::requests_filter_year_until(&end.to_string())),
+    }
+}
+
+fn language_name(code: &str) -> Option<&'static str> {
+    if code == "all" {
+        return Some(msg::requests_filter_any_language());
+    }
+    plx_plex::plex::languages::LANGUAGES.iter().find(|l| l.code == code).map(|l| l.name)
+}
+
 fn this_year() -> u16 {
     let stamp = i64::try_from(plx_plex::plex::seerr_cache::now()).unwrap_or(0);
     plx_platform::i18n::local_calendar_date(stamp).and_then(|d| u16::try_from(d[0]).ok()).unwrap_or(2026)
 }
 
-/// The strip for `pick`: Any first, then the values, newest year first. The first-year strip puts the
-/// decades before the years, so a range such as the 1920s is one choice.
-pub(super) fn chooser(pick: Pick, browse: &Browse, genres: &Genres) -> Chooser {
-    use plx_platform::i18n::msg;
-    let mut choices = vec![Choice { label: label(pick.any_label()).unwrap_or_default(), value: Value::Any }];
-    let mut push = |text: &str, value: Value| choices.extend(label(text).map(|label| Choice { label, value }));
-    match pick {
-        Pick::Genre => match genres {
-            Genres::Loaded(list) => list.iter().for_each(|g| push(&g.name, Value::Id(g.id))),
-            Genres::Failed => push(msg::requests_filter_retry(), Value::Retry),
-            // placeholder-exempt: the visible waiting chip is counted in render::bar.
-            Genres::Unknown | Genres::Asked => push(msg::requests_loading(), Value::Waiting),
-        },
-        Pick::Mood => MOODS.iter().for_each(|(id, name)| push(name(), Value::Id(*id))),
-        Pick::From | Pick::To => {
-            let year = this_year();
-            if pick == Pick::From {
-                for start in (OLDEST..=year - year % 10).rev().step_by(10) {
-                    push(&msg::requests_filter_decade(&start.to_string()), Value::Decade(start));
-                }
+fn decade(year: u16) -> u16 {
+    year - year % 10
+}
+
+fn year_bound(years: Years, bound: Bound) -> Option<u16> {
+    match bound { Bound::Start => years.0, Bound::End => years.1 }
+}
+
+fn with_year(mut years: Years, bound: Bound, year: Option<u16>) -> Years {
+    match bound {
+        Bound::Start => {
+            years.0 = year;
+            if let (Some(from), Some(to)) = (year, years.1) {
+                years.1 = Some(to.max(from));
             }
-            for y in (OLDEST..=year).rev() {
-                push(&y.to_string(), Value::Year(y));
+        }
+        Bound::End => {
+            years.1 = year;
+            if let (Some(from), Some(to)) = (years.0, year) {
+                years.0 = Some(from.min(to));
             }
         }
     }
-    let start = choices.iter().position(|c| pick.is_current(browse, c.value)).unwrap_or(0);
-    Chooser { pick, choices, start }
+    years
 }
-
-impl Chooser {
-    /// The filter after choice `n`, and whether it is one (the others are notes).
-    pub(super) fn apply(&self, n: usize, browse: Browse) -> Option<Browse> {
-        let choice = self.choices.get(n)?;
-        match choice.value {
-            Value::Retry | Value::Waiting => None,
-            value => Some(self.pick.set(browse, value)),
-        }
-    }
-}
-
-/// Where the bar's controls (or the strip's choices) sit, measured once per change.
-#[derive(Default)]
-pub(super) struct Layout {
-    stamp: u64,
-    xs: Vec<f32>,
-    ws: Vec<f32>,
-}
-
-/// The pills' and chips' placement, cached on `RequestsScreen::bar_stamp`.
-pub(super) type LayoutCache = RefCell<Layout>;
 
 impl RequestsScreen {
-    /// The filter bar is part of the page unless a search stands in for the browse rows.
     pub(super) fn bar_shown(&self) -> bool {
         self.results.is_none()
     }
 
-    pub(super) fn bar_len(&self) -> usize {
-        if !self.bar_shown() {
-            return 0;
-        }
-        self.chooser.as_ref().map_or(self.pills.len(), |c| c.choices.len())
-    }
-
-    pub(super) fn bar_elem(&self, n: usize) -> Option<u32> {
-        if n >= self.bar_len() {
-            return None;
-        }
-        match &self.chooser {
-            Some(_) => Some(CHIP_BASE + n as u32),
-            None => self.pills.get(n).map(|p| p.elem),
-        }
-    }
-
-    pub(super) fn bar_label(&self, n: usize) -> Option<&CStr> {
-        match &self.chooser {
-            Some(c) => c.choices.get(n).map(|c| c.label.as_c_str()),
-            None => self.pills.get(n).map(|p| p.label.as_c_str()),
-        }
-    }
-
-    pub(super) fn bar_waiting(&self, n: usize) -> bool {
-        self.chooser.as_ref().and_then(|c| c.choices.get(n)).is_some_and(|c| c.value == Value::Waiting)
-    }
-
-    /// Whether control or choice `n` holds a value: it is drawn lit.
-    pub(super) fn bar_lit(&self, n: usize) -> bool {
-        match &self.chooser {
-            Some(c) => c.choices.get(n).is_some_and(|ch| c.pick.is_current(&self.browse, ch.value)),
-            None => self.pills.get(n).is_some_and(|p| p.active),
-        }
-    }
-
-    /// Where control or choice `n` sits in a bar section drawn at `section`. The strip is wider than
-    /// the screen: it slides so the focused choice stays at the middle, and stands still at its ends.
-    pub(super) fn bar_rect(&self, measure: &dyn plx_machine::machine::Measure, focus: Option<u32>, n: usize, section: Rect) -> Rect {
+    pub(super) fn bar_rect(&self, measure: &dyn plx_machine::machine::Measure, n: usize, section: Rect) -> Rect {
+        let gap = space::MD;
+        let margin = plx_ui::consts::MARGIN_X;
+        let room = SCR_W - 2.0 * margin - gap * self.pills.len().saturating_sub(1) as f32;
         let mut cache = self.bar_layout.borrow_mut();
-        if cache.stamp != self.bar_stamp || cache.xs.len() != self.bar_len() {
-            cache.stamp = self.bar_stamp;
-            cache.ws.clear();
-            cache.xs.clear();
-            let mut x = plx_ui::consts::MARGIN_X;
-            for label in (0..self.bar_len()).filter_map(|n| self.bar_label(n)) {
-                let w = plx_ui::widgets::Button::pill_w_measured(label, plx_ui::theme::size::BODY, false, None, measure);
-                cache.xs.push(x);
-                cache.ws.push(w);
-                x += w + GAP;
+        if cache.0 != self.bar_stamp || cache.1.len() != self.pills.len() {
+            cache.0 = self.bar_stamp;
+            cache.1.clear();
+            let min_w = room / self.pills.len().max(1) as f32;
+            let total: f32 = self.pills.iter().map(|p| {
+                plx_ui::widgets::Button::pill_w_measured(&p.label, size::BODY, p.icon.is_some(), None, measure).max(min_w)
+            }).sum();
+            let mut x = margin;
+            for pill in &self.pills {
+                let w = plx_ui::widgets::Button::pill_w_measured(&pill.label, size::BODY, pill.icon.is_some(), None, measure)
+                    .max(min_w) * room / total;
+                cache.1.push((x, w));
+                x += w + gap;
             }
         }
-        let Some((&x, &w)) = cache.xs.get(n).zip(cache.ws.get(n)) else { return Rect::new(0.0, section.y, 0.0, 0.0) };
-        let shift = match &self.chooser {
-            Some(chooser) => {
-                let at = focus.filter(|e| is_chip(*e)).map_or(chooser.start, |e| (e - CHIP_BASE) as usize);
-                let end = cache.xs.last().zip(cache.ws.last()).map_or(0.0, |(x, w)| x + w) + plx_ui::consts::MARGIN_X;
-                let centre = cache.xs.get(at).zip(cache.ws.get(at)).map_or(0.0, |(x, w)| x + w / 2.0);
-                (centre - SCR_W / 2.0).clamp(0.0, (end - SCR_W).max(0.0))
-            }
-            None => 0.0,
-        };
-        Rect::new(x - shift, section.y + layout::BAR_PILL_Y, w, plx_ui::widgets::StatusOverlay::CTRL_H)
+        let (x, w) = cache.1.get(n).copied().unwrap_or_default();
+        Rect::new(x, section.y + layout::BAR_PILL_Y, w, HEIGHT)
     }
 
-    /// Left or right of control `at`, as an index; `None` at the ends.
-    pub(super) fn bar_step(&self, at: usize, dir: Dir) -> Option<usize> {
-        match dir {
-            Dir::Left => at.checked_sub(1),
-            Dir::Right => (at + 1 < self.bar_len()).then_some(at + 1),
-            _ => None,
-        }
+    pub(super) fn choice_rect(&self, focus: Option<u32>, n: usize, section: Rect) -> Option<Rect> {
+        self.chooser.as_ref()?.rect(focus.filter(|e| is_chip(*e)).map(|e| (e - CHIP_BASE) as usize), n, section)
     }
 
-    /// Rebuild what the bar says after the filter, the genres or the strip changed.
     pub(super) fn relabel(&mut self) {
-        self.pills = pills(&self.browse, &self.genres);
+        let b = &self.browse;
+        let genre = b.genre.and_then(|id| match &self.genres {
+            Genres::Loaded(list) => list.iter().find(|g| g.id == id).map(|g| g.name.as_str()),
+            _ => None,
+        });
+        let years = year_label((b.from, b.to));
+        let themes = match b.keywords.as_slice() {
+            [] => None,
+            [_] => self.selected_themes.first().map(|k| k.name.clone()),
+            many => Some(msg::requests_filter_theme_count(&many.len().to_string())),
+        };
+        let runtime = RUNTIMES.iter().find(|(lo, hi, _)| (*lo, *hi) == (b.runtime_min, b.runtime_max))
+            .and_then(|(lo, hi, label)| (lo.is_some() || hi.is_some()).then(|| label()));
+        let labels = [genre, years.as_deref(), themes.as_deref(), b.language.and_then(language_name), runtime];
+        self.pills.clear();
+        for (pick, active) in Pick::FILTERS.into_iter().zip(labels) {
+            let label = active.map_or_else(|| pick.name().to_owned(), |value| msg::requests_filter_pill(pick.name(), value));
+            self.pills.push(Pill::new(pick.elem(), &label, Some(if active.is_some() { Icon::Check } else { Icon::ChevronDown })));
+        }
+        if !b.is_empty() {
+            self.pills.push(Pill::new(RESET, msg::requests_filter_reset(), None));
+        }
         self.bar_stamp = self.bar_stamp.wrapping_add(1);
         self.rev = self.rev.wrapping_add(1);
+        self.relabel_actions();
     }
 
-    /// Ask Seerr for the genres once.
     pub(super) fn want_genres<H: ContentLike>(&mut self, fx: &mut Effects<'_, H>) {
         if matches!(self.genres, Genres::Asked) {
             return;
@@ -380,103 +375,313 @@ impl RequestsScreen {
         self.ask(RequestsCmd::Genres { reply: self.tx.clone() }, fx);
     }
 
-    /// The control `pick` was pressed: its choices replace the bar and focus lands on the current one.
     pub(super) fn open_chooser<H: ContentLike>(&mut self, pick: Pick, fx: &mut Effects<'_, H>) {
         if pick == Pick::Genre && matches!(self.genres, Genres::Unknown) {
             self.want_genres(fx);
         }
-        let chooser = chooser(pick, &self.browse, &self.genres);
-        let at = chooser.start as u32;
-        self.chooser = Some(chooser);
-        self.relabel();
-        self.reseat(FocusTarget::Elem(self.key(CHIP_BASE + at)), fx);
+        self.dismiss_chooser();
+        self.chooser = Some(Chooser { pick, stage: Stage::Main, choices: Vec::new(), start: 0, years: (self.browse.from, self.browse.to) });
+        self.build_choices(None);
+        self.seat_choice(fx);
     }
 
-    /// Close the strip and put focus back on the control it came from.
+    pub(super) fn dismiss_chooser(&mut self) {
+        if self.chooser.take().is_some() {
+            self.keyword_search = None;
+            self.theme_input.clear();
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
     pub(super) fn close_chooser<H: ContentLike>(&mut self, fx: &mut Effects<'_, H>) -> bool {
-        let Some(chooser) = self.chooser.take() else { return false };
-        self.relabel();
-        self.reseat(FocusTarget::Elem(self.key(chooser.pick.elem())), fx);
+        let Some(pick) = self.chooser.as_ref().map(|c| c.pick) else { return false };
+        self.dismiss_chooser();
+        self.reseat(FocusTarget::Elem(self.key(pick.elem())), fx);
         true
     }
 
-    /// Choice `n` of the strip was pressed.
-    pub(super) fn choose<H: ContentLike>(&mut self, n: usize, fx: &mut Effects<'_, H>) -> Handled {
-        let Some(chooser) = &self.chooser else { return Handled::No };
-        match chooser.apply(n, self.browse) {
-            Some(browse) => {
-                self.close_chooser(fx);
-                self.set_filter(browse, fx);
-            }
-            None if chooser.choices.get(n).is_some_and(|c| c.value == Value::Retry) => {
-                self.genres = Genres::Unknown;
-                self.want_genres(fx);
-                self.chooser = Some(super::filters::chooser(Pick::Genre, &self.browse, &self.genres));
-                self.relabel();
-            }
-            None => {}
+    fn seat_choice<H: ContentLike>(&self, fx: &mut Effects<'_, H>) {
+        if let Some(chooser) = &self.chooser {
+            self.reseat(FocusTarget::Elem(self.key(CHIP_BASE + chooser.start as u32)), fx);
         }
+    }
+
+    fn chooser_stage<H: ContentLike>(&mut self, stage: Stage, prefer: Option<Value>, fx: &mut Effects<'_, H>) {
+        if let Some(chooser) = &mut self.chooser {
+            if stage == Stage::Range && chooser.stage == Stage::Main {
+                chooser.years = (self.browse.from, self.browse.to);
+            }
+            chooser.stage = stage;
+        }
+        self.build_choices(prefer);
+        self.seat_choice(fx);
+    }
+
+    pub(super) fn back_in_chooser<H: ContentLike>(&mut self, fx: &mut Effects<'_, H>) -> bool {
+        let Some(chooser) = &self.chooser else { return false };
+        match chooser.stage {
+            Stage::Range => self.chooser_stage(Stage::Main, Some(Value::Range), fx),
+            Stage::Decades(bound) => self.chooser_stage(Stage::Range, Some(Value::Bound(bound)), fx),
+            Stage::Year(bound, first) => self.chooser_stage(Stage::Decades(bound), Some(Value::Decade(bound, first)), fx),
+            Stage::Main if self.keyword_search.take().is_some() => {
+                self.theme_input.clear();
+                self.build_choices(Some(Value::FindTheme));
+                self.seat_choice(fx);
+            }
+            Stage::Main => return self.close_chooser(fx),
+        }
+        true
+    }
+
+    pub(super) fn build_choices(&mut self, prefer: Option<Value>) {
+        let Some(c) = &mut self.chooser else { return };
+        let b = &self.browse;
+        let year = this_year();
+        c.choices.clear();
+        let mut push = |name: &str, value, selected| {
+            if let Ok(label) = CString::new(name) {
+                c.choices.push(Choice { label, value, selected });
+            }
+        };
+        let mut note = None;
+        match (c.pick, c.stage) {
+            (Pick::Genre, _) => {
+                push(msg::requests_filter_any_genre(), Value::Genre(None), b.genre.is_none());
+                match &self.genres {
+                    Genres::Loaded(list) => for g in list { push(&g.name, Value::Genre(Some(g.id)), b.genre == Some(g.id)); },
+                    Genres::Failed => push(msg::requests_filter_retry(), Value::RetryGenres, false),
+                    Genres::Unknown | Genres::Asked => note = Some((msg::requests_loading(), Note::Working)),
+                }
+            }
+            (Pick::Years, Stage::Main) => {
+                let now = (b.from, b.to);
+                for (label, years) in [
+                    (msg::requests_filter_any_year(), (None, None)),
+                    (msg::requests_filter_this_year(), (Some(year), Some(year))),
+                    (msg::requests_filter_last_five(), (Some(year - 4), Some(year))),
+                ] {
+                    push(label, Value::Years(years), now == years);
+                }
+                push(msg::requests_filter_custom_years(), Value::Range, false);
+                for start in (OLDEST..=decade(year)).rev().step_by(10) {
+                    let range = (Some(start), Some(start + 9));
+                    push(&msg::requests_filter_decade(&start.to_string()), Value::Years(range), now == range);
+                }
+            }
+            (Pick::Years, Stage::Range) => {
+                push(msg::requests_filter_apply_years(), Value::ApplyRange, false);
+                for (bound, label) in [(Bound::Start, msg::requests_filter_start_year()), (Bound::End, msg::requests_filter_end_year())] {
+                    let value = year_bound(c.years, bound).map_or_else(|| msg::requests_filter_open_bound().to_owned(), |y| y.to_string());
+                    push(&msg::requests_filter_pill(label, &value), Value::Bound(bound), false);
+                }
+            }
+            (Pick::Years, Stage::Decades(bound)) => {
+                let current = year_bound(c.years, bound);
+                push(msg::requests_filter_open_bound(), Value::Year(bound, None), current.is_none());
+                for start in (OLDEST..=decade(year)).rev().step_by(10) {
+                    push(&msg::requests_filter_decade(&start.to_string()), Value::Decade(bound, start), current.map(decade) == Some(start));
+                }
+            }
+            (Pick::Years, Stage::Year(bound, first)) => {
+                let current = year_bound(c.years, bound);
+                for y in (first..=(first + 9).min(year)).rev() {
+                    push(&y.to_string(), Value::Year(bound, Some(y)), current == Some(y));
+                }
+            }
+            (Pick::Themes, _) => {
+                let text = self.theme_input.text();
+                push(if text.trim().is_empty() { msg::requests_filter_find_theme() } else { text }, Value::FindTheme, false);
+                if let Some(search) = &self.keyword_search {
+                    if search.waiting {
+                        note = Some((msg::requests_searching(), Note::Working));
+                    } else if search.failed {
+                        push(msg::requests_filter_retry(), Value::ThemePage(search.page), false);
+                    } else if let Some(page) = &search.found {
+                        for word in &page.items {
+                            push(&word.name, Value::Theme(word.id), b.keywords.binary_search(&word.id).is_ok());
+                        }
+                        if page.page > 1 {
+                            push(msg::requests_matches_previous(), Value::ThemePage(page.page - 1), false);
+                        }
+                        if page.more() {
+                            push(msg::requests_matches_next(), Value::ThemePage(page.page + 1), false);
+                        }
+                        if page.items.is_empty() {
+                            note = Some((msg::requests_filter_no_themes(), Note::Empty));
+                        }
+                    }
+                } else {
+                    push(msg::requests_filter_clear_themes(), Value::ClearThemes, false);
+                    for (i, (id, label)) in MOODS.into_iter().enumerate() {
+                        push(label(), Value::Theme(id), b.keywords.binary_search(&id).is_ok());
+                        if i == 1 {
+                            // An added search hit stays removable without finding it again.
+                            for word in &self.selected_themes {
+                                if !MOODS.iter().any(|m| m.0 == word.id) {
+                                    push(&word.name, Value::Theme(word.id), true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            (Pick::Language, _) => {
+                push(msg::requests_filter_default_language(), Value::Language(None), b.language.is_none());
+                push(msg::requests_filter_any_language(), Value::Language(Some("all")), b.language == Some("all"));
+                let languages = plx_plex::plex::languages::LANGUAGES;
+                let common = ["en", "fr", "es", "hi", "ja", "ko", "de", "it", "zh"];
+                let ahead = common.iter().filter_map(|code| languages.iter().find(|l| &l.code == code));
+                let rest = languages.iter().filter(|l| l.code.len() == 2 && !common.contains(&l.code));
+                for language in ahead.chain(rest) {
+                    push(language.name, Value::Language(Some(language.code)), b.language == Some(language.code));
+                }
+            }
+            (Pick::Runtime, _) => for (lo, hi, label) in RUNTIMES {
+                push(label(), Value::Runtime(lo, hi), (b.runtime_min, b.runtime_max) == (lo, hi));
+            },
+            (Pick::Sort, _) => for sort in Sort::ALL {
+                push(matches::sort_label(sort), Value::Sort(sort), self.matches.sort == sort);
+            },
+        }
+        if let Some((label, kind)) = note {
+            push(label, Value::Note(kind), false);
+        }
+        c.start = prefer.and_then(|v| c.choices.iter().position(|ch| ch.value == v))
+            .or_else(|| (c.pick != Pick::Themes).then(|| c.choices.iter().position(|ch| ch.selected)).flatten())
+            .unwrap_or(0);
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    pub(super) fn theme_editing(&self) -> bool {
+        self.chooser.as_ref().is_some_and(|c| c.pick == Pick::Themes)
+    }
+    pub(super) fn update_theme_field(&mut self) {
+        let Some(field) = self.chooser.as_mut().and_then(|c| c.choices.first_mut()).filter(|c| c.value == Value::FindTheme) else { return };
+        let text = self.theme_input.text();
+        let label = if text.trim().is_empty() { msg::requests_filter_find_theme() } else { text };
+        field.label = CString::new(label).unwrap_or_default();
+    }
+
+
+    pub(super) fn commit_theme<H: ContentLike>(&mut self, fx: &mut Effects<'_, H>) {
+        let query = self.theme_input.text().trim();
+        if query.is_empty() {
+            self.keyword_search = None;
+            self.build_choices(Some(Value::FindTheme));
+        } else {
+            let query = query.to_owned();
+            self.keyword_search = Some(ThemeSearch { query, page: 1, waiting: false, failed: false, found: None });
+            self.want_keywords(1, fx);
+        }
+    }
+
+    fn want_keywords<H: ContentLike>(&mut self, page: u32, fx: &mut Effects<'_, H>) {
+        let Some(search) = &mut self.keyword_search else { return };
+        search.page = page;
+        search.waiting = true;
+        self.keyword_gen = self.keyword_gen.wrapping_add(1);
+        let job = RequestsCmd::Keywords { query: search.query.clone(), page, gen: self.keyword_gen, reply: self.tx.clone() };
+        self.ask(job, fx);
+        self.build_choices(Some(Value::FindTheme));
+        self.seat_choice(fx);
+    }
+
+    pub(super) fn land_keywords(&mut self, gen: u32, page: u32, result: Result<Page<Keyword>, SeerrError>) -> bool {
+        let Some(search) = &mut self.keyword_search else { return false };
+        if gen != self.keyword_gen || page != search.page || !search.waiting {
+            return false;
+        }
+        search.waiting = false;
+        search.failed = result.as_ref().map_or(true, |found| found.page != page);
+        search.found = result.ok().filter(|found| found.page == page);
+        self.build_choices(Some(Value::FindTheme));
+        true
+    }
+
+    pub(super) fn choose<H: ContentLike>(&mut self, n: usize, fx: &mut Effects<'_, H>) -> Handled {
+        let Some(choice) = self.chooser.as_ref().and_then(|c| c.choices.get(n)) else { return Handled::No };
+        let value = choice.value;
+        let mut browse = self.browse.clone();
+        match value {
+            Value::Genre(id) => browse.genre = id,
+            Value::Years(years) => (browse.from, browse.to) = years,
+            Value::Language(code) => browse.language = code,
+            Value::Runtime(lo, hi) => (browse.runtime_min, browse.runtime_max) = (lo, hi),
+            Value::ApplyRange => (browse.from, browse.to) = self.chooser.as_ref().unwrap().years,
+            Value::Sort(sort) => {
+                self.close_chooser(fx);
+                self.change_sort(sort, fx);
+                return Handled::Yes;
+            }
+            _ => {
+                match value {
+                    Value::Range => self.chooser_stage(Stage::Range, None, fx),
+                    Value::Bound(bound) => self.chooser_stage(Stage::Decades(bound), None, fx),
+                    Value::Decade(bound, first) => self.chooser_stage(Stage::Year(bound, first), None, fx),
+                    Value::Year(bound, y) => {
+                        let c = self.chooser.as_mut().unwrap();
+                        c.years = with_year(c.years, bound, y);
+                        self.chooser_stage(Stage::Range, Some(Value::ApplyRange), fx);
+                    }
+                    Value::FindTheme => self.keyboard(!self.editing, true, fx),
+                    Value::ThemePage(page) => self.want_keywords(page, fx),
+                    Value::RetryGenres => {
+                        self.want_genres(fx);
+                        self.build_choices(None);
+                        self.seat_choice(fx);
+                    }
+                    Value::Theme(id) => {
+                        match browse.keywords.binary_search(&id) {
+                            Ok(at) => {
+                                browse.keywords.remove(at);
+                                self.selected_themes.remove(at);
+                            }
+                            Err(at) => {
+                                browse.keywords.insert(at, id);
+                                self.selected_themes.insert(at, Keyword { id, name: choice.label.to_string_lossy().into_owned() });
+                            }
+                        }
+                        self.set_filter(browse, fx);
+                        self.build_choices(Some(value));
+                        self.seat_choice(fx);
+                    }
+                    Value::ClearThemes => {
+                        browse.keywords.clear();
+                        self.selected_themes.clear();
+                        self.set_filter(browse, fx);
+                        self.build_choices(Some(value));
+                    }
+                    _ => {}
+                }
+                return Handled::Yes;
+            }
+        }
+        self.close_chooser(fx);
+        self.set_filter(browse, fx);
         Handled::Yes
     }
 
-    /// Clear every filter in one press.
     pub(super) fn reset<H: ContentLike>(&mut self, fx: &mut Effects<'_, H>) {
-        self.chooser = None;
+        self.dismiss_chooser();
+        self.selected_themes.clear();
         self.set_filter(Browse::default(), fx);
         self.reseat(FocusTarget::Elem(self.key(GENRE)), fx);
     }
 
-    /// Make `browse` the page's filter: the filtered rows start over and Seerr is asked for their
-    /// first pages, in the three orders; with no filter they are gone.
-    pub(super) fn set_filter<H: ContentLike>(&mut self, browse: Browse, fx: &mut Effects<'_, H>) {
-        if browse == self.browse {
-            return;
-        }
-        self.browse = browse;
-        self.filter_gen = self.filter_gen.wrapping_add(1);
-        self.keys.retain(|key| !Lane::FILTERED.contains(&key.0));
-        for lane in Lane::FILTERED {
-            if let Some(row) = self.row_mut(lane) {
-                *row = Row::new(lane);
-            }
-        }
-        if !browse.is_empty() {
-            for sort in plx_plex::plex::seerr::Sort::ALL {
-                self.ask(RequestsCmd::Browse { filter: browse, sort, page: 1, gen: self.filter_gen, reply: self.tx.clone() }, fx);
-            }
-        }
-        self.relabel();
-    }
-}
-
-/// What the area under the bar says while no filtered row has a poster.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Note {
-    Working,
-    Empty,
-    Failed,
-}
-
-impl RequestsScreen {
-    /// The group Down from the search pill goes to: the bar, or the first row when a search hides it.
     pub(super) fn below_field(&self) -> Option<GroupId> {
         if self.bar_shown() { Some(GROUP) } else { self.first_content() }
     }
+}
 
-    /// The read-out for a filter that has nothing to show yet (or at all).
-    pub(super) fn note(&self) -> Option<Note> {
-        if self.browse.is_empty() || !self.bar_shown() {
-            return None;
-        }
-        let rows = &self.rows[Lane::BROWSE.len()..];
-        if rows.iter().any(|r| !r.cards.is_empty()) {
-            None
-        } else if rows.iter().any(|r| r.failed) {
-            Some(Note::Failed)
-        } else if rows.iter().all(|r| r.loaded) {
-            Some(Note::Empty)
-        } else {
-            Some(Note::Working)
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_years_keep_both_endpoints_and_correct_crossing_edits() {
+        let range = with_year((None, Some(1980)), Bound::Start, Some(1990));
+        assert_eq!(range, (Some(1990), Some(1990)));
+        assert_eq!(with_year(range, Bound::End, Some(1960)), (Some(1960), Some(1960)));
+        assert_eq!(with_year(range, Bound::Start, None), (None, Some(1990)));
     }
 }

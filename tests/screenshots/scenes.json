@@ -161,24 +161,105 @@
       "outputs": [{"file": "ux-discover.jpg", "size": "1920x1080"}]
     },
     {
+      "name": "discover-chooser",
+      "state": "The genre chooser open beneath the Discover bar, navigable with the TV remote.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0"},
+      "virtual": {"preroll": 370, "press": ["up", "right", "right", "right", "ok", "down", "ok"]},
+      "expect_focus": {"route": "requests", "chooser": "Genre"},
+      "expect_http": [{"path": "/api/v1/genres/movie"}],
+      "outputs": [{"file": "ux-discover-chooser.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-quick-filters",
+      "state": "Comedy and the 1920s selected with the genre and year presets.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0"},
+      "timeout_s": 120,
+      "virtual": {"preroll": 620, "press": [
+        "up", "right", "right", "right", "ok",
+        "down", "ok", "down", "ok",
+        "right", "ok", "down", "down", "down", "right", "right", "ok"
+      ]},
+      "expect_focus": {"route": "requests", "phase": "Ready", "page": "0", "matches": "4"},
+      "expect_http": [
+        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": null}},
+        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": null}}
+      ],
+      "outputs": [{"file": "ux-discover-quick-filters.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-keyword-search",
+      "state": "The Themes chooser showing a server keyword result for a typed query.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0"},
+      "timeout_s": 120,
+      "virtual": {"preroll": 500, "text": "360:hei", "press": [
+        "up", "right", "right", "right", "ok",
+        "down", "right", "right", "ok", "ok", "ok"
+      ]},
+      "expect_focus": {"route": "requests", "chooser": "Themes", "editing": "false", "keyword_results": "1"},
+      "expect_http": [{"path": "/api/v1/search/keyword", "query": {"query": "hei", "page": "1"}}],
+      "outputs": [{"file": "ux-discover-keyword-search.jpg", "size": "1920x1080"}]
+    },
+    {
       "name": "discover-filtered",
-      "state": "Comedy, 1920–1929 and Heist selected together: the popular, top-rated and newest matching titles.",
+      "state": "Comedy, the 1920s, Dark comedy and a searched Heist keyword selected together.",
       "requests_link": true,
       "triggers": {"focus": "", "heropin": "0"},
       "timeout_s": 150,
-      "virtual": {"preroll": 1120, "press": [
+      "virtual": {"preroll": 1020, "text": "760:hei", "press": [
         "up", "right", "right", "right", "ok",
-        "down", "ok", "right", "right", "right", "right", "ok",
-        "right", "ok", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "ok",
-        "right", "right", "ok", "right", "right", "right", "right", "right", "right", "right", "ok"
+        "down", "ok", "down", "ok",
+        "right", "ok", "down", "down", "down", "right", "right", "ok",
+        "right", "ok", "right", "right", "right", "ok",
+        "left", "left", "left", "ok", "ok",
+        "right", "ok", "back", "back"
       ]},
-      "expect_focus": {"route": "requests", "phase": "Ready", "rows": "7", "elem": "5"},
+      "expect_focus": {"route": "requests", "phase": "Ready", "page": "0", "matches": "3"},
       "expect_http": [
-        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}},
-        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "vote_average.desc", "voteCountGte": "100", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}},
-        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "primary_release_date.desc", "voteCountGte": "5", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}}
+        {"path": "/api/v1/search/keyword", "query": {"query": "hei", "page": "1"}},
+        {"path": "/api/v1/discover/movies", "query": {"page": "1", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051,10123", "voteCountGte": null}}
       ],
       "outputs": [{"file": "ux-discover-filtered.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-all-matches-page",
+      "state": "The second All matches page, retaining the Comedy and 1920s filters and the total of four.",
+      "requests_link": true,
+      "seerr_page_size": 3,
+      "triggers": {"focus": "", "heropin": "0"},
+      "timeout_s": 120,
+      "virtual": {"preroll": 720, "press": [
+        "up", "right", "right", "right", "ok",
+        "down", "ok", "down", "ok",
+        "right", "ok", "down", "down", "down", "right", "right", "ok",
+        "down", "ok", "right", "ok"
+      ]},
+      "expect_focus": {"route": "requests", "page": "2", "matches": "4"},
+      "expect_http": [
+        {"path": "/api/v1/discover/movies", "query": {"page": "2", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "voteCountGte": null}}
+      ],
+      "outputs": [{"file": "ux-discover-all-matches-page.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-all-matches-back",
+      "state": "Back from All matches restores focus to the same count button on Discover.",
+      "requests_link": true,
+      "seerr_page_size": 3,
+      "triggers": {"focus": "", "heropin": "0"},
+      "timeout_s": 120,
+      "virtual": {"preroll": 745, "press": [
+        "up", "right", "right", "right", "ok",
+        "down", "ok", "down", "ok",
+        "right", "ok", "down", "down", "down", "right", "right", "ok",
+        "down", "ok", "right", "ok", "back"
+      ]},
+      "expect_focus": {"route": "requests", "grid": "false", "page": "0", "matches": "4", "elem": "8"},
+      "expect_http": [
+        {"path": "/api/v1/discover/movies", "query": {"page": "2", "sortBy": "popularity.desc", "genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31"}}
+      ],
+      "outputs": [{"file": "ux-discover-all-matches-back.jpg", "size": "1920x1080"}]
     },
     {
       "name": "discover-movie",
@@ -191,6 +272,29 @@
                       {"path": "/api/v3/queue/details", "query": {"movieId": "1004"}},
                       {"path": "/photo/:/transcode", "query": {"url": "https://image.tmdb.org/t/p/w1280/demo/tears-of-steel/backdrop.jpg"}}],
       "outputs": [{"file": "ux-discover-movie.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-movie-plot",
+      "state": "The complete Tears of Steel plot in About, one Down from the movie hero.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0", "hintoff": ""},
+      "virtual": {"preroll": 480, "press": ["up", "right", "right", "right", "ok", "down", "down", "ok", "down"]},
+      "expect_focus": {"route": "request_title", "tmdb": "700004", "ready": "1", "elem": "4"},
+      "expect": ["about_page=1/"],
+      "expect_http": [{"path": "/api/v1/movie/700004"},
+                      {"path": "/photo/:/transcode", "query": {"url": "https://image.tmdb.org/t/p/w1280/demo/tears-of-steel/backdrop.jpg"}}],
+      "outputs": [{"file": "ux-discover-movie-plot.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-movie-plot-next",
+      "state": "The next page of the Tears of Steel plot, reached by pressing Down again within About.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0", "hintoff": ""},
+      "virtual": {"preroll": 505, "press": ["up", "right", "right", "right", "ok", "down", "down", "ok", "down", "down"]},
+      "expect_focus": {"route": "request_title", "tmdb": "700004", "ready": "1", "elem": "4"},
+      "expect": ["about_page=2/"],
+      "expect_http": [{"path": "/api/v1/movie/700004"}],
+      "outputs": [{"file": "ux-discover-movie-plot-next.jpg", "size": "1920x1080"}]
     },
     {
       "name": "discover-series",

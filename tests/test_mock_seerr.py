@@ -34,9 +34,24 @@ class SeerrMock(unittest.TestCase):
 
     def test_genre_decade_tag_filters_combine(self):
         _, page = get(self.fx, "/api/v1/discover/movies?genre=35&primaryReleaseDateGte=1920-01-01"
-                               "&primaryReleaseDateLte=1929-12-31&keywords=10051")
+                               "&primaryReleaseDateLte=1929-12-31&keywords=10051,10123")
         self.assertEqual(sorted(r["title"] for r in page["results"]),
-                         ["Safety Last!", "Sherlock Jr.", "The General", "The Kid"])
+                         ["Sherlock Jr.", "The General", "The Kid"])
+
+    def test_filtered_paging_reports_the_whole_match_count(self):
+        self.fx.page_size = 3
+        path = ("/api/v1/discover/movies?genre=35&primaryReleaseDateGte=1920-01-01"
+                "&primaryReleaseDateLte=1929-12-31")
+        _, first = get(self.fx, path + "&page=1")
+        _, second = get(self.fx, path + "&page=2")
+        self.assertEqual((first["totalResults"], second["totalResults"]), (4, 4))
+        self.assertEqual((first["totalPages"], second["totalPages"]), (2, 2))
+        self.assertEqual([r["title"] for r in first["results"]], ["The General", "Sherlock Jr.", "The Kid"])
+        self.assertEqual([r["title"] for r in second["results"]], ["Safety Last!"])
+
+    def test_search_keyword_returns_ids_and_names(self):
+        _, page = get(self.fx, "/api/v1/search/keyword?query=HEI&page=1")
+        self.assertEqual(page["results"], [{"id": 10051, "name": "heist"}])
 
     def test_download_is_matched_by_exact_ids(self):
         movie = next(t for t in self.fx.titles if t["title"] == "Tears of Steel")
