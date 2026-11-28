@@ -71,7 +71,7 @@ class SeerrFixture:
     def __init__(self, catalog, lib=None):
         """`catalog` is the parsed demo catalog.json; `lib` the CatalogLibrary (artwork + rating keys)."""
         self.lib = lib
-        self.page_size = PAGE
+        self.browse_page_size = PAGE
         self.titles = []
         for kind, rows, base in (("movie", catalog["movies"], 700_000), ("tv", catalog["shows"], 800_000)):
             for n, row in enumerate(rows):
@@ -159,10 +159,10 @@ class SeerrFixture:
             row["mediaInfo"] = info
         return row
 
-    def _page(self, rows, q):
+    def _page(self, rows, q, page_size=PAGE):
         page = max(1, int(q.get("page", "1") or 1))
-        pages = -(-len(rows) // self.page_size)
-        chunk = rows[(page - 1) * self.page_size:page * self.page_size]
+        pages = -(-len(rows) // page_size)
+        chunk = rows[(page - 1) * page_size:page * page_size]
         return {"page": page, "totalPages": pages if rows else 0, "totalResults": len(rows),
                 "results": [self._row(t) for t in chunk]}
 
@@ -348,7 +348,8 @@ class SeerrFixture:
                     mixed.append(shows[n])
             return _json(self._page(mixed, q))
         if rest == "discover/movies":
-            return _json(dict(self._page(self._filtered("movie", q), q), keywords=[
+            page_size = self.browse_page_size if "sortBy" in q else PAGE
+            return _json(dict(self._page(self._filtered("movie", q), q, page_size), keywords=[
                 {"id": int(k), "name": KEYWORDS[int(k)][0]} for k in re.split(r"[,|]", q.get("keywords", ""))
                 if k.isdigit() and int(k) in KEYWORDS]))
         if rest == "discover/tv":
@@ -361,7 +362,9 @@ class SeerrFixture:
             needle = q.get("query", "").casefold()
             rows = [{"id": k, "name": name} for k, (name, _) in KEYWORDS.items()
                     if needle and needle in name.casefold()]
-            return _json({"page": 1, "totalPages": int(bool(rows)), "totalResults": len(rows), "results": rows})
+            page = max(1, int(q.get("page", "1") or 1))
+            return _json({"page": page, "total_pages": -(-len(rows) // PAGE), "total_results": len(rows),
+                          "results": rows[(page - 1) * PAGE:page * PAGE]})
         if rest == "search":
             needle = q.get("query", "").lower()
             return _json(self._page([t for t in self.titles if needle and needle in t["title"].lower()], q))

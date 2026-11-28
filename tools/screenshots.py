@@ -271,9 +271,9 @@ def capture(binary, scene, defaults, hero, keep, *, prepare=None, assets=None):
     try:
         if prepare is not None:
             prepare(pms, rt)
-        if "seerr_page_size" in scene:
-            # Keep real demo posters and distinct titles, even in a deliberately small paging fixture.
-            pms.seerr.page_size = scene["seerr_page_size"]
+        if "seerr_browse_page_size" in scene:
+            # Keep normal shelves intact while exercising paging in the sorted movie grid.
+            pms.seerr.browse_page_size = scene["seerr_browse_page_size"]
         triggers = {"plextv": f"http://127.0.0.1:{port}", "discover": f"http://127.0.0.1:{port}", "stillclock": str(defaults["stillclock_ms"])}
         if not scene.get("no_token"):
             triggers["token"] = PLACEHOLDER_TOKEN
