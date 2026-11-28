@@ -26,7 +26,7 @@
   "requests.progress_note_offline": "Não foi possível contactar {app}",
   "requests.progress_note_refused": "{app} recusou a ligação. Verifique a chave nas definições.",
   "requests.progress_not_sent": "Ainda não aparece em {app}",
-  "requests.progress_chip_downloading": "A transferir {n}%",
+  "requests.progress_chip_downloading": "A obter {n}%",
   "requests.progress_chip_finishing": "A concluir",
   "requests.progress_chip_importing": "A importar",
   "requests.progress_chip_imported": "Na biblioteca",

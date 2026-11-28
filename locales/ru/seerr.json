@@ -61,7 +61,7 @@
   "requests.season": "Сезон {number}",
   "requests.specials": "Спецвыпуски",
   "requests.sending": "Отправка запроса…",
-  "requests.sent": "Запрошено. Появится здесь, когда будет готово.",
+  "requests.sent": "Запрошено. Здесь появится по готовности.",
   "requests.videos": "Видео",
   "requests.episodes": "Серии",
   "requests.director": "Режиссёр",
@@ -82,5 +82,5 @@
   "requests.video_clip": "Отрывок",
   "requests.video_featurette": "Дополнительно",
   "requests.video_extra": "Видео",
-  "requests.trailer_failed": "Приложение YouTube не открылось на этом телевизоре."
+  "requests.trailer_failed": "Не удалось открыть YouTube."
 }

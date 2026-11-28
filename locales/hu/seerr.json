@@ -82,5 +82,5 @@
   "requests.video_clip": "Részlet",
   "requests.video_featurette": "Kulisszák",
   "requests.video_extra": "Videó",
-  "requests.trailer_failed": "A YouTube alkalmazás nem nyílt meg ezen a tévén."
+  "requests.trailer_failed": "Nem sikerült megnyitni a YouTube-ot."
 }

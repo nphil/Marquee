@@ -29,7 +29,7 @@
   "requests.progress_chip_downloading": "Téléch. {n} %",
   "requests.progress_chip_finishing": "Finalisation",
   "requests.progress_chip_importing": "Importation",
-  "requests.progress_chip_imported": "En bibliothèque",
+  "requests.progress_chip_imported": "Ajouté",
   "requests.progress_chip_queued": "En file",
   "requests.progress_chip_paused": "En pause",
   "requests.progress_chip_attention": "À vérifier"

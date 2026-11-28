@@ -342,7 +342,7 @@
     "description": "Requests area, a title's page. Line under a video tile for any other kind of video."
   },
   "requests.trailer_failed": {
-    "value": "The YouTube app did not open on this TV.",
+    "value": "Could not open YouTube.",
     "description": "Requests area, a title's page. Status line when the TV would not open the YouTube app for a trailer or video."
   }
 }

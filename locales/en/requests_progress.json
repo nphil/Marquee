@@ -149,7 +149,7 @@
     }
   },
   "requests.progress_chip_downloading": {
-    "value": "Downloading {n}%",
+    "value": "Getting {n}%",
     "description": "Requests area, progress. Chip on a poster: downloading, with the percent done. {n} is 0 to 100.",
     "args": {
       "n": "i64"

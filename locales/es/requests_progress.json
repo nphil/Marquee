@@ -26,10 +26,10 @@
   "requests.progress_note_offline": "No se puede conectar con {app}",
   "requests.progress_note_refused": "{app} rechazó la conexión. Revisa su clave en Ajustes.",
   "requests.progress_not_sent": "Aún no aparece en {app}",
-  "requests.progress_chip_downloading": "Descargando {n} %",
+  "requests.progress_chip_downloading": "Bajando {n} %",
   "requests.progress_chip_finishing": "Terminando",
   "requests.progress_chip_importing": "Importando",
-  "requests.progress_chip_imported": "En la biblioteca",
+  "requests.progress_chip_imported": "En biblioteca",
   "requests.progress_chip_queued": "En cola",
   "requests.progress_chip_paused": "En pausa",
   "requests.progress_chip_attention": "Revisar"

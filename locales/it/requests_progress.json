@@ -26,7 +26,7 @@
   "requests.progress_note_offline": "Impossibile raggiungere {app}",
   "requests.progress_note_refused": "{app} ha rifiutato la connessione. Controlla la sua chiave nelle impostazioni.",
   "requests.progress_not_sent": "Non ancora nell'elenco di {app}",
-  "requests.progress_chip_downloading": "Download {n}%",
+  "requests.progress_chip_downloading": "Scar. {n}%",
   "requests.progress_chip_finishing": "In chiusura",
   "requests.progress_chip_importing": "Importazione",
   "requests.progress_chip_imported": "In libreria",

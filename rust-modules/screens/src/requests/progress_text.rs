@@ -131,7 +131,7 @@ pub(super) fn lines(snap: &Snapshot, kind: Kind) -> Option<Lines> {
     Some(Lines { headline, detail: join(detail), note: note(snap, kind) })
 }
 
-/// A season's short word: "Downloading 75%", "Importing", "Ready to watch".
+/// The localized progress chip on a season card.
 pub(super) fn season_word(row: &SeasonRow) -> String {
     short(row.stage, row.percent).into_owned()
 }

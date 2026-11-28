@@ -82,5 +82,5 @@
   "requests.video_clip": "Fragmento",
   "requests.video_featurette": "Extra",
   "requests.video_extra": "Vídeo",
-  "requests.trailer_failed": "No se pudo abrir la aplicación de YouTube en este televisor."
+  "requests.trailer_failed": "No se pudo abrir YouTube."
 }

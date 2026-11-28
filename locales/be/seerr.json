@@ -82,5 +82,5 @@
   "requests.video_clip": "Урывак",
   "requests.video_featurette": "Дадаткова",
   "requests.video_extra": "Відэа",
-  "requests.trailer_failed": "Праграма YouTube не адкрылася на гэтым тэлевізары."
+  "requests.trailer_failed": "Не ўдалося адкрыць YouTube."
 }

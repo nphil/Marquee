@@ -82,5 +82,5 @@
   "requests.video_clip": "Fragment",
   "requests.video_featurette": "Extra",
   "requests.video_extra": "Video",
-  "requests.trailer_failed": "De YouTube-app ging niet open op deze tv."
+  "requests.trailer_failed": "YouTube kon niet worden geopend."
 }

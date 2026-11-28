@@ -82,5 +82,5 @@
   "requests.video_clip": "Ausschnitt",
   "requests.video_featurette": "Bonusmaterial",
   "requests.video_extra": "Video",
-  "requests.trailer_failed": "Die YouTube-App ließ sich auf diesem Fernseher nicht öffnen."
+  "requests.trailer_failed": "YouTube ließ sich nicht öffnen."
 }
