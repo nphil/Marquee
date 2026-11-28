@@ -3,3 +3,7 @@ docs/marquee/agent-guide.md export-ignore
 docs/marquee/subtitles-ui-status.md export-ignore
 docs/marquee/mocks export-ignore
 docs/marquee/renders export-ignore
+
+# These upstream records and examples contain upstream telemetry URLs or credential examples.
+docs/plex-openapi.json export-ignore
+docs/release-audits/v0.[6789].0.md export-ignore
