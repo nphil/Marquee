@@ -1,9 +1,9 @@
 #!/bin/sh
 # Hand a television its Bazarr, Radarr or Sonarr address and API key without typing them there.
 #
-#   tools/import-bazarr-link.sh [--app bazarr|radarr|sonarr] SSH_HOST KEY_FILE [URL]
-#       (the app defaults to bazarr; URL defaults to https://<app>.nateshome.net)
-#   tools/import-bazarr-link.sh [--app APP] --dry-run KEY_FILE [URL]   (checks the file and the address, writes nothing)
+#   tools/import-bazarr-link.sh [--app bazarr|radarr|sonarr] SSH_HOST KEY_FILE URL
+#   tools/import-bazarr-link.sh [--app APP] --dry-run KEY_FILE URL   (checks the file and the address, writes nothing)
+#       (the app defaults to bazarr)
 #
 # KEY_FILE may be a process substitution, `<(ssh unraid ...)`, so a key never has to sit in a file.
 # Builds {"url": ..., "api_key": ...} from KEY_FILE and writes it, over ssh's stdin, to
@@ -22,9 +22,9 @@ case "$app" in bazarr|radarr|sonarr) ;; *) echo "import-bazarr-link: unknown app
 dry=0
 if [ "${1:-}" = "--dry-run" ]; then dry=1; shift; fi
 if [ "$dry" = 1 ]; then
-  keyfile=${1:?usage: import-bazarr-link.sh --dry-run KEY_FILE [URL]}; url=${2:-https://$app.nateshome.net}
+  keyfile=${1:?usage: import-bazarr-link.sh --dry-run KEY_FILE URL}; url=${2:?server URL}
 else
-  host=${1:?usage: import-bazarr-link.sh SSH_HOST KEY_FILE [URL]}; keyfile=${2:?key file}; url=${3:-https://$app.nateshome.net}
+  host=${1:?usage: import-bazarr-link.sh SSH_HOST KEY_FILE URL}; keyfile=${2:?key file}; url=${3:?server URL}
 fi
 remote=/tmp/marquee-$app-import.json
 jail=/var/palm/jail/com.beb.plxnative

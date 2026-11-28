@@ -66,6 +66,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
@@ -196,8 +197,13 @@ def clean_env(rt, shot, scene, defaults, assets=None):
 def virtual_spec(scene):
     """A virtual-clock capture selects one written frame; all input still releases before exit."""
     cfg = {"frames": 1, "select": 0, "preroll": 900, **scene["virtual"]}
-    if set(cfg) - {"frames", "select", "preroll", "keys", "clicks", "overlay"}:
+    if set(cfg) - {"frames", "select", "preroll", "keys", "clicks", "overlay", "press"}:
         raise ValueError("unknown virtual capture option")
+    if "press" in cfg:
+        if "keys" in cfg:
+            raise ValueError("a virtual capture takes press or keys, not both")
+        # The preroll includes the key walk; leave time for each key to release and the next surface to open.
+        cfg["keys"] = ",".join(f"{120 + n * 25}:{key}" for n, key in enumerate(cfg.pop("press")))
     for key in ("frames", "select", "preroll"):
         if not isinstance(cfg[key], int) or isinstance(cfg[key], bool):
             raise ValueError(f"virtual {key} must be an integer")
@@ -267,6 +273,10 @@ def capture(binary, scene, defaults, hero, keep, *, prepare=None, assets=None):
         if not scene.get("no_token"):
             triggers["token"] = PLACEHOLDER_TOKEN
         triggers.update(scene.get("triggers", {}))
+        if scene.get("requests_link"):
+            # The simulator-only link to the mock's Seerr, Radarr and Sonarr: the harness's own loopback
+            # address and nothing else (the app supplies fixed demo keys; see session/sim_link.rs).
+            triggers["reqlink"] = f"http://127.0.0.1:{port}"
         for name, value in triggers.items():
             (rt / f"plxnative-{name}").write_text(value)
         shot = rt / "shot.png"
@@ -300,12 +310,31 @@ def capture(binary, scene, defaults, hero, keep, *, prepare=None, assets=None):
         for line in scene.get("expect", []):
             if line not in log:
                 problems.append(f"expected log line missing: {line!r}")
-        if scene.get("expect_focus"):
-            focus = [line.split("focus route=player ",1)[1] for line in log.splitlines() if "focus route=player " in line]
-            fields = dict(word.split("=",1) for word in focus[-1].split() if "=" in word) if focus else {}
-            for key, value in scene["expect_focus"].items():
-                if fields.get(key) != value:
-                    problems.append(f"final player focus {key}: expected {value!r}, got {fields.get(key)!r}")
+        if scene.get("expect_focus") or scene.get("expect_back_focus"):
+            rows = (line.split("focus route=", 1)[1].split() for line in log.splitlines()
+                    if "focus route=" in line)
+            focus = [dict((word.split("=", 1) for word in fields if "=" in word), route=route)
+                     for route, *fields in rows]
+            expected = scene.get("expect_focus", {})
+            if "route" not in expected:  # Older scenes specify player fields only.
+                focus = [fields for fields in focus if fields["route"] == "player"]
+            final = focus[-1] if focus else {}
+            for key, value in expected.items():
+                if final.get(key) != value:
+                    problems.append(f"final focus {key}: expected {value!r}, got {final.get(key)!r}")
+            if scene.get("expect_back_focus"):
+                title = next((i for i, fields in enumerate(focus) if fields["route"] == "request_title"), 0)
+                before = focus[title - 1] if title else {}
+                if (before.get("route") != "requests" or before.get("elem") in (None, "-1")
+                        or any(before.get(k) != final.get(k) for k in ("entry", "group", "elem"))):
+                    problems.append("Back did not restore the Requests poster focus")
+        if scene.get("expect_http"):
+            replies = [urllib.parse.urlsplit(path) for path, status in pms.requests if 200 <= status < 300]
+            for expected in scene["expect_http"]:
+                if not any(r.path == expected["path"]
+                           and all(urllib.parse.parse_qs(r.query).get(k) == [v]
+                                   for k, v in expected.get("query", {}).items()) for r in replies):
+                    problems.append(f"no successful response for {expected}")
         # The boot line proves the person-page and Watchlist reads reach the mock, not the real provider.
         stand_in = mock_pms.discover_stand_in_problem(log)
         if stand_in:

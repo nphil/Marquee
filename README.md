@@ -163,6 +163,13 @@ Error monitoring for Marquee is sponsored by [Sentry](https://sentry.io/for/good
   </picture>
 </a>
 
+<a href="https://www.themoviedb.org/">
+  <img alt="The Movie Database (TMDB)" src="assets/brand/tmdb-blue-long.svg" width="136">
+</a>
+
+This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
 ## Licence
 
 [GPL-3.0-or-later](LICENSE), © 2026 Gleb Linnik. The PlxNative name and its brand artwork are excluded — see

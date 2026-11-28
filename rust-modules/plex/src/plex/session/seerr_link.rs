@@ -34,9 +34,6 @@ impl std::fmt::Debug for SeerrLink {
 }
 
 impl SeerrLink {
-    /// The address turning Requests on offers when none is set.
-    pub const DEFAULT_URL: &'static str = "https://request.nateshome.net";
-
     /// Nothing set: the session omits the key.
     pub fn is_empty(&self) -> bool {
         self.url.is_empty() && !self.enabled && self.cookie.is_empty()

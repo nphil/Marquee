@@ -315,7 +315,7 @@ impl<'a> SubSearchView<'a> {
     pub fn item(self) -> Option<(ServerId, &'a str)> { self.open.map(|o| (o.sid, o.rk.as_str())) }
     /// The generation a [`SubSearchCmd::Download`] must quote.
     pub fn gen(self) -> u32 { self.gen }
-    /// The host of the Bazarr the viewer has set up ("bazarr.nateshome.net"), or "" when its address
+    /// The host of the Bazarr the viewer has set up ("bazarr.example.net"), or "" when its address
     /// and key are not both set. The ONLY part of the link a screen can read.
     pub fn bazarr_host(self) -> &'a str { self.bazarr_host }
 

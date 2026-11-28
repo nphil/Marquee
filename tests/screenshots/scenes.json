@@ -81,6 +81,71 @@
       "outputs": [{"file": "ux-detail.jpg", "size": "1920x1080"}]
     },
     {
+      "name": "discover-landing",
+      "state": "Discover with the search and filter bar above the first carousels.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0"},
+      "virtual": {"preroll": 330, "press": ["up", "right", "right", "right", "ok"]},
+      "expect_focus": {"route": "requests", "rows": "5"},
+      "expect_http": [{"path": "/api/v1/request"}, {"path": "/api/v1/discover/trending"},
+                      {"path": "/api/v1/discover/movies"}, {"path": "/api/v1/discover/tv"},
+                      {"path": "/api/v1/discover/movies/upcoming"}, {"path": "/api/v1/genres/movie"}],
+      "outputs": [{"file": "ux-discover.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-filtered",
+      "state": "Comedy, 1920–1929 and Heist selected together: the popular, top-rated and newest matching titles.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0"},
+      "virtual": {"preroll": 1120, "press": [
+        "up", "right", "right", "right", "ok",
+        "down", "ok", "right", "right", "right", "right", "ok",
+        "right", "ok", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "ok",
+        "right", "right", "ok", "right", "right", "right", "right", "right", "right", "right", "ok"
+      ]},
+      "expect_focus": {"route": "requests", "rows": "3"},
+      "expect_http": [{
+        "path": "/api/v1/discover/movies",
+        "query": {"genre": "35", "primaryReleaseDateGte": "1920-01-01", "primaryReleaseDateLte": "1929-12-31", "keywords": "10051"}
+      }],
+      "outputs": [{"file": "ux-discover-filtered.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-movie",
+      "state": "Tears of Steel opened from My Requests: its real backdrop and metadata, with an active Radarr download.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0", "hintoff": ""},
+      "virtual": {"preroll": 420, "press": ["up", "right", "right", "right", "ok", "down", "down", "ok"]},
+      "expect_focus": {"route": "request_title", "tmdb": "700004"},
+      "expect_http": [{"path": "/api/v1/movie/700004"},
+                      {"path": "/api/v3/queue/details", "query": {"movieId": "1004"}},
+                      {"path": "/photo/:/transcode", "query": {"url": "https://image.tmdb.org/t/p/w1280/demo/tears-of-steel/backdrop.jpg"}}],
+      "outputs": [{"file": "ux-discover-movie.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-series",
+      "state": "Caminandes opened from My Requests: series imagery, seasons and active episode downloads from Sonarr.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0", "hintoff": ""},
+      "virtual": {"preroll": 450, "press": ["up", "right", "right", "right", "ok", "down", "down", "right", "ok"]},
+      "expect_focus": {"route": "request_title", "tmdb": "800000"},
+      "expect_http": [{"path": "/api/v1/tv/800000"},
+                      {"path": "/api/v3/queue/details", "query": {"seriesId": "1000"}},
+                      {"path": "/photo/:/transcode", "query": {"url": "https://image.tmdb.org/t/p/w1280/demo/caminandes/backdrop.jpg"}}],
+      "outputs": [{"file": "ux-discover-series.jpg", "size": "1920x1080"}]
+    },
+    {
+      "name": "discover-back",
+      "state": "Back from Caminandes to the same poster in My Requests, with its download badge.",
+      "requests_link": true,
+      "triggers": {"focus": "", "heropin": "0", "hintoff": ""},
+      "virtual": {"preroll": 480, "press": ["up", "right", "right", "right", "ok", "down", "down", "right", "ok", "back"]},
+      "expect_focus": {"route": "requests"},
+      "expect_back_focus": true,
+      "expect_http": [{"path": "/api/v1/tv/800000"}],
+      "outputs": [{"file": "ux-discover-back.jpg", "size": "1920x1080"}]
+    },
+    {
       "name": "signin",
       "state": "The QR sign-in screen with the mock's pin: code DEMO and a QR that the mock generated (it encodes https://plex.tv/link). No token is armed on this scene.",
       "triggers": {"login": ""},

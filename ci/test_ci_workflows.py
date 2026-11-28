@@ -1036,6 +1036,7 @@ class SiteVideoRelease(unittest.TestCase):
         self.assertEqual(code("release.yml").count("actions: write"), 2)
         self.assertEqual(job_body("release.yml", "hud-simulator").count("actions: write"), 1)
         self.assertEqual(code("site-video.yml").count("actions: write"), 1)
+        self.assertIn("github.repository != 'nphil/Marquee'", hook)
         # candidates and nightlies never refresh the film
         for name in ("rc.yml", "nightly.yml"):
             self.assertNotIn("site-video", code(name))
@@ -1049,6 +1050,7 @@ class HudSimulatorRelease(unittest.TestCase):
         hook = job_body("release.yml", "hud-simulator")
         self.assertIn("needs: [guard, publish]",hook)
         self.assertIn("needs.publish.result == 'success'",hook)
+        self.assertIn("github.repository != 'nphil/Marquee'", hook)
         self.assertIn("HTTP 404",hook)
         self.assertIn("/contents/.github/workflows/hud-simulator.yml",hook)
         self.assertLess(hook.index("HTTP 404"),hook.index("'workflow','run'"))

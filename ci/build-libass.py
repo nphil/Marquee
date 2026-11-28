@@ -65,7 +65,12 @@ def extract(path, folder):
                     raise ValueError('unsafe source archive link')
             elif not entry.isfile() and not entry.isdir():
                 raise ValueError('special source archive member')
-        contents.extractall(folder)
+        # Source archives may name owners not mapped in a container. Skipping that ownership
+        # change also lets tarfile apply executable modes to the configure scripts.
+        if hasattr(tarfile, 'data_filter'):
+            contents.extractall(folder, filter='data')
+        else:
+            contents.extractall(folder)
 
 
 def patch_pins(dep, root=ROOT):

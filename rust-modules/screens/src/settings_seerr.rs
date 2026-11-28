@@ -1,11 +1,11 @@
 //! **Settings > Integrations > Requests**: whether the Requests area is on, and where the viewer's
 //! Seerr runs.
 //!
-//! Requests is off until the switch is turned on; turning it on with no address set offers
-//! [`SeerrLink::DEFAULT_URL`]. The address is typed on the television's own keyboard and settles
-//! through [`SeerrLink::normalize_url`] (the address says why it was refused, and plain `http://`
-//! is accepted only for the home network). Every edit is one `PreferenceCmd::SeerrLink`, which the
-//! app writes into the protected half of the session record.
+//! Requests appears only when it is enabled and an address has been entered. The address is
+//! typed on the television's own keyboard and settles through [`SeerrLink::normalize_url`]
+//! (the address says why it was refused, and plain `http://` is accepted only for the home
+//! network). Every edit is one `PreferenceCmd::SeerrLink`, which the app writes into the
+//! protected half of the session record.
 //!
 //! **The Seerr session never rests in this page.** It signs in with the seated Plex account and the
 //! cookie it gets stays with the app; Test connection asks the app, which answers Seerr's version
@@ -266,9 +266,6 @@ impl SeerrPage {
         match row {
             SeId::Enabled => {
                 let on = !self.state.enabled;
-                if on && self.state.url.is_empty() {
-                    self.send(SeerrChange::Url(SeerrLink::DEFAULT_URL.to_string()), fx);
-                }
                 self.send(SeerrChange::Enabled(on), fx);
                 self.rebuild();
                 fx.invalidate(Provenance::Input);

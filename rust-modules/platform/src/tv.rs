@@ -11,6 +11,7 @@ pub mod toast;
 #[cfg(feature = "devtriggers")]
 pub mod uri;
 pub mod window;
+pub mod youtube;
 
 use std::os::raw::c_void;
 use std::sync::OnceLock;
@@ -30,6 +31,9 @@ pub struct Port {
     pub sound_output: fn() -> sound::Reply,
     pub audio_chain: fn() -> earc::Reply,
     pub go_home: fn(),
+    /// Launch an app through the system's application manager: the request's JSON in, whether it
+    /// was accepted out. Blocks for the answer: call it off the frame thread.
+    pub launch_app: fn(&str) -> bool,
     pub poll_home: fn(),
     pub deliver_toast: fn(&str, toast::Identity) -> toast::Sent,
     pub bind_window: fn(*mut c_void),
@@ -73,6 +77,7 @@ static ABSENT: Port = Port {
     sound_output: || sound::Reply::NoPlatform,
     audio_chain: || earc::Reply::NoPlatform,
     go_home: nothing,
+    launch_app: |_| false,
     poll_home: nothing,
     deliver_toast: toast::deliver_without_port,
     bind_window: |_| {},

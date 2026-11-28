@@ -45,20 +45,17 @@ fn status(page: &SeerrPage) -> String {
     page.form.table.sections.iter().flat_map(|s| s.rows.iter()).find(|r| r.is_note()).map(|r| r.label.clone()).unwrap_or_default()
 }
 
-const HOME: &str = "https://request.nateshome.net";
+const HOME: &str = "https://requests.example.net";
 
 #[test]
-fn turning_requests_on_with_no_address_offers_the_default_one() {
+fn turning_requests_on_without_an_address_does_not_supply_one() {
     let _guard = plx_base::testlock::serial();
+    let _en = language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
     let mut page = page_with("", false);
     let (commands, _) = run(&mut page, |p, fx| p.activate(SeId::Enabled.key().0, fx));
-    match commands.as_slice() {
-        [crate::registry::PreferenceCmd::SeerrLink { change: SeerrChange::Url(url), .. }, crate::registry::PreferenceCmd::SeerrLink { change: SeerrChange::Enabled(true), .. }] => {
-            assert_eq!(url, HOME);
-        }
-        _ => panic!("the address, then the switch"),
-    }
-    assert!(page.state.enabled && page.state.url == HOME, "the rows show it before the write answers");
+    assert!(matches!(commands.as_slice(), [crate::registry::PreferenceCmd::SeerrLink { change: SeerrChange::Enabled(true), .. }]));
+    assert!(page.state.enabled && page.state.url.is_empty());
+    assert!(status(&page).contains("address"));
 }
 
 #[test]
@@ -77,7 +74,7 @@ fn a_typed_address_settles_and_is_sent_as_one_edit() {
     let (_, keyboard) = run(&mut page, |p, fx| p.begin_edit(fx));
     assert_eq!(keyboard, [true], "the television's keyboard goes up");
     page.state.edit.as_mut().unwrap().buf.edit(&TextEdit::Clear);
-    type_in(&mut page, "  request.nateshome.net/discover ");
+    type_in(&mut page, "  requests.example.net/discover ");
     let (commands, keyboard) = run(&mut page, |p, fx| p.finish_edit(true, fx));
     assert_eq!(keyboard, [false]);
     match commands.as_slice() {
@@ -146,9 +143,9 @@ fn test_connection_asks_once_and_reads_the_answer() {
     let (again, _) = run(&mut page, |p, fx| p.activate(SeId::Test.key().0, fx));
     assert!(again.is_empty(), "one test at a time");
     assert!(!poll(&mut page).0, "an unanswered test leaves the page alone");
-    reply.send(Ok((Status { version: "3.5.2".into() }, Me { id: 1, name: "Nitin".into() }))).unwrap();
+    reply.send(Ok((Status { version: "3.5.2".into() }, Me { id: 1, name: "Sam".into() }))).unwrap();
     assert!(poll(&mut page).0);
-    assert_eq!(status(&page), "Connected \u{b7} Seerr 3.5.2, signed in as Nitin.");
+    assert_eq!(status(&page), "Connected \u{b7} Seerr 3.5.2, signed in as Sam.");
 }
 
 #[test]
@@ -216,7 +213,7 @@ fn the_summary_names_the_host_only_while_on() {
     let _guard = plx_base::testlock::serial();
     let _en = language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
     let link = SeerrLink { url: HOME.into(), enabled: true, ..Default::default() };
-    assert_eq!(summary(&link), "request.nateshome.net");
+    assert_eq!(summary(&link), "requests.example.net");
     assert_eq!(summary(&SeerrLink { enabled: false, ..link }), "Off");
     assert_eq!(summary(&SeerrLink::default()), "Off");
 }
@@ -247,7 +244,7 @@ fn the_root_row_opens_the_page() {
 fn every_seerr_string_fits_in_every_language() {
     let _guard = plx_base::testlock::serial();
     let layout = RouteLayout::screen();
-    let ok = Probe::Connected(Status { version: "3.5.2".into() }, Me { id: 1, name: "Nitin Philip".into() });
+    let ok = Probe::Connected(Status { version: "3.5.2".into() }, Me { id: 1, name: "Sam Taylor".into() });
     let probes = [
         Probe::Idle, Probe::Testing, ok, Probe::Failed(SeerrError::Unreachable), Probe::Failed(SeerrError::NotSeerr),
         Probe::Failed(SeerrError::NoPlexAccount), Probe::Failed(SeerrError::SignInRefused), Probe::Failed(SeerrError::RateLimited),
@@ -258,7 +255,7 @@ fn every_seerr_string_fits_in_every_language() {
     for language in SHIPPED {
         let _lang = language_on_this_thread_for_test(language);
         let tag = language.tag();
-        for (url, enabled) in [("", false), (HOME, false), (HOME, true)] {
+        for (url, enabled) in [("", false), ("", true), (HOME, false), (HOME, true)] {
             for probe in &probes {
                 for problem in problems {
                     for armed in [false, true] {

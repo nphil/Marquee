@@ -1,0 +1,205 @@
+{
+  "requests.filter_pill": {
+    "value": "{name}: {value}",
+    "description": "Requests area, filter bar above the rows. A control showing its current value, such as Genre: Comedy. {name} is the control's name (Genre, From, To, Mood); {value} is what it is set to, or the word for any.",
+    "args": {
+      "name": "str",
+      "value": "str"
+    }
+  },
+  "requests.filter_genre": {
+    "value": "Genre",
+    "description": "Requests area, filter bar. Name of the control that picks a movie genre. One short word."
+  },
+  "requests.filter_from": {
+    "value": "From",
+    "description": "Requests area, filter bar. Name of the control that picks the first release year of a range. One short word."
+  },
+  "requests.filter_to": {
+    "value": "To",
+    "description": "Requests area, filter bar. Name of the control that picks the last release year of a range. One short word."
+  },
+  "requests.filter_mood": {
+    "value": "Mood",
+    "description": "Requests area, filter bar. Name of the control that picks a subgenre or mood such as Heist or Time travel. One short word."
+  },
+  "requests.filter_any": {
+    "value": "Any",
+    "description": "Requests area, filter bar. The value a control shows while it filters nothing."
+  },
+  "requests.filter_any_genre": {
+    "value": "Any genre",
+    "description": "Requests area, filter bar choices. First choice of the genre list: no genre filter."
+  },
+  "requests.filter_any_from": {
+    "value": "Any start",
+    "description": "Requests area, filter bar choices. First choice of the first-year list: no earliest year."
+  },
+  "requests.filter_any_to": {
+    "value": "Any end",
+    "description": "Requests area, filter bar choices. First choice of the last-year list: no latest year."
+  },
+  "requests.filter_any_mood": {
+    "value": "Any mood",
+    "description": "Requests area, filter bar choices. First choice of the mood list: no mood filter."
+  },
+  "requests.filter_reset": {
+    "value": "Reset filters",
+    "description": "Requests area, filter bar. Button that clears every filter at once. Shown only while a filter is set."
+  },
+  "requests.filter_decade": {
+    "value": "{year}s",
+    "description": "Requests area, filter bar choices. A whole decade in the first-year list, such as 1920s. {year} is the decade's first year, such as 1920.",
+    "args": {
+      "year": "str"
+    }
+  },
+  "requests.filter_retry": {
+    "value": "Try again",
+    "description": "Requests area, filter bar choices. Choice in the genre list when the genres could not be loaded: asks for them again."
+  },
+  "requests.filter_none": {
+    "value": "No movies match these filters",
+    "description": "Requests area. Read-out under the filter bar when the chosen genre, years and mood together match no movie."
+  },
+  "requests.filter_none_reason": {
+    "value": "Try a wider range of years or a different mood.",
+    "description": "Requests area. Second line under the no-match read-out: what to change. One short sentence."
+  },
+  "requests.popular": {
+    "value": "Popular matches",
+    "description": "Requests area. Heading of the row of movies matching the filters, most popular first."
+  },
+  "requests.top_rated": {
+    "value": "Top rated matches",
+    "description": "Requests area. Heading of the row of movies matching the filters, best rated first."
+  },
+  "requests.newest": {
+    "value": "Newest matches",
+    "description": "Requests area. Heading of the row of movies matching the filters, most recent release first."
+  },
+  "requests.unfiltered_mine": {
+    "value": "My requests (not filtered)",
+    "description": "Requests area. Heading of the viewer's own requests while a filter is set; the filter does not apply to this row."
+  },
+  "requests.unfiltered_trending": {
+    "value": "Trending (not filtered)",
+    "description": "Requests area. Heading of the trending row while a filter is set; the filter does not apply to this row."
+  },
+  "requests.unfiltered_shows": {
+    "value": "Popular shows (not filtered)",
+    "description": "Requests area. Heading of the popular shows row while a filter is set; the filter does not apply to this row."
+  },
+  "requests.unfiltered_upcoming": {
+    "value": "Coming soon (not filtered)",
+    "description": "Requests area. Heading of the coming-soon row while a filter is set; the filter does not apply to this row."
+  },
+  "requests.mood_neo_noir": {
+    "value": "Neo-noir",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_film_noir": {
+    "value": "Film noir",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_dark_comedy": {
+    "value": "Dark comedy",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_dystopia": {
+    "value": "Dystopia",
+    "description": "Requests area, mood list. A movie theme."
+  },
+  "requests.mood_cyberpunk": {
+    "value": "Cyberpunk",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_time_travel": {
+    "value": "Time travel",
+    "description": "Requests area, mood list. A movie theme."
+  },
+  "requests.mood_heist": {
+    "value": "Heist",
+    "description": "Requests area, mood list. A movie subgenre: a robbery plot."
+  },
+  "requests.mood_true_story": {
+    "value": "Based on a true story",
+    "description": "Requests area, mood list. Movies drawn from real events."
+  },
+  "requests.mood_coming_of_age": {
+    "value": "Coming of age",
+    "description": "Requests area, mood list. A movie subgenre about growing up."
+  },
+  "requests.mood_post_apocalyptic": {
+    "value": "Post-apocalyptic",
+    "description": "Requests area, mood list. A movie subgenre set after a collapse of civilisation."
+  },
+  "requests.mood_psychological_thriller": {
+    "value": "Psychological thriller",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_slasher": {
+    "value": "Slasher",
+    "description": "Requests area, mood list. A horror subgenre."
+  },
+  "requests.mood_road_trip": {
+    "value": "Road trip",
+    "description": "Requests area, mood list. A movie theme."
+  },
+  "requests.mood_survival": {
+    "value": "Survival",
+    "description": "Requests area, mood list. A movie theme."
+  },
+  "requests.mood_whodunit": {
+    "value": "Whodunit",
+    "description": "Requests area, mood list. A detective mystery where the culprit is the puzzle."
+  },
+  "requests.mood_satire": {
+    "value": "Satire",
+    "description": "Requests area, mood list. A movie style."
+  },
+  "requests.mood_superhero": {
+    "value": "Superhero",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_revenge": {
+    "value": "Revenge",
+    "description": "Requests area, mood list. A movie theme."
+  },
+  "requests.mood_buddy_comedy": {
+    "value": "Buddy comedy",
+    "description": "Requests area, mood list. A comedy about two friends or partners."
+  },
+  "requests.mood_martial_arts": {
+    "value": "Martial arts",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_courtroom": {
+    "value": "Courtroom",
+    "description": "Requests area, mood list. Movies set around a trial."
+  },
+  "requests.mood_spy": {
+    "value": "Spy",
+    "description": "Requests area, mood list. A movie subgenre."
+  },
+  "requests.mood_zombie": {
+    "value": "Zombie",
+    "description": "Requests area, mood list. A horror subgenre."
+  },
+  "requests.mood_haunted_house": {
+    "value": "Haunted house",
+    "description": "Requests area, mood list. A horror theme."
+  },
+  "requests.mood_alien_invasion": {
+    "value": "Alien invasion",
+    "description": "Requests area, mood list. A science-fiction theme."
+  },
+  "requests.mood_christmas": {
+    "value": "Christmas",
+    "description": "Requests area, mood list. Movies set at Christmas."
+  },
+  "requests.mood_found_footage": {
+    "value": "Found footage",
+    "description": "Requests area, mood list. A horror and thriller style filmed as if recovered camera footage."
+  }
+}

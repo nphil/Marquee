@@ -94,10 +94,10 @@ fn every_settings_row_fits_its_column_in_every_language() {
                 &RootInputs { subtitle_preset: preset, ..base_root_inputs() }, &mut out);
         }
         overflowing_root(&format!("{tag} bazarr set"), &RootInputs { bazarr: plx_plex::plex::session::BazarrLink {
-            url: "https://bazarr.nateshome.net:6767".into(), api_key: "k".into() }, ..base_root_inputs() }, &mut out);
+            url: "https://bazarr.example.net:6767".into(), api_key: "k".into() }, ..base_root_inputs() }, &mut out);
         overflowing_root(&format!("{tag} radarr, sonarr and a clean-up waiting"), &RootInputs { arr: ArrRoot {
-            radarr: plx_plex::plex::session::ArrLink { url: "https://radarr.nateshome.net:7878".into(), api_key: "k".into() },
-            sonarr: plx_plex::plex::session::ArrLink { url: "https://sonarr.nateshome.net:8989".into(), api_key: "k".into() },
+            radarr: plx_plex::plex::session::ArrLink { url: "https://radarr.example.net:7878".into(), api_key: "k".into() },
+            sonarr: plx_plex::plex::session::ArrLink { url: "https://sonarr.example.net:8989".into(), api_key: "k".into() },
             cleanup: Some("The Lord of the Rings: The Fellowship of the Ring".into()) }, ..base_root_inputs() }, &mut out);
         for &library_count in &[0i64, 1, 88] {
             overflowing_root(&format!("{tag} library_count={library_count}"),

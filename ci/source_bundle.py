@@ -66,6 +66,12 @@ def allowed(name):
     # Optional upstream API reference contains credential-shaped public examples; not a build input.
     if name == 'docs/plex-openapi.json' or name.startswith('docs/measurements/'):
         return False
+    # Household operations and device evidence are not inputs to the package or its tests.
+    if name in {
+        'docs/marquee/agent-guide.md',
+        'docs/marquee/subtitles-ui-status.md',
+    } or name.startswith(('docs/marquee/mocks/', 'docs/marquee/renders/')):
+        return False
     if name in {'ipkroot/ctl/control', '.agents/skills/wake-tv/wake-tv.sh'} or name.startswith('.claude/hooks/'):
         return True
     if name in ROOT_FILES or p.parts[0] in ROOT_DIRS:

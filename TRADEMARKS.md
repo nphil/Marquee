@@ -43,3 +43,7 @@ software interoperates with.
 IMDb.com; "TMDB" of The Movie Database. None of those companies is affiliated with this project.
 Where their names appear in the application, they identify whose service or review score is being
 shown, and nothing more.
+
+The unmodified TMDB logo in About credits [The Movie Database](https://www.themoviedb.org/about/logos-attribution)
+for metadata and artwork on the Requests page. It is TMDB's mark, not covered by the project's GPL
+licence, and does not imply endorsement.

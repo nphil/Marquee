@@ -610,16 +610,17 @@ IMDb.com, or The Movie Database. "webOS", "LG", "Plex", "Rotten Tomatoes", "IMDb
 other trademarks are the property of their respective owners. Where those names appear in the
 application, they identify whose review score is being shown and nothing more.
 
-**Third-party brands in the interface (not a licence matter).** Review scores fetched from the
-user's own Plex Media Server are labelled with the name of the service that published them, set
-as ordinary text. No third-party logo, wordmark or brand colour is reproduced: the only glyphs
-beside a score are two original drawings — a tomato and a group of people — that indicate the
-verdict, not the vendor. Nothing here is owed under any licence in this file.
+**Review scores.** Scores fetched from the viewer's Plex Media Server use ordinary text to name
+the source. The tomato and group-of-people glyphs indicate the verdict, not the vendor.
 
-*This paragraph previously described a set of shipped icons depicting the Rotten Tomatoes fruit
-and popcorn marks, and IMDb/TMDB rendered as name-and-brand-colour chips. Those eleven assets were
-removed in favour of the above; the notice is kept accurate rather than deleted, because a stale
-disclosure that over-states what a package contains is its own problem.*
+**The Movie Database (TMDB).** Requests uses TMDB metadata through Seerr and displays TMDB
+artwork. The [official attribution logo](https://www.themoviedb.org/about/logos-attribution) in
+About is the unmodified blue long logo (`assets/brand/tmdb-blue-long.svg`, SHA-256
+`9665a76b1ae401a510ec1e0ca40ddcb3b0cfe45f1d51b77a308fea0845885648`). It remains TMDB's mark
+and is not covered by the project's GPL licence.
+
+This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.
+This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ---
 

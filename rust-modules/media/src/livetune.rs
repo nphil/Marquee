@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn the_url_path_is_found_past_host_and_port() {
-        assert_eq!(path_of("http://192.168.1.242:5004/auto/v7.1?transcode=mobile"), "/auto/v7.1?transcode=mobile");
+        assert_eq!(path_of("http://192.0.2.24:5004/auto/v7.1?transcode=mobile"), "/auto/v7.1?transcode=mobile");
         assert_eq!(path_of("http://host"), "");
     }
 

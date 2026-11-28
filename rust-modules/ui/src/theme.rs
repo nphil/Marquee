@@ -123,6 +123,9 @@ pub const TEXT_SECONDARY: [f32; 4] = COOL_300;
 pub const TEXT_READING: [f32; 4] = COOL_200;
 /// Tertiary text: runtime, kickers, inactive tabs, About labels, dim/empty states.
 pub const TEXT_TERTIARY: [f32; 4] = COOL_400;
+/// Tint that draws a full-colour image exactly as authored (the sampler's colour times white). For
+/// artwork a third party supplies and forbids recolouring or fading, such as a partner's logo.
+pub const IMAGE_AS_AUTHORED: [f32; 4] = WHITE;
 /// A page-header control's label at rest (`PageHeader`): white at 65%. A value segment beside it
 /// stays full white, so "Collections · 24" reads as a label and a value.
 pub const CONTROL_TEXT_REST: [f32; 4] = with_a(WHITE, 0.65);

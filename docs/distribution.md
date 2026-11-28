@@ -939,13 +939,12 @@ this space target redraws.
 is referential use, or use a neutral house glyph. The scores come from PMS either way, so dropping
 the icons costs no data.
 
-**BLOCKING but trivial — TMDB.** Terms (rev. 2023-10-20) §3 require the **unmodified** official logo
-plus this notice placed prominently: *"This [application] uses TMDB and the TMDB APIs but is not
-endorsed, certified, or otherwise approved by TMDB."* (Note this current wording differs from the
-older short form that circulates.) Our `tmdb.svg` is a redraw — violating the no-modification rule —
-and there is no attribution anywhere. Nuance: we don't call the TMDB API (we take
-`themoviedb://image.rating` hints from PMS, `metadata.rs:322`), so we're likely not a licensee at all
-and have no licence to the logo. Ship the official unmodified logo **with** the notice, or drop it.
+**TMDB attribution.** Requests retrieves catalogue data via Seerr and loads artwork from TMDB.
+About uses the official unmodified logo and the two notices in
+[Third-party notices](../THIRD-PARTY-NOTICES.md#4-not-determined-and-matters-outside-licensing).
+The [TMDB API terms](https://www.themoviedb.org/api-terms-of-use) limit retention and require a
+separate agreement for commercial use. This describes the fork's attribution, not a general
+redistribution or service-licence determination.
 
 Two more, minor: `assets/icons/user.svg` is character-for-character Google Material Icons `person`
 (Apache-2.0, needs attribution) and `backspace.svg` is Feather Icons `delete` (MIT, needs the

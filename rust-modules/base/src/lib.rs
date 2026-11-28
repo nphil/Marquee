@@ -14,6 +14,7 @@
 pub mod eventlog; // THE event log: `eventlog::log` is the one sink every module writes through
 pub mod logcap; // size caps for the event and stderr logs while the app runs, with a `.prev` twin
 pub mod paths; // where the app's own files live — /proc/self/exe, not a hardcoded install prefix
+pub mod retention; // how long TMDB-derived data may stay on the device (TMDB API terms 1.C)
 pub mod process; // `exit_now`: the one way the app process ends (`_exit`, never libc `exit`, #1115)
 pub mod task; // the one spawn: a refused thread is a return value, not a panic that kills the app
 pub mod cbuf; // fixed NUL-terminated C-string buffer read/write

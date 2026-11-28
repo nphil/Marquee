@@ -33,7 +33,7 @@ TV".
   receiver volume.
 - **Install:** sideloaded like Stashy (free signing, re-signed every 7 days).
 
-The protocol and its decisions are in `/data/home/lumaglass/docs/research/phone-remote.md`
-(LumaTV repo, "Decisions", 7d0801d0). Added latency is a target under 20 ms on Wi-Fi, to be
+The protocol and its decisions are in the LumaTV repo (`docs/research/phone-remote.md`, “Decisions”,
+commit `7d0801d0`). Added latency is a target under 20 ms on Wi-Fi, to be
 measured. iOS builds run on GitHub Actions macOS runners; the kit keeps its own CI with
 `swift test`.

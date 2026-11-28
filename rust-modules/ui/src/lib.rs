@@ -55,6 +55,7 @@ pub mod placeholder; // placeholder accounting: a per-frame count at every place
 pub mod hero_logo; // the ONE clearLogo sizing rule + its fallback-to-title band (both heroes, the compact title)
 pub mod landing_hero; // shared landing hero geometry and scrim curve, also read by route/legibility checks
 pub mod icons;
+pub mod attribution; // a partner's logo and the notice its terms require, as one credits block
 pub mod form; // declared, ordered rows with stable keys: Form / FormTable (docs/settings-form.md)
 #[cfg(test)]
 mod form_tests;

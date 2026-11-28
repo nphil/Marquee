@@ -541,6 +541,15 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(b'expected candidate', result.stderr)
 
+    def test_household_only_notes_stay_out_of_source_bundle(self):
+        from source_bundle import allowed
+        for path in ('docs/marquee/agent-guide.md', 'docs/marquee/subtitles-ui-status.md',
+                     'docs/marquee/mocks/09-integrations.html', 'docs/marquee/renders/example.jpg'):
+            with self.subTest(path=path):
+                self.assertFalse(allowed(path))
+        self.assertTrue(allowed('docs/marquee/changelog.md'))
+        self.assertTrue(allowed('tools/import-bazarr-link.sh'))
+
 
 class RepositoryTreeScan(unittest.TestCase):
     """Run the bundle's credential scan over the REAL tree, before any ARM build.

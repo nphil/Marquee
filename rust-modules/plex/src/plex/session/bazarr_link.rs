@@ -186,11 +186,11 @@ mod tests {
     #[test]
     fn addresses_settle_to_scheme_host_port() {
         for (typed, want) in [
-            ("https://bazarr.nateshome.net", "https://bazarr.nateshome.net"),
-            ("  https://bazarr.nateshome.net/  ", "https://bazarr.nateshome.net"),
+            ("https://bazarr.example.net", "https://bazarr.example.net"),
+            ("  https://bazarr.example.net/  ", "https://bazarr.example.net"),
             ("HTTPS://Bazarr.Example.net/settings/general", "https://Bazarr.Example.net"),
-            ("bazarr.nateshome.net", "https://bazarr.nateshome.net"),
-            ("bazarr.nateshome.net:6767", "https://bazarr.nateshome.net:6767"),
+            ("bazarr.example.net", "https://bazarr.example.net"),
+            ("bazarr.example.net:6767", "https://bazarr.example.net:6767"),
             ("http://192.168.1.50:6767", "http://192.168.1.50:6767"),
             ("http://bazarr:6767/", "http://bazarr:6767"),
             ("http://nas.local", "http://nas.local"),
@@ -236,8 +236,8 @@ mod tests {
 
     #[test]
     fn host_names_the_machine_only() {
-        let link = BazarrLink { url: "https://bazarr.nateshome.net:6767".into(), api_key: "k".into() };
-        assert_eq!(link.host(), Some("bazarr.nateshome.net:6767"));
+        let link = BazarrLink { url: "https://bazarr.example.net:6767".into(), api_key: "k".into() };
+        assert_eq!(link.host(), Some("bazarr.example.net:6767"));
         assert_eq!(BazarrLink::default().host(), None);
         assert!(link.is_complete() && !link.is_empty());
         assert!(!BazarrLink { url: "https://x.net".into(), api_key: String::new() }.is_complete());

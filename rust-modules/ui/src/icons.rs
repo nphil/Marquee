@@ -465,7 +465,7 @@ fn tex_for(key: Key, svg: &str, px: i32) -> c_uint {
     let tex = match plx_gfx::svg::rasterize(svg, hi, hi) {
         Some(rgba) => {
             let small = downsample_alpha(&rgba, hi, SS);
-            upload(target, &small)
+            upload(target, target, &small)
         }
         None => 0,
     };
@@ -481,10 +481,10 @@ fn tex_for(key: Key, svg: &str, px: i32) -> c_uint {
 /// reaches this through the page header's icons; it is handed a stand-in name per cache entry,
 /// specced in `gfx::tex_ledger` as the real upload would be, so the paint the icon declares still
 /// carries a texture and the cache keeps its one-entry-per-size shape.
-fn upload(side: i32, px: &[u8]) -> c_uint {
+pub(crate) fn upload(w: i32, h: i32, px: &[u8]) -> c_uint {
     #[cfg(not(any(test, feature = "test-support")))]
     {
-        plx_gfx::gfx::upload_rgba(0, side, side, px.as_ptr())
+        plx_gfx::gfx::upload_rgba(0, w, h, px.as_ptr())
     }
     #[cfg(any(test, feature = "test-support"))]
     {
@@ -494,7 +494,7 @@ fn upload(side: i32, px: &[u8]) -> c_uint {
         const STAND_IN_BASE: u32 = 0x4943_0000;
         static NEXT: AtomicU32 = AtomicU32::new(STAND_IN_BASE);
         let tex = NEXT.fetch_add(1, Ordering::Relaxed);
-        plx_gfx::gfx::tex_ledger::specified(tex, side, side);
+        plx_gfx::gfx::tex_ledger::specified(tex, w, h);
         tex
     }
 }

@@ -107,8 +107,8 @@ Lines in `/tmp/plxnative-events.log`:
 
 ## On the TV
 
-One run, at `ca33f3bdf` (`/data/home/tmp/marquee-multilink-20261122/RESULTS.txt`): Wi-Fi and the
-wired port carried an 89 Mbit/s film over TLS for seven minutes and two seeks, with no answer
+In a run at `ca33f3bdf`, Wi-Fi and the wired port carried an 89 Mbit/s film over TLS for seven
+minutes and two seeks, with no answer
 refused and no hand-back. The answers to the Wi-Fi-bound connections arrived, their return
 traffic leaving over the wired port. The links brought 145 Mbit/s together at best over 10 s,
 and failed over nine times in four and a half minutes, each link proven again within seconds.

@@ -2764,6 +2764,8 @@ class MockPms:
         self.lib = lib
         # The plex.tv Watchlist's Discover stand-in (see its class); held titles take library guids.
         self.discover = DiscoverFixture()
+        # Seerr/Radarr/Sonarr stand-in (tests/mock_seerr.py); `serve(catalog=...)` sets it.
+        self.seerr = None
         if not isinstance(lib, CatalogLibrary):  # the demo catalog's recorded guids are pinned by fixtures
             self.discover.bind(lib)
         # `--home-hubs N` (#395): `/hubs` answers exactly N hubs; 0 keeps the library's own.
@@ -2975,7 +2977,7 @@ class MockPms:
                                    {"key": "random", "defaultDirection": "asc", "title": "Randomly"}]}]}
 
     def handle(self, method, path, body=b"", headers=None):
-        """Returns (status, content_type, bytes)."""
+        """Returns (status, content_type, bytes), with optional extra response headers."""
         u = urllib.parse.urlsplit(path)
         p = u.path
         q = {k: v[-1] for k, v in urllib.parse.parse_qs(u.query, keep_blank_values=True).items()}
@@ -3114,6 +3116,10 @@ class MockPms:
                 return j({"error": "invalid JSON body"}, 400)
             status, obj = self.discover.configure(patch, self.lib)
             return j(obj, status)
+        if self.seerr is not None:
+            answered = self.seerr.handle(method, p, q, headers, body)
+            if answered is not None:
+                return answered
         answered = self.discover.handle(method, p, q, headers, lib)
         if answered is not None:
             if method == "PUT":
@@ -3430,6 +3436,8 @@ class MockPms:
                                                    include_collections=q.get("includeCollections") == "1")))
         if p == "/photo/:/transcode" and catalog:
             img = lib.image(q.get("url", ""), q.get("width"), q.get("height"))
+            if img is None and self.seerr is not None:
+                img = self.seerr.image(q.get("url", ""), q.get("width"), q.get("height"))
             if img is None:
                 # A Watchlist title's poster (`/library/metadata/<24-hex guid>/thumb/..`): the Discover
                 # fixture's, not the catalog's, so it gets the flat colour a catalog-less mock draws
@@ -3789,11 +3797,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        status, ctype, data = self.server.pms.handle(method, self.path, body, self.headers)
+        status, ctype, data, *extra = self.server.pms.handle(method, self.path, body, self.headers)
         with self.server.pms.lock:
             self.server.pms.requests.append((self.path, status))
         self.send_response(status)
         self.send_header("Content-Type", ctype)
+        for name, value in (extra[0] if extra else {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Plex-Protocol", "1.0")
         self.end_headers()
@@ -4020,6 +4030,9 @@ def serve(port, seed=1, host="127.0.0.1", verbose=False, movies=48, rail_fixture
                       band_fixture=band_fixture)
     lib.smart_collections = smart_collections
     pms = MockPms(lib)
+    if catalog is not None:
+        import mock_seerr
+        pms.seerr = mock_seerr.SeerrFixture(json.loads(pathlib.Path(catalog).read_text()), lib)
     pms.link = link_conditioner.Conditioner(seed=seed)
     for spec in link:
         klass, profile = link_conditioner.parse_spec(spec)

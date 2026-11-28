@@ -28,6 +28,19 @@ pub struct RowCards<'a> {
     pub(super) row: &'a Row,
     /// The server whose photo proxy fetches the posters; none while no server is reachable.
     pub(super) art: Option<plx_plex::plex::ServerId>,
+    pub(super) progress: &'a progress::Poll,
+}
+
+impl RowCards<'_> {
+    fn chip_word(&self, card: &Card) -> Option<&str> {
+        let badge = card.badge?;
+        if self.row.lane == Lane::Mine && progress::follows(badge) {
+            if let Some(chip) = self.progress.chip(card.kind, card.tmdb) {
+                return Some(chip.word.as_ref());
+            }
+        }
+        Some(badge_word(badge))
+    }
 }
 
 impl<H: ContentLike> CardSource<H> for RowCards<'_> {
@@ -74,10 +87,10 @@ impl<H: ContentLike> CardSource<H> for RowCards<'_> {
         self.row.epoch
     }
     fn overlay(&self, p: Painter, i: usize, tile: &Tile, measure: &dyn Measure) {
-        if let Some(badge) = self.row.cards.get(i).and_then(|c| c.badge) {
+        if let Some(word) = self.row.cards.get(i).and_then(|c| self.chip_word(c)) {
             let inset = plx_ui::theme::space::SM;
             let room = (tile.rect.w - 2.0 * inset - BADGE_CHROME).max(0.0);
-            let fit = measure.fit_line(badge_word(badge), room, plx_ui::theme::size::CAPTION, true);
+            let fit = measure.fit_line(word, room, plx_ui::theme::size::CAPTION, true);
             let word = fit.to_str().unwrap_or_default();
             let cy = tile.rect.y + inset + plx_ui::widgets::BADGE_H * 0.5;
             plx_ui::widgets::badge(p, tile.rect.x + inset, cy, word, None, plx_ui::widgets::BadgeStyle::OverArt, measure);
@@ -89,6 +102,30 @@ impl<H: ContentLike> CardSource<H> for RowCards<'_> {
 mod tests {
     use super::*;
     use plx_ui::fixture::FixtureMeasure;
+
+    #[test]
+    fn the_mine_chip_uses_live_bytes_but_never_overrides_a_ready_title() {
+        use plx_plex::plex::progress::{Live, Stage, Sum};
+        let mut progress = progress::Poll::default();
+        progress.show();
+        let (kind, gen) = progress.advance(|k| k == Kind::Movie).unwrap();
+        progress.land(gen, kind, Ok(vec![Live {
+            tmdb: 7,
+            sum: Sum { stage: Stage::Downloading, percent: Some(42), eta_s: None },
+        }]));
+        let row = Row::new(Lane::Mine);
+        let cards = RowCards { row: &row, art: None, progress: &progress };
+        let mut card = Card {
+            elem: 10, kind, tmdb: 7, name: String::new(), year: String::new(), thumb: String::new(),
+            badge: Some(Badge::Approved),
+        };
+        assert!(cards.chip_word(&card).unwrap().contains("42"));
+        card.tmdb = 8;
+        assert_eq!(cards.chip_word(&card), Some(badge_word(Badge::Approved)));
+        card.tmdb = 7;
+        card.badge = Some(Badge::Available);
+        assert_eq!(cards.chip_word(&card), Some(badge_word(Badge::Available)));
+    }
 
     #[test]
     fn every_status_chip_fits_a_poster_corner() {

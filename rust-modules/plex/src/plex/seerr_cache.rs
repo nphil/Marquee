@@ -16,12 +16,15 @@
 //!   for a title that has been asked for.
 //! * The refresh ([`refresh`]) reads the shelves and the viewer's requests beside each other, and
 //!   a title already known from an earlier read is not asked for again, so a repeat refresh is
-//!   five calls instead of twenty-five.
+//!   five calls instead of twenty-five. A title is held at most [`TMDB_MAX_AGE_SECS`] (TMDB's
+//!   terms limit keeping what it supplies to six months): past that it is read again rather than
+//!   carried over, and a snapshot whose titles are older is neither shown nor kept on disk.
 //!
 //! The [`Hub`] holds the one snapshot of the process and the pages listening to it ([`Sink`]); it
 //! takes the time as an argument so tests need no clock.
 
 use super::seerr::{Asked, Badge, Have, Kind, Page, Rules, Seerr, SeerrError, Shelf, Title, Transport};
+use plx_base::retention::TMDB_MAX_AGE_SECS;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -47,6 +50,10 @@ pub struct Key {
 pub struct Mine {
     pub items: Vec<Asked>,
     pub more: bool,
+    /// Unix seconds when the oldest title in `items` was read from Seerr (TMDB-derived data, kept
+    /// at most [`TMDB_MAX_AGE_SECS`]); 0 for a copy saved before this was recorded.
+    #[serde(default)]
+    pub born: u64,
 }
 
 /// One row of the page.
@@ -81,12 +88,22 @@ pub struct Snapshot {
     account: String,
     /// Unix seconds when the last complete refresh finished.
     read: u64,
+    /// Unix seconds when the first answer of a first read landed: dates a snapshot no complete
+    /// refresh has yet (`read` is 0 until one ends).
+    #[serde(default)]
+    since: u64,
     /// Something changed since (a request was made): ask again whatever the age.
     #[serde(default)]
     stale: bool,
     rules: Option<Rules>,
     mine: Option<Mine>,
     shelves: [Option<Page<Title>>; 4],
+}
+
+/// Whether something read at `at` is inside TMDB's retention limit at `now`; a time of 0 (unknown)
+/// or in the future (a clock set back) is not.
+fn young(at: u64, now: u64) -> bool {
+    at > 0 && now.checked_sub(at).is_some_and(|age| age < TMDB_MAX_AGE_SECS)
 }
 
 impl Snapshot {
@@ -96,6 +113,7 @@ impl Snapshot {
             base: key.base.clone(),
             account: key.account.clone(),
             read: 0,
+            since: 0,
             stale: true,
             rules: None,
             mine: None,
@@ -112,18 +130,37 @@ impl Snapshot {
         now.checked_sub(self.read).unwrap_or(u64::MAX)
     }
 
+    /// When this snapshot was read: the last complete refresh, else the first answer of the first.
+    fn stamp(&self) -> u64 {
+        if self.read > 0 {
+            self.read
+        } else {
+            self.since
+        }
+    }
+
     fn complete(&self) -> bool {
         self.rules.is_some() && self.mine.is_some() && self.shelves.iter().all(Option::is_some)
     }
 
     /// Nothing needs asking: whole, read lately, and nothing has happened since.
     pub fn fresh(&self, now: u64) -> bool {
-        !self.stale && self.complete() && self.age(now) < FRESH_SECS
+        !self.stale && self.complete() && self.age(now) < FRESH_SECS && self.keeps(now)
     }
 
-    /// Young enough to show.
+    /// Young enough to show: inside [`KEEP_SECS`], and the viewer's titles inside TMDB's limit
+    /// (one with no read time, from before it was kept, is not).
     pub fn keeps(&self, now: u64) -> bool {
-        self.age(now) <= KEEP_SECS
+        let titles = self.mine.as_ref().is_none_or(|m| m.items.is_empty() || young(m.born, now));
+        self.stamp() != 0 && now.checked_sub(self.stamp()).is_some_and(|age| age <= KEEP_SECS) && titles
+    }
+
+    /// Provably past the limits, as opposed to merely not trusted (a clock set back since): the
+    /// only thing that deletes a file.
+    fn expired(&self, now: u64) -> bool {
+        let older = |at: u64, limit: u64| now.checked_sub(at).is_some_and(|age| age > limit);
+        let titles = self.mine.as_ref().is_some_and(|m| !m.items.is_empty() && (m.born == 0 || older(m.born, TMDB_MAX_AGE_SECS - 1)));
+        older(self.stamp(), KEEP_SECS) || titles
     }
 
     /// A title this snapshot already knows, from the viewer's requests first.
@@ -132,6 +169,20 @@ impl Snapshot {
         let mine = self.mine.iter().flat_map(|m| m.items.iter().map(|a| &a.title));
         let shelves = self.shelves.iter().flatten().flat_map(|p| p.items.iter());
         mine.chain(shelves).find(same)
+    }
+
+    /// A title this snapshot may hand on to the next read, with when it was read: only one read
+    /// inside TMDB's retention limit, so a title that stays on the list is read afresh in time.
+    fn reusable(&self, kind: Kind, tmdb: u32, now: u64) -> Option<(&Title, u64)> {
+        let same = |t: &&Title| t.kind == kind && t.tmdb == tmdb;
+        if let Some(mine) = &self.mine {
+            if let Some(ask) = mine.items.iter().find(|a| same(&&a.title)) {
+                return young(mine.born, now).then_some((&ask.title, mine.born));
+            }
+        }
+        // A shelf is read whole each pass, so a title in one was read no earlier than the snapshot.
+        let title = self.shelves.iter().flatten().flat_map(|p| p.items.iter()).find(same)?;
+        young(self.stamp(), now).then_some((title, self.stamp()))
     }
 
     /// Every held answer, in the order a page wants them.
@@ -177,8 +228,10 @@ impl Snapshot {
             }
         }
         let known = self.title(kind, tmdb).cloned();
+        let stamp = self.stamp();
         if let (Some(mine), Some(title)) = (&mut self.mine, known) {
             if !mine.items.iter().any(|a| a.title.kind == kind && a.title.tmdb == tmdb) {
+                mine.born = if mine.items.is_empty() { stamp } else { mine.born.min(stamp) };
                 mine.items.insert(0, Asked { title, badge: Some(Badge::Requested) });
                 changed.push(Piece::Mine(mine.clone()));
             }
@@ -252,6 +305,11 @@ impl Hub {
             g.gen += 1;
             g.again |= g.running;
         }
+        // Held answers past the limits go even when nobody has asked for them in the meantime.
+        if g.snap.as_ref().is_some_and(|s| !s.keeps(now)) {
+            g.snap = None;
+            g.gen += 1;
+        }
         if let Some(sink) = sink {
             let live = g.snap.as_ref().is_none_or(|s| s.pieces().into_iter().all(|piece| sink.take(piece)));
             if live {
@@ -298,8 +356,9 @@ impl Hub {
         !self.lock().disk_read
     }
 
-    pub fn snapshot(&self) -> Option<Snapshot> {
-        self.lock().snap.clone()
+    /// What is held, unless it is past the retention limits.
+    pub fn snapshot(&self, now: u64) -> Option<Snapshot> {
+        self.lock().snap.as_ref().filter(|s| s.keeps(now)).cloned()
     }
 
     /// Moves whenever the snapshot changes.
@@ -308,12 +367,16 @@ impl Hub {
     }
 
     /// One answer of a refresh: held and handed to every listener.
-    pub fn publish(&self, key: &Key, piece: Piece) {
+    pub fn publish(&self, key: &Key, piece: Piece, now: u64) {
         let mut g = self.lock();
         if g.key.as_ref() != Some(key) {
             return;
         }
-        g.snap.get_or_insert_with(|| Snapshot::empty(key)).apply(&piece);
+        let snap = g.snap.get_or_insert_with(|| Snapshot::empty(key));
+        if snap.since == 0 {
+            snap.since = now;
+        }
+        snap.apply(&piece);
         g.gen += 1;
         g.sinks.retain(|s| s.take(piece.clone()));
     }
@@ -357,7 +420,9 @@ impl Hub {
             if let Some(snap) = g.snap.as_mut() {
                 snap.read = now;
                 snap.stale = false;
-                save = Some(snap.clone());
+                if snap.keeps(now) {
+                    save = Some(snap.clone());
+                }
             }
         }
         let again = std::mem::take(&mut g.again);
@@ -383,11 +448,12 @@ impl Hub {
     }
 
     /// Drop the held answers but keep the key and listeners (the app went to the background): the
-    /// next open reads the copy on disk again. Only answers the disk copy matches go; a running
-    /// worker would refill them anyway.
-    pub fn release(&self) {
+    /// next open reads the copy on disk again. Only answers the disk copy matches go, and ones past
+    /// the retention limits; a running worker would refill them anyway.
+    pub fn release(&self, now: u64) {
         let mut g = self.lock();
-        if g.running || g.snap.as_ref().is_none_or(|s| s.stale) {
+        let Some(snap) = g.snap.as_ref() else { return };
+        if g.running || (snap.stale && snap.keeps(now)) {
             return;
         }
         g.snap = None;
@@ -395,10 +461,19 @@ impl Hub {
         g.gen += 1;
     }
 
+    /// Drop expired held answers even if Requests is never opened.
+    pub fn expire(&self, now: u64) {
+        let mut g = self.lock();
+        if !g.running && g.snap.as_ref().is_some_and(|s| s.expired(now)) {
+            g.snap = None;
+            g.gen += 1;
+        }
+    }
+
     /// The poster paths a page shows first: the first `per_row` of each of the first `rows` rows.
-    pub fn first_posters(&self, rows: usize, per_row: usize) -> Vec<String> {
+    pub fn first_posters(&self, rows: usize, per_row: usize, now: u64) -> Vec<String> {
         let g = self.lock();
-        let Some(snap) = g.snap.as_ref() else { return Vec::new() };
+        let Some(snap) = g.snap.as_ref().filter(|s| s.keeps(now)) else { return Vec::new() };
         let mine = snap.mine.iter().map(|m| m.items.iter().map(|a| &a.title).collect::<Vec<_>>());
         let shelves = snap.shelves.iter().flatten().map(|p| p.items.iter().collect::<Vec<_>>());
         let titled = mine.chain(shelves).filter(|row| !row.is_empty());
@@ -417,34 +492,64 @@ pub fn now() -> u64 {
 
 // ---- the file ----------------------------------------------------------------------------------------
 
-/// The snapshot a file holds, from the first of `paths` that holds one.
-pub fn load(paths: &[PathBuf]) -> Option<Snapshot> {
-    paths.iter().find_map(|path| {
-        let snap: Snapshot = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-        (snap.format == FORMAT).then_some(snap)
-    })
+// An idle scan must not remove a newer snapshot saved after it reads an old one.
+static FILE_IO: Mutex<()> = Mutex::new(());
+
+fn read_saved(path: &std::path::Path, now: u64) -> Option<Snapshot> {
+    let bytes = std::fs::read(path).ok()?;
+    let snap = serde_json::from_slice::<Snapshot>(&bytes)
+        .ok()
+        .filter(|snap| snap.format == FORMAT && !snap.expired(now));
+    if snap.is_none() {
+        let _ = std::fs::remove_file(path);
+    }
+    snap.filter(|snap| snap.keeps(now))
+}
+
+/// The snapshot a file holds, from the first of `paths` that holds one. A file past the limits is
+/// deleted rather than read. `now` is Unix seconds.
+pub fn load(paths: &[PathBuf], now: u64) -> Option<Snapshot> {
+    let _io = FILE_IO.lock().unwrap_or_else(|e| e.into_inner());
+    paths.iter().find_map(|path| read_saved(path, now))
 }
 
 /// Write the snapshot to the first of `paths` that takes it. Owner-only: it lists what the viewer
 /// asked for.
 pub fn save(paths: &[PathBuf], snap: &Snapshot) -> bool {
     let Ok(json) = serde_json::to_vec(snap) else { return false };
+    let _io = FILE_IO.lock().unwrap_or_else(|e| e.into_inner());
     paths.iter().any(|path| write_private(path, &json).is_ok())
 }
 
 /// Remove every file of `paths`.
 pub fn purge(paths: &[PathBuf]) {
+    let _io = FILE_IO.lock().unwrap_or_else(|e| e.into_inner());
     for path in paths {
         let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(temp_path(path));
     }
+}
+
+/// Delete the files of `paths` that cannot be shown any more: past the limits, or not a snapshot
+/// this build reads. Run while idle, so a copy nobody opens does not outlive TMDB's limit.
+pub fn expire(paths: &[PathBuf], now: u64) {
+    let _io = FILE_IO.lock().unwrap_or_else(|e| e.into_inner());
+    for path in paths {
+        let _ = read_saved(path, now);
+        let _ = std::fs::remove_file(temp_path(path));
+    }
+}
+
+fn temp_path(path: &std::path::Path) -> PathBuf {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    PathBuf::from(tmp)
 }
 
 fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
+    let tmp = temp_path(path);
     let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
     let written = file.write_all(bytes).and_then(|()| file.flush());
     drop(file);
@@ -460,13 +565,21 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 // ---- the reads ---------------------------------------------------------------------------------------
 
 /// One page of the viewer's requests, each with its title. A title `known` already is not asked for
-/// again; the others are read a few at a time. A title Seerr cannot read any more is left out
-/// rather than failing the row.
-pub fn mine_page<T: Transport + Sync>(seerr: &Seerr<'_, T>, skip: u32, known: Option<&Snapshot>) -> Result<Mine, SeerrError> {
+/// again, unless it was read longer ago than TMDB lets it be kept; the others are read a few at a
+/// time. A title Seerr cannot read any more is left out rather than failing the row. `now` is Unix
+/// seconds.
+pub fn mine_page<T: Transport + Sync>(seerr: &Seerr<'_, T>, skip: u32, known: Option<&Snapshot>, now: u64) -> Result<Mine, SeerrError> {
     let me = seerr.me()?;
     let (requests, more) = seerr.my_requests(me.id, skip)?;
-    let mut titles: Vec<Option<Title>> =
-        requests.iter().map(|r| known.and_then(|s| s.title(r.kind, r.tmdb)).cloned()).collect();
+    let mut born = now;
+    let mut titles: Vec<Option<Title>> = requests
+        .iter()
+        .map(|r| {
+            let (title, read) = known.and_then(|s| s.reusable(r.kind, r.tmdb, now))?;
+            born = born.min(read);
+            Some(title.clone())
+        })
+        .collect();
     let missing: Vec<usize> = (0..titles.len()).filter(|&i| titles[i].is_none()).collect();
     for chunk in missing.chunks(TITLES_AT_ONCE) {
         std::thread::scope(|scope| {
@@ -487,7 +600,7 @@ pub fn mine_page<T: Transport + Sync>(seerr: &Seerr<'_, T>, skip: u32, known: Op
         .zip(titles)
         .filter_map(|(request, title)| Some(Asked { title: title?, badge: request.badge.or(Some(Badge::Requested)) }))
         .collect();
-    Ok(Mine { items, more })
+    Ok(Mine { items, more, born })
 }
 
 /// What a refresh signs in with.
@@ -498,8 +611,8 @@ pub struct Login<'a> {
 }
 
 /// Read what the page opens with, each row beside the others, handing each to the hub as it lands.
-/// Returns whether every row was read, and the session to keep.
-pub fn refresh<T: Transport + Sync>(hub: &Hub, key: &Key, login: &Login<'_>, http: &T) -> (bool, String) {
+/// `at` is the time in Unix seconds. Returns whether every row was read, and the session to keep.
+pub fn refresh<T: Transport + Sync>(hub: &Hub, key: &Key, login: &Login<'_>, http: &T, at: u64) -> (bool, String) {
     let seerr = Seerr::new(login.base, login.cookie, login.plex_token, http);
     // The first call signs in when the session is gone, so the rows below start from a good one.
     let rules = match seerr.rules() {
@@ -509,12 +622,12 @@ pub fn refresh<T: Transport + Sync>(hub: &Hub, key: &Key, login: &Login<'_>, htt
             return (false, seerr.cookie());
         }
     };
-    hub.publish(key, Piece::Ready(rules));
-    let prior = hub.snapshot();
+    hub.publish(key, Piece::Ready(rules), at);
+    let prior = hub.snapshot(at);
     let prior = prior.as_ref();
     let land = |part: Part, read: Result<Piece, SeerrError>| match read {
         Ok(piece) => {
-            hub.publish(key, piece);
+            hub.publish(key, piece, at);
             true
         }
         Err(error) => {
@@ -526,7 +639,7 @@ pub fn refresh<T: Transport + Sync>(hub: &Hub, key: &Key, login: &Login<'_>, htt
         let land = &land;
         let one = seerr.sibling();
         let mine = plx_base::task::beside(scope, "seerr-mine", move || {
-            land(Part::Mine, mine_page(&one, 0, prior).map(Piece::Mine))
+            land(Part::Mine, mine_page(&one, 0, prior, at).map(Piece::Mine))
         });
         let shelves: Vec<_> = Shelf::ALL
             .into_iter()
@@ -602,7 +715,11 @@ mod tests {
     fn whole() -> Snapshot {
         let mut snap = Snapshot::empty(&key());
         snap.apply(&Piece::Ready(Rules { partial: true, specials: false }));
-        snap.apply(&Piece::Mine(Mine { items: vec![Asked { title: title(Kind::Movie, 1, Have::Pending), badge: Some(Badge::Requested) }], more: false }));
+        snap.apply(&Piece::Mine(Mine {
+            items: vec![Asked { title: title(Kind::Movie, 1, Have::Pending), badge: Some(Badge::Requested) }],
+            more: false,
+            born: NOW,
+        }));
         for shelf in Shelf::ALL {
             snap.apply(&Piece::Shelf(shelf, page(vec![title(Kind::Movie, 10 + shelf.index() as u32, Have::Nothing)])));
         }
@@ -650,7 +767,7 @@ mod tests {
         let mut other = whole();
         other.account = "u2".into();
         hub.disk_read(Some(other), NOW);
-        assert!(ear.heard().is_empty() && hub.snapshot().is_none());
+        assert!(ear.heard().is_empty() && hub.snapshot(NOW).is_none());
 
         let later = Key { account: "u2".into(), ..key() };
         let second = Ear::default();
@@ -674,7 +791,7 @@ mod tests {
         assert_eq!(trending.items[0].state.badge(), Some(Badge::Requested), "never 'nothing' for a title asked for");
         let Piece::Mine(mine) = &heard[before + 1] else { panic!("{heard:?}") };
         assert_eq!((mine.items[0].title.tmdb, mine.items[0].badge), (10, Some(Badge::Requested)), "it joins My requests at once");
-        assert!(!hub.snapshot().unwrap().fresh(NOW), "stale whatever the age");
+        assert!(!hub.snapshot(NOW).unwrap().fresh(NOW), "stale whatever the age");
         assert_eq!(hub.open(&key(), None, NOW + 1), Work::Start, "so the next open reads Seerr");
         hub.requested(Kind::Movie, 10);
         assert_eq!(ear.heard().len(), before + 2, "a title already shown as requested changes nothing");
@@ -686,16 +803,16 @@ mod tests {
         hub.open(&key(), None, NOW);
         hub.disk_read(Some(whole()), NOW);
         hub.finish(&key(), true, NOW);
-        hub.release();
-        assert!(hub.snapshot().is_none(), "the disk copy holds them");
+        hub.release(NOW);
+        assert!(hub.snapshot(NOW).is_none(), "the disk copy holds them");
         let ear = Ear::default();
         assert_eq!(hub.open(&key(), Some(Box::new(ear.clone())), NOW + 1), Work::Start, "the file is read again");
         hub.disk_read(Some(whole()), NOW + 1);
         assert_eq!(ear.heard().len(), 6);
         hub.finish(&key(), true, NOW + 1);
         hub.requested(Kind::Movie, 10);
-        hub.release();
-        assert!(hub.snapshot().is_some(), "a request not yet on disk stays held");
+        hub.release(NOW + 1);
+        assert!(hub.snapshot(NOW + 1).is_some(), "a request not yet on disk stays held");
     }
 
     #[test]
@@ -727,7 +844,7 @@ mod tests {
         let hub = Hub::new();
         hub.open(&key(), None, NOW);
         hub.disk_read(Some(whole()), NOW);
-        let urls = hub.first_posters(2, 5);
+        let urls = hub.first_posters(2, 5, NOW);
         assert_eq!(urls, ["https://image.tmdb.org/t/p/w342/p1.jpg", "https://image.tmdb.org/t/p/w342/p10.jpg"]);
     }
 
@@ -736,15 +853,15 @@ mod tests {
         let dir = plx_base::testscratch::process_dir("seerr-cache");
         let (a, b) = (dir.join("first.json"), dir.join("missing").join("second.json"));
         assert!(save(&[b.clone(), a.clone()], &whole()), "the next place takes it when one refuses");
-        assert_eq!(load(&[b.clone(), a.clone()]), Some(whole()));
+        assert_eq!(load(&[b.clone(), a.clone()], NOW), Some(whole()));
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
         }
         std::fs::write(&a, b"{\"format\":99}").unwrap();
-        assert_eq!(load(&[a.clone()]), None);
+        assert_eq!(load(&[a.clone()], NOW), None);
         std::fs::write(&a, b"not json").unwrap();
-        assert_eq!(load(&[a.clone()]), None);
+        assert_eq!(load(&[a.clone()], NOW), None);
         purge(&[a.clone()]);
         assert!(!a.exists());
     }
@@ -804,11 +921,12 @@ mod tests {
                 Asked { title: title(Kind::Movie, 1170608, Have::Processing), badge: None },
             ],
             more: false,
+            born: NOW,
         }));
         hub.disk_read(Some(known), NOW);
         let held = ear.heard().len();
         let fake = Fake::new(&seerr_routes());
-        let (ok, cookie) = refresh(&hub, &key(), &LOGIN, &fake);
+        let (ok, cookie) = refresh(&hub, &key(), &LOGIN, &fake, NOW);
         assert!(ok);
         assert_eq!(cookie, LOGIN.cookie, "the session held is kept");
         let heard = ear.heard();
@@ -829,10 +947,10 @@ mod tests {
         hub.open(&key(), None, NOW);
         hub.disk_read(None, NOW);
         let fake = Fake::new(&seerr_routes());
-        assert!(refresh(&hub, &key(), &LOGIN, &fake).0);
+        assert!(refresh(&hub, &key(), &LOGIN, &fake, NOW).0);
         assert_eq!(fake.titles_read().len(), 8, "a cold read asks for every title of the viewer's requests");
         let again = Fake::new(&seerr_routes());
-        assert!(refresh(&hub, &key(), &LOGIN, &again).0);
+        assert!(refresh(&hub, &key(), &LOGIN, &again, NOW).0);
         // Titles the first pass saw in a shelf are not read again.
         assert!(again.titles_read().len() < 8);
     }
@@ -846,10 +964,10 @@ mod tests {
         let held = ear.heard().len();
         let mut routes = seerr_routes();
         routes.retain(|(p, ..)| !p.contains("upcoming"));
-        let (ok, _) = refresh(&hub, &key(), &LOGIN, &Fake::new(&routes));
+        let (ok, _) = refresh(&hub, &key(), &LOGIN, &Fake::new(&routes), NOW);
         assert!(!ok, "a row failed");
         assert!(ear.heard()[held..].iter().all(|p| !matches!(p, Piece::Lost(..) | Piece::Failed(_))), "the held row stays");
-        assert!(hub.snapshot().unwrap().shelves[Shelf::Upcoming.index()].is_some());
+        assert!(hub.snapshot(NOW).unwrap().shelves[Shelf::Upcoming.index()].is_some());
         assert!(hub.finish(&key(), ok, NOW + 1).save.is_none(), "an incomplete pass is not saved or made fresh");
         assert!(hub.wants_refresh(NOW + FRESH_SECS), "so the next open reads Seerr again");
 
@@ -857,7 +975,106 @@ mod tests {
         let blank = Ear::default();
         none.open(&key(), Some(Box::new(blank.clone())), NOW);
         none.disk_read(None, NOW);
-        assert!(!refresh(&none, &key(), &LOGIN, &Fake::new(&[])).0);
+        assert!(!refresh(&none, &key(), &LOGIN, &Fake::new(&[]), NOW).0);
         assert_eq!(blank.heard(), [Piece::Failed(SeerrError::NotFound)], "with nothing held the page is told");
+    }
+
+    /// The longest a title may be held, in seconds.
+    const CAP: u64 = TMDB_MAX_AGE_SECS;
+
+    fn scratch(name: &str) -> PathBuf {
+        plx_base::testscratch::process_dir("seerr-cache").join(name)
+    }
+
+    #[test]
+    fn a_snapshot_whose_titles_pass_tmdbs_limit_is_neither_shown_nor_kept() {
+        // Read just now, but its titles were read at NOW and carried over since.
+        let mut snap = whole();
+        snap.read = NOW + CAP - 10;
+        assert!(snap.keeps(NOW + CAP - 5) && !snap.expired(NOW + CAP - 5));
+        assert!(!snap.keeps(NOW + CAP) && snap.expired(NOW + CAP), "the limit is up");
+        let mut legacy = whole();
+        legacy.mine.as_mut().unwrap().born = 0;
+        assert!(!legacy.keeps(NOW) && legacy.expired(NOW), "titles of unknown age cannot be shown");
+        legacy.mine.as_mut().unwrap().items.clear();
+        assert!(legacy.keeps(NOW), "no titles held, nothing to date");
+    }
+
+    #[test]
+    fn a_file_past_the_limits_is_deleted_when_read_and_when_idle_and_never_on_a_wrong_clock() {
+        let (a, b) = (scratch("expired-a.json"), scratch("expired-b.json"));
+        assert!(save(&[a.clone()], &whole()));
+        assert_eq!(load(&[a.clone()], NOW - 1), None, "a clock set back shows nothing");
+        assert!(a.exists(), "but it deletes nothing either");
+        expire(&[a.clone()], NOW - 1);
+        assert!(a.exists());
+        expire(&[a.clone()], NOW + KEEP_SECS);
+        assert!(a.exists(), "still inside the limits");
+        assert_eq!(load(&[a.clone()], NOW + KEEP_SECS + 1), None);
+        assert!(!a.exists(), "read past the limits, it is deleted");
+
+        assert!(save(&[b.clone()], &whole()));
+        expire(&[b.clone()], NOW + KEEP_SECS + 1);
+        assert!(!b.exists(), "an idle pass deletes it without anyone asking");
+        std::fs::write(&b, b"{\"format\":99}").unwrap();
+        expire(&[b.clone()], NOW);
+        assert!(!b.exists(), "so is a file this build cannot read");
+    }
+
+    #[test]
+    fn a_title_past_the_limit_is_read_again_instead_of_carried_over() {
+        let mut known = whole();
+        known.apply(&Piece::Mine(Mine {
+            items: vec![
+                Asked { title: title(Kind::Movie, 656908, Have::Processing), badge: None },
+                Asked { title: title(Kind::Movie, 1170608, Have::Processing), badge: None },
+            ],
+            more: false,
+            born: NOW,
+        }));
+        let ask = |at: u64| {
+            let fake = Fake::new(&seerr_routes());
+            let seerr = Seerr::new(LOGIN.base, LOGIN.cookie, LOGIN.plex_token, &fake);
+            let mine = mine_page(&seerr, 0, Some(&known), at).unwrap();
+            (fake.titles_read().len(), mine.born)
+        };
+        assert_eq!(ask(NOW + 10), (6, NOW), "two carried over; the page is as old as the oldest");
+        assert_eq!(ask(NOW + CAP - 1).0, 6, "still inside the limit");
+        assert_eq!(ask(NOW + CAP), (8, NOW + CAP), "past it, every title is read afresh");
+        let mut dated = known.clone();
+        dated.mine.as_mut().unwrap().born = 0;
+        let fake = Fake::new(&seerr_routes());
+        let seerr = Seerr::new(LOGIN.base, LOGIN.cookie, LOGIN.plex_token, &fake);
+        mine_page(&seerr, 0, Some(&dated), NOW).unwrap();
+        assert_eq!(fake.titles_read().len(), 8, "a title of unknown age is not carried over");
+    }
+
+    #[test]
+    fn the_hub_drops_held_answers_past_the_limits_whether_or_not_anyone_asks() {
+        let late = NOW + KEEP_SECS + 1;
+        let hub = Hub::new();
+        hub.open(&key(), None, NOW);
+        hub.disk_read(Some(whole()), NOW);
+        hub.finish(&key(), true, NOW);
+        assert!(hub.snapshot(NOW).is_some() && hub.snapshot(late).is_none());
+        assert!(hub.first_posters(2, 5, late).is_empty(), "nothing is warmed from expired answers");
+        let ear = Ear::default();
+        assert_eq!(hub.open(&key(), Some(Box::new(ear.clone())), late), Work::Start);
+        assert!(ear.heard().is_empty(), "a page opening late is handed nothing");
+
+        let held = Hub::new();
+        held.open(&key(), None, NOW);
+        held.disk_read(Some(whole()), NOW);
+        held.finish(&key(), true, NOW);
+        held.requested(Kind::Movie, 10);
+        held.release(NOW + 1);
+        assert!(!held.disk_unread(), "a request not yet on disk stays held");
+        held.release(late);
+        assert!(held.disk_unread(), "but not past the limits");
+
+        let partial = Hub::new();
+        partial.open(&key(), None, NOW);
+        partial.publish(&key(), Piece::Ready(Rules { partial: true, specials: false }), NOW);
+        assert!(partial.snapshot(NOW + 1).is_some() && partial.snapshot(late).is_none(), "an unfinished first read ages from its start");
     }
 }

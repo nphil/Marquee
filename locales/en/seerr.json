@@ -8,7 +8,7 @@
     "description": "Settings > Integrations > Requests page. Detail line under the Requests row on the Settings root. One short sentence."
   },
   "seerr.copy": {
-    "value": "Requests lets you ask for movies and shows that are not in the library yet. It uses Seerr. Turn it on and check the address.",
+    "value": "Requests uses Seerr to ask for movies and shows that are not in the library yet. Enter the Seerr address and turn Requests on.",
     "description": "Settings > Integrations > Requests page. Narrative copy beside the page. Seerr is a product name; keep it."
   },
   "seerr.enabled": {
@@ -260,5 +260,89 @@
   "requests.sent": {
     "value": "Requested. It will show up here when it is ready.",
     "description": "Requests area, a title's page. Status line after a request went through."
+  },
+  "requests.videos": {
+    "value": "Videos",
+    "description": "Requests area, a title's page. Heading over the row of trailers, teasers and clips from YouTube."
+  },
+  "requests.episodes": {
+    "value": "Episodes",
+    "description": "Requests area, a title's page. Heading over the row of episode pictures of a series."
+  },
+  "requests.director": {
+    "value": "Director",
+    "description": "Requests area, a title's page. Label of the film's director in the facts, and the line under the director's picture. One word."
+  },
+  "requests.writer": {
+    "value": "Writer",
+    "description": "Requests area, a title's page. Label of the film's writers in the facts. One word."
+  },
+  "requests.creator": {
+    "value": "Creator",
+    "description": "Requests area, a title's page. Label of a series' creators in the facts, and the line under the creator's picture. One word."
+  },
+  "requests.studio": {
+    "value": "Studio",
+    "description": "Requests area, a title's page. Label of the production companies of a film in the facts. One word."
+  },
+  "requests.network": {
+    "value": "Network",
+    "description": "Requests area, a title's page. Label of the TV network or streaming service a series is on, in the facts. One word."
+  },
+  "requests.budget": {
+    "value": "Budget",
+    "description": "Requests area, a title's page. Label of what a film cost to make, in the facts. One word."
+  },
+  "requests.revenue": {
+    "value": "Revenue",
+    "description": "Requests area, a title's page. Label of what a film earned at the box office, in the facts. One word."
+  },
+  "requests.status": {
+    "value": "Status",
+    "description": "Requests area, a title's page. Label of where a title stands (released, ended, in production), in the facts. One word."
+  },
+  "requests.life_released": {
+    "value": "Released",
+    "description": "Requests area, a title's page. Status value: the film is out."
+  },
+  "requests.life_returning": {
+    "value": "Returning",
+    "description": "Requests area, a title's page. Status value: the series is still running and has more to come."
+  },
+  "requests.life_ended": {
+    "value": "Ended",
+    "description": "Requests area, a title's page. Status value: the series has finished."
+  },
+  "requests.life_canceled": {
+    "value": "Canceled",
+    "description": "Requests area, a title's page. Status value: the title was canceled before it finished."
+  },
+  "requests.life_in_production": {
+    "value": "In production",
+    "description": "Requests area, a title's page. Status value: the title is being made."
+  },
+  "requests.life_planned": {
+    "value": "Planned",
+    "description": "Requests area, a title's page. Status value: the title is announced and not yet being made."
+  },
+  "requests.video_teaser": {
+    "value": "Teaser",
+    "description": "Requests area, a title's page. Line under a video tile: a very short preview."
+  },
+  "requests.video_clip": {
+    "value": "Clip",
+    "description": "Requests area, a title's page. Line under a video tile: a scene from the title."
+  },
+  "requests.video_featurette": {
+    "value": "Featurette",
+    "description": "Requests area, a title's page. Line under a video tile: a short behind-the-scenes piece."
+  },
+  "requests.video_extra": {
+    "value": "Video",
+    "description": "Requests area, a title's page. Line under a video tile for any other kind of video."
+  },
+  "requests.trailer_failed": {
+    "value": "The YouTube app did not open on this TV.",
+    "description": "Requests area, a title's page. Status line when the TV would not open the YouTube app for a trailer or video."
   }
 }

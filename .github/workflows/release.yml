@@ -128,11 +128,17 @@ jobs:
           LINE: ${{ inputs.line || 'main' }}
           CANDIDATE: ${{ inputs.candidate }}
           GH_TOKEN: ${{ github.token }}
+          SPEC: ${{ inputs.version || inputs.bump }}
         run: |
           set -euo pipefail
           line="$LINE"
-          spec='${{ inputs.version || inputs.bump }}'
-          python3 ci/bump-version.py "$spec"
+          # Release only the reviewed fork head, not a new push between dispatch and checkout.
+          if [ "$GITHUB_REPOSITORY" = nphil/Marquee ] && [ "$line" = main ] \
+            && [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "::error::main moved after release dispatch; verify the new head before releasing."
+            exit 1
+          fi
+          python3 ci/bump-version.py "$SPEC"
           new=$(python3 ci/bump-version.py --current)
           tag="v$new"
 
@@ -372,10 +378,10 @@ jobs:
       # package deliberately does not write that released asset name) — a loud failure naming a
       # checksum rather than a flavour.
       flavor: stable
-      # The PRODUCTION telemetry endpoints, compiled in from `vars` rather than `secrets`
-      # DELIBERATELY — see build-package.yml's own comment on the point. Only SENTRY_AUTH_TOKEN,
-      # passed as a secret below, can read or delete the project.
-      telemetry: production
+      # No telemetry. The fork has no Sentry or PostHog project, so no endpoint is compiled in and
+      # no debug files are uploaded (build-package.yml checks the binary carries none). A
+      # `production` build fails closed without the repository variables and SENTRY_AUTH_TOKEN.
+      telemetry: ${{ github.repository == 'nphil/Marquee' && 'none' || 'production' }}
       artifact: release-assets
       homebrew-manifest: true
       source-asset: true
@@ -515,6 +521,30 @@ jobs:
             --out dist/audit-generated.md
           echo "audit evidence: $(wc -l < dist/audit-generated.md) lines" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check the Marquee package and release text for credentials
+        if: github.repository == 'nphil/Marquee'
+        run: |
+          set -euo pipefail
+          ipk=$(ls dist/*.ipk)
+          for part in control data; do
+            ar p "$ipk" "$part.tar.gz" > "$RUNNER_TEMP/$part.tar.gz"
+            test -s "$RUNNER_TEMP/$part.tar.gz"
+          done
+          python3 - "$RUNNER_TEMP" <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "ci")
+          from source_bundle import scan
+          temp = Path(sys.argv[1])
+          for path in [
+              temp / "control.tar.gz", temp / "data.tar.gz",
+              *Path("dist").glob("*.manifest.json"),
+              Path("dist/body.md"), Path("dist/audit-generated.md"),
+          ]:
+              scan(path.read_bytes(), path.name)
+          PY
+
+      # The corresponding source archive was scanned by the build before upload.
       - name: Create the release
         id: publish
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -532,7 +562,7 @@ jobs:
           # which is the URL the webosbrew package YAML resolves the manifest through.
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: ${{ github.repository != 'nphil/Marquee' }}
           fail_on_unmatched_files: true
           files: |
             dist/*.ipk
@@ -584,7 +614,7 @@ jobs:
           fi
           python3 ci/gen-release-audit.py \
             --tag "$tag" --dist dist \
-            --commit "${{ github.sha }}" \
+            --commit "$(git rev-parse "$tag^{commit}")" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --uploader 'github-actions[bot]' \
             --build-config "$(cat dist/build-config.txt 2>/dev/null || echo unknown)" \
@@ -630,7 +660,8 @@ jobs:
     timeout-minutes: 10
     continue-on-error: true
     needs: [guard, publish]
-    if: always() && needs.publish.result == 'success' && needs.guard.outputs.line == 'main'
+    # The fork does not publish the upstream demo site.
+    if: always() && needs.publish.result == 'success' && needs.guard.outputs.line == 'main' && github.repository != 'nphil/Marquee'
     permissions:
       actions: write
       contents: read
@@ -655,7 +686,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: [guard, publish]
-    if: always() && needs.publish.result == 'success'
+    # The registry re-lint it ends with dispatches to the upstream project's HUD registry, which
+    # needs that project's token; the fork does not publish to it.
+    if: always() && needs.publish.result == 'success' && github.repository != 'nphil/Marquee'
     permissions:
       actions: write
       contents: read

@@ -57,17 +57,17 @@ fn a_typed_address_settles_and_is_sent_as_one_edit_for_its_own_app() {
         let mut page = ArrPage::new(kind, EntryId(0));
         let (_, keyboard) = run(&mut page, |p, fx| p.begin_edit(ArId::Address, fx));
         assert_eq!(keyboard, [true], "the television's keyboard goes up");
-        type_in(&mut page, "  arr.nateshome.net/settings ");
+        type_in(&mut page, "  arr.example.net/settings ");
         let (commands, keyboard) = run(&mut page, |p, fx| p.finish_edit(true, fx));
         assert_eq!(keyboard, [false]);
         match commands.as_slice() {
             [crate::registry::PreferenceCmd::ArrLink { kind: sent, change, .. }] => {
                 assert_eq!(*sent, kind);
-                assert_eq!(*change, ArrChange::Url("https://arr.nateshome.net".into()));
+                assert_eq!(*change, ArrChange::Url("https://arr.example.net".into()));
             }
             _ => panic!("one link edit"),
         }
-        assert_eq!(page.state.url, "https://arr.nateshome.net", "the row shows it before the write answers");
+        assert_eq!(page.state.url, "https://arr.example.net", "the row shows it before the write answers");
     }
 }
 
@@ -95,7 +95,7 @@ fn an_address_that_cannot_work_says_why_and_sends_nothing() {
 fn the_key_is_typed_as_dots_sent_once_and_never_shown_or_hashed() {
     let _guard = plx_base::testlock::serial();
     let secret = "0123456789abcdef0123456789abcdef";
-    let mut page = page_with("https://radarr.nateshome.net", false);
+    let mut page = page_with("https://radarr.example.net", false);
     run(&mut page, |p, fx| p.begin_edit(ArId::Key, fx));
     type_in(&mut page, secret);
     page.rebuild();
@@ -106,7 +106,7 @@ fn the_key_is_typed_as_dots_sent_once_and_never_shown_or_hashed() {
     assert!(!probe.contains("0123"));
     let during = page.state.hash();
     let other = {
-        let mut twin = page_with("https://radarr.nateshome.net", false);
+        let mut twin = page_with("https://radarr.example.net", false);
         run(&mut twin, |p, fx| p.begin_edit(ArId::Key, fx));
         type_in(&mut twin, &"z".repeat(secret.len()));
         twin.state.hash()
@@ -122,7 +122,7 @@ fn the_key_is_typed_as_dots_sent_once_and_never_shown_or_hashed() {
 #[test]
 fn a_key_that_cannot_ride_in_a_header_is_refused() {
     let _guard = plx_base::testlock::serial();
-    let mut page = page_with("https://radarr.nateshome.net", false);
+    let mut page = page_with("https://radarr.example.net", false);
     run(&mut page, |p, fx| p.begin_edit(ArId::Key, fx));
     type_in(&mut page, "invalid\nkey");
     let (commands, _) = run(&mut page, |p, fx| p.finish_edit(true, fx));
@@ -134,7 +134,7 @@ fn a_key_that_cannot_ride_in_a_header_is_refused() {
 #[test]
 fn forgetting_takes_two_presses_and_empties_both_halves() {
     let _guard = plx_base::testlock::serial();
-    let mut page = page_with("https://radarr.nateshome.net", true);
+    let mut page = page_with("https://radarr.example.net", true);
     let (commands, _) = run(&mut page, |p, fx| p.activate(ArId::Forget.key().0, fx));
     assert!(commands.is_empty() && page.state.armed, "the first OK arms the row");
     let (commands, _) = run(&mut page, |p, fx| p.activate(ArId::Forget.key().0, fx));
@@ -150,9 +150,9 @@ fn the_page_asks_for_the_stored_link_and_a_durable_write_is_followed_by_a_read()
     let (commands, _) = run(&mut page, |p, fx| p.ask_read(fx));
     let [crate::registry::PreferenceCmd::ArrRead { kind, reply }] = commands.as_slice() else { panic!("one read") };
     assert_eq!(*kind, ArrKind::Sonarr);
-    reply.send(("https://sonarr.nateshome.net".into(), true)).unwrap();
+    reply.send(("https://sonarr.example.net".into(), true)).unwrap();
     assert!(poll(&mut page).0);
-    assert_eq!((page.state.url.as_str(), page.state.key_set), ("https://sonarr.nateshome.net", true));
+    assert_eq!((page.state.url.as_str(), page.state.key_set), ("https://sonarr.example.net", true));
     run(&mut page, |p, fx| p.begin_edit(ArId::Address, fx));
     type_in(&mut page, "sonarr.example.net");
     let (commands, _) = run(&mut page, |p, fx| p.finish_edit(true, fx));
@@ -166,8 +166,8 @@ fn the_page_asks_for_the_stored_link_and_a_durable_write_is_followed_by_a_read()
 fn the_summary_names_the_host_only_when_both_halves_are_set() {
     let _guard = plx_base::testlock::serial();
     let _en = language_on_this_thread_for_test(plx_platform::i18n::Preference::En);
-    let link = ArrLink { url: "https://radarr.nateshome.net:7878".into(), api_key: "k".into() };
-    assert_eq!(summary(&link), "radarr.nateshome.net:7878");
+    let link = ArrLink { url: "https://radarr.example.net:7878".into(), api_key: "k".into() };
+    assert_eq!(summary(&link), "radarr.example.net:7878");
     assert_eq!(summary(&ArrLink { api_key: String::new(), ..link }), "Not set up");
 }
 
@@ -212,7 +212,7 @@ fn every_radarr_and_sonarr_string_fits_in_every_language() {
     for language in SHIPPED {
         let _lang = language_on_this_thread_for_test(language);
         let tag = language.tag();
-        for (url, key_set) in [("", false), ("https://radarr.nateshome.net", false), ("https://radarr.nateshome.net", true)] {
+        for (url, key_set) in [("", false), ("https://radarr.example.net", false), ("https://radarr.example.net", true)] {
             for problem in problems {
                 for armed in [false, true] {
                     let status = status_text(!url.is_empty() && key_set, problem);

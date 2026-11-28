@@ -1,0 +1,5 @@
+# GitHub's automatic source downloads do not use ci/source_bundle.py.
+docs/marquee/agent-guide.md export-ignore
+docs/marquee/subtitles-ui-status.md export-ignore
+docs/marquee/mocks export-ignore
+docs/marquee/renders export-ignore

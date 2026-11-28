@@ -3,7 +3,10 @@
 //! answers come back down this page's channel and are read on its tick, so nothing here waits.
 //! A title opens [`title::TitleScreen`], where it is asked for.
 mod cards;
+mod filters;
 mod layout;
+mod progress;
+mod progress_text;
 mod render;
 pub mod title;
 #[cfg(test)]
@@ -24,7 +27,7 @@ use plx_machine::machine::{
     Key, LogicalState, Machine, MachineId, TextEdit,
 };
 use plx_machine::present::Provenance;
-use plx_plex::plex::seerr::{Badge, Kind, Shelf as Discover, Title};
+use plx_plex::plex::seerr::{Badge, Browse, Kind, Shelf as Discover, Sort, Title};
 use plx_ui::cards::{CardEvent, SectionFrame, SectionSpec, Shelf, Stack, StackEvent, StackPage};
 use plx_ui::consts::{SCR_H, SCR_W};
 use plx_ui::frame::Budget;
@@ -42,7 +45,8 @@ const BLINK_US: u32 = 530_000;
 /// The first element number a card is given; the field and the strip keep the ones below.
 const FIRST_ELEM: u32 = 10;
 
-/// The rows of the page. `Results` stands alone while a search is shown.
+/// The rows of the page. `Results` stands alone while a search is shown; `Popular`, `TopRated` and
+/// `Newest` are one listing of the filtered movies in three orders, shown while a filter is set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lane {
     Mine,
@@ -51,26 +55,50 @@ pub enum Lane {
     Shows,
     Upcoming,
     Results,
+    Popular,
+    TopRated,
+    Newest,
 }
 
 impl Lane {
     /// The browse rows, top to bottom.
     const BROWSE: [Lane; 5] = [Lane::Mine, Lane::Trending, Lane::Movies, Lane::Shows, Lane::Upcoming];
+    /// The filtered rows, top to bottom.
+    const FILTERED: [Lane; 3] = [Lane::Popular, Lane::TopRated, Lane::Newest];
+    /// Every row the page keeps: the browse rows first.
+    const ROWS: [Lane; 8] = [
+        Lane::Mine,
+        Lane::Trending,
+        Lane::Movies,
+        Lane::Shows,
+        Lane::Upcoming,
+        Lane::Popular,
+        Lane::TopRated,
+        Lane::Newest,
+    ];
     fn ordinal(self) -> u32 {
         self as u32
     }
     fn group(self) -> GroupId {
         GroupId(0x5251_0100 + self.ordinal())
     }
-    fn heading(self) -> &'static std::ffi::CStr {
+    /// The heading. While a filter is set the rows it does not touch say so.
+    fn heading(self, filtered: bool) -> &'static std::ffi::CStr {
         use plx_platform::i18n::msg;
-        match self {
-            Lane::Mine => msg::requests_mine_c(),
-            Lane::Trending => msg::requests_trending_c(),
-            Lane::Movies => msg::requests_movies_c(),
-            Lane::Shows => msg::requests_shows_c(),
-            Lane::Upcoming => msg::requests_upcoming_c(),
-            Lane::Results => msg::requests_results_c(),
+        match (self, filtered) {
+            (Lane::Mine, true) => msg::requests_unfiltered_mine_c(),
+            (Lane::Trending, true) => msg::requests_unfiltered_trending_c(),
+            (Lane::Shows, true) => msg::requests_unfiltered_shows_c(),
+            (Lane::Upcoming, true) => msg::requests_unfiltered_upcoming_c(),
+            (Lane::Mine, _) => msg::requests_mine_c(),
+            (Lane::Trending, _) => msg::requests_trending_c(),
+            (Lane::Movies, _) => msg::requests_movies_c(),
+            (Lane::Shows, _) => msg::requests_shows_c(),
+            (Lane::Upcoming, _) => msg::requests_upcoming_c(),
+            (Lane::Results, _) => msg::requests_results_c(),
+            (Lane::Popular, _) => msg::requests_popular_c(),
+            (Lane::TopRated, _) => msg::requests_top_rated_c(),
+            (Lane::Newest, _) => msg::requests_newest_c(),
         }
     }
     fn discover(self) -> Option<Discover> {
@@ -79,7 +107,7 @@ impl Lane {
             Lane::Movies => Some(Discover::Movies),
             Lane::Shows => Some(Discover::Shows),
             Lane::Upcoming => Some(Discover::Upcoming),
-            Lane::Mine | Lane::Results => None,
+            Lane::Mine | Lane::Results | Lane::Popular | Lane::TopRated | Lane::Newest => None,
         }
     }
     fn of(shelf: Discover) -> Lane {
@@ -88,6 +116,22 @@ impl Lane {
             Discover::Movies => Lane::Movies,
             Discover::Shows => Lane::Shows,
             Discover::Upcoming => Lane::Upcoming,
+        }
+    }
+    /// The order a filtered row reads its movies in.
+    fn sort(self) -> Option<Sort> {
+        match self {
+            Lane::Popular => Some(Sort::Popular),
+            Lane::TopRated => Some(Sort::TopRated),
+            Lane::Newest => Some(Sort::Newest),
+            _ => None,
+        }
+    }
+    fn of_sort(sort: Sort) -> Lane {
+        match sort {
+            Sort::Popular => Lane::Popular,
+            Sort::TopRated => Lane::TopRated,
+            Sort::Newest => Lane::Newest,
         }
     }
 }
@@ -111,6 +155,8 @@ pub(crate) struct Row {
     cards: Vec<Card>,
     /// A reply (good or not) has come for this row's first page.
     loaded: bool,
+    /// The reply was a failure.
+    failed: bool,
     more: bool,
     /// The next page is asked for and has not come.
     asked: bool,
@@ -124,7 +170,7 @@ pub(crate) struct Row {
 
 impl Row {
     fn new(lane: Lane) -> Self {
-        Self { lane, cards: Vec::new(), loaded: false, more: false, asked: false, pages: 0, skip: 0, epoch: 0 }
+        Self { lane, cards: Vec::new(), loaded: false, failed: false, more: false, asked: false, pages: 0, skip: 0, epoch: 0 }
     }
 }
 
@@ -141,6 +187,10 @@ enum Phase {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Sec {
     Head,
+    /// The filter bar under the search pill.
+    Filters,
+    /// What the filtered rows say while they have nothing to show.
+    Note,
     Row(Lane, u32),
 }
 
@@ -161,7 +211,8 @@ pub struct RequestsScreen {
     searched: String,
     /// A search is out and has not answered.
     searching: bool,
-    rows: [Row; 5],
+    rows: [Row; 8],
+    progress: progress::Poll,
     results: Option<Row>,
     keys: Vec<(Lane, Kind, u32, u32)>,
     next_elem: u32,
@@ -170,12 +221,24 @@ pub struct RequestsScreen {
     rev: u64,
     stack: Stack<Sec>,
     render: render::Resources,
+    /// The filter the bar holds; empty shows the unfiltered rows.
+    browse: Browse,
+    /// Moves whenever the filter changes: the filtered rows are new sections each time.
+    filter_gen: u32,
+    genres: filters::Genres,
+    /// The choices of a control, while one is being set.
+    chooser: Option<filters::Chooser>,
+    /// The bar's controls as drawn.
+    pills: Vec<filters::Pill>,
+    /// Moves whenever the bar's words change, which is when its measure is stale.
+    bar_stamp: u64,
+    bar_layout: filters::LayoutCache,
 }
 
 impl RequestsScreen {
     pub fn new(entry: EntryId, instance: InstanceId) -> Self {
         let (tx, inbox) = channel();
-        Self {
+        let mut page = Self {
             entry,
             instance,
             tx,
@@ -188,7 +251,8 @@ impl RequestsScreen {
             blink_us: 0,
             searched: String::new(),
             searching: false,
-            rows: Lane::BROWSE.map(Row::new),
+            rows: Lane::ROWS.map(Row::new),
+            progress: Default::default(),
             results: None,
             keys: Vec::new(),
             next_elem: FIRST_ELEM,
@@ -196,7 +260,16 @@ impl RequestsScreen {
             rev: 0,
             stack: new_stack(entry),
             render: Default::default(),
-        }
+            browse: Browse::default(),
+            filter_gen: 0,
+            genres: filters::Genres::Unknown,
+            chooser: None,
+            pills: Vec::new(),
+            bar_stamp: 0,
+            bar_layout: Default::default(),
+        };
+        page.relabel();
+        page
     }
 
     fn key(&self, elem: u32) -> FocusKey<u32> {
@@ -220,11 +293,17 @@ impl RequestsScreen {
         }
     }
 
-    /// The rows on show, top to bottom: the search's alone while one is shown, else the browse
-    /// rows that hold something.
+    /// The rows on show, top to bottom: the search's alone while one is shown; else the filtered rows
+    /// while a filter is set (they replace Popular movies), then the browse rows that hold something.
     fn shown(&self) -> impl Iterator<Item = &Row> + '_ {
         let browse = self.results.is_none();
-        self.results.iter().chain(self.rows.iter().filter(move |_| browse)).filter(|r| !r.cards.is_empty())
+        let filtered = !self.browse.is_empty();
+        let (base, extra) = self.rows.split_at(Lane::BROWSE.len());
+        self.results
+            .iter()
+            .chain(extra.iter().filter(move |_| browse))
+            .chain(base.iter().filter(move |r| browse && !(filtered && r.lane == Lane::Movies)))
+            .filter(|r| !r.cards.is_empty())
     }
 
     fn first_content(&self) -> Option<GroupId> {
@@ -234,17 +313,22 @@ impl RequestsScreen {
     fn cards_of(&self, k: Sec) -> Option<RowCards<'_>> {
         let Sec::Row(lane, _) = k else { return None };
         let row = self.shown().find(|r| r.lane == lane)?;
-        Some(RowCards { row, art: self.art })
+        Some(RowCards { row, art: self.art, progress: &self.progress })
+    }
+
+    /// The section of `lane`'s row: a filtered row is a new section whenever the filter changes.
+    fn sec(&self, lane: Lane) -> Sec {
+        Sec::Row(lane, if Lane::FILTERED.contains(&lane) { self.filter_gen } else { self.rows_gen })
     }
 
     fn row_frame<H: ContentLike>(&self, cx: &Cx<'_, H>, lane: Lane) -> Option<(SectionFrame, &Shelf)> {
-        let k = Sec::Row(lane, self.rows_gen);
+        let k = self.sec(lane);
         Some((self.stack.shelf_frame(self, cx, k)?, self.stack.shelf(k)?))
     }
 
-    /// Whether every row has had its first answer, so that an empty page is the truth.
+    /// Whether every browse row has had its first answer, so that an empty page is the truth.
     fn settled(&self) -> bool {
-        self.rows.iter().all(|r| r.loaded)
+        self.rows[..Lane::BROWSE.len()].iter().all(|r| r.loaded)
     }
 
     fn ask<H: ContentLike>(&self, cmd: RequestsCmd, fx: &mut Effects<'_, H>) {
@@ -275,7 +359,7 @@ impl RequestsScreen {
             RequestsReply::Failed(error) => {
                 self.phase = Phase::Failed;
                 self.failure = std::ffi::CString::new(seerr_error_text(error)).ok();
-                for row in &mut self.rows {
+                for row in &mut self.rows[..Lane::BROWSE.len()] {
                     row.loaded = true;
                 }
                 true
@@ -316,7 +400,34 @@ impl RequestsScreen {
                 }
                 true
             }
-            RequestsReply::Detail { .. } | RequestsReply::Requested { .. } => false,
+            RequestsReply::Browse { gen, sort, page, result } => {
+                if gen != self.filter_gen || self.browse.is_empty() {
+                    return false;
+                }
+                let lane = Lane::of_sort(sort);
+                match result {
+                    Ok(p) => {
+                        let more = p.more();
+                        let cards = p.items.iter().map(|t| (t, None)).collect();
+                        self.land(lane, page <= 1, cards, more, page, 0)
+                    }
+                    Err(_) => self.fail(lane),
+                }
+            }
+            RequestsReply::Genres(result) => {
+                self.genres = match result {
+                    Ok(list) => filters::Genres::Loaded(list),
+                    Err(_) => filters::Genres::Failed,
+                };
+                if let Some(chooser) = self.chooser.as_ref().filter(|c| c.pick == filters::Pick::Genre) {
+                    self.chooser = Some(filters::chooser(chooser.pick, &self.browse, &self.genres));
+                }
+                self.relabel();
+                true
+            }
+            RequestsReply::ProgressList { gen, kind, result } => self.progress.land(gen, kind, result),
+            RequestsReply::Detail { .. } | RequestsReply::Requested { .. } | RequestsReply::Stills { .. }
+            | RequestsReply::Trailer { .. } | RequestsReply::Progress { .. } => false,
         };
         if changed {
             self.rev = self.rev.wrapping_add(1);
@@ -326,9 +437,9 @@ impl RequestsScreen {
 
     fn fail(&mut self, lane: Lane) -> bool {
         let Some(row) = self.row_mut(lane) else { return false };
-        let was = (row.loaded, row.more, row.asked);
-        (row.loaded, row.more, row.asked) = (true, false, false);
-        was != (row.loaded, row.more, row.asked)
+        let was = (row.loaded, row.failed, row.more, row.asked);
+        (row.loaded, row.failed, row.more, row.asked) = (true, true, false, false);
+        was != (row.loaded, row.failed, row.more, row.asked)
     }
 
     /// A page of `lane` landed: `first` replaces what the row held, a later one follows it.
@@ -373,7 +484,7 @@ impl RequestsScreen {
             }
             return changed;
         }
-        let mut changed = !row.loaded;
+        let mut changed = !row.loaded || row.failed;
         if first {
             if row.cards != cards || row.more != more {
                 row.cards = cards;
@@ -394,7 +505,7 @@ impl RequestsScreen {
             row.pages = pages;
             row.skip = skip;
         }
-        row.loaded = true;
+        (row.loaded, row.failed) = (true, false);
         if changed {
             row.epoch = row.epoch.wrapping_add(1);
         }
@@ -404,16 +515,19 @@ impl RequestsScreen {
     /// The row's next page, asked for once.
     fn want<H: ContentLike>(&mut self, lane: Lane, fx: &mut Effects<'_, H>) {
         let reply = self.tx.clone();
-        let query = self.searched.clone();
+        let gen = self.filter_gen;
+        let filter = self.browse;
         let Some(row) = self.row_mut(lane) else { return };
         if !row.more || row.asked {
             return;
         }
         row.asked = true;
-        let cmd = match lane.discover() {
-            Some(shelf) => RequestsCmd::Shelf { shelf, page: row.pages + 1, reply },
-            None if lane == Lane::Mine => RequestsCmd::Mine { skip: row.skip, reply },
-            None => RequestsCmd::Search { query, page: row.pages + 1, reply },
+        let page = row.pages + 1;
+        let cmd = match (lane.discover(), lane.sort()) {
+            (Some(shelf), _) => RequestsCmd::Shelf { shelf, page, reply },
+            (None, Some(sort)) => RequestsCmd::Browse { filter, sort, page, gen, reply },
+            (None, None) if lane == Lane::Mine => RequestsCmd::Mine { skip: row.skip, reply },
+            (None, None) => RequestsCmd::Search { query: self.searched.clone(), page, reply },
         };
         self.ask(cmd, fx);
     }
@@ -494,6 +608,17 @@ impl RequestsScreen {
             fx.push(Fx::App(AppFx::Search(request)));
             return Handled::Yes;
         }
+        if let Some(pick) = filters::Pick::of(elem) {
+            self.open_chooser(pick, fx);
+            return Handled::Yes;
+        }
+        if elem == filters::RESET {
+            self.reset(fx);
+            return Handled::Yes;
+        }
+        if filters::is_chip(elem) {
+            return self.choose((elem - filters::CHIP_BASE) as usize, fx);
+        }
         if elem == FIELD {
             self.keyboard(!self.editing, true, fx);
             return Handled::Yes;
@@ -509,9 +634,24 @@ impl RequestsScreen {
     }
 
     fn tick<H: ContentLike>(&mut self, tick: plx_machine::machine::Tick, fx: &mut Effects<'_, H>) {
+        self.progress.set_now(tick.ms);
         let mut changed = false;
         while let Ok(reply) = self.inbox.try_recv() {
             changed |= self.receive(reply);
+        }
+        if self.progress.expire() {
+            self.rev = self.rev.wrapping_add(1);
+            changed = true;
+        }
+        if self.results.is_none() {
+            let rows = &self.rows;
+            if let Some((kind, gen)) = self.progress.advance(|kind| {
+                rows.iter().find(|r| r.lane == Lane::Mine).is_some_and(|r| {
+                    r.cards.iter().any(|c| c.kind == kind && c.badge.is_some_and(progress::follows))
+                })
+            }) {
+                self.ask(RequestsCmd::ProgressList { gen, kind, reply: self.tx.clone() }, fx);
+            }
         }
         if changed {
             fx.invalidate(Provenance::Landing(fx.from()));
@@ -570,13 +710,20 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
         let card = self.stack_on(ev, cx, fx);
         match ev {
             ScreenEvent::Mount => {
+                self.progress.show();
                 self.open(fx);
+                self.want_genres(fx);
                 self.reseat(FocusTarget::Elem(self.key(FIELD)), fx);
             }
             // Back from a title: what was asked for shows on its poster.
-            ScreenEvent::Uncover => self.refresh(fx),
+            ScreenEvent::Uncover => {
+                self.progress.show();
+                self.refresh(fx);
+            }
+            ScreenEvent::Resume => self.progress.show(),
             ScreenEvent::WillLeave(_) | ScreenEvent::Unmount | ScreenEvent::Cover | ScreenEvent::Suspend => {
-                self.keyboard(false, false, fx)
+                self.progress.hide();
+                self.keyboard(false, false, fx);
             }
             ScreenEvent::Activate(elem) => return self.activate(*elem, fx),
             ScreenEvent::PressCommit(_) => {
@@ -622,7 +769,7 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
                             Key::Ok => self.keyboard(false, true, fx),
                             Key::Down => {
                                 self.keyboard(false, true, fx);
-                                if let Some(group) = self.first_content() {
+                                if let Some(group) = self.below_field() {
                                     self.reseat(FocusTarget::ContainerGroup(group), fx);
                                 }
                             }
@@ -635,7 +782,10 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
                         return Handled::Yes;
                     }
                     if *key == Key::Back {
-                        // Back closes the innermost thing: a shown search, then the page.
+                        // Back closes the innermost thing: a control's choices, a shown search, then the page.
+                        if self.close_chooser(fx) {
+                            return Handled::Yes;
+                        }
                         if self.results.is_some() || !self.query.text().is_empty() {
                             self.clear(fx);
                         } else {
@@ -649,6 +799,10 @@ impl<H: ContentLike> Machine<H> for RequestsScreen {
             },
             ScreenEvent::Tick(tick) => self.tick(*tick, fx),
             ScreenEvent::FocusMoved { to, .. } => {
+                if self.chooser.is_some() && !filters::is_chip(to.elem) {
+                    self.chooser = None;
+                    self.relabel();
+                }
                 if to.elem != FIELD {
                     self.keyboard(false, true, fx);
                 }
@@ -678,17 +832,26 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
         let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
         let mut h = mix(0xcbf2_9ce4_8422_2325, u64::from(self.rows_gen));
         h = mix(h, self.rev);
+        h = mix(mix(h, u64::from(self.filter_gen)), self.bar_stamp);
         for row in self.shown() {
             h = mix(mix(h, u64::from(row.lane.ordinal())), row.cards.len() as u64);
         }
         h
     }
     fn sections(&self, _cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
-        out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::CONTENT_TOP, focusable: true }, FIELD_GROUP));
+        if self.bar_shown() {
+            out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::HEAD_H, focusable: true }, FIELD_GROUP));
+            out.push(SectionSpec::new(Sec::Filters, plx_ui::cards::Kind::Custom { height: layout::BAR_H, focusable: true }, filters::GROUP));
+            if self.note().is_some() {
+                out.push(SectionSpec::new(Sec::Note, plx_ui::cards::Kind::Custom { height: layout::NOTE_H, focusable: false }, filters::NOTE_GROUP));
+            }
+        } else {
+            out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::CONTENT_TOP, focusable: true }, FIELD_GROUP));
+        }
         for row in self.shown() {
             out.push(
                 SectionSpec::new(
-                    Sec::Row(row.lane, self.rows_gen),
+                    self.sec(row.lane),
                     plx_ui::cards::Kind::Shelf { style: &layout::POSTER, heading: layout::HEAD_TO_ROW },
                     row.lane.group(),
                 )
@@ -710,10 +873,36 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
     fn elem_of(&self, k: Sec) -> Option<u32> {
         (k == Sec::Head).then_some(FIELD)
     }
-    fn focus_rect(&self, _cx: &Cx<'_, H>, _k: Sec, section: Rect) -> Rect {
-        Rect::new(layout::FIELD.x, layout::FIELD.y + section.y, layout::FIELD.w, layout::FIELD.h)
+    fn plain_len(&self, k: Sec) -> usize {
+        match k {
+            Sec::Filters => self.bar_len(),
+            Sec::Head => 1,
+            _ => 0,
+        }
     }
-    fn plain_group(&self, _cx: &Cx<'_, H>, _k: Sec, id: GroupId, extent: Rect) -> GroupSpec {
+    fn plain_elem(&self, k: Sec, n: usize) -> Option<u32> {
+        match k {
+            Sec::Filters => self.bar_elem(n),
+            Sec::Head => (n == 0).then_some(FIELD),
+            _ => None,
+        }
+    }
+    fn plain_step(&self, k: Sec, at: usize, dir: Dir) -> Option<usize> {
+        if k == Sec::Filters { self.bar_step(at, dir) } else { None }
+    }
+    fn focus_rect(&self, _cx: &Cx<'_, H>, k: Sec, section: Rect) -> Rect {
+        match k {
+            Sec::Filters => section,
+            _ => Rect::new(layout::FIELD.x, layout::FIELD.y + section.y, layout::FIELD.w, layout::FIELD.h),
+        }
+    }
+    fn element_rect(&self, cx: &Cx<'_, H>, k: Sec, n: usize, section: Rect) -> Rect {
+        match k {
+            Sec::Filters => self.bar_rect(cx.measure, cx.focus.current.map(|key| key.elem), n, section),
+            _ => self.focus_rect(cx, k, section),
+        }
+    }
+    fn plain_group(&self, _cx: &Cx<'_, H>, k: Sec, id: GroupId, extent: Rect) -> GroupSpec {
         GroupSpec {
             id,
             kind: GroupKind::Row { wrap: false },
@@ -721,19 +910,28 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
             reachable: AxisMask::BOTH,
             edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop, EdgeRule::Stop],
             extent,
-            len: 1,
+            len: if k == Sec::Filters { self.bar_len() } else { 1 },
             elem: ElemKind::Bare,
         }
     }
-    /// Entered from the field, a row takes the card focus last left on in it, else its first.
+    /// Entered from the field or the bar, a row takes the card focus last left on in it, else its
+    /// first; the bar takes the control last left on, else Genre.
     fn seat_override(&self, cx: &Cx<'_, H>, k: Sec, _from: Placed) -> Option<u32> {
-        if !cx.focus.current.is_some_and(|key| key.elem == FIELD) {
+        if k == Sec::Filters {
+            let here = |elem: &u32| (0..self.bar_len()).any(|n| self.bar_elem(n) == Some(*elem));
+            return Some(cx.focus.remembered(filters::GROUP).filter(here).or(self.bar_elem(0)).unwrap_or(filters::GENRE));
+        }
+        if !cx.focus.current.is_some_and(|key| key.elem == FIELD || filters::is_bar(key.elem)) {
             return None;
         }
         let Sec::Row(lane, _) = k else { return None };
         let row = self.shown().find(|r| r.lane == lane)?;
         let valid = |elem: &u32| row.cards.iter().any(|c| c.elem == *elem);
         Some(cx.focus.remembered(lane.group()).filter(valid).or(row.cards.first().map(|c| c.elem)).unwrap_or(FIELD))
+    }
+    /// The bar belongs to the header block: the search pill stays in view above it.
+    fn reveal_with(&self, k: Sec) -> Option<Sec> {
+        (k == Sec::Filters).then_some(Sec::Head)
     }
     fn reveal_margin(&self, _k: Sec) -> f32 {
         layout::CONTENT_TOP
@@ -783,9 +981,14 @@ impl<H: ContentLike> Screen<H> for RequestsScreen {
     fn links(&self, out: &mut Vec<Link>) {
         out.push(Link { from: STRIP, dir: Dir::Down, to: FIELD_GROUP });
         out.push(Link { from: FIELD_GROUP, dir: Dir::Up, to: STRIP });
+        let above = if self.bar_shown() { filters::GROUP } else { FIELD_GROUP };
+        if self.bar_shown() {
+            out.push(Link { from: FIELD_GROUP, dir: Dir::Down, to: filters::GROUP });
+            out.push(Link { from: filters::GROUP, dir: Dir::Up, to: FIELD_GROUP });
+        }
         if let Some(first) = self.first_content() {
-            out.push(Link { from: FIELD_GROUP, dir: Dir::Down, to: first });
-            out.push(Link { from: first, dir: Dir::Up, to: FIELD_GROUP });
+            out.push(Link { from: above, dir: Dir::Down, to: first });
+            out.push(Link { from: first, dir: Dir::Up, to: above });
         }
         let groups: Vec<GroupId> = self.shown().map(|r| r.lane.group()).collect();
         for pair in groups.windows(2) {
@@ -810,16 +1013,19 @@ impl LogicalState for RequestsScreen {
         c.u32(self.phase as u32).bool(self.editing).u32(self.blink_us).bool(self.searching);
         c.str(self.query.text()).u64(self.query.caret() as u64).str(&self.searched);
         self.stack.write_scroll(c);
-        c.u32(self.next_elem).u32(self.rows_gen);
+        c.u32(self.next_elem).u32(self.rows_gen).u32(self.filter_gen).u64(self.bar_stamp);
+        let b = &self.browse;
+        c.u32(b.genre.unwrap_or(0)).u32(b.keyword.unwrap_or(0)).u32(u32::from(b.from.unwrap_or(0))).u32(u32::from(b.to.unwrap_or(0)));
+        c.u32(self.chooser.as_ref().map_or(0, |ch| ch.pick.elem()));
         let rows = self.rows.iter().chain(self.results.iter());
         c.seq(rows.clone().count());
         for row in rows {
-            c.u32(row.lane.ordinal()).bool(row.loaded).bool(row.more).bool(row.asked).u32(row.pages).u32(row.skip);
+            c.u32(row.lane.ordinal()).bool(row.loaded).bool(row.failed).bool(row.more).bool(row.asked).u32(row.pages).u32(row.skip);
             c.seq(row.cards.len());
             for card in &row.cards {
                 c.u32(card.elem);
             }
-            if let Some(shelf) = self.stack.shelf(Sec::Row(row.lane, self.rows_gen)) {
+            if let Some(shelf) = self.stack.shelf(self.sec(row.lane)) {
                 shelf.write(c);
             }
         }

@@ -368,6 +368,14 @@ fn launch_home() -> bool {
     true
 }
 
+/// Ask SAM to launch an app: `payload` is the launch request's JSON (`{"id":…,"params":{…}}`).
+/// `true` once SAM accepted it; on the television the app then takes the screen.
+#[cfg(any(feature = "hostsim", test, feature = "test-support"))]
+pub fn launch_app(_payload: &str) -> bool {
+    plx_base::eventlog::log("launch: no LS2 bus off-device — SAM would launch the app on a television");
+    true
+}
+
 #[cfg(any(feature = "hostsim", test, feature = "test-support"))]
 fn minimize() {}
 
@@ -547,6 +555,33 @@ fn launch_home() -> bool {
         }
         Err(ls2::Fail::Timeout) => {
             plx_base::eventlog::log(&format!("gohome: SAM timed out in {ms}ms"));
+            false
+        }
+    }
+}
+
+/// Ask SAM to launch an app: `payload` is the launch request's JSON (`{"id":…,"params":{…}}`).
+/// `true` once SAM accepted it (`returnValue: true`); on the television the app then takes the
+/// screen. Blocks for SAM's reply (600 ms at most), so call it off the frame thread. The reply is
+/// logged whole, as `launch_home` does: it is one short platform-authored line naming any refusal.
+#[cfg(all(not(feature = "hostsim"), not(any(test, feature = "test-support"))))]
+pub fn launch_app(payload: &str) -> bool {
+    let started = std::time::Instant::now();
+    let outcome = ls2::call_once("luna://com.webos.applicationManager/launch", payload);
+    let ms = started.elapsed().as_millis();
+    match outcome {
+        Ok(reply) => {
+            let ok = reply.contains("\"returnValue\":true") || reply.contains("\"returnValue\": true");
+            let verdict = if ok { "accepted" } else { "rejected" };
+            plx_base::eventlog::log(&format!("launch: SAM {verdict} in {ms}ms → {reply}"));
+            ok
+        }
+        Err(ls2::Fail::Setup { stage, detail, .. }) => {
+            plx_base::eventlog::log(&format!("launch: LS2 setup failed stage={stage} after {ms}ms {detail}"));
+            false
+        }
+        Err(ls2::Fail::Timeout) => {
+            plx_base::eventlog::log(&format!("launch: SAM timed out in {ms}ms"));
             false
         }
     }

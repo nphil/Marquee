@@ -15,7 +15,12 @@ use super::*;
 use plx_plex::plex::seerr::{CurlTransport, Seerr, SeerrError};
 use plx_plex::plex::seerr_cache::{self, Hub, Key, Login, Part, Piece, Sink, Work};
 use plx_plex::plex::session::SeerrChange;
+#[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+use plx_plex::plex::session::sim_link;
 use plx_screens::registry::{RequestsCmd, RequestsReply, TitlePage};
+use plx_plex::plex::arr::CurlTransport as ArrCurl;
+use plx_plex::plex::progress::{self, Fail as ProgressFail};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 /// The answers held for the Requests page, one per process.
@@ -37,6 +42,11 @@ impl Link {
         if link.url.is_empty() || (ready && !link.is_ready()) {
             return Err(SeerrError::NotSet);
         }
+        #[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+        if sim_link::base().is_some() {
+            return Ok(Self { base: link.url, cookie: String::new(), plex_token: sim_link::PLEX_TOKEN.into(),
+                             account: sim_link::ACCOUNT.into() });
+        }
         let user = plx_plex::plex::session::current().ok_or(SeerrError::NoPlexAccount)?;
         let plex_token = plx_plex::plex::session::plex_tv_credential(&user).ok_or(SeerrError::NoPlexAccount)?;
         Ok(Self { cookie: link.session_for(&user.uuid).to_string(), base: link.url, plex_token, account: user.uuid })
@@ -44,6 +54,10 @@ impl Link {
 
     /// Hand a session that changed during the calls to the session record.
     fn keep(&self, after: String) {
+        #[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+        if sim_link::base().is_some() {
+            return;
+        }
         if after == self.cookie {
             return;
         }
@@ -92,6 +106,83 @@ fn say(reply: &Sender<RequestsReply>, answer: RequestsReply) {
     plx_machine::idle::invalidate();
 }
 
+/// Whether a progress call is out. One at a time across the Requests list's chips and a title page's
+/// tracker: the TV's connections are few, and the page showing the numbers is the only thing that
+/// wants them.
+static PROGRESS_OUT: AtomicBool = AtomicBool::new(false);
+
+/// The right to make the one progress call; given back when dropped, whatever the call did.
+struct ProgressSlot;
+
+impl ProgressSlot {
+    fn take() -> Option<Self> {
+        PROGRESS_OUT.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).ok().map(|_| Self)
+    }
+}
+
+impl Drop for ProgressSlot {
+    fn drop(&mut self) {
+        PROGRESS_OUT.store(false, Ordering::Release);
+    }
+}
+
+/// Run `work` on a worker if no other progress call is out; otherwise, or when no worker can be
+/// spawned, answer `refused(Busy)` / `refused(Failed)` at once so the page asks again later.
+fn progress_worker<W, F>(reply: Sender<RequestsReply>, work: W, refused: F)
+where
+    W: FnOnce(&Sender<RequestsReply>) + Send + 'static,
+    F: Fn(ProgressFail) -> RequestsReply,
+{
+    let Some(slot) = ProgressSlot::take() else {
+        say(&reply, refused(ProgressFail::Busy));
+        return;
+    };
+    let back = reply.clone();
+    let spawned = plx_base::task::spawn_small("progress", move || {
+        let _slot = slot;
+        work(&reply);
+    });
+    if !spawned {
+        say(&back, refused(ProgressFail::Failed));
+    }
+}
+
+fn progress_fail(error: SeerrError) -> ProgressFail {
+    match error {
+        SeerrError::NotSet => ProgressFail::NotSet,
+        SeerrError::SignInRefused | SeerrError::Forbidden => ProgressFail::Refused,
+        _ => ProgressFail::Failed,
+    }
+}
+
+/// One step of a title's tracker: Seerr's title answer, or the title's own app (its record, its queue).
+fn progress_call(order: &progress::Order) -> progress::Outcome {
+    if order.step == progress::Step::Seerr {
+        let link = Link::read(true).map_err(progress_fail)?;
+        let seerr = Seerr::new(&link.base, &link.cookie, &link.plex_token, &CurlTransport);
+        let view = seerr.progress(order.key.kind, order.key.tmdb);
+        link.keep(seerr.cookie());
+        return view.map(progress::Answer::Seerr).map_err(progress_fail);
+    }
+    let link = plx_plex::plex::session::peek().arr(progress::arr_of(order.key.kind));
+    progress::run_arr(&link, &ArrCurl, order)
+}
+
+/// The whole queue of the app that keeps `kind`'s downloads.
+fn progress_list(kind: plx_plex::plex::seerr::Kind) -> Result<Vec<progress::Live>, ProgressFail> {
+    let link = plx_plex::plex::session::peek().arr(progress::arr_of(kind));
+    progress::run_list(&link, &ArrCurl, kind)
+}
+
+/// Today's date in the TV's timezone, `YYYY-MM-DD`: the upper bound of a newest-first listing.
+fn today() -> String {
+    let [year, month, day] = i64::try_from(seerr_cache::now())
+        .ok()
+        .and_then(plx_platform::i18n::local_calendar_date)
+        .unwrap_or([2100, 1, 1]);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
 /// A Requests page listening to the hub: its answers become the replies the page reads on its tick.
 struct Listener {
     reply: Sender<RequestsReply>,
@@ -120,6 +211,10 @@ fn key_now() -> Result<Key, SeerrError> {
     if !link.is_ready() {
         return Err(SeerrError::NotSet);
     }
+    #[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+    if sim_link::base().is_some() {
+        return Ok(Key { base: link.url, account: sim_link::ACCOUNT.into() });
+    }
     let user = plx_plex::plex::session::current().ok_or(SeerrError::NoPlexAccount)?;
     Ok(Key { base: link.url, account: user.uuid })
 }
@@ -141,7 +236,8 @@ fn sync() {
             break;
         };
         if HUB.disk_unread() {
-            HUB.disk_read(seerr_cache::load(&paths), seerr_cache::now());
+            let now = seerr_cache::now();
+            HUB.disk_read(seerr_cache::load(&paths, now), now);
         }
         let ok = HUB.wants_refresh(seerr_cache::now()) && refresh_once(&key);
         let done = HUB.finish(&key, ok, seerr_cache::now());
@@ -169,7 +265,7 @@ fn refresh_once(key: &Key) -> bool {
         return false;
     }
     let login = Login { base: &link.base, cookie: &link.cookie, plex_token: &link.plex_token };
-    let (ok, cookie) = seerr_cache::refresh(&HUB, key, &login, &CurlTransport);
+    let (ok, cookie) = seerr_cache::refresh(&HUB, key, &login, &CurlTransport, seerr_cache::now());
     link.keep(cookie);
     ok
 }
@@ -184,13 +280,25 @@ pub(crate) fn forget_held_answers() {
 
 /// The app went to the background: drop the held answers the copy on disk still matches.
 pub(crate) fn release_held_answers() {
-    HUB.release();
+    HUB.release(seerr_cache::now());
+    expire_request_cache();
+}
+
+fn expire_request_cache() -> bool {
+    plx_base::storage_worker::submit(|| {
+        let now = seerr_cache::now();
+        HUB.expire(now);
+        seerr_cache::expire(&plx_base::paths::requests_cache_candidates(), now);
+        plx_platform::imgcache::prewarm();
+    })
+    .is_ok()
 }
 
 /// Not before this, so the warm-up never competes with starting the app.
 const WARM_AFTER_MS: u32 = 8_000;
 /// How often the warm-up looks for its moment.
 const WARM_EVERY_MS: u32 = 1_000;
+const CACHE_EXPIRY_EVERY_MS: u32 = 3600 * 1000;
 /// Posters warmed ahead: the first row or two of the page, a screenful.
 const WARM_ROWS: usize = 2;
 const WARM_PER_ROW: usize = 6;
@@ -208,6 +316,7 @@ pub(super) struct RequestsWarm {
     /// `(server, path, width, height)` of each poster still to warm, nearest first.
     posters: Vec<(u16, String, std::os::raw::c_int, std::os::raw::c_int)>,
     tries: u32,
+    last_expiry_ms: Option<u32>,
 }
 
 /// Test connection on the Settings page: sign in and answer Seerr's version and the name it knows
@@ -256,8 +365,9 @@ impl Bridge {
                 reply,
                 move |error| RequestsReply::Mine { skip, result: Err(error) },
                 move |seerr, reply| {
-                    let known = HUB.snapshot();
-                    let result = seerr_cache::mine_page(seerr, skip, known.as_ref()).map(|mine| (mine.items, mine.more));
+                    let now = seerr_cache::now();
+                    let known = HUB.snapshot(now);
+                    let result = seerr_cache::mine_page(seerr, skip, known.as_ref(), now).map(|mine| (mine.items, mine.more));
                     say(reply, RequestsReply::Mine { skip, result });
                 },
             ),
@@ -272,20 +382,55 @@ impl Bridge {
                     },
                 );
             }
-            RequestsCmd::Detail { kind, tmdb, reply } => run(
-                reply,
-                move |error| RequestsReply::Detail { kind, tmdb, result: Err(error) },
-                move |seerr, reply| {
-                    let result = seerr.detail(kind, tmdb).and_then(|detail| {
-                        let rules = seerr.rules()?;
-                        let plex = detail.plex.as_ref().and_then(|found| {
-                            plx_plex::plex::id_of_machine(&found.machine).map(|sid| (sid, found.rating_key.clone()))
+            RequestsCmd::Detail { kind, tmdb, reply } => {
+                let art = self.stores.watchlist.view().art_server();
+                run(
+                    reply,
+                    move |error| RequestsReply::Detail { kind, tmdb, result: Err(error) },
+                    move |seerr, reply| {
+                        let result = seerr.detail(kind, tmdb).and_then(|detail| {
+                            let rules = seerr.rules()?;
+                            let plex = detail.plex.as_ref().and_then(|found| {
+                                plx_plex::plex::id_of_machine(&found.machine).map(|sid| (sid, found.rating_key.clone()))
+                            });
+                            Ok(TitlePage { detail, plex, rules, art })
                         });
-                        Ok(TitlePage { detail, plex, rules })
-                    });
-                    say(reply, RequestsReply::Detail { kind, tmdb, result });
+                        say(reply, RequestsReply::Detail { kind, tmdb, result });
+                    },
+                );
+            }
+            RequestsCmd::Stills { tmdb, seasons, reply } => run(
+                reply,
+                move |error| RequestsReply::Stills { tmdb, result: Err(error) },
+                move |seerr, reply| {
+                    // A season that cannot be read leaves the others' stills standing.
+                    let per_season = plx_plex::plex::seerr::SHELF_CAP / seasons.len().max(1);
+                    let mut stills = Vec::new();
+                    let mut failure = None;
+                    for season in seasons {
+                        match seerr.stills(tmdb, season) {
+                            Ok(read) => stills.extend(read.into_iter().take(per_season)),
+                            Err(error) => failure = Some(error),
+                        }
+                    }
+                    let result = match failure {
+                        Some(error) if stills.is_empty() => Err(error),
+                        _ => Ok(stills),
+                    };
+                    say(reply, RequestsReply::Stills { tmdb, result });
                 },
             ),
+            RequestsCmd::Trailer { video, reply } => {
+                // The launch waits for the system's answer: off the frame thread, like every Seerr call.
+                let back = reply.clone();
+                let spawned = plx_base::task::spawn_small("trailer", move || {
+                    let opened = plx_platform::tv::youtube::watch(&video);
+                    say(&reply, RequestsReply::Trailer { opened });
+                });
+                if !spawned {
+                    say(&back, RequestsReply::Trailer { opened: false });
+                }
+            }
             RequestsCmd::Request { kind, tmdb, seasons, reply } => run(
                 reply,
                 move |error| RequestsReply::Requested { kind, tmdb, result: Err(error) },
@@ -298,6 +443,28 @@ impl Bridge {
                     say(reply, RequestsReply::Requested { kind, tmdb, result });
                 },
             ),
+            RequestsCmd::Browse { filter, sort, page, gen, reply } => run(
+                reply,
+                move |error| RequestsReply::Browse { gen, sort, page, result: Err(error) },
+                move |seerr, reply| {
+                    let result = seerr.browse(&filter, sort, page, &today());
+                    say(reply, RequestsReply::Browse { gen, sort, page, result });
+                },
+            ),
+            RequestsCmd::Genres { reply } => run(
+                reply,
+                |error| RequestsReply::Genres(Err(error)),
+                move |seerr, reply| say(reply, RequestsReply::Genres(seerr.genres())),
+            ),
+            RequestsCmd::Progress { order, reply } => {
+                let (gen, step) = (order.gen, order.step);
+                let answer = move |outcome| RequestsReply::Progress { gen, step, outcome };
+                progress_worker(reply, move |reply| say(reply, answer(progress_call(&order))), move |busy| answer(Err(busy)));
+            }
+            RequestsCmd::ProgressList { gen, kind, reply } => {
+                let answer = move |result| RequestsReply::ProgressList { gen, kind, result };
+                progress_worker(reply, move |reply| say(reply, answer(progress_list(kind))), move |busy| answer(Err(busy)));
+            }
         }
     }
 
@@ -310,6 +477,12 @@ impl Bridge {
             return;
         }
         self.requests_warm.last_ms = tick.ms;
+        // Defer disk I/O until startup has settled, even if Requests itself is never opened.
+        if self.requests_warm.last_expiry_ms.is_none_or(|ms| tick.ms.wrapping_sub(ms) >= CACHE_EXPIRY_EVERY_MS)
+            && expire_request_cache()
+        {
+            self.requests_warm.last_expiry_ms = Some(tick.ms);
+        }
         let Ok(key) = key_now() else { return };
         if self.requests_warm.started.as_ref() == Some(&key) || playback_busy(d) {
             return;
@@ -328,7 +501,7 @@ impl Bridge {
         if generation != self.requests_warm.posters_from {
             let Some(server) = self.stores.watchlist.view().art_server() else { return };
             let posters = HUB
-                .first_posters(WARM_ROWS, WARM_PER_ROW)
+                .first_posters(WARM_ROWS, WARM_PER_ROW, seerr_cache::now())
                 .iter()
                 .filter_map(|url| {
                     let facts = plx_ui::tile::TileFacts { src: server.raw(), thumb: url, ..Default::default() };

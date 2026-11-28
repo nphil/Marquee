@@ -59,6 +59,9 @@ pub use bazarr_link::{BazarrChange, BazarrLink, UrlProblem};
 mod seerr_link;
 pub use seerr_link::{SeerrChange, SeerrLink};
 mod arr_link;
+#[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+#[doc(hidden)]
+pub mod sim_link;
 pub use arr_link::{ArrChange, ArrKind, ArrLink};
 mod link_import;
 pub use link_import::import_once as import_link_files;
@@ -2573,6 +2576,10 @@ impl Session {
 
     /// The Seerr link (Settings > Integrations > Requests); empty until the viewer set it.
     pub fn seerr(&self) -> SeerrLink {
+        #[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+        if let Some(link) = sim_link::seerr() {
+            return link;
+        }
         self.extensions.0.get("seerr").map(SeerrLink::from_value).unwrap_or_default()
     }
 
@@ -2589,6 +2596,10 @@ impl Session {
 
     /// The Radarr or Sonarr link (Settings > Integrations); empty until the viewer set it.
     pub fn arr(&self, kind: ArrKind) -> ArrLink {
+        #[cfg(all(feature = "hostsim", feature = "devtriggers", not(all(target_os = "linux", target_arch = "arm"))))]
+        if let Some(link) = sim_link::arr(kind) {
+            return link;
+        }
         self.extensions.0.get(kind.key()).map(ArrLink::from_value).unwrap_or_default()
     }
 

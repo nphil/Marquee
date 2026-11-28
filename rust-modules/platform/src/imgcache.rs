@@ -8,6 +8,12 @@
 //! and transformation.
 //! Fetch time drives refresh independently of recency, which is persisted at most hourly.
 //! Limits cover committed files; one atomic-write temporary can additionally occupy MAX_FILE.
+//!
+//! A `tmdb-` picture expires from its fetch time. Older `image-` files don't record their source,
+//! so they share that deadline until a request identifies and renames them. All are rebuildable
+//! files in this cache; no offline downloads or user-supplied originals are stored here.
+//! Newly cached `plex-` art is still evicted only by size/recency.
+//! Expired entries are never served and are removed on startup and background maintenance.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -24,11 +30,17 @@ const MAX_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8192;
 const MAGIC: &[u8; 8] = b"PLXIMG02";
 const HEADER_LEN: usize = 24;
+const TMDB_PREFIX: &str = "tmdb-";
+const PLEX_PREFIX: &str = "plex-";
+const UNSCOPED_PREFIX: &str = "image-";
+const SWEEP_AFTER: Duration = Duration::from_secs(3600);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DiskKey {
     name: String,
     legacy: Option<String>,
+    /// Old undifferentiated name, adopted on read while it is within its retention window.
+    prior: Option<String>,
 }
 
 pub struct CachedImage {
@@ -54,6 +66,7 @@ pub fn classify(server_namespace: &str, built_key: &str) -> Option<DiskKey> {
     }
     let (mut params, source_index) = transcode_request(built_key)?;
     let avatar = is_avatar(&params[source_index].1);
+    let tmdb = is_tmdb_source(&params[source_index].1);
     if avatar {
         params[source_index].1 = without_avatar_stamp(&params[source_index].1);
     }
@@ -95,9 +108,11 @@ pub fn classify(server_namespace: &str, built_key: &str) -> Option<DiskKey> {
         identity.extend_from_slice(&(field.len() as u64).to_le_bytes());
         identity.extend_from_slice(field.as_bytes());
     }
+    let hash = hex_digest(&identity);
     Some(DiskKey {
-        name: format!("image-{}.img", hex_digest(&identity)),
+        name: format!("{}{hash}.img", if tmdb { TMDB_PREFIX } else { PLEX_PREFIX }),
         legacy,
+        prior: Some(format!("{UNSCOPED_PREFIX}{hash}.img")),
     })
 }
 
@@ -152,9 +167,11 @@ pub fn classify_baked(
         identity.extend_from_slice(&(field.len() as u64).to_le_bytes());
         identity.extend_from_slice(field.as_bytes());
     }
+    let hash = hex_digest(&identity);
     Some(DiskKey {
-        name: format!("image-{}.img", hex_digest(&identity)),
+        name: format!("{PLEX_PREFIX}{hash}.img"),
         legacy: None,
+        prior: Some(format!("{UNSCOPED_PREFIX}{hash}.img")),
     })
 }
 
@@ -234,6 +251,8 @@ struct Entry {
     size: u64,
     order: u64,
     touched: SystemTime,
+    /// Original fetch time for TMDB and undifferentiated entries.
+    fetched: Option<u64>,
 }
 
 #[derive(Default)]
@@ -247,6 +266,8 @@ struct Index {
     /// The byte ceiling for THIS root, set once it is chosen: [`Limits::bytes`] clamped to the
     /// space the filesystem can spare (see [`byte_cap`]). `None` before initialization.
     cap: Option<u64>,
+    /// When the TMDB entries were last checked against the retention limit ([`Cache::sweep_expired`]).
+    swept: Option<SystemTime>,
 }
 
 #[derive(Default)]
@@ -293,6 +314,9 @@ impl Cache {
             .iter()
             .find(|p| probe_dir(p, plx_base::paths::image_cache_dir_is_private(p)))
             .cloned();
+        let now = SystemTime::now();
+        index.swept = Some(now);
+        self.sweep_other_roots(index.root.as_deref(), unix_seconds(now));
         let Some(root) = index.root.clone() else {
             plx_base::eventlog::log("imgcache: no writable directory; disk cache unavailable");
             return;
@@ -301,6 +325,8 @@ impl Cache {
             return;
         };
         let mut found = Vec::new();
+        let now = unix_seconds(now);
+        let mut dropped = 0u32;
         for file in files.flatten() {
             let Some(name) = file.file_name().to_str().map(str::to_owned) else {
                 continue;
@@ -320,7 +346,7 @@ impl Cache {
                 continue;
             }
             let max_size = MAX_FILE
-                + if name.starts_with("image-") {
+                + if !name.starts_with("avatar-") {
                     HEADER_LEN
                 } else {
                     0
@@ -330,11 +356,24 @@ impl Cache {
             {
                 continue;
             }
-            found.push((meta.modified().unwrap_or(UNIX_EPOCH), name, meta.len()));
+            // The header dates the fetch. The mtime instead records the last use.
+            let fetched = if expires(&name) {
+                match read_header(&file.path()) {
+                    Some(at) if !lapsed(at, now) => Some(at),
+                    _ => {
+                        let _ = fs::remove_file(file.path());
+                        dropped += 1;
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            found.push((meta.modified().unwrap_or(UNIX_EPOCH), name, meta.len(), fetched));
         }
         found.sort_by(|a, b| a.0.cmp(&b.0));
-        for (mtime, name, size) in found {
-            index.insert(name, size, mtime);
+        for (mtime, name, size, fetched) in found {
+            index.insert(name, size, mtime, fetched);
         }
         let Some(cap) = byte_cap(self.limits.bytes, free_bytes(&root), index.bytes) else {
             plx_base::eventlog::log(&format!(
@@ -348,7 +387,7 @@ impl Cache {
         self.make_room(index, None, 0, 0);
         self.publish_size(index);
         plx_base::eventlog::log(&format!(
-            "imgcache: {} entries={} bytes={} cap={}",
+            "imgcache: {} entries={} bytes={} cap={} expired_dropped={dropped}",
             root.display(),
             index.entries.len(),
             index.bytes,
@@ -362,6 +401,7 @@ impl Cache {
             return None;
         }
         self.initialize(&mut index);
+        self.sweep_expired(&mut index, SystemTime::now());
         let result = self.read_locked(&mut index, key);
         if result.is_some() {
             &self.counters.hit
@@ -375,9 +415,31 @@ impl Cache {
     fn read_locked(&self, index: &mut Index, key: &DiskKey) -> Option<CachedImage> {
         let root = index.root.clone()?;
         let now = SystemTime::now();
-        if index.entries.contains_key(&key.name) {
+        if let Some(prior) = &key.prior {
+            if !index.entries.contains_key(&key.name) && index.entries.contains_key(prior) {
+                self.adopt_prior(index, prior, &key.name, unix_seconds(now));
+            }
+        }
+        if let Some(entry) = index.entries.get(&key.name) {
+            // Expired files need not be read into memory just to be discarded.
+            if let Some(fetched) = entry.fetched {
+                let at = unix_seconds(now);
+                if !servable(fetched, at) {
+                    if lapsed(fetched, at) {
+                        self.remove_locked(index, &key.name);
+                    }
+                    return None;
+                }
+            }
             match read_file(&root.join(&key.name), false) {
                 Some((bytes, fetched)) => {
+                    let at = unix_seconds(now);
+                    if expires(&key.name) && !servable(fetched, at) {
+                        if lapsed(fetched, at) {
+                            self.remove_locked(index, &key.name);
+                        }
+                        return None;
+                    }
                     index.touch(&key.name, now);
                     return Some(CachedImage {
                         bytes,
@@ -407,12 +469,71 @@ impl Cache {
         })
     }
 
+    fn adopt_prior(&self, index: &mut Index, prior: &str, name: &str, now: u64) {
+        let Some(root) = index.root.as_ref() else { return };
+        let Some(old) = index.entries.get(prior) else { return };
+        let (size, touched, fetched) = (old.size, old.touched, old.fetched);
+        if !fetched.is_some_and(|at| servable(at, now)) {
+            if fetched.is_none_or(|at| lapsed(at, now)) {
+                self.remove_locked(index, prior);
+            }
+            return;
+        }
+        if fs::rename(root.join(prior), root.join(name)).is_err() {
+            return;
+        }
+        index.forget(prior);
+        index.insert(name.to_owned(), size, touched, fetched.filter(|_| expires(name)));
+    }
+
+    /// Checks the indexed root in memory; checks other candidates in case the writable root moved.
+    fn sweep_expired(&self, index: &mut Index, now: SystemTime) {
+        if index.swept.is_some_and(|at| now.duration_since(at).unwrap_or_default() < SWEEP_AFTER) {
+            return;
+        }
+        index.swept = Some(now);
+        let secs = unix_seconds(now);
+        let due: Vec<String> = index
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.fetched.is_some_and(|at| lapsed(at, secs)))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in due {
+            self.remove_locked(index, &name);
+        }
+        self.sweep_other_roots(index.root.as_deref(), secs);
+    }
+
+    fn sweep_other_roots(&self, active: Option<&Path>, now: u64) {
+        use std::os::unix::fs::MetadataExt;
+        let owner = unsafe { libc::geteuid() };
+        for root in self.candidates.iter().map(PathBuf::as_path).filter(|root| Some(*root) != active) {
+            if !fs::symlink_metadata(root).is_ok_and(|meta| meta.is_dir() && meta.uid() == owner) {
+                continue;
+            }
+            let Ok(files) = fs::read_dir(root) else { continue };
+            for file in files.flatten() {
+                let name = file.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if !expires(name) || !cache_name(name) || !file.file_type().is_ok_and(|kind| kind.is_file()) {
+                    continue;
+                }
+                let path = file.path();
+                if read_header(&path).is_none_or(|fetched| lapsed(fetched, now)) {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
+    }
+
     fn write_at(&self, generation: u64, key: &DiskKey, bytes: &[u8]) -> bool {
         let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());
         if self.generation.load(Ordering::Acquire) != generation {
             return false;
         }
         self.initialize(&mut index);
+        self.sweep_expired(&mut index, SystemTime::now());
         self.write_locked(&mut index, key, bytes, unix_seconds(SystemTime::now()))
     }
 
@@ -457,7 +578,8 @@ impl Cache {
             return false;
         }
         index.forget(&key.name);
-        index.insert(key.name.clone(), size, SystemTime::now());
+        let scoped = expires(&key.name).then_some(fetched);
+        index.insert(key.name.clone(), size, SystemTime::now(), scoped);
         self.counters.write.fetch_add(1, Ordering::Relaxed);
         self.publish_size(index);
         true
@@ -495,6 +617,9 @@ impl Cache {
         }
         self.initialize(&mut index);
         self.remove_locked(&mut index, &key.name);
+        if let Some(prior) = &key.prior {
+            self.remove_locked(&mut index, prior);
+        }
         if let Some(legacy) = &key.legacy {
             self.remove_locked(&mut index, legacy);
         }
@@ -547,11 +672,10 @@ impl Cache {
         self.counters.bytes.store(index.bytes, Ordering::Relaxed);
     }
 
-    /// The one-time directory scan, now. The lock is the same one every read and write takes, so
-    /// whoever arrives first does the scan and the rest wait for it, exactly as before.
     fn warm(&self) {
         let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());
         self.initialize(&mut index);
+        self.sweep_expired(&mut index, SystemTime::now());
     }
 
     fn stats(&self) -> Snapshot {
@@ -568,7 +692,7 @@ impl Cache {
 }
 
 impl Index {
-    fn insert(&mut self, name: String, size: u64, touched: SystemTime) {
+    fn insert(&mut self, name: String, size: u64, touched: SystemTime, fetched: Option<u64>) {
         self.sequence += 1;
         self.bytes += size;
         self.lru.insert((self.sequence, name.clone()));
@@ -578,6 +702,7 @@ impl Index {
                 size,
                 order: self.sequence,
                 touched,
+                fetched,
             },
         );
     }
@@ -655,10 +780,51 @@ fn unix_seconds(time: SystemTime) -> u64 {
 }
 
 fn cache_name(name: &str) -> bool {
-    name.strip_prefix("image-")
+    name.strip_prefix(PLEX_PREFIX)
+        .or_else(|| name.strip_prefix(TMDB_PREFIX))
+        .or_else(|| name.strip_prefix(UNSCOPED_PREFIX))
         .or_else(|| name.strip_prefix("avatar-"))
         .and_then(|s| s.strip_suffix(".img"))
         .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn expires(name: &str) -> bool {
+    name.starts_with(TMDB_PREFIX) || name.starts_with(UNSCOPED_PREFIX)
+}
+
+/// Whether a picture's source address is on a TMDB host (`image.tmdb.org`, `www.themoviedb.org`,
+/// any subdomain of `tmdb.org` or `themoviedb.org`): the data TMDB's six-month limit covers.
+fn is_tmdb_source(source: &str) -> bool {
+    let Some((_, rest)) = source.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let host = host.split(':').next().unwrap_or("").trim_end_matches('.').to_ascii_lowercase();
+    ["tmdb.org", "themoviedb.org"]
+        .iter()
+        .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|rest| rest.ends_with('.')))
+}
+
+/// Whether a TMDB entry fetched at `fetched` is provably past the retention limit at `now`.
+fn lapsed(fetched: u64, now: u64) -> bool {
+    now >= fetched && now - fetched >= plx_base::retention::TMDB_MAX_AGE_SECS
+}
+
+/// Whether a TMDB entry may be served: not lapsed, and not dated in the future (a clock set back
+/// leaves its age unknown, and an unknown age cannot be shown to be inside the limit).
+fn servable(fetched: u64, now: u64) -> bool {
+    fetched <= now && !lapsed(fetched, now)
+}
+
+/// The fetch time in a file's header, without reading its picture.
+fn read_header(path: &Path) -> Option<u64> {
+    let mut head = [0u8; HEADER_LEN];
+    File::open(path).ok()?.read_exact(&mut head).ok()?;
+    if &head[..8] != MAGIC {
+        return None;
+    }
+    Some(u64::from_le_bytes(head[8..16].try_into().ok()?))
 }
 
 impl Cache {
@@ -759,9 +925,8 @@ fn cache() -> &'static Cache {
 pub fn generation() -> u64 {
     cache().generation.load(Ordering::Acquire)
 }
-/// Runs the one-time directory scan (about a thousand files on the television) now, so the first
-/// poster read does not pay for it. Blocks until the scan is done: call it from a background
-/// thread, early in boot, never from the frame thread.
+/// Runs the directory scan once, so the first poster read does not pay for it, and runs scheduled
+/// expiry on subsequent calls. Call from a background thread, never the frame thread.
 pub fn prewarm() {
     cache().warm();
 }

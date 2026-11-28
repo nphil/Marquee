@@ -111,6 +111,27 @@ pub enum RequestsCmd {
         seasons: Vec<u32>,
         reply: std::sync::mpsc::Sender<RequestsReply>,
     },
+    /// Page `page` (from 1) of movies under `filter` in `sort` order, which Seerr has TMDB filter
+    /// before it pages.
+    Browse {
+        filter: plx_plex::plex::seerr::Browse,
+        sort: plx_plex::plex::seerr::Sort,
+        page: u32,
+        gen: u32,
+        reply: std::sync::mpsc::Sender<RequestsReply>,
+    },
+    /// The movie genres Seerr offers.
+    Genres { reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// The episode stills of a series' title page: these seasons', in the order given.
+    Stills { tmdb: u32, seasons: Vec<u32>, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// Open a YouTube video in the TV's YouTube app (the title page's Trailer action).
+    Trailer { video: String, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// One call of a page's progress tracker: the driver makes it, with the viewer's Seerr or app link,
+    /// and answers with the same generation and step. It answers `Busy` at once when another
+    /// progress call is still out, so the TV never has two in flight.
+    Progress { order: plx_plex::plex::progress::Order, reply: std::sync::mpsc::Sender<RequestsReply> },
+    /// The whole Radarr or Sonarr queue, for the chips on the viewer's requests; `Busy` as above.
+    ProgressList { gen: u32, kind: plx_plex::plex::seerr::Kind, reply: std::sync::mpsc::Sender<RequestsReply> },
 }
 
 /// A title's page as the Requests page shows it: Seerr's facts and, when Plex has it on a server
@@ -121,6 +142,8 @@ pub struct TitlePage {
     pub plex: Option<(plx_plex::plex::ServerId, String)>,
     /// What Seerr's request settings allow, which decides whether a series offers a season picker.
     pub rules: plx_plex::plex::seerr::Rules,
+    /// The Plex server whose photo proxy fetches the title's pictures; none while no server is reachable.
+    pub art: Option<plx_plex::plex::ServerId>,
 }
 
 /// One answer of the Seerr driver.
@@ -143,6 +166,21 @@ pub enum RequestsReply {
     Requested { kind: plx_plex::plex::seerr::Kind, tmdb: u32, result: Result<(), plx_plex::plex::seerr::SeerrError> },
     /// Signing in failed: nothing else comes.
     Failed(plx_plex::plex::seerr::SeerrError),
+    /// Page `page` of the current filter generation, in `sort` order.
+    Browse {
+        gen: u32,
+        sort: plx_plex::plex::seerr::Sort,
+        page: u32,
+        result: Result<plx_plex::plex::seerr::Page<plx_plex::plex::seerr::Title>, plx_plex::plex::seerr::SeerrError>,
+    },
+    Genres(Result<Vec<plx_plex::plex::seerr::Genre>, plx_plex::plex::seerr::SeerrError>),
+    Stills { tmdb: u32, result: Result<Vec<plx_plex::plex::seerr::Still>, plx_plex::plex::seerr::SeerrError> },
+    /// Whether the YouTube app took the video.
+    Trailer { opened: bool },
+    /// One call of a title page's progress tracker, answered (`Busy` when another progress call is out).
+    Progress { gen: u32, step: plx_plex::plex::progress::Step, outcome: plx_plex::plex::progress::Outcome },
+    /// One Radarr or Sonarr queue read for the Mine row's chips.
+    ProgressList { gen: u32, kind: plx_plex::plex::seerr::Kind, result: Result<Vec<plx_plex::plex::progress::Live>, plx_plex::plex::progress::Fail> },
 }
 
 /// The plain words for why a call to Seerr did not go through; the Settings page and the Requests

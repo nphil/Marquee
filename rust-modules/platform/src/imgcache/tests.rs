@@ -81,7 +81,7 @@ fn keys_include_namespace_source_version_and_every_transform() {
     );
     let shuffled = "/photo/:/transcode?X-Plex-Token=rotated&minSize=1&height=375&url=%2flibrary%2fmetadata%2f42%2fthumb%2f1&width=250";
     assert_eq!(name, classify("server-a", shuffled).unwrap().name);
-    assert!(name.starts_with("image-") && name.ends_with(".img"));
+    assert!(name.starts_with(PLEX_PREFIX) && name.ends_with(".img"));
     assert!(cache_name(&name));
     for bad in [
         "no-query",
@@ -534,6 +534,184 @@ fn the_directory_scan_can_run_ahead_of_the_first_read() {
     cache.warm();
     assert_eq!(cache.stats().entries, 3);
     assert!(cache.index.lock().unwrap().initialized);
+}
+
+// ---- TMDB retention ---------------------------------------------------------------------------
+
+const LIMIT: u64 = plx_base::retention::TMDB_MAX_AGE_SECS;
+
+fn now_secs() -> u64 {
+    unix_seconds(SystemTime::now())
+}
+
+/// A transcode request for the picture at `source`, as the Requests posters are built.
+fn transcode_of(source: &str) -> String {
+    let encoded = source.replace(':', "%3A").replace('/', "%2F");
+    format!("/photo/:/transcode?width=342&height=513&minSize=1&url={encoded}&X-Plex-Token=t")
+}
+
+fn tmdb(path: &str) -> DiskKey {
+    classify("server-a", &transcode_of(&format!("https://image.tmdb.org/t/p/w342/{path}"))).unwrap()
+}
+
+#[test]
+fn only_pictures_sourced_from_tmdb_hosts_are_scoped() {
+    let key = tmdb("a.jpg");
+    assert!(key.name.starts_with("tmdb-") && cache_name(&key.name), "{}", key.name);
+    let prior = key.prior.as_deref().unwrap();
+    assert!(prior.starts_with("image-") && prior.ends_with(&key.name["tmdb-".len()..]));
+    for scoped in [
+        "https://api.themoviedb.org/3/movie/1",
+        "https://www.themoviedb.org/t/p/w92/a.jpg",
+        "HTTPS://IMAGE.TMDB.ORG:443/t/p/w92/a.jpg",
+        "https://tmdb.org/a.jpg",
+    ] {
+        let key = classify("server-a", &transcode_of(scoped)).unwrap();
+        assert!(key.name.starts_with("tmdb-"), "{scoped}");
+    }
+    for plain in [
+        "https://image.tmdb.org.example.com/a.jpg",
+        "https://example.com/?u=image.tmdb.org",
+        "https://image.tmdb.org@example.com/a.jpg",
+        "https://notthemoviedb.org/a.jpg",
+        "https://metadata-static.plex.tv/a.jpg",
+    ] {
+        let key = classify("server-a", &transcode_of(plain)).unwrap();
+        assert!(key.name.starts_with(PLEX_PREFIX) && !expires(&key.name), "{plain}");
+    }
+    assert!(poster(1).name.starts_with(PLEX_PREFIX));
+    assert!(classify_baked("m", "fan", "1", "2", 3, 4).unwrap().name.starts_with(PLEX_PREFIX));
+}
+
+#[test]
+fn a_tmdb_picture_past_the_limit_is_never_served_and_plex_art_is_kept() {
+    let dir = TestDir::new();
+    let cache = dir.cache(100, MAX_BYTES);
+    let old = now_secs() - LIMIT - 1;
+    {
+        let mut index = cache.index.lock().unwrap();
+        cache.initialize(&mut index);
+        assert!(cache.write_locked(&mut index, &tmdb("old.jpg"), b"tmdb", old));
+        assert!(cache.write_locked(&mut index, &poster(1), b"plex", old));
+    }
+    assert!(cache.read_at(0, &tmdb("old.jpg")).is_none());
+    assert!(!dir.0.join(&tmdb("old.jpg").name).exists(), "an expired picture is deleted, not kept");
+    let plex = cache.read_at(0, &poster(1)).unwrap();
+    assert_eq!(plex.bytes, b"plex");
+    assert!(plex.stale, "Plex art has no age limit; it is only refreshed");
+    assert_eq!(cache.stats().entries, 1);
+}
+
+#[test]
+fn a_tmdb_picture_inside_the_limit_is_served_and_refreshed_daily() {
+    let dir = TestDir::new();
+    let cache = dir.cache(100, MAX_BYTES);
+    {
+        let mut index = cache.index.lock().unwrap();
+        cache.initialize(&mut index);
+        assert!(cache.write_locked(&mut index, &tmdb("a.jpg"), b"fresh", now_secs()));
+        assert!(cache.write_locked(&mut index, &tmdb("b.jpg"), b"aging", now_secs() - LIMIT + 3600));
+    }
+    assert!(!cache.read_at(0, &tmdb("a.jpg")).unwrap().stale);
+    let aging = cache.read_at(0, &tmdb("b.jpg")).unwrap();
+    assert!(aging.stale, "a day old or more asks for a refresh");
+    assert_eq!(aging.bytes, b"aging");
+}
+
+#[test]
+fn a_future_dated_tmdb_picture_is_a_miss_but_is_left_for_the_next_write_to_replace() {
+    let dir = TestDir::new();
+    let cache = dir.cache(100, MAX_BYTES);
+    {
+        let mut index = cache.index.lock().unwrap();
+        cache.initialize(&mut index);
+        assert!(cache.write_locked(&mut index, &tmdb("a.jpg"), b"x", now_secs() + 86_400));
+    }
+    assert!(cache.read_at(0, &tmdb("a.jpg")).is_none());
+    assert!(dir.0.join(&tmdb("a.jpg").name).exists());
+    assert!(cache.write_at(0, &tmdb("a.jpg"), b"new"));
+    assert_eq!(cache.read_at(0, &tmdb("a.jpg")).unwrap().bytes, b"new");
+}
+
+#[test]
+fn startup_deletes_expired_tmdb_and_unscoped_art_but_keeps_plex_art() {
+    let dir = TestDir::new();
+    let fallback = TestDir::new();
+    let old = now_secs() - LIMIT - 1;
+    let prior = |id| DiskKey { name: poster(id).prior.unwrap(), legacy: None, prior: None };
+    {
+        let writer = dir.cache(100, MAX_BYTES);
+        let mut index = writer.index.lock().unwrap();
+        writer.initialize(&mut index);
+        assert!(writer.write_locked(&mut index, &tmdb("old.jpg"), b"old", old));
+        assert!(writer.write_locked(&mut index, &tmdb("new.jpg"), b"new", now_secs()));
+        assert!(writer.write_locked(&mut index, &poster(1), b"plex", old));
+        assert!(writer.write_locked(&mut index, &prior(2), b"old unscoped", old));
+        assert!(writer.write_locked(&mut index, &prior(3), b"young unscoped", now_secs()));
+    }
+    {
+        let writer = fallback.cache(100, MAX_BYTES);
+        let mut index = writer.index.lock().unwrap();
+        writer.initialize(&mut index);
+        assert!(writer.write_locked(&mut index, &tmdb("abandoned.jpg"), b"old fallback", old));
+        assert!(writer.write_locked(&mut index, &poster(4), b"plex fallback", old));
+    }
+    let cache = Cache::new(vec![dir.0.clone(), fallback.0.clone()], Limits { entries: 100, bytes: MAX_BYTES });
+    cache.warm();
+    assert_eq!(cache.stats().entries, 3);
+    assert!(!dir.0.join(&tmdb("old.jpg").name).exists());
+    assert!(dir.0.join(&tmdb("new.jpg").name).exists());
+    assert!(dir.0.join(&poster(1).name).exists());
+    assert!(!dir.0.join(prior(2).name).exists());
+    assert_eq!(cache.read_at(0, &poster(3)).unwrap().bytes, b"young unscoped");
+    assert!(!dir.0.join(prior(3).name).exists());
+    assert!(cache.index.lock().unwrap().entries[&poster(3).name].fetched.is_none());
+    assert!(!fallback.0.join(&tmdb("abandoned.jpg").name).exists());
+    assert!(fallback.0.join(&poster(4).name).exists());
+}
+
+#[test]
+fn a_running_cache_drops_idle_expired_tmdb_entries_on_its_hourly_pass() {
+    let dir = TestDir::new();
+    let cache = dir.cache(100, MAX_BYTES);
+    let mut index = cache.index.lock().unwrap();
+    cache.initialize(&mut index);
+    // Written already past the limit, as if its age had run out while the process stayed up.
+    assert!(cache.write_locked(&mut index, &tmdb("idle.jpg"), b"x", now_secs() - LIMIT - 1));
+    assert!(cache.write_locked(&mut index, &poster(1), b"plex", now_secs() - LIMIT - 1));
+    let now = SystemTime::now();
+    cache.sweep_expired(&mut index, now);
+    assert!(dir.0.join(&tmdb("idle.jpg").name).exists(), "the pass runs at most once an hour");
+    cache.sweep_expired(&mut index, now + SWEEP_AFTER);
+    assert!(!dir.0.join(&tmdb("idle.jpg").name).exists());
+    assert!(dir.0.join(&poster(1).name).exists());
+    assert_eq!(index.entries.len(), 1);
+}
+
+#[test]
+fn a_tmdb_picture_stored_before_the_scope_is_adopted_with_its_fetch_time() {
+    let dir = TestDir::new();
+    let cache = dir.cache(100, MAX_BYTES);
+    let key = tmdb("kept.jpg");
+    let plain = |key: &DiskKey| DiskKey { name: key.prior.clone().unwrap(), legacy: None, prior: None };
+    let fetched = now_secs() - 40 * 86_400;
+    {
+        let mut index = cache.index.lock().unwrap();
+        cache.initialize(&mut index);
+        assert!(cache.write_locked(&mut index, &plain(&key), b"before", fetched));
+        assert!(cache.write_locked(&mut index, &plain(&tmdb("gone.jpg")), b"before", now_secs() - LIMIT - 1));
+    }
+    let hit = cache.read_at(0, &key).unwrap();
+    assert_eq!(hit.bytes, b"before");
+    assert!(!dir.0.join(key.prior.as_ref().unwrap()).exists());
+    assert_eq!(read_file(&dir.0.join(&key.name), false).unwrap().1, fetched, "its age is not reset");
+    let expired = tmdb("gone.jpg");
+    assert!(cache.read_at(0, &expired).is_none(), "an unscoped file past the limit is not served");
+    assert!(!dir.0.join(&expired.name).exists());
+    assert!(!dir.0.join(expired.prior.unwrap()).exists());
+    assert_eq!(cache.stats().entries, 1);
+    cache.remove_at(0, &key);
+    assert_eq!(cache.stats().entries, 0);
 }
 
 // ---- avatar tiles -----------------------------------------------------------------------------

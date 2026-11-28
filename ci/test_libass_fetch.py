@@ -325,5 +325,19 @@ class PinnedPatches(unittest.TestCase):
                 build_libass.apply_patches(dep, Path(folder) / ('libass-' + dep['version']))
 
 
+class ExtractedSource(unittest.TestCase):
+    def test_extraction_keeps_configure_executable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / 'dependency.tar'
+            with tarfile.open(archive, 'w') as tar:
+                script = tarfile.TarInfo('configure')
+                script.mode = 0o755
+                script.uid = script.gid = 1000
+                tar.addfile(script)
+            build_libass.extract(archive, root)
+            self.assertTrue((root / 'configure').stat().st_mode & 0o100)
+
+
 if __name__ == '__main__':
     unittest.main()

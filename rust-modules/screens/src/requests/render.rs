@@ -2,7 +2,7 @@
 use super::*;
 use plx_ui::consts::MARGIN_X;
 use plx_ui::icons::Icon;
-use plx_ui::widgets::{Button, StatusKind, StatusOverlay, BTN_PILL_AIR};
+use plx_ui::widgets::{Button, StatusKind, StatusOverlay, TransportFocus, TransportRest, BTN_PILL_AIR};
 use plx_ui::{theme, Env, Painter, View};
 use std::ffi::CString;
 use std::rc::Rc;
@@ -47,17 +47,23 @@ pub(super) fn draw<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_
     plx_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
     let p = f.painter.alpha(f.page_alpha);
     field(screen, f, p);
-    if screen.shown().next().is_none() {
-        status(screen, p);
+    if screen.bar_shown() {
+        bar(screen, f, p);
     }
+    match screen.note() {
+        Some(note) => note_read(screen, note, p),
+        None if screen.shown().next().is_none() => status(screen, p),
+        None => {}
+    }
+    let filtered = !screen.browse.is_empty();
     for row in screen.shown() {
         let Some((frame, shelf)) = screen.row_frame(f.cx, row.lane) else { continue };
         let top = frame.y - layout::HEAD_TO_ROW;
         if !plx_ui::on_axis(top, layout::block_h(shelf.under_band()), SCR_H, 0.0) {
             continue;
         }
-        plx_ui::cards::draw_heading_c(p, row.lane.heading(), c"", c"", MARGIN_X, top - shelf.heading_lift(), 0.0, f.cx.measure);
-        if let Some(src) = screen.cards_of(Sec::Row(row.lane, screen.rows_gen)) {
+        plx_ui::cards::draw_heading_c(p, row.lane.heading(filtered), c"", c"", MARGIN_X, top - shelf.heading_lift(), 0.0, f.cx.measure);
+        if let Some(src) = screen.cards_of(screen.sec(row.lane)) {
             shelf.draw(f, p, &src, frame);
         }
     }
@@ -81,7 +87,7 @@ fn field<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, 
             );
         }
     }
-    stop(screen, f, p);
+    stop(screen, f, p, FIELD);
 }
 
 /// What the page says where its rows would be: it is reaching Seerr, it could not, or nothing is there.
@@ -110,20 +116,59 @@ fn status(screen: &RequestsScreen, p: Painter) {
     }
 }
 
-/// The field's hit target, recorded where the field is drawn.
-fn stop<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p: Painter) {
+/// What a filter with nothing on its rows says, in the band the page keeps for it under the bar.
+fn note_read(screen: &RequestsScreen, note: filters::Note, p: Painter) {
+    use plx_platform::i18n::msg;
+    let rect = Rect::new(0.0, layout::CONTENT_TOP - screen.stack.scroll(), SCR_W, layout::NOTE_H);
+    let env = Env::inert();
+    match note {
+        // placeholder-exempt: counted where drawn (StatusOverlay::draw_geometry, Working)
+        filters::Note::Working => StatusOverlay::new(rect, msg::requests_loading_c(), StatusKind::Working).draw(&env, p),
+        filters::Note::Failed => StatusOverlay::new(rect, msg::requests_failed_c(), StatusKind::Failed).draw(&env, p),
+        filters::Note::Empty => StatusOverlay::new(rect, msg::requests_filter_none_c(), StatusKind::Empty)
+            .reason(msg::requests_filter_none_reason_c())
+            .draw(&env, p),
+    }
+}
+
+/// The filter bar: a control for each filter, or the choices of the one being set. A control that
+/// holds a value wears the accent plate at rest, so what is filtering the rows reads at a glance.
+fn bar<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p: Painter) {
+    let section = Rect::new(0.0, layout::HEAD_H - screen.stack.scroll(), SCR_W, layout::BAR_H);
+    if section.y > SCR_H || section.y + section.h < 0.0 {
+        return;
+    }
+    let focus = f.cx.focus.current.map(|key| key.elem);
+    let env = Env::inert();
+    for n in 0..screen.bar_len() {
+        let (Some(elem), Some(label)) = (screen.bar_elem(n), screen.bar_label(n)) else { continue };
+        let rect = screen.bar_rect(f.cx.measure, focus, n, section);
+        if rect.x + rect.w < 0.0 || rect.x > SCR_W {
+            continue;
+        }
+        let mut button = Button::new(label.as_ptr(), theme::size::BODY, rect).focused(focus == Some(elem));
+        if screen.bar_lit(n) {
+            button = button.rest_face(TransportRest::Solid).focus_face(TransportFocus::Ring);
+        }
+        button.draw(&env, p);
+        stop(screen, f, p, elem);
+    }
+}
+
+/// An element's hit target, recorded where it is drawn.
+fn stop<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p: Painter, elem: u32) {
     if !f.records_stops() {
         return;
     }
     use plx_ui::screen::{Activate, Hover, Stop};
-    let Some(placed) = <RequestsScreen as plx_ui::screen::Focusable<H>>::place(screen, &FIELD, f.cx, plx_ui::screen::At::Drawn)
+    let Some(placed) = <RequestsScreen as plx_ui::screen::Focusable<H>>::place(screen, &elem, f.cx, plx_ui::screen::At::Drawn)
     else {
         return;
     };
     f.stop(
         p,
         Stop {
-            key: screen.key(FIELD),
+            key: screen.key(elem),
             rect: placed.rect,
             rest_rect: placed.rest_rect,
             clip: placed.clip,

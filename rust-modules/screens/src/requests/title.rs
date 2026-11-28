@@ -1,352 +1,429 @@
-//! One title's page: what Seerr says of it, Play when Plex has it, and Request when it may be
-//! asked for. A series offers its missing seasons as a picker (every one chosen to begin with),
-//! unless Seerr is set to take whole series only. A title already asked for, by the viewer or by
-//! anyone (Pulsarr asks for every Watchlist add), shows "Already requested" and nothing to press: the
-//! app driver reads the title again before it sends a request, so a duplicate cannot go out even
-//! from a page that was open while another request landed.
-use super::cards::badge_word;
-use super::*;
-use super::super::family::{form_focus, TABLE_GROUP};
-use plx_plex::plex::seerr::{Ask, Have, SeerrError};
+//! One title's artwork, credits, synopsis and actions. Requests and progress never wait on the frame.
+mod facts;
+mod paint;
+mod shelves;
+
+use std::borrow::Cow;
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+use super::progress_text;
+use crate::registry::{AppFx, ContentArg, ContentLike, ContentReq, PageMemory, RequestsCmd, RequestsReply, TitlePage};
+use plx_machine::machine::{Canon, Cx, Delivery, Edge, Effects, EntryId, Fx, GroupId, Handled, InputKind, Key, LogicalState, Machine, Tick};
+use plx_machine::present::Provenance;
 use plx_platform::i18n::msg;
-use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
-use plx_ui::route_screen::{RouteGround, RouteLayout};
-use plx_ui::screen::{FocusSource, HitSource, Part};
-use plx_ui::table::Row as TableRow;
-use plx_ui::table_screen::{Header, TablePart, TableScreen};
+use plx_plex::plex::progress::{self, Snapshot, Tracker};
+use plx_plex::plex::seerr::{tmdb_image, Ask, Kind, SeerrError};
+use plx_ui::cards::{CardEvent, Kind as Section, RowStyle, SectionSpec, Stack, StackEvent, StackPage};
+use plx_ui::consts::{MARGIN_X, SCR_W, UNDER_LABEL_AIR};
+use plx_ui::screen::{AxisMask, Dir, DrawFrame, EdgeRule, ElemKind, Enter, FocusSource, FocusTarget, GroupKind, GroupSpec, HitSource, Link, RenderStrategy, Screen, ScreenEvent, Seat};
+use plx_ui::theme;
 use plx_ui::widgets::{StatusKind, StatusOverlay};
-use plx_ui::{Env, Painter, View};
+use plx_ui::{Env, Rect, View};
 
-use crate::registry::TitlePage;
+const PLAY: u32 = 1;
+const REQUEST: u32 = 2;
+const TRAILER: u32 = 3;
+const ABOUT: u32 = 4;
+const HERO_READ: u32 = 5;
+const SEASON: u32 = 100;
+const CAST: u32 = 1000;
+const VIDEO: u32 = 2000;
+const STILL: u32 = 3000;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum TId {
-    Play,
-    Request,
-    Season(u32),
-}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sec { Hero, About, Seasons, Cast, Videos, Episodes }
 
-impl FormId for TId {
-    fn key(&self) -> RowKey {
-        RowKey(match self {
-            TId::Play => 1,
-            TId::Request => 2,
-            TId::Season(n) => 100 + n,
-        })
-    }
-}
-
-/// How the viewer's request stands on this page.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Sent {
-    Idle,
-    Sending,
-    Done,
-    Failed(SeerrError),
-}
-
-enum Load {
-    Loading,
-    Ready(Box<TitlePage>),
-    Failed(SeerrError),
-}
-
-/// The part of the overview the header shows: whole words, ending in an ellipsis when cut.
-fn blurb(overview: &str) -> String {
-    const MAX: usize = 240;
-    let overview = overview.trim();
-    if overview.chars().count() <= MAX {
-        return overview.to_string();
-    }
-    let cut: String = overview.chars().take(MAX).collect();
-    let words = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
-    format!("{}…", words.trim_end_matches([',', ';', ':', '.', ' ']))
-}
-
-/// The seasons a request could name, as the picker lists them.
-fn announced(page: &TitlePage) -> impl Iterator<Item = &plx_plex::plex::seerr::Season> {
-    let specials = page.rules.specials;
-    page.detail.seasons.iter().filter(move |s| (s.number > 0 || specials) && s.episodes > 0)
-}
-
-/// What stands beside a season that cannot be picked.
-fn season_word(season: &plx_plex::plex::seerr::Season) -> Option<&'static str> {
-    match season.have {
-        Have::All => Some(badge_word(Badge::Available)),
-        Have::Partly => Some(badge_word(Badge::PartlyAvailable)),
-        Have::Pending | Have::Processing => Some(badge_word(Badge::Requested)),
-        _ if season.requested => Some(badge_word(Badge::Requested)),
-        _ => None,
-    }
-}
-
-/// The page's rows from plain inputs (the text-fit tests call this directly).
-pub(super) fn title_form(page: &TitlePage, picked: &[u32], sent: Sent) -> Form<TId, TId, ()> {
-    let ask = page.detail.ask(page.rules);
-    let sending = sent == Sent::Sending;
-    let mut actions = FormSection::new("");
-    if page.plex.is_some() {
-        actions = actions.item(
-            TId::Play,
-            RowKind::Button,
-            TId::Play,
-            TableRow::new(msg::requests_play()).detail(msg::requests_play_detail()),
-        );
-    }
-    let partial = page.rules.partial;
-    actions = match &ask {
-        Ask::Movie => actions
-            .item(TId::Request, RowKind::Button, TId::Request, TableRow::new(msg::requests_request()))
-            .disabled(sending),
-        Ask::Seasons(_) => actions
-            .item(TId::Request, RowKind::Button, TId::Request, TableRow::new(msg::requests_request()))
-            .disabled(sending || (partial && picked.is_empty())),
-        Ask::Requested => actions
-            .item(TId::Request, RowKind::Button, TId::Request, TableRow::new(msg::requests_already()))
-            .disabled(true),
-        // In Plex, Play already says so; otherwise Seerr alone knows it is there.
-        Ask::Have if page.plex.is_none() => actions
-            .item(TId::Request, RowKind::Button, TId::Request, TableRow::new(msg::requests_available()))
-            .disabled(true),
-        Ask::Have => actions,
-        Ask::Blocked => actions
-            .item(TId::Request, RowKind::Button, TId::Request, TableRow::new(msg::requests_unavailable()))
-            .disabled(true),
-        Ask::NotYet => actions
-            .item(TId::Request, RowKind::Button, TId::Request, TableRow::new(msg::requests_not_yet()))
-            .disabled(true),
-    };
-    let mut form = Form::new().section(actions);
-    if matches!(ask, Ask::Seasons(_)) && partial {
-        let mut seasons = FormSection::new(msg::requests_seasons());
-        for season in announced(page) {
-            let label = if season.number == 0 {
-                msg::requests_specials().to_string()
-            } else {
-                msg::requests_season(i64::from(season.number))
-            };
-            let id = TId::Season(season.number);
-            seasons = match season_word(season) {
-                None if season.have == Have::Nothing => seasons
-                    .item(id, RowKind::Toggle, id, TableRow::new(label).toggle(picked.contains(&season.number)))
-                    .disabled(sending),
-                word => seasons
-                    .item(id, RowKind::Button, id, TableRow::new(label).value(word.unwrap_or_default()))
-                    .disabled(true),
-            };
+impl Sec {
+    const ALL: [Self; 6] = [Self::Hero, Self::About, Self::Seasons, Self::Cast, Self::Videos, Self::Episodes];
+    fn group(self) -> GroupId { GroupId(0x5254_0000 + self as u32) }
+    fn style(self) -> &'static RowStyle {
+        match self {
+            Self::Seasons => &RowStyle::HOME,
+            Self::Cast => &RowStyle::CAST,
+            _ => &RowStyle::EPISODE,
         }
-        form = form.section(seasons);
     }
-    let note = match sent {
-        Sent::Idle => None,
-        Sent::Sending => Some(msg::requests_sending().to_string()),
-        Sent::Done => Some(msg::requests_sent().to_string()),
-        Sent::Failed(error) => Some(crate::registry::seerr_error_text(error).to_string()),
-    };
-    match note {
-        Some(note) => form.section(FormSection::new("").note(note)),
-        None => form,
+}
+
+impl facts::Act {
+    fn elem(self) -> Option<u32> {
+        match self {
+            Self::Play => Some(PLAY),
+            Self::Request => Some(REQUEST),
+            Self::Trailer => Some(TRAILER),
+            Self::Status => None,
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sent { Idle, Sending, Done, Failed(SeerrError) }
+
+enum Load { Loading, Ready(Box<Ready>), Failed(SeerrError) }
+
+struct Ready {
+    page: TitlePage,
+    ask: Ask,
+    actions: Vec<facts::Action>,
+    poster: String,
+    backdrop: String,
+    length: String,
+    stage: &'static str,
+    facts: Vec<facts::Fact>,
+    seasons: Vec<shelves::Card>,
+    cast: Vec<shelves::Card>,
+    videos: Vec<shelves::Card>,
+}
+
+impl Ready {
+    fn new(page: TitlePage, ask: Ask, picked: &[u32], sending: bool) -> Self {
+        let poster = tmdb_image(&page.detail.title.poster, "w342");
+        let backdrop = tmdb_image(&page.detail.title.backdrop, "w1280");
+        let seasons = facts::announced(&page).take((CAST - SEASON) as usize).enumerate()
+            .map(|(i, s)| shelves::season(s, &page, &poster, i)).collect();
+        Self {
+            actions: facts::actions(&page, picked, sending),
+            length: facts::length(&page),
+            stage: page.detail.info.stage.map_or("", facts::stage_word),
+            facts: facts::about_facts(&page),
+            cast: shelves::cast(&page), videos: shelves::videos(&page),
+            page, ask, poster, backdrop, seasons,
+        }
+    }
+
+    fn about(&self) -> bool { !self.facts.is_empty() || !self.page.detail.title.overview.trim().is_empty() }
 }
 
 pub struct TitleScreen {
     entry: EntryId,
     kind: Kind,
     tmdb: u32,
+    stack: Stack<Sec>,
+    revision: u64,
     tx: Sender<RequestsReply>,
     inbox: Receiver<RequestsReply>,
     load: Load,
     sent: Sent,
-    /// The seasons the viewer has chosen to ask for.
     picked: Vec<u32>,
-    form: FormTable<TId, TId, ()>,
-    heading: String,
-    blurb: String,
-    ground: RouteGround,
+    stills: Vec<shelves::Card>,
+    trailer_pending: bool,
+    trailer_failed: bool,
+    tracker: Tracker,
+    progress_at: u32,
+    snapshot: Option<Snapshot>,
+    progress: Option<progress_text::Lines>,
+    season_progress: Vec<(u32, shelves::SeasonProgress)>,
+    visible: bool,
 }
 
 impl TitleScreen {
     pub fn new(entry: EntryId, kind: Kind, tmdb: u32) -> Self {
         let (tx, inbox) = channel();
         Self {
-            entry,
-            kind,
-            tmdb,
-            tx,
-            inbox,
-            load: Load::Loading,
-            sent: Sent::Idle,
-            picked: Vec::new(),
-            form: FormTable::new(crate::registry::BAND),
-            heading: String::new(),
-            blurb: String::new(),
-            ground: RouteGround::authored(),
+            entry, kind, tmdb, stack: Stack::new(entry).reveal_on_move(true), revision: 0, tx, inbox,
+            load: Load::Loading, sent: Sent::Idle, picked: Vec::new(), stills: Vec::new(),
+            trailer_pending: false, trailer_failed: false,
+            tracker: Tracker::new(progress::Key { kind, tmdb }, entry.0), progress_at: 0,
+            snapshot: None, progress: None, season_progress: Vec::new(),
+            visible: true,
         }
     }
 
+    fn ready(&self) -> Option<&Ready> {
+        match &self.load { Load::Ready(r) => Some(r), _ => None }
+    }
+    fn picker(&self) -> bool {
+        self.ready().is_some_and(|r| r.page.rules.partial && matches!(r.ask, Ask::Seasons(_)))
+    }
+    fn actions(&self) -> &[facts::Action] { self.ready().map_or(&[], |r| &r.actions) }
+    fn cards_of(&self, k: Sec) -> Option<shelves::Cards<'_>> {
+        let ready = self.ready()?;
+        let art = ready.page.art;
+        let cards = match k {
+            Sec::Seasons if self.picker() || !self.season_progress.is_empty() => &ready.seasons,
+            Sec::Cast if art.is_some() => &ready.cast,
+            Sec::Videos if art.is_some() => &ready.videos,
+            Sec::Episodes if art.is_some() => &self.stills,
+            _ => return None,
+        };
+        (!cards.is_empty()).then_some(shelves::Cards { screen: self, sid: art.map(|s| s.raw()), cards, which: k })
+    }
+    fn focus_sections(&self) -> impl Iterator<Item = Sec> + '_ {
+        Sec::ALL.into_iter().filter(|k| match k {
+            Sec::Hero => self.ready().is_some(),
+            Sec::About => self.ready().is_some_and(Ready::about),
+            _ => self.cards_of(*k).is_some(),
+        })
+    }
+    fn ask<H: ContentLike>(&self, cmd: RequestsCmd, fx: &mut Effects<'_, H>) { fx.push(Fx::App(AppFx::Requests(cmd))); }
     fn read<H: ContentLike>(&self, fx: &mut Effects<'_, H>) {
-        fx.push(Fx::App(AppFx::Requests(RequestsCmd::Detail { kind: self.kind, tmdb: self.tmdb, reply: self.tx.clone() })));
+        self.ask(RequestsCmd::Detail { kind: self.kind, tmdb: self.tmdb, reply: self.tx.clone() }, fx);
     }
 
-    /// The rows again from what the page holds, keeping the selection where it still is.
-    fn rebuild(&mut self) {
-        let keep = self.form.selected_id().copied();
-        match &self.load {
-            Load::Ready(page) => self.form.set(title_form(page, &self.picked, self.sent), keep.as_ref()),
-            _ => self.form.set(Form::new(), None),
+    fn relabel_actions(&mut self) {
+        if let Load::Ready(ready) = &mut self.load {
+            if let Some(action) = ready.actions.iter_mut().find(|a| a.act == facts::Act::Request) {
+                let empty_picker = ready.page.rules.partial && matches!(ready.ask, Ask::Seasons(_)) && self.picked.is_empty();
+                action.enabled = !matches!(self.sent, Sent::Sending | Sent::Done) && !empty_picker;
+            }
         }
     }
-
-    /// Take one answer; `true` when the title should be read again (a request just went through).
-    fn receive(&mut self, reply: RequestsReply) -> bool {
+    fn read_stills<H: ContentLike>(&self, page: &TitlePage, fx: &mut Effects<'_, H>) {
+        if self.kind != Kind::Tv || page.art.is_none() { return; }
+        let aired = page.detail.seasons.iter().filter(|s| s.number > 0 && s.episodes > 0).map(|s| s.number);
+        if let Some(first) = aired.clone().min() {
+            let mut seasons = vec![first];
+            if let Some(last) = aired.max().filter(|n| *n != first) { seasons.push(last); }
+            self.ask(RequestsCmd::Stills { tmdb: self.tmdb, seasons, reply: self.tx.clone() }, fx);
+        }
+    }
+    fn progress_readout(&mut self) -> bool {
+        let snapshot = self.tracker.snapshot();
+        if self.snapshot.as_ref() == Some(&snapshot) { return false; }
+        let was_empty = self.season_progress.is_empty();
+        self.progress = progress_text::lines(&snapshot, self.kind);
+        self.season_progress = snapshot.seasons.iter().map(|row| (row.number, shelves::SeasonProgress::new(row))).collect();
+        if was_empty != self.season_progress.is_empty() { self.revision += 1; }
+        self.snapshot = Some(snapshot);
+        true
+    }
+    fn receive<H: ContentLike>(&mut self, reply: RequestsReply, now: u32, fx: &mut Effects<'_, H>) -> bool {
         match reply {
-            RequestsReply::Detail { result: Ok(page), .. } => {
-                let free: Vec<u32> = match page.detail.ask(page.rules) {
-                    Ask::Seasons(free) => free,
-                    _ => Vec::new(),
-                };
-                if matches!(self.load, Load::Ready(_)) {
-                    self.picked.retain(|n| free.contains(n));
-                } else {
-                    self.picked = free;
+            RequestsReply::Detail { kind, tmdb, result } if kind == self.kind && tmdb == self.tmdb => {
+                match result {
+                    Ok(page) => {
+                        let first = self.ready().is_none();
+                        let ask = page.detail.ask(page.rules);
+                        match &ask {
+                            Ask::Seasons(free) if first => self.picked.clone_from(free),
+                            Ask::Seasons(free) => self.picked.retain(|n| free.contains(n)),
+                            _ => self.picked.clear(),
+                        }
+                        self.picked.sort_unstable();
+                        if first { self.read_stills(&page, fx); }
+                        let disabled = matches!(self.sent, Sent::Sending | Sent::Done);
+                        self.load = Load::Ready(Box::new(Ready::new(page, ask, &self.picked, disabled)));
+                        self.revision += 1;
+                    }
+                    Err(error) if self.ready().is_none() => self.load = Load::Failed(error),
+                    Err(_) => return false,
                 }
-                self.heading = if page.detail.title.year.is_empty() {
-                    page.detail.title.name.clone()
-                } else {
-                    format!("{} ({})", page.detail.title.name, page.detail.title.year)
-                };
-                self.blurb = blurb(&page.detail.title.overview);
-                self.load = Load::Ready(Box::new(page));
-                false
-            }
-            RequestsReply::Detail { result: Err(error), .. } => {
-                if !matches!(self.load, Load::Ready(_)) {
-                    self.load = Load::Failed(error);
-                }
-                false
-            }
-            RequestsReply::Requested { result: Ok(()), .. } => {
-                self.sent = Sent::Done;
                 true
             }
-            RequestsReply::Requested { result: Err(error), .. } => {
-                self.sent = Sent::Failed(error);
-                // A request the page thought open may have been taken meanwhile: read it again.
-                error == SeerrError::AlreadyRequested
+            RequestsReply::Requested { kind, tmdb, result } if kind == self.kind && tmdb == self.tmdb => {
+                self.sent = match result { Ok(()) => Sent::Done, Err(e) => Sent::Failed(e) };
+                self.relabel_actions();
+                if result.is_ok() && self.visible {
+                    self.tracker.hide();
+                    self.tracker.show(now);
+                }
+                if matches!(result, Ok(()) | Err(SeerrError::AlreadyRequested)) { self.read(fx); }
+                true
+            }
+            RequestsReply::Stills { tmdb, result: Ok(stills) } if tmdb == self.tmdb => {
+                self.stills = shelves::stills(stills);
+                self.revision += 1;
+                true
+            }
+            RequestsReply::Trailer { opened } => {
+                self.trailer_pending = false;
+                self.trailer_failed = !opened;
+                true
+            }
+            RequestsReply::Progress { gen, step, outcome } => {
+                self.tracker.land(gen, step, outcome) && self.progress_readout()
             }
             _ => false,
         }
     }
-
-    fn activate<H: ContentLike>(&mut self, elem: u32, fx: &mut Effects<'_, H>) -> Handled {
-        let Some(index) = self.form.index_of_key(RowKey(elem)) else { return Handled::Yes };
-        // A disabled row (already requested, nothing chosen) answers nothing.
-        if self.form.activate(index).is_none() {
-            return Handled::Yes;
+    fn tick<H: ContentLike>(&mut self, t: Tick, fx: &mut Effects<'_, H>) -> bool {
+        let first = self.ready().is_none();
+        let mut changed = false;
+        while let Ok(reply) = self.inbox.try_recv() { changed |= self.receive(reply, t.ms, fx); }
+        if let Some(order) = self.tracker.advance(t.ms) {
+            self.ask(RequestsCmd::Progress { order, reply: self.tx.clone() }, fx);
         }
-        let Some(&id) = self.form.id_at(index) else { return Handled::Yes };
-        let Load::Ready(page) = &self.load else { return Handled::Yes };
-        match id {
-            TId::Play => {
-                if let Some((sid, rk)) = &page.plex {
+        if self.visible && t.ms.wrapping_sub(self.progress_at) >= 1_000 {
+            self.progress_at = t.ms;
+            changed |= self.progress_readout();
+        }
+        if changed { fx.invalidate(Provenance::Landing(fx.from())); }
+        first && self.ready().is_some()
+    }
+    fn launch<H: ContentLike>(&mut self, key: String, fx: &mut Effects<'_, H>) {
+        if !self.trailer_pending {
+            self.trailer_pending = true;
+            self.trailer_failed = false;
+            self.ask(RequestsCmd::Trailer { video: key, reply: self.tx.clone() }, fx);
+            fx.invalidate(Provenance::Input);
+        }
+    }
+    fn activate<H: ContentLike>(&mut self, elem: u32, fx: &mut Effects<'_, H>) -> Handled {
+        let Some(ready) = self.ready() else { return Handled::Yes };
+        match elem {
+            PLAY => {
+                if let Some((sid, rk)) = &ready.page.plex {
                     fx.push(Fx::App(AppFx::Content(ContentReq::Push(ContentArg::Detail { sid: *sid, rk: rk.clone() }))));
                 }
             }
-            TId::Season(n) => {
-                match self.picked.iter().position(|p| *p == n) {
-                    Some(at) => {
-                        self.picked.remove(at);
-                    }
-                    None => {
-                        self.picked.push(n);
-                        self.picked.sort_unstable();
-                    }
-                }
-                self.rebuild();
-                fx.invalidate(Provenance::Input);
-            }
-            TId::Request => {
-                let seasons = match page.detail.ask(page.rules) {
+            REQUEST if !matches!(self.sent, Sent::Sending | Sent::Done) => {
+                let seasons = match &ready.ask {
                     Ask::Movie => Vec::new(),
-                    Ask::Seasons(free) if page.rules.partial => free.into_iter().filter(|n| self.picked.contains(n)).collect(),
-                    Ask::Seasons(free) => free,
+                    Ask::Seasons(_) if self.picker() => self.picked.clone(),
+                    Ask::Seasons(free) => free.clone(),
                     _ => return Handled::Yes,
                 };
-                if self.sent == Sent::Sending || (self.kind == Kind::Tv && seasons.is_empty()) {
-                    return Handled::Yes;
-                }
+                if self.kind == Kind::Tv && seasons.is_empty() { return Handled::Yes; }
                 self.sent = Sent::Sending;
-                fx.push(Fx::App(AppFx::Requests(RequestsCmd::Request {
-                    kind: self.kind,
-                    tmdb: self.tmdb,
-                    seasons,
-                    reply: self.tx.clone(),
-                })));
-                self.rebuild();
+                self.relabel_actions();
+                self.ask(RequestsCmd::Request { kind: self.kind, tmdb: self.tmdb, seasons, reply: self.tx.clone() }, fx);
                 fx.invalidate(Provenance::Input);
             }
+            TRAILER => {
+                if let Some(video) = ready.page.detail.info.trailer() { self.launch(video.key.clone(), fx); }
+            }
+            SEASON..CAST if self.picker() && !matches!(self.sent, Sent::Sending | Sent::Done) => {
+                let Some(season) = facts::announced(&ready.page).nth((elem - SEASON) as usize) else { return Handled::Yes };
+                let n = season.number;
+                if !matches!(&ready.ask, Ask::Seasons(free) if free.contains(&n)) { return Handled::Yes; }
+                match self.picked.binary_search(&n) {
+                    Ok(i) => { self.picked.remove(i); }
+                    Err(i) => self.picked.insert(i, n),
+                }
+                self.relabel_actions();
+                fx.invalidate(Provenance::Input);
+            }
+            VIDEO..STILL if ready.page.art.is_some() => {
+                if let Some(video) = ready.page.detail.info.videos.get((elem - VIDEO) as usize) { self.launch(video.key.clone(), fx); }
+            }
+            _ => {}
         }
         Handled::Yes
     }
 
-    /// The page's `Focusable`: the table under the header.
-    fn view<H: ContentLike>(&self) -> impl plx_ui::screen::Focusable<H> + '_ {
-        TableScreen::new(Header::new(RouteLayout::screen(), Some(msg::requests_title()), &self.heading, &self.blurb), &self.form.table, TABLE_GROUP, self.entry)
-            .keyed(&self.form)
+    fn stack_on<H: ContentLike>(&mut self, ev: &ScreenEvent<H>, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Option<StackEvent<Sec, u32>> {
+        let mut stack = std::mem::replace(&mut self.stack, Stack::new(self.entry));
+        let result = stack.on(self, ev, cx, fx);
+        self.stack = stack;
+        result
     }
+    fn view<H: ContentLike>(&self) -> impl plx_ui::screen::Focusable<H> + '_ { self.stack.view(self) }
 }
 
 impl<H: ContentLike> Machine<H> for TitleScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        let first = if let ScreenEvent::Tick(t) = ev { self.tick(*t, fx) } else { false };
+        let stack = self.stack_on(ev, cx, fx);
+        if first {
+            if let Some(k) = self.focus_sections().next() {
+                fx.push(Fx::Deliver(fx.from(), Delivery::Screen(ScreenEvent::Enter(Enter::Fresh { focus: FocusTarget::FirstInGroup(k.group()) }))));
+            }
+        }
         match ev {
-            ScreenEvent::Mount => {
-                self.read(fx);
-                Handled::Yes
+            ScreenEvent::Mount => self.read(fx),
+            ScreenEvent::Cover | ScreenEvent::Suspend | ScreenEvent::WillLeave(_) | ScreenEvent::Unmount => {
+                self.visible = false;
+                self.tracker.hide();
             }
-            ScreenEvent::Tick(t) => {
-                let was_empty = self.form.table.n_rows() == 0;
-                let mut landed = false;
-                let mut again = false;
-                while let Ok(reply) = self.inbox.try_recv() {
-                    again |= self.receive(reply);
-                    landed = true;
-                }
-                if landed {
-                    self.rebuild();
-                    fx.invalidate(Provenance::Landing(fx.from()));
-                    // The rows arrived after the page was seated: put focus on the first.
-                    if was_empty && self.form.table.n_rows() > 0 {
-                        fx.push(Fx::Deliver(
-                            fx.from(),
-                            Delivery::Screen(ScreenEvent::Enter(Enter::Fresh { focus: FocusTarget::FirstInGroup(TABLE_GROUP) })),
-                        ));
-                    }
-                }
-                if again {
-                    self.read(fx);
-                }
-                self.form.table.update(t.dt(), RouteLayout::screen().sectioned_table().h);
-                Handled::Yes
+            ScreenEvent::Uncover | ScreenEvent::Resume => {
+                self.visible = true;
+                self.tracker.show(cx.tick.ms);
             }
-            ScreenEvent::FocusMoved { to, .. } => {
-                form_focus(&mut self.form, to.elem);
-                Handled::Yes
+            ScreenEvent::Tick(_) | ScreenEvent::Enter(_) | ScreenEvent::FocusMoved { .. } => {}
+            ScreenEvent::Activate(elem) => return self.activate(*elem, fx),
+            ScreenEvent::PressCommit(_) => {
+                if let Some(StackEvent::Card(_, CardEvent::Activate(elem))) = stack { return self.activate(elem, fx); }
+                if let Some(key) = cx.focus.current { return self.activate(key.elem, fx); }
             }
-            ScreenEvent::Activate(elem) => self.activate(*elem, fx),
-            ScreenEvent::PressCommit(_) => match cx.focus.current {
-                Some(key) => self.activate(key.elem, fx),
-                None => Handled::Yes,
-            },
-            ScreenEvent::Input(input) => match &input.kind {
-                InputKind::Key { key: Key::Back, edge: Edge::Down, .. } => {
-                    fx.push(Fx::App(AppFx::Content(ContentReq::Back)));
-                    Handled::Yes
-                }
-                _ => Handled::No,
-            },
-            ScreenEvent::Enter(_) => Handled::Yes,
-            _ => Handled::No,
+            ScreenEvent::Input(input) if matches!(input.kind, InputKind::Key { key: Key::Back, edge: Edge::Down, .. }) => {
+                self.visible = false;
+                self.tracker.hide();
+                fx.push(Fx::App(AppFx::Content(ContentReq::Back)));
+            }
+            _ => return Handled::No,
+        }
+        Handled::Yes
+    }
+}
+
+impl<H: ContentLike> StackPage<H> for TitleScreen {
+    type Key = Sec;
+    type Cards<'a> = shelves::Cards<'a>;
+    fn revision(&self, _: &Cx<'_, H>) -> u64 { self.revision }
+    fn sections(&self, cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
+        let Some(ready) = self.ready() else { return };
+        let hero = Section::Custom { height: paint::HERO_H, focusable: true };
+        out.push(SectionSpec::new(Sec::Hero, hero, Sec::Hero.group()));
+        if ready.about() {
+            let about = Section::Custom { height: paint::about_h(ready, cx.measure), focusable: true };
+            out.push(SectionSpec::new(Sec::About, about, Sec::About.group()));
+        }
+        for k in [Sec::Seasons, Sec::Cast, Sec::Videos, Sec::Episodes] {
+            if self.cards_of(k).is_none() { continue; }
+            out.push(SectionSpec::new(k, Section::Shelf { style: k.style(), heading: super::layout::HEAD_TO_ROW }, k.group())
+                .seated(Seat::Projected).edges([EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop, EdgeRule::Stop]).of_kind(ElemKind::Card));
+        }
+    }
+    fn fallback(&self, _: &Cx<'_, H>, out: &mut Vec<Sec>) { out.extend(self.focus_sections()); }
+    fn cards<'a>(&'a self, _: &'a Cx<'_, H>, k: Sec) -> Option<Self::Cards<'a>> { self.cards_of(k) }
+    fn card_has_menu(&self, _: &Cx<'_, H>, _: Sec, _: &u32) -> bool { false }
+    fn plain_len(&self, k: Sec) -> usize {
+        match k { Sec::Hero => self.actions().iter().filter(|a| a.focusable()).count().max(1), Sec::About => 1, _ => 0 }
+    }
+    fn plain_elem(&self, k: Sec, n: usize) -> Option<u32> {
+        match k {
+            Sec::Hero if n == 0 && !self.actions().iter().any(facts::Action::focusable) => Some(HERO_READ),
+            Sec::Hero => self.actions().iter().filter_map(|a| a.act.elem()).nth(n),
+            Sec::About if n == 0 => Some(ABOUT),
+            _ => None,
+        }
+    }
+    fn plain_step(&self, k: Sec, at: usize, dir: Dir) -> Option<usize> {
+        if k != Sec::Hero { return None; }
+        match dir {
+            Dir::Left => at.checked_sub(1),
+            Dir::Right if at + 1 < <Self as StackPage<H>>::plain_len(self, k) => Some(at + 1),
+            _ => None,
+        }
+    }
+    fn focus_rect(&self, _: &Cx<'_, H>, k: Sec, section: Rect) -> Rect {
+        if k == Sec::About { paint::about_rect(section) } else { section }
+    }
+    fn element_rect(&self, cx: &Cx<'_, H>, k: Sec, n: usize, section: Rect) -> Rect {
+        if k == Sec::Hero {
+            return paint::pills(self.actions(), section.y, cx.measure).filter(|(a, _)| a.focusable()).nth(n)
+                .or_else(|| paint::pills(self.actions(), section.y, cx.measure).next()).map_or(section, |(_, r)| r);
+        }
+        self.focus_rect(cx, k, section)
+    }
+    fn plain_group(&self, _: &Cx<'_, H>, k: Sec, id: GroupId, extent: Rect) -> GroupSpec {
+        GroupSpec { id, kind: GroupKind::Row { wrap: false }, seat: Seat::First, reachable: AxisMask::BOTH,
+            edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop, EdgeRule::Stop], extent,
+            len: <Self as StackPage<H>>::plain_len(self, k),
+            elem: if k == Sec::Hero && self.actions().iter().any(facts::Action::focusable) { ElemKind::Control } else { ElemKind::Bare } }
+    }
+    fn shelf_foot(&self, _: &Cx<'_, H>, _: Sec) -> f32 { UNDER_LABEL_AIR }
+    fn wide_extent(&self, _: Sec) -> bool { false }
+    fn draw_heading(&self, k: Sec, f: &mut DrawFrame<'_, '_, H>, r: Rect, lift: f32) {
+        let word = match k {
+            Sec::Seasons => msg::requests_seasons_c(),
+            Sec::Cast => msg::browse_detail_cast_c(),
+            Sec::Videos => msg::requests_videos_c(),
+            Sec::Episodes => msg::requests_episodes_c(),
+            _ => return,
+        };
+        let p = f.painter.alpha(f.page_alpha).translate(0.0, r.y);
+        plx_ui::cards::draw_heading_c(p, word, c"", c"", MARGIN_X, -lift, 1.0, f.cx.measure);
+    }
+    fn custom_draw(&self, k: Sec, f: &mut DrawFrame<'_, '_, H>, r: Rect, _: f32) {
+        let Some(ready) = self.ready() else { return };
+        let p = f.painter.alpha(f.page_alpha);
+        let hot = f.cx.focus.current.filter(|key| key.entry == self.entry).map(|key| key.elem);
+        match k {
+            Sec::Hero => paint::hero(p, r.y, ready, hot, self.sent, self.trailer_failed, self.progress.as_ref(), f.cx.measure),
+            Sec::About => paint::about(p, r, ready, hot == Some(ABOUT), f.cx.measure),
+            _ => {}
         }
     }
 }
@@ -354,79 +431,56 @@ impl<H: ContentLike> Machine<H> for TitleScreen {
 plx_ui::focusable_via_view!(TitleScreen, H: [ContentLike], view);
 
 impl<H: ContentLike> Screen<H> for TitleScreen {
-    fn name(&self) -> &'static str {
-        "request_title"
-    }
-    fn state(&self) -> &dyn LogicalState {
-        self
-    }
-    fn crumb(&self, _cx: &Cx<'_, H>) -> Option<Cow<'_, str>> {
-        Some(Cow::Borrowed(msg::requests_title()))
-    }
-    fn prepare(&mut self, _b: &mut Budget, _cx: &Cx<'_, H>) {}
-    fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
-        let p: Painter = f.painter;
-        self.ground.draw_home(Painter::root());
-        let layout = RouteLayout::screen();
-        Header::new(layout, Some(msg::requests_title()), &self.heading, &self.blurb).paint(p, f.measure);
-        let frame = layout.sectioned_table();
-        if self.form.table.n_rows() == 0 {
-            let env = Env::inert();
-            match &self.load {
-                Load::Failed(error) => {
-                    let reason = std::ffi::CString::new(crate::registry::seerr_error_text(*error)).unwrap_or_default();
-                    StatusOverlay::new(frame, msg::requests_failed_c(), StatusKind::Failed).reason(&reason).draw(&env, p);
-                }
-                // placeholder-exempt: counted where drawn (StatusOverlay::draw_geometry, Working)
-                _ => StatusOverlay::new(frame, msg::requests_loading_c(), StatusKind::Working).draw(&env, p),
+    fn glides(&self) -> bool { true }
+    fn name(&self) -> &'static str { "request_title" }
+    fn state(&self) -> &dyn LogicalState { self }
+    fn crumb(&self, _: &Cx<'_, H>) -> Option<Cow<'_, str>> { Some(Cow::Borrowed(msg::requests_title())) }
+    fn render(&self) -> RenderStrategy { RenderStrategy::Page }
+    fn focus_source(&self) -> FocusSource { FocusSource::Engine }
+    fn hit_source(&self) -> HitSource { HitSource::Engine }
+    fn memory(&self) -> PageMemory { PageMemory::None }
+    fn links(&self, out: &mut Vec<Link>) {
+        let mut previous = None;
+        for group in self.focus_sections().map(Sec::group) {
+            if let Some(from) = previous {
+                out.push(Link { from, dir: Dir::Down, to: group });
+                out.push(Link { from: group, dir: Dir::Up, to: from });
             }
-            return;
+            previous = Some(group);
         }
-        let mut table = TablePart {
-            table: &self.form.table,
-            frame,
-            group: TABLE_GROUP,
-            entry: self.entry,
-            uncommitted: false,
-            has_band: false,
-            adjusts: false,
-            keys: Some(&self.form),
-        };
-        Part::<H>::draw(&mut table, f, frame);
     }
-    fn render(&self) -> RenderStrategy {
-        RenderStrategy::Page
-    }
-    fn focus_source(&self) -> FocusSource {
-        FocusSource::Engine
-    }
-    fn hit_source(&self) -> HitSource {
-        HitSource::Engine
+    fn prepare(&mut self, _: &mut plx_ui::frame::Budget, _: &Cx<'_, H>) {}
+    fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
+        plx_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        let p = f.painter.alpha(f.page_alpha);
+        let band = Rect::new(MARGIN_X, theme::space::XL, SCR_W - 2.0 * MARGIN_X, paint::HERO_H);
+        match self.load {
+            Load::Ready(_) => self.stack.view(self).paint(f),
+            Load::Failed(error) => {
+                let reason = std::ffi::CString::new(crate::registry::seerr_error_text(error)).unwrap_or_default();
+                StatusOverlay::new(band, msg::requests_failed_c(), StatusKind::Failed).reason(&reason).draw(&Env::inert(), p);
+            }
+            // placeholder-exempt: counted where drawn (StatusOverlay::draw_geometry, Working)
+            Load::Loading => StatusOverlay::new(band, msg::requests_loading_c(), StatusKind::Working).draw(&Env::inert(), p),
+        }
     }
 }
 
 impl LogicalState for TitleScreen {
     fn write(&self, c: &mut Canon) {
-        c.u32(self.entry.0).u32(self.kind as u32).u32(self.tmdb);
-        c.u32(match self.load {
-            Load::Loading => 0,
-            Load::Ready(_) => 1,
-            Load::Failed(_) => 2,
-        });
-        c.u32(match self.sent {
-            Sent::Idle => 0,
-            Sent::Sending => 1,
-            Sent::Done => 2,
-            Sent::Failed(_) => 3,
-        });
+        c.u32(self.entry.0).u32(self.kind as u32).u32(self.tmdb).u64(self.revision);
+        c.u32(match self.load { Load::Loading => 0, Load::Ready(_) => 1, Load::Failed(_) => 2 });
+        c.u32(match self.sent { Sent::Idle => 0, Sent::Sending => 1, Sent::Done => 2, Sent::Failed(_) => 3 });
         c.seq(self.picked.len());
-        for n in &self.picked {
-            c.u32(*n);
+        for n in &self.picked { c.u32(*n); }
+        self.stack.write_scroll(c);
+        for k in Sec::ALL {
+            if let Some(shelf) = self.stack.shelf(k) { shelf.write(c); }
         }
-        c.u32(self.form.selected_key().map_or(0, |k| k.0));
     }
     fn probe(&self, out: &mut String) {
-        out.push_str(&format!("request-title entry={} tmdb={} rows={}", self.entry.0, self.tmdb, self.form.table.n_rows()));
+        use std::fmt::Write;
+        let _ = write!(out, "request-title entry={} tmdb={} sections={}", self.entry.0, self.tmdb, self.focus_sections().count());
     }
 }
 

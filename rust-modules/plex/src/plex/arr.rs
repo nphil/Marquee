@@ -1,5 +1,5 @@
-//! **Radarr's and Sonarr's HTTP API (v3)**, as far as taking a deleted title out of them needs it.
-//! The contract is the apps' own source, read 2026-11-22:
+//! **Radarr's and Sonarr's HTTP API (v3)**, as far as taking a deleted title out of them and showing
+//! a request's progress need it. The contract is the apps' own source, read 2026-11-22:
 //!
 //! * every call carries `X-Api-Key`; a wrong key answers `401`;
 //! * `GET /api/v3/movie?tmdbId=` and `GET /api/v3/series?tvdbId=` answer an array, empty when the
@@ -11,6 +11,9 @@
 //! * a title the app does not hold gets only the exclusion: `POST /api/v3/exclusions` (Radarr,
 //!   `{tmdbId, movieTitle, movieYear}`) or `POST /api/v3/importlistexclusion` (Sonarr,
 //!   `{tvdbId, title}`), which answers `400` "already" when it exists.
+//! * `GET /api/v3/queue/details?movieId=` / `?seriesId=&includeEpisode=true` answer the title's own
+//!   downloads, `GET /api/v3/queue?includeMovie=true` / `includeSeries=true` the whole queue
+//!   (`{records}`): see [`super::progress`].
 //!
 //! Pure but for [`CurlTransport`]: everything else takes a [`Transport`], so the tests drive the flows
 //! against a fake. The key only ever goes in a header; no value here holds it and nothing logs a URL.
@@ -114,6 +117,16 @@ impl<'a, T: Transport> Arr<'a, T> {
             401 | 403 => Err(ArrError::Refused),
             _ => Ok(reply),
         }
+    }
+
+    /// `GET path` (a `/api/v3/` path with its query) as JSON: the title lookups and queues the
+    /// progress view reads.
+    pub fn read(&self, path: String) -> Result<Value, ArrError> {
+        let reply = self.send(Verb::Get, path, None)?;
+        if !(200..300).contains(&reply.status) {
+            return Err(ArrError::Failed);
+        }
+        serde_json::from_slice(&reply.body).map_err(|_| ArrError::Failed)
     }
 
     /// Take the title out: delete it and its files when the app holds it, and keep it from coming

@@ -605,6 +605,11 @@
       "version": "str"
     }
   },
+  "settings.about.tmdb": {
+    "value": "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. Movie and show data and images on the Requests page come from The Movie Database (themoviedb.org).",
+    "translate": false,
+    "description": "About page, under the TMDB logo. TMDB's API terms require the first two sentences exactly as published at themoviedb.org/api-terms-of-use and developer.themoviedb.org/docs/faq, so they stay in English in every language."
+  },
   "settings.consent.preview.crash_intro": {
     "value": "When this build is configured for reporting: Crashes / Errors — what is actually sent to Sentry, and only when error reporting is on. Random and build-specific values are placeholders; fixed classes below are representative values from the closed domains in the Privacy notice. Nothing else is sent. The crash report identifier is random, is created only when crash reports are enabled, and is shown here as a placeholder.\n\n",
     "description": "Settings, account, onboarding or privacy UI: settings.consent.preview.crash_intro"

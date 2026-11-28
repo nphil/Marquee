@@ -30,6 +30,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
+mod title_info;
+pub use title_info::{is_video_key, Info, Person, Role, SeasonArt, Stage, Still, Video, VideoKind, SHELF_CAP};
+
 // ---- transport -----------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,7 +150,7 @@ pub enum Have {
 }
 
 impl Have {
-    fn of(code: i64) -> Self {
+    pub(super) fn of(code: i64) -> Self {
         match code {
             2 => Have::Pending,
             3 => Have::Processing,
@@ -297,6 +300,80 @@ impl Shelf {
     }
 }
 
+/// A movie genre as Seerr lists it, named in the language the Seerr user reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Genre {
+    pub id: u32,
+    pub name: String,
+}
+
+/// The order a filtered movie listing is read in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Sort {
+    Popular,
+    TopRated,
+    Newest,
+}
+
+impl Sort {
+    pub const ALL: [Sort; 3] = [Sort::Popular, Sort::TopRated, Sort::Newest];
+}
+
+/// The filters of a movie listing, all of which TMDB applies before it pages: a genre, a keyword (a
+/// mood such as "heist"), and an inclusive range of release years. `None` leaves that side open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Browse {
+    pub genre: Option<u32>,
+    pub keyword: Option<u32>,
+    pub from: Option<u16>,
+    pub to: Option<u16>,
+}
+
+impl Browse {
+    pub fn is_empty(&self) -> bool {
+        *self == Browse::default()
+    }
+
+    /// `GET /api/v1/discover/movies` for one page (from 1) in `sort` order. `today` is `YYYY-MM-DD`:
+    /// the upper bound that keeps unreleased titles out of the newest-first order, and the end of a
+    /// range that has only a first year. A last year alone starts at 1900. Top rated needs a vote floor,
+    /// as otherwise a title with a handful of perfect votes leads; newest-first needs a small one for
+    /// the same reason. The `language` parameter is never sent: Seerr reads it as the ORIGINAL language.
+    pub fn path(&self, sort: Sort, page: u32, today: &str) -> String {
+        let order = match sort {
+            Sort::Popular => "popularity.desc",
+            Sort::TopRated => "vote_average.desc",
+            Sort::Newest => "primary_release_date.desc",
+        };
+        let mut path = format!("/api/v1/discover/movies?page={page}&sortBy={order}");
+        if let Some(genre) = self.genre {
+            path.push_str(&format!("&genre={genre}"));
+        }
+        if let Some(keyword) = self.keyword {
+            path.push_str(&format!("&keywords={keyword}"));
+        }
+        let from = self.from.map(|y| format!("{y:04}-01-01"));
+        let to = self.to.map(|y| format!("{y:04}-12-31"));
+        let first = from.clone().or_else(|| to.is_some().then(|| "1900-01-01".to_string()));
+        let last = match sort {
+            Sort::Newest => Some(to.filter(|end| end.as_str() < today).unwrap_or_else(|| today.to_string())),
+            _ => to.or_else(|| from.is_some().then(|| today.to_string())),
+        };
+        if let Some(first) = first {
+            path.push_str(&format!("&primaryReleaseDateGte={first}"));
+        }
+        if let Some(last) = last {
+            path.push_str(&format!("&primaryReleaseDateLte={last}"));
+        }
+        match sort {
+            Sort::Popular => {}
+            Sort::TopRated => path.push_str("&voteCountGte=100"),
+            Sort::Newest => path.push_str("&voteCountGte=5"),
+        }
+        path
+    }
+}
+
 /// One season of a show as the request picker needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Season {
@@ -350,6 +427,8 @@ pub struct Detail {
     /// A request for the title that is still open (pending or approved), 4K requests aside.
     pub requested: bool,
     pub plex: Option<InPlex>,
+    /// What the title's page shows besides the request state: credits, pictures, videos.
+    pub info: Info,
 }
 
 /// A request is open until Seerr declines it or completes it (`DECLINED` 3, `COMPLETED` 5).
@@ -405,6 +484,7 @@ impl Detail {
             seasons,
             requested: !requests.is_empty(),
             plex,
+            info: Info::of(v, kind),
         })
     }
 
@@ -653,6 +733,25 @@ impl<'a, T: Transport> Seerr<'a, T> {
         self.titles(format!("{}?page={page}", shelf.path()))
     }
 
+    /// One page (from 1) of movies under `filter`, in `sort` order; see [`Browse::path`].
+    pub fn browse(&self, filter: &Browse, sort: Sort, page: u32, today: &str) -> Result<Page<Title>, SeerrError> {
+        self.titles(filter.path(sort, page, today))
+    }
+
+    /// The movie genres Seerr offers, with the ids `Browse::genre` takes.
+    pub fn genres(&self) -> Result<Vec<Genre>, SeerrError> {
+        let v = self.get("/api/v1/genres/movie".into())?;
+        let list = v.as_array().ok_or(SeerrError::NotSeerr)?;
+        Ok(list
+            .iter()
+            .filter_map(|g| {
+                let id = u32::try_from(int(g, "id")).ok().filter(|id| *id > 0)?;
+                let name = text(g, "name");
+                (!name.is_empty()).then_some(Genre { id, name })
+            })
+            .collect())
+    }
+
     /// One page (from 1) of a search for movies and shows.
     pub fn search(&self, query: &str, page: u32) -> Result<Page<Title>, SeerrError> {
         self.titles(format!("/api/v1/search?query={}&page={page}", enc(query.trim())))
@@ -668,6 +767,16 @@ impl<'a, T: Transport> Seerr<'a, T> {
         match self.get(format!("/api/v1/{}/{tmdb}", kind.word())) {
             Ok(v) => Ok(v.get("mediaInfo").and_then(|m| u32::try_from(int(m, "id")).ok()).filter(|id| *id > 0)),
             Err(SeerrError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// What Seerr says of the title's requests and downloads, for the progress view. A title Seerr
+    /// does not know has nothing in it.
+    pub fn progress(&self, kind: Kind, tmdb: u32) -> Result<super::progress::SeerrView, SeerrError> {
+        match self.get(format!("/api/v1/{}/{tmdb}", kind.word())) {
+            Ok(v) => Ok(super::progress::SeerrView::of(&v)),
+            Err(SeerrError::NotFound) => Ok(super::progress::SeerrView::default()),
             Err(error) => Err(error),
         }
     }
@@ -902,6 +1011,71 @@ mod tests {
         assert_eq!(mine[0], MyRequest { id: 201, kind: Kind::Movie, tmdb: 656908, badge: Some(Badge::Approved) });
         assert!(mine.iter().all(|r| r.badge.is_some()));
         assert_eq!(seerr.rules(), Ok(Rules { partial: true, specials: false }));
+    }
+
+    const TODAY: &str = "2026-08-15";
+
+    #[test]
+    fn a_filtered_listing_sends_genre_keyword_and_inclusive_year_bounds_to_seerr() {
+        let all = Browse { genre: Some(28), keyword: Some(779), from: Some(1990), to: Some(1999) };
+        assert_eq!(
+            all.path(Sort::Popular, 2, TODAY),
+            "/api/v1/discover/movies?page=2&sortBy=popularity.desc&genre=28&keywords=779&primaryReleaseDateGte=1990-01-01&primaryReleaseDateLte=1999-12-31"
+        );
+        assert!(all.path(Sort::TopRated, 1, TODAY).ends_with("&voteCountGte=100"));
+        assert!(all.path(Sort::TopRated, 1, TODAY).contains("sortBy=vote_average.desc"));
+        let one_year = Browse { from: Some(2005), to: Some(2005), ..Browse::default() };
+        assert!(one_year.path(Sort::Popular, 1, TODAY).ends_with("&primaryReleaseDateGte=2005-01-01&primaryReleaseDateLte=2005-12-31"));
+        assert_eq!(Browse::default().path(Sort::Popular, 1, TODAY), "/api/v1/discover/movies?page=1&sortBy=popularity.desc");
+    }
+
+    #[test]
+    fn a_range_with_one_end_is_closed_and_newest_never_lists_the_unreleased() {
+        let from = Browse { from: Some(2010), ..Browse::default() };
+        assert!(from.path(Sort::Popular, 1, TODAY).ends_with("&primaryReleaseDateGte=2010-01-01&primaryReleaseDateLte=2026-08-15"));
+        let to = Browse { to: Some(1979), ..Browse::default() };
+        assert!(to.path(Sort::Popular, 1, TODAY).ends_with("&primaryReleaseDateGte=1900-01-01&primaryReleaseDateLte=1979-12-31"));
+        let newest = Browse::default().path(Sort::Newest, 1, TODAY);
+        assert_eq!(
+            newest,
+            "/api/v1/discover/movies?page=1&sortBy=primary_release_date.desc&primaryReleaseDateLte=2026-08-15&voteCountGte=5"
+        );
+        assert!(to.path(Sort::Newest, 1, TODAY).contains("&primaryReleaseDateLte=1979-12-31&"), "an earlier end wins over today");
+        let future = Browse { to: Some(2030), ..Browse::default() };
+        assert!(future.path(Sort::Newest, 1, TODAY).contains("&primaryReleaseDateLte=2026-08-15&"), "a later end is cut at today");
+    }
+
+    #[test]
+    fn a_filtered_listing_reads_titles_and_paging_and_an_empty_answer_is_a_page_with_no_titles() {
+        let found = r#"{"page":1,"totalPages":14,"totalResults":272,"keywords":[],"results":[
+            {"id":603,"mediaType":"movie","title":"The Matrix","releaseDate":"1999-03-30","posterPath":"/m.jpg","mediaInfo":{"status":5,"tmdbId":603}},
+            {"id":8,"mediaType":"movie","title":"Another","releaseDate":"1998-01-01","posterPath":"/a.jpg"}]}"#;
+        let none = r#"{"page":1,"totalPages":0,"totalResults":0,"keywords":[],"results":[]}"#;
+        let hit = Browse { genre: Some(28), keyword: Some(779), from: Some(1990), to: Some(1999) };
+        let miss = Browse { genre: Some(99), keyword: Some(12339), from: Some(1930), to: Some(1939) };
+        let fake = Fake::new(&[
+            ("/api/v1/discover/movies?page=1&sortBy=popularity.desc&genre=28&keywords=779&primaryReleaseDateGte=1990-01-01&primaryReleaseDateLte=1999-12-31", 200, found),
+            ("/api/v1/discover/movies?page=1&sortBy=popularity.desc&genre=99&keywords=12339&primaryReleaseDateGte=1930-01-01&primaryReleaseDateLte=1939-12-31", 200, none),
+        ]);
+        let seerr = Seerr::new(BASE, SESSION, "plex-token", &fake);
+        let page = seerr.browse(&hit, Sort::Popular, 1, TODAY).unwrap();
+        assert_eq!((page.items.len(), page.page, page.pages, page.more()), (2, 1, 14, true));
+        assert_eq!((page.items[0].tmdb, page.items[0].year.as_str()), (603, "1999"));
+        let empty = seerr.browse(&miss, Sort::Popular, 1, TODAY).unwrap();
+        assert_eq!((empty.items.len(), empty.more()), (0, false));
+    }
+
+    #[test]
+    fn genres_are_read_as_ids_and_names_and_an_answer_that_is_not_a_list_is_not_seerr() {
+        let fake = Fake::new(&[(
+            "/api/v1/genres/movie",
+            200,
+            r#"[{"id":28,"name":"Action"},{"id":878,"name":"Science Fiction"},{"id":0,"name":"Bad"},{"id":5,"name":""}]"#,
+        )]);
+        let seerr = Seerr::new(BASE, SESSION, "plex-token", &fake);
+        assert_eq!(seerr.genres(), Ok(vec![Genre { id: 28, name: "Action".into() }, Genre { id: 878, name: "Science Fiction".into() }]));
+        let object = Fake::new(&[("/api/v1/genres/movie", 200, "{}")]);
+        assert_eq!(Seerr::new(BASE, SESSION, "plex-token", &object).genres(), Err(SeerrError::NotSeerr));
     }
 
     #[test]

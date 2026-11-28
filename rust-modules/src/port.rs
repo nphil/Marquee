@@ -24,6 +24,7 @@ static PORT: plx_platform::tv::Port = plx_platform::tv::Port {
     sound_output: plx_platform::webos::sound_output,
     audio_chain: plx_platform::webos::audio_chain,
     go_home: plx_platform::webos::go_home,
+    launch_app: plx_platform::webos::launch_app,
     poll_home: plx_platform::webos::poll_home,
     deliver_toast: plx_platform::webos::toast::deliver,
     bind_window: plx_platform::webos::bind_window,

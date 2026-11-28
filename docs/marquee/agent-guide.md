@@ -19,8 +19,11 @@ workflow (pull requests, releases, the TV), this file wins.
 - The full test suite is too heavy for the shared build host (below), so GitHub CI is the gate;
   locally only the tests a change touches are run.
 - Author-only workflows are disabled in the repository settings: Build bench, CI metrics, Issue
-  labels, Nightly, Deploy landing page, Release candidate, Site video. Release publishes on a `v*`
-  tag.
+  labels, Nightly, Deploy landing page, Release candidate, Site video. After the CI gate and review
+  on `main`, `gh workflow run release.yml -R nphil/Marquee --ref main -f version=X.Y.0` bumps the
+  version, tags it, builds the package, and publishes it. The versioned note and authored audit
+  must already be on `main`. The fork builds without telemetry and skips the upstream site and
+  HUD registry jobs; it does not need upstream credentials.
 - Upstream changes are merged by hand after the owner reviews them; there is no automatic sync.
   Merge in a separate worktree and keep every fork behaviour.
 - User-visible changes get a line under "Unreleased" in `docs/marquee/changelog.md`.
@@ -117,8 +120,8 @@ his profile.
 - **Plex-Auto-Languages** runs beside it and rewrites stream selections. A subtitle the server has
   selected is therefore not the viewer's choice.
 - **Bazarr** at `https://bazarr.nateshome.net` downloads `<base>.en.srt` translations. The TV gets
-  its link through `tools/import-bazarr-link.sh`, which writes a 0600 file owned by the app's jail
-  uid; the key never goes into the repository or logs.
+  its link through `tools/import-bazarr-link.sh SSH_HOST KEY_FILE URL` with the address above.
+  The tool writes a 0600 file owned by the app's jail uid; the key never enters the repository or logs.
 - **SpeechDock** (owned by the "Speech 2 Text Stuff" session) writes `<base>.en.cc.srt` transcripts
   of English dubs. Plex lists them as hearing-impaired English. Its word-alignment endpoint
   `POST /api/alignment/windows` accepts them like any English sidecar.
@@ -151,5 +154,9 @@ his profile.
   import-list exclusion (or only the exclusion when the app does not hold it) and its Seerr media
   record cleared. No release is blocklisted, so a deliberate re-add or request still works. Each step
   reports alone; only `failed` is retryable, through Settings > Integrations > Finish clean-up, which
-  never repeats the Plex delete. A partial episode or season delete leaves the apps alone. Radarr and
-  Sonarr are plugins-by-setting (address and key, off until set) used only for this.
+  never repeats the Plex delete. A partial episode or season delete leaves the apps alone.
+- **Request progress** (`plex/src/plex/progress.rs`). Requests reads Seerr and, when linked in
+  Settings > Integrations, the Radarr or Sonarr queue using exact TMDB or TVDB IDs. The My requests
+  strip reads the first 100 queue records; on Sonarr it needs v4 to match TMDB IDs. Download clients
+  such as NZBGet are reported through those queues, not contacted directly. A download shared by
+  several seasons has one combined percentage, never a separate estimate per season.

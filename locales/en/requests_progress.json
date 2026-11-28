@@ -1,0 +1,182 @@
+{
+  "requests.progress_stage_requested": {
+    "value": "Waiting for approval",
+    "description": "Requests area, progress. Where a request stands: waiting for someone to approve it."
+  },
+  "requests.progress_stage_approved": {
+    "value": "Approved, waiting for a download",
+    "description": "Requests area, progress. Where a request stands: approved, not downloading yet."
+  },
+  "requests.progress_stage_queued": {
+    "value": "Waiting in the download queue",
+    "description": "Requests area, progress. Where a request stands: in the download queue, not started."
+  },
+  "requests.progress_stage_downloading": {
+    "value": "Downloading",
+    "description": "Requests area, progress. Where a request stands: the download is running."
+  },
+  "requests.progress_stage_paused": {
+    "value": "Download paused",
+    "description": "Requests area, progress. Where a request stands: the download is paused."
+  },
+  "requests.progress_stage_finishing": {
+    "value": "Finishing the download",
+    "description": "Requests area, progress. Where a request stands: all data is in, the download app is wrapping up."
+  },
+  "requests.progress_stage_importing": {
+    "value": "Adding to the library",
+    "description": "Requests area, progress. Where a request stands: the file is being moved into the library."
+  },
+  "requests.progress_stage_imported": {
+    "value": "Added to the library",
+    "description": "Requests area, progress. Where a request stands: the file was added to the library."
+  },
+  "requests.progress_stage_partial": {
+    "value": "Some episodes are in the library",
+    "description": "Requests area, progress. Where a request stands: part of a series is in the library."
+  },
+  "requests.progress_stage_attention": {
+    "value": "Needs attention in {app}",
+    "description": "Requests area, progress. Where a request stands: the download app reported a problem. {app} is Radarr or Sonarr.",
+    "args": {
+      "app": "str"
+    }
+  },
+  "requests.progress_stage_failed": {
+    "value": "Download failed",
+    "description": "Requests area, progress. Where a request stands: the download failed."
+  },
+  "requests.progress_stage_declined": {
+    "value": "Request declined",
+    "description": "Requests area, progress. Where a request stands: the request was declined."
+  },
+  "requests.progress_stage_available": {
+    "value": "Ready to watch",
+    "description": "Requests area, progress. Where a request stands: ready to watch."
+  },
+  "requests.progress_percent": {
+    "value": "{n}%",
+    "description": "Requests area, progress. A percentage. {n} is 0 to 100.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "requests.progress_eta_soon": {
+    "value": "Almost done",
+    "description": "Requests area, progress. Time left: under a minute."
+  },
+  "requests.progress_eta_minutes": {
+    "value": "About {n} min left",
+    "description": "Requests area, progress. Time left in minutes. {n} is the minutes.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "requests.progress_eta_hours": {
+    "value": "About {h} h {m} min left",
+    "description": "Requests area, progress. Time left in hours and minutes. {h} is the hours, {m} the minutes.",
+    "args": {
+      "h": "i64",
+      "m": "i64"
+    }
+  },
+  "requests.progress_eta_whole_hours": {
+    "value": "About {h} h left",
+    "description": "Requests area, progress. Time left in whole hours. {h} is the hours.",
+    "args": {
+      "h": "i64"
+    }
+  },
+  "requests.progress_library_count": {
+    "value": "In the library: {have} of {total}",
+    "description": "Requests area, progress. A series: how many episodes are in the library. {have} of {total}.",
+    "args": {
+      "have": "i64",
+      "total": "i64"
+    }
+  },
+  "requests.progress_via_client": {
+    "value": "Via {client}",
+    "description": "Requests area, progress. The download app doing the download. {client} is its name, as it reports it.",
+    "args": {
+      "client": "str"
+    }
+  },
+  "requests.progress_note_live": {
+    "value": "Live from {app}",
+    "description": "Requests area, progress. Where the numbers came from: read live. {app} is Radarr or Sonarr.",
+    "args": {
+      "app": "str"
+    }
+  },
+  "requests.progress_note_seerr": {
+    "value": "From Seerr, updated about once a minute",
+    "description": "Requests area, progress. Where the numbers came from: Seerr only, which updates about once a minute."
+  },
+  "requests.progress_note_age": {
+    "value": "Last update {n} s ago",
+    "description": "Requests area, progress. The numbers are a little old. {n} is the seconds since the last update.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "requests.progress_note_age_min": {
+    "value": "Last update {n} min ago",
+    "description": "Requests area, progress. The numbers are old. {n} is the minutes since the last update.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "requests.progress_note_offline": {
+    "value": "{app} cannot be reached",
+    "description": "Requests area, progress. The app could not be reached. {app} is its name.",
+    "args": {
+      "app": "str"
+    }
+  },
+  "requests.progress_note_refused": {
+    "value": "{app} refused the connection. Check its key in Settings.",
+    "description": "Requests area, progress. The app turned the connection down, likely a wrong key. {app} is its name.",
+    "args": {
+      "app": "str"
+    }
+  },
+  "requests.progress_not_sent": {
+    "value": "Not listed in {app} yet",
+    "description": "Requests area, progress. Approved in Seerr, but no matching title appeared in {app}, Radarr or Sonarr.",
+    "args": {
+      "app": "str"
+    }
+  },
+  "requests.progress_chip_downloading": {
+    "value": "Downloading {n}%",
+    "description": "Requests area, progress. Chip on a poster: downloading, with the percent done. {n} is 0 to 100.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "requests.progress_chip_finishing": {
+    "value": "Finishing",
+    "description": "Requests area, progress. Chip on a poster: the download is wrapping up."
+  },
+  "requests.progress_chip_importing": {
+    "value": "Importing",
+    "description": "Requests area, progress. Chip on a poster: being moved into the library."
+  },
+  "requests.progress_chip_imported": {
+    "value": "In the library",
+    "description": "Requests area, progress. Chip on a poster: added to the library."
+  },
+  "requests.progress_chip_queued": {
+    "value": "In the queue",
+    "description": "Requests area, progress. Chip on a poster: waiting in the download queue."
+  },
+  "requests.progress_chip_paused": {
+    "value": "Paused",
+    "description": "Requests area, progress. Chip on a poster: the download is paused."
+  },
+  "requests.progress_chip_attention": {
+    "value": "Needs attention",
+    "description": "Requests area, progress. Chip on a poster: the download app reported a problem."
+  }
+}

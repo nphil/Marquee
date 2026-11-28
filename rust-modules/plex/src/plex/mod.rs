@@ -41,9 +41,12 @@ pub mod subtitles;
 /// playing item, search the providers, download a pick. A third-party service the viewer runs, so
 /// it is reached by the address they typed, with the key they typed, and nothing else.
 pub mod bazarr;
-/// Radarr's and Sonarr's HTTP API (Settings > Integrations), used only to take a deleted title out of
-/// them. A third-party service the viewer runs, reached by the address and key they typed.
+/// Radarr's and Sonarr's HTTP API (Settings > Integrations), used to take a deleted title out of
+/// them and to read a request's queue. A third-party service the viewer runs, reached by the address and key they typed.
 pub mod arr;
+/// How far a request has got: Seerr's view of it, the Radarr/Sonarr record and queue (which carries
+/// the download client's progress), and the page's polling state machine.
+pub mod progress;
 /// Seerr's HTTP API (Settings > Integrations > Requests): discover, search, read and request
 /// titles as the seated Plex account. A third-party service the viewer runs, reached by the
 /// address they typed.

@@ -316,6 +316,8 @@ pub struct DocumentPage {
     body: Cow<'static, str>,
     qr: Option<plx_ui::qr::QrCode>,
     guide_caption: Option<&'static str>,
+    /// Attribution a partner's terms require under the page's title, drawn with that partner's logo.
+    credit: Option<&'static str>,
     word: &'static str,
     state: DocState,
 }
@@ -372,6 +374,7 @@ impl DocumentPage {
             body: Cow::Borrowed(page.body()),
             qr: None,
             guide_caption: None,
+            credit: None,
             word: word::LEGAL,
             state: DocState { which: i, pos: 0 },
         }
@@ -387,6 +390,7 @@ impl DocumentPage {
             body: Cow::Borrowed(&ABOUT),
             qr: None,
             guide_caption: None,
+            credit: Some(plx_platform::i18n::msg::settings_about_tmdb()),
             word: word::LEGAL,
             state: DocState { which: 0xff, pos: 0 },
         }
@@ -402,6 +406,7 @@ impl DocumentPage {
             body: Cow::Owned(contribution_address()),
             qr: plx_ui::qr::QrCode::new(plx_platform::i18n::CONTRIBUTE_URL).ok(),
             guide_caption: Some(plx_platform::i18n::msg::settings_language_contribute_body()),
+            credit: None,
             word: "contribute",
             state: DocState { which: 0xfe, pos: 0 },
         }
@@ -495,7 +500,7 @@ impl Screen<InnerHost> for DocumentPage {
                 .paint(f.painter, f.measure);
             return;
         }
-        let Self { reader, crumb, title, subtitle, body, entry, .. } = self;
+        let Self { reader, crumb, title, subtitle, body, entry, credit, .. } = self;
         let mut v = DocumentScreen::new(
             Header::new(RouteLayout::screen(), Some(crumb), title, subtitle),
             reader,
@@ -505,6 +510,11 @@ impl Screen<InnerHost> for DocumentPage {
         );
         v.doc.frame = document_frame;
         Part::<InnerHost>::draw(&mut v, f, Rect::FULL);
+        if let Some(notice) = *credit {
+            // Bottom of the title column, well clear of the title: the Marquee name stays the
+            // prominent mark on the page, as TMDB's terms require.
+            plx_ui::attribution::draw_tmdb_credit(f.painter, RouteLayout::screen().narrative, notice);
+        }
     }
     fn render(&self) -> RenderStrategy {
         RenderStrategy::Page
@@ -611,6 +621,19 @@ mod tests {
             !build_sha().is_empty(),
             "the build's commit must never be the empty string (build.rs falls back to \"unknown\")"
         );
+    }
+
+    /// TMDB's API terms and FAQ each give a notice wording; About shows both, with the logo.
+    #[test]
+    fn about_credits_tmdb_with_both_published_notices() {
+        let _guard = plx_base::testlock::serial();
+        let notice = DocumentPage::about(EntryId(0)).credit.expect("About credits TMDB");
+        assert!(notice.contains(
+            "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB."
+        ));
+        assert!(notice.contains("This product uses the TMDB API but is not endorsed or certified by TMDB."));
+        assert!(notice.contains("The Movie Database"));
+        assert!(DocumentPage::legal(EntryId(0), 0).credit.is_none(), "only About carries the credit");
     }
 
     #[test]
