@@ -3332,7 +3332,7 @@ fn page_probe(d: &Dispatcher<AppHost>, rig: &Bridge) -> String {
         return format!(" zone={zone} editing={} row={row} col={col} recent={recent} pill={pill} card={} below={} clear={}",
             u8::from(search.is_editing()), u8::from(card), search.probe_below(), search.recents_shown());
     }
-    if !matches!(page.arg, AppArg::Content(_)) { return String::new(); }
+    if !matches!(page.arg, AppArg::Content(_) | AppArg::Requests) { return String::new(); }
     let Some(InputOwner::Entry(owner)) = d.nav.input_owner() else { return String::new() };
     let Some(instance) = d.nav.entry(owner).and_then(|e| e.inst.as_ref()) else { return String::new() };
     let focus = d.focus();
@@ -3420,6 +3420,11 @@ fn page_probe(d: &Dispatcher<AppHost>, rig: &Bridge) -> String {
                 let _ = write!(out, " sid={} rk=", item.sid.raw());
                 crate::focusprobe::push_rk(&mut out, &item.rk);
             } else { out.push_str(" sid=- rk=-"); }
+        }
+        AppArg::Requests | AppArg::Content(ContentArg::RequestTitle { .. }) => {
+            out.push(' ');
+            instance.screen.state().probe(&mut out);
+            let _ = write!(out, " card={}", u8::from(card));
         }
         _ => {}
     }

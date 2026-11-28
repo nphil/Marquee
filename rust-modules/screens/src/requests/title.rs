@@ -480,7 +480,9 @@ impl LogicalState for TitleScreen {
     }
     fn probe(&self, out: &mut String) {
         use std::fmt::Write;
-        let _ = write!(out, "request-title entry={} tmdb={} sections={}", self.entry.0, self.tmdb, self.focus_sections().count());
+        let percent = self.snapshot.as_ref().and_then(|snap| snap.percent).map_or(-1, i16::from);
+        let _ = write!(out, "request-title entry={} tmdb={} sections={} ready={} percent={percent}",
+            self.entry.0, self.tmdb, self.focus_sections().count(), u8::from(self.ready().is_some()));
     }
 }
 

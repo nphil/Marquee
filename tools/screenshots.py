@@ -325,7 +325,7 @@ def capture(binary, scene, defaults, hero, keep, *, prepare=None, assets=None):
             if scene.get("expect_back_focus"):
                 title = next((i for i, fields in enumerate(focus) if fields["route"] == "request_title"), 0)
                 before = focus[title - 1] if title else {}
-                if (before.get("route") != "requests" or before.get("elem") in (None, "-1")
+                if (before.get("route") != "requests" or before.get("card") != "1" or final.get("card") != "1"
                         or any(before.get(k) != final.get(k) for k in ("entry", "group", "elem"))):
                     problems.append("Back did not restore the Requests poster focus")
         if scene.get("expect_http"):
