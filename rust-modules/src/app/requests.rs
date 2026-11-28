@@ -125,12 +125,11 @@ impl SeerrJob {
             }
             Self::Stills { tmdb, seasons } => {
                 // A season that cannot be read leaves the others' stills standing.
-                let per_season = plx_plex::plex::seerr::SHELF_CAP / seasons.len().max(1);
                 let mut stills = Vec::new();
                 let mut failure = None;
                 for season in seasons {
                     match seerr.stills(tmdb, season) {
-                        Ok(read) => stills.extend(read.into_iter().take(per_season)),
+                        Ok(read) => stills.extend(read),
                         Err(error) => failure = Some(error),
                     }
                 }

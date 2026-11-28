@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Regenerate the documentation screenshots and the website's close-up stills: `make screenshots`.
 
-Every figure is a named target STATE in `tests/screenshots/scenes.json`. For each scene this
-driver:
+Every figure is a named target STATE in `tests/screenshots/scenes.json`. The default renders
+the published `scenes`; `review_scenes` require explicit `--only` and `--out`. For each scene this driver:
 
   1. starts `tests/mock_pms.py` in catalog mode (the demo library, `tests/demo_library/`) on a
      free loopback port, in this process;
-  2. makes a fresh instance root and arms the scene's triggers in it, plus four the driver owns:
-     `token` (a placeholder the mock accepts), `plextv` (plex.tv replaced by the mock, so nothing
-     leaves the machine), `discover` (the Watchlist's discover host, the same mock) and `stillclock` (free-running animation held still);
+  2. makes a fresh instance root and arms the scene's triggers. The driver sets `token` (mock
+     placeholder), `plextv` and `discover` (both go to the mock), and `stillclock` (freezes
+     animation). For `requests_link` it also sets `reqlink` to the same loopback mock;
   3. runs the simulator with `PLXNATIVE_SHOT_SETTLE`: the app itself writes one PNG once its
      screen has been at rest for the scene's settle time, and exits. The driver waits on that
      process — an artifact, never a sleep — under a ceiling timeout;
-  4. checks the capture is the state the manifest names: every `expect` line is in the event log,
-     no trigger was refused (`BADTRIGGER`) or gave up, and the mock saw no request it could not
-     answer;
+  4. checks the capture is the state the manifest names: the log confirms any expected messages
+     and final focus, and the mock confirms any expected requests. A refused trigger or an
+     unhandled request fails the scene;
   5. crops, scales and encodes each output with ffmpeg (Lanczos, `-bitexact`, one thread) into a
      staging directory.
 
@@ -485,12 +485,31 @@ def render_set(jobs, render, dests, keep=False):
             shutil.rmtree(stage, ignore_errors=True)
 
 
+def select_scenes(manifest, only, out):
+    """Review scenes never enter the published set and need an explicit output directory."""
+    published = manifest["scenes"]
+    if not only:
+        return published
+    wanted = {w.strip().removesuffix(".jpg") for w in only.split(",") if w.strip()}
+
+    def selected(s):
+        return s["name"] in wanted or any(o["file"].removesuffix(".jpg") in wanted for o in s["outputs"])
+
+    review = [s for s in manifest.get("review_scenes", []) if selected(s)]
+    if review and out is None:
+        raise ValueError("review scenes require --out; they are not published to docs/ or site/")
+    scenes = [s for s in published if selected(s)] + review
+    if not scenes:
+        raise ValueError(f"--only {only!r} names no scene")
+    return scenes
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--bin", required=True, type=pathlib.Path, help="the simulator (make screenshots-sim)")
     ap.add_argument("--out", type=pathlib.Path,
                     help="write every output here instead of docs/screenshots/ and site/media/")
-    ap.add_argument("--only", help="comma-separated scene names or output files (home, ux-detail.jpg, …)")
+    ap.add_argument("--only", help="comma-separated scene names or output files (review scenes require --out)")
     ap.add_argument("--check-determinism", action="store_true",
                     help="capture every scene twice and require the documented tolerance")
     ap.add_argument("--retry-unstable", action="store_true",
@@ -509,7 +528,8 @@ def main():
     if shutil.which("ffmpeg") is None:
         die("ffmpeg is not on PATH")
     manifest = json.loads(SCENES.read_text())
-    for s in manifest["scenes"]:
+    all_scenes = manifest["scenes"] + manifest.get("review_scenes", [])
+    for s in all_scenes:
         if s.get("free_regions") and not s.get("tolerance_reason"):
             die(f"scene {s['name']}: free_regions without a tolerance_reason")
     defaults = dict(manifest["defaults"], canvas=manifest["canvas"])
@@ -520,20 +540,14 @@ def main():
         die(f"{e} — run `make demo-library`")
     canvas = size_of(manifest["canvas"])
     try:
-        for s in manifest["scenes"]:
+        scenes = select_scenes(manifest, a.only, a.out)
+        for s in all_scenes:
             for o in s["outputs"]:
                 resolve_output(s, o, canvas)
     except ValueError as e:
         die(str(e))
     dests = {d: a.out for d in DESTS} if a.out else dict(DESTS)
 
-    scenes = manifest["scenes"]
-    if a.only:
-        wanted = {w.strip().removesuffix(".jpg") for w in a.only.split(",") if w.strip()}
-        scenes = [s for s in scenes
-                  if s["name"] in wanted or any(o["file"].removesuffix(".jpg") in wanted for o in s["outputs"])]
-        if not scenes:
-            die(f"--only {a.only!r} names no scene")
     jobs = [(s, a.hero, s["outputs"]) for s in scenes]
     if a.hero_variants:
         home = next(s for s in manifest["scenes"] if s.get("hero_variants"))

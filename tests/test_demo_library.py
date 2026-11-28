@@ -42,8 +42,8 @@ _spec.loader.exec_module(screenshots)
 SCENES = ROOT / "tests" / "screenshots" / "scenes.json"
 CATALOG = ROOT / "tests" / "demo_library" / "catalog.json"
 RUST = ROOT / "rust-modules" / "src"
-# Armed by tools/screenshots.py on every scene, not by the manifest.
-DRIVER_TRIGGERS = {"token", "plextv", "discover", "stillclock"}
+# Armed by tools/screenshots.py, not by a scene's trigger map.
+DRIVER_TRIGGERS = {"token", "plextv", "discover", "stillclock", "reqlink"}
 
 HAVE_CACHE = (mock_pms.demo_cache_dir() / "derived").is_dir() and shutil.which("ffmpeg") and shutil.which("ffprobe")
 
@@ -1463,7 +1463,9 @@ class PlexTvStandIn(unittest.TestCase):
 class SceneManifest(unittest.TestCase):
     def setUp(self):
         self.manifest = json.loads(SCENES.read_text())
-        self.scenes = self.manifest["scenes"]
+        self.published = self.manifest["scenes"]
+        self.review = self.manifest["review_scenes"]
+        self.scenes = self.published + self.review
 
     def test_names_and_outputs_are_unique(self):
         names = [s["name"] for s in self.scenes]
@@ -1472,7 +1474,7 @@ class SceneManifest(unittest.TestCase):
         self.assertEqual(len(files), len(set(files)))
 
     def test_every_documented_figure_has_a_scene(self):
-        files = {o["file"] for s in self.scenes for o in s["outputs"]}
+        files = {o["file"] for s in self.published for o in s["outputs"]}
         readme = {"home.jpg", "library.jpg", "search.jpg", "player.jpg"}
         ux = {f"ux-{n}.jpg" for n in ("home-hero", "home-shelves", "signin", "library-grid", "library-sort",
                                       "search", "item-menu", "account-menu", "detail", "failure")}
@@ -1487,7 +1489,7 @@ class SceneManifest(unittest.TestCase):
                 self.assertTrue(o["file"].endswith(".jpg"), o["file"])
 
     def test_the_site_close_ups_are_all_rendered_and_supersampled(self):
-        site = {o["file"]: s for s in self.scenes for o in s["outputs"]
+        site = {o["file"]: s for s in self.published for o in s["outputs"]
                 if o.get("dest") == "site" and "card" not in o}
         self.assertEqual(set(site), {"closeup-glass.jpg", "closeup-glass-narrow.jpg",
                                      "closeup-tiles.jpg", "closeup-player.jpg", "closeup-fan-caligari.jpg",
@@ -1496,11 +1498,18 @@ class SceneManifest(unittest.TestCase):
             with self.subTest(file=file):
                 self.assertGreaterEqual(s.get("render_scale", 1), 3)
 
-    def test_every_scene_names_its_state_and_a_log_line_proving_it(self):
+    def test_every_scene_names_its_state_and_a_runtime_witness_proving_it(self):
         for s in self.scenes:
             with self.subTest(scene=s["name"]):
                 self.assertTrue(s.get("state"))
-                self.assertTrue(s.get("expect"))
+                self.assertTrue(s.get("expect") or s.get("expect_focus"))
+                if "expect_focus" in s:
+                    self.assertIn("focus", s.get("triggers", {}))
+                    self.assertIn("route", s["expect_focus"])
+                if s.get("requests_link"):
+                    self.assertTrue(s.get("expect_http"), "the mock integration must answer")
+                if s.get("expect_back_focus"):
+                    self.assertEqual(s.get("expect_focus", {}).get("route"), "requests")
 
     def test_a_loosened_bound_is_explained(self):
         for s in self.scenes:
@@ -1514,9 +1523,13 @@ class SceneManifest(unittest.TestCase):
         # The application AND every layer crate (`rust-modules/<layer>/src`): a trigger is read where
         # its owner lives, and the media layer (`simvideo`, `playurl`, ...) is one of them.
         roots = [RUST, *sorted((ROOT / "rust-modules").glob("*/src"))]
+        latched = re.compile(r'latched_flag!\s*[({]\s*(?://[^\n]*\s+)*'
+                             r'(?:pub(?:\([^)]*\))?\s+)?fn\s+\w+\s*=\s*"([a-z0-9_-]+)"')
         for path in (p for root in roots for p in root.rglob("*.rs")):
-            read |= set(re.findall(r'dev::(?:read|flag)\("([a-z0-9_]+)"\)', path.read_text()))
-            read |= set(re.findall(r'\b(?:read|flag)\("([a-z0-9_]+)"\)', path.read_text()))
+            source = path.read_text()
+            read.update(re.findall(r'\b(?:read|flag)\("([a-z0-9_-]+)"\)', source))
+            read.update(latched.findall(source))
+        self.assertLessEqual(DRIVER_TRIGGERS, read)
         for s in self.scenes:
             for name in s.get("triggers", {}):
                 with self.subTest(scene=s["name"], trigger=name):
@@ -1524,7 +1537,15 @@ class SceneManifest(unittest.TestCase):
                     self.assertNotIn(name, DRIVER_TRIGGERS, "the driver owns this trigger")
 
     def test_exactly_one_scene_renders_the_hero_variants(self):
-        self.assertEqual(sum(1 for s in self.scenes if s.get("hero_variants")), 1)
+        self.assertEqual(sum(1 for s in self.published if s.get("hero_variants")), 1)
+        self.assertFalse(any(s.get("hero_variants") for s in self.review))
+
+    def test_a_review_scene_needs_both_explicit_selection_and_destination(self):
+        wanted = ",".join(s["outputs"][0]["file"] for s in self.review)
+        self.assertEqual(screenshots.select_scenes(self.manifest, None, None), self.published)
+        self.assertEqual(screenshots.select_scenes(self.manifest, wanted, pathlib.Path("out")), self.review)
+        with self.assertRaisesRegex(ValueError, "review scenes require --out"):
+            screenshots.select_scenes(self.manifest, wanted, None)
 
 
 @unittest.skipUnless(HAVE_CACHE, "no derived demo cache (make demo-library) or no ffmpeg/ffprobe")

@@ -242,6 +242,7 @@ pub(super) fn chooser(pick: Pick, browse: &Browse, genres: &Genres) -> Chooser {
         Pick::Genre => match genres {
             Genres::Loaded(list) => list.iter().for_each(|g| push(&g.name, Value::Id(g.id))),
             Genres::Failed => push(msg::requests_filter_retry(), Value::Retry),
+            // placeholder-exempt: the visible waiting chip is counted in render::bar.
             Genres::Unknown | Genres::Asked => push(msg::requests_loading(), Value::Waiting),
         },
         Pick::Mood => MOODS.iter().for_each(|(id, name)| push(name(), Value::Id(*id))),
@@ -311,6 +312,10 @@ impl RequestsScreen {
             Some(c) => c.choices.get(n).map(|c| c.label.as_c_str()),
             None => self.pills.get(n).map(|p| p.label.as_c_str()),
         }
+    }
+
+    pub(super) fn bar_waiting(&self, n: usize) -> bool {
+        self.chooser.as_ref().and_then(|c| c.choices.get(n)).is_some_and(|c| c.value == Value::Waiting)
     }
 
     /// Whether control or choice `n` holds a value: it is drawn lit.

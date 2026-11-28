@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 use std::cell::RefCell;
 
 mod title_info;
-pub use title_info::{is_video_key, Info, Person, Role, SeasonArt, Stage, Still, Video, VideoKind, SHELF_CAP};
+pub use title_info::{is_video_key, Info, Person, Role, SeasonArt, Stage, Still, Video, VideoKind};
 
 // ---- transport -----------------------------------------------------------------------------------
 

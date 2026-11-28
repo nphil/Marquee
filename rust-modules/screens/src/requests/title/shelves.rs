@@ -60,7 +60,7 @@ pub(super) fn videos(page: &TitlePage) -> Vec<Card> {
 }
 
 pub(super) fn stills(stills: Vec<Still>) -> Vec<Card> {
-    stills.into_iter().take(plx_plex::plex::seerr::SHELF_CAP).enumerate().map(|(i, still)| Card {
+    stills.into_iter().enumerate().map(|(i, still)| Card {
         elem: STILL + i as u32,
         key: still.image,
         label: captions::still_block(&still.name, &facts::season_name(still.season)),

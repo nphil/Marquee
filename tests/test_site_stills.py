@@ -55,6 +55,13 @@ class FileSet(unittest.TestCase):
                     "site/media/og-card.jpg", "docs/screenshots/ux-home-hero.jpg"):
             self.assertIn(rel, ss.output_files())
 
+    def test_review_scenes_and_outputs_are_not_published(self):
+        review = json.loads(shots.SCENES.read_text())["review_scenes"]
+        self.assertTrue(review)
+        self.assertFalse({s["name"] for s in review} & set(ss.automated_scenes()))
+        self.assertFalse({o["file"] for s in review for o in s["outputs"]}
+                         & {pathlib.Path(p).name for p in ss.output_files()})
+
     def test_a_manual_scene_would_take_everything_cut_from_it(self):
         """The mechanism stays for the day a scene cannot be made on the runner: its figure, WebP, phone copy, glow
         and the card composed around it all leave the automated set together."""

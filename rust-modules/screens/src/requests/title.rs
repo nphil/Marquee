@@ -25,10 +25,11 @@ const REQUEST: u32 = 2;
 const TRAILER: u32 = 3;
 const ABOUT: u32 = 4;
 const HERO_READ: u32 = 5;
-const SEASON: u32 = 100;
-const CAST: u32 = 1000;
-const VIDEO: u32 = 2000;
-const STILL: u32 = 3000;
+// Separate the focus identifiers by more entries than a Seerr response can carry.
+const SEASON: u32 = 1 << 24;
+const CAST: u32 = 2 << 24;
+const VIDEO: u32 = 3 << 24;
+const STILL: u32 = 4 << 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sec { Hero, About, Seasons, Cast, Videos, Episodes }
@@ -80,7 +81,7 @@ impl Ready {
     fn new(page: TitlePage, ask: Ask, picked: &[u32], sending: bool, measure: &dyn plx_machine::machine::Measure) -> Self {
         let poster = tmdb_image(&page.detail.title.poster, "w342");
         let backdrop = tmdb_image(&page.detail.title.backdrop, "w1280");
-        let seasons = facts::announced(&page).take((CAST - SEASON) as usize).enumerate()
+        let seasons = facts::announced(&page).enumerate()
             .map(|(i, s)| shelves::season(s, &page, &poster, i)).collect();
         Self {
             actions: facts::actions(&page, picked, sending),

@@ -8,8 +8,6 @@
 use super::{int, text, tmdb_image, Kind, Seerr, SeerrError, Transport};
 use serde_json::Value;
 
-/// The most entries any one shelf of the page takes.
-pub const SHELF_CAP: usize = 24;
 /// Writers and studios named in the facts: the page has room for a line, not a credits roll.
 const NAMED: usize = 3;
 
@@ -220,7 +218,6 @@ impl Info {
             seen.push(p.id);
             fresh
         });
-        people.truncate(SHELF_CAP);
         directors.truncate(NAMED);
         writers.truncate(NAMED);
 
@@ -232,7 +229,6 @@ impl Info {
             })
             .collect();
         videos.sort_by_key(|video| video.kind.rank());
-        videos.truncate(SHELF_CAP);
 
         let names = |key: &str| -> Vec<String> {
             let mut out = Vec::new();
@@ -381,6 +377,20 @@ mod tests {
         assert_eq!(info.people[0].role, Role::Director);
         assert_eq!(info.people[2].role, Role::Character("Thomas A. Anderson / Neo".into()));
         assert_eq!(info.people[2].photo, "https://image.tmdb.org/t/p/w342/rRdru6REr9i3WIHv2mntpcgxnoY.jpg");
+    }
+
+    #[test]
+    fn credits_and_videos_keep_entries_past_the_first_shelf_window() {
+        let cast: Vec<_> = (0..25).map(|id| json!({
+            "id": id, "name": "Cast member", "profilePath": "/cast.jpg"
+        })).collect();
+        let videos: Vec<_> = (0..25).map(|id| json!({
+            "name": "Trailer", "site": "YouTube", "key": format!("{id:011}"), "type": "Trailer"
+        })).collect();
+        let details = json!({"credits": {"cast": cast}, "relatedVideos": videos});
+        let info = Info::of(&details, Kind::Movie);
+        assert_eq!(info.people.last().unwrap().id, 24);
+        assert_eq!(info.videos.last().unwrap().key, "00000000024");
     }
 
     #[test]

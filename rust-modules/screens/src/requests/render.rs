@@ -149,6 +149,9 @@ fn bar<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p:
         if rect.x + rect.w < 0.0 || rect.x > SCR_W {
             continue;
         }
+        if screen.bar_waiting(n) {
+            plx_ui::placeholder::note(p, plx_ui::placeholder::Reason::WorkingReadout, "requests-genres");
+        }
         let focused = focus == Some(elem);
         let face = if focused { focus_pill(rect) } else { rect };
         Button::new(label.as_ptr(), theme::size::BODY, face)
