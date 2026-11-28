@@ -5,6 +5,7 @@ use plx_plex::plex::seerr::{Genre, Keyword, Page, SeerrError};
 use plx_platform::i18n::msg;
 use plx_ui::icons::Icon;
 use plx_ui::theme::{size, space};
+use plx_ui::text_view::TextView;
 use std::ffi::CString;
 
 pub(super) const GENRE: u32 = 2;
@@ -234,6 +235,15 @@ impl Pill {
     }
 }
 
+const SUMMARY_W: f32 = SCR_W - 2.0 * plx_ui::consts::MARGIN_X;
+
+#[derive(Default)]
+pub(super) struct BarLayout {
+    stamp: u64,
+    pills: [(f32, f32); Pick::FILTERS.len() + 1],
+    pub(super) summary_h: f32,
+}
+
 /// A single page of theme names; the query generation belongs to the screen, not to the panel.
 pub(super) struct ThemeSearch {
     pub(super) query: String,
@@ -312,27 +322,44 @@ impl RequestsScreen {
     }
 
     pub(super) fn bar_rect(&self, measure: &dyn plx_machine::machine::Measure, n: usize, section: Rect) -> Rect {
-        let gap = space::MD;
-        let margin = plx_ui::consts::MARGIN_X;
-        let room = SCR_W - 2.0 * margin - gap * self.pills.len().saturating_sub(1) as f32;
-        let mut cache = self.bar_layout.borrow_mut();
-        if cache.0 != self.bar_stamp || cache.1.len() != self.pills.len() {
-            cache.0 = self.bar_stamp;
-            cache.1.clear();
-            let min_w = room / self.pills.len().max(1) as f32;
-            let total: f32 = self.pills.iter().map(|p| {
-                plx_ui::widgets::Button::pill_w_measured(&p.label, size::BODY, p.icon.is_some(), None, measure).max(min_w)
-            }).sum();
-            let mut x = margin;
-            for pill in &self.pills {
-                let w = plx_ui::widgets::Button::pill_w_measured(&pill.label, size::BODY, pill.icon.is_some(), None, measure)
-                    .max(min_w) * room / total;
-                cache.1.push((x, w));
-                x += w + gap;
-            }
-        }
-        let (x, w) = cache.1.get(n).copied().unwrap_or_default();
+        self.prepare_bar(measure);
+        let (x, w) = self.bar_layout.borrow().pills[n];
         Rect::new(x, section.y + layout::BAR_PILL_Y, w, HEIGHT)
+    }
+
+    pub(super) fn prepare_bar(&self, measure: &dyn plx_machine::machine::Measure) {
+        let mut cache = self.bar_layout.borrow_mut();
+        if cache.stamp == self.bar_stamp { return; }
+        cache.stamp = self.bar_stamp;
+        let gap = space::MD;
+        let room = SUMMARY_W - gap * self.pills.len().saturating_sub(1) as f32;
+        let slots = &mut cache.pills[..self.pills.len()];
+        let mut total = 0.0;
+        for (slot, pill) in slots.iter_mut().zip(&self.pills) {
+            slot.1 = plx_ui::widgets::Button::pill_w_measured(&pill.label, size::BODY, pill.icon.is_some(), None, measure);
+            total += slot.1;
+        }
+        let extra = (room - total).max(0.0) / slots.len() as f32;
+        let fit = (room / total).min(1.0);
+        let mut x = plx_ui::consts::MARGIN_X;
+        for (left, width) in slots {
+            *left = x;
+            *width = *width * fit + extra;
+            x += *width + gap;
+        }
+        cache.summary_h = self.summary_view(measure).map_or(0.0, |summary| space::SM + summary.measure_h(SUMMARY_W));
+    }
+
+    pub(super) fn summary_view<'a>(&'a self, measure: &'a dyn plx_machine::machine::Measure) -> Option<TextView<'a>> {
+        (!self.filter_summary.is_empty()).then(|| {
+            TextView::new(&self.filter_summary, size::BODY, plx_ui::theme::TEXT_SECONDARY)
+                .with_measure(measure)
+                .break_long_words()
+        })
+    }
+
+    pub(super) fn summary_rect(&self, section: Rect) -> Rect {
+        Rect::new(plx_ui::consts::MARGIN_X, section.y + layout::BAR_H, SUMMARY_W, self.bar_layout.borrow().summary_h)
     }
 
     pub(super) fn choice_rect(&self, focus: Option<u32>, n: usize, section: Rect) -> Option<Rect> {
@@ -346,18 +373,24 @@ impl RequestsScreen {
             _ => None,
         });
         let years = year_label((b.from, b.to));
-        let themes = match b.keywords.as_slice() {
-            [] => None,
-            [_] => self.selected_themes.first().map(|k| k.name.clone()),
-            many => Some(msg::requests_filter_theme_count(&many.len().to_string())),
-        };
+        let mut theme_names = String::new();
+        for theme in &self.selected_themes {
+            if !theme_names.is_empty() { theme_names.push_str(", "); }
+            theme_names.push_str(&theme.name);
+        }
         let runtime = RUNTIMES.iter().find(|(lo, hi, _)| (*lo, *hi) == (b.runtime_min, b.runtime_max))
             .and_then(|(lo, hi, label)| (lo.is_some() || hi.is_some()).then(|| label()));
-        let labels = [genre, years.as_deref(), themes.as_deref(), b.language.and_then(language_name), runtime];
+        let values = [genre, years.as_deref(), (!theme_names.is_empty()).then_some(theme_names.as_str()),
+            b.language.and_then(language_name), runtime];
+        self.filter_summary.clear();
         self.pills.clear();
-        for (pick, active) in Pick::FILTERS.into_iter().zip(labels) {
-            let label = active.map_or_else(|| pick.name().to_owned(), |value| msg::requests_filter_pill(pick.name(), value));
-            self.pills.push(Pill::new(pick.elem(), &label, Some(if active.is_some() { Icon::Check } else { Icon::ChevronDown })));
+        for (pick, active) in Pick::FILTERS.into_iter().zip(values) {
+            let label = pick.name();
+            if let Some(value) = active {
+                if !self.filter_summary.is_empty() { self.filter_summary.push_str("   ·   "); }
+                self.filter_summary.push_str(&msg::requests_filter_pill(label, value));
+            }
+            self.pills.push(Pill::new(pick.elem(), label, Some(if active.is_some() { Icon::Check } else { Icon::ChevronDown })));
         }
         if !b.is_empty() {
             self.pills.push(Pill::new(RESET, msg::requests_filter_reset(), None));
@@ -450,6 +483,7 @@ impl RequestsScreen {
                 match &self.genres {
                     Genres::Loaded(list) => for g in list { push(&g.name, Value::Genre(Some(g.id)), b.genre == Some(g.id)); },
                     Genres::Failed => push(msg::requests_filter_retry(), Value::RetryGenres, false),
+                    // placeholder-exempt: counted at the draw of the chooser's Working note
                     Genres::Unknown | Genres::Asked => note = Some((msg::requests_loading(), Note::Working)),
                 }
             }
@@ -683,5 +717,39 @@ mod tests {
         assert_eq!(range, (Some(1990), Some(1990)));
         assert_eq!(with_year(range, Bound::End, Some(1960)), (Some(1960), Some(1960)));
         assert_eq!(with_year(range, Bound::Start, None), (None, Some(1990)));
+    }
+
+    #[test]
+    fn applied_values_wrap_below_the_controls_without_changing_their_focus_order() {
+        struct Measure;
+        impl plx_machine::machine::Measure for Measure {
+            fn width(&self, text: &std::ffi::CStr, _: i32, _: bool) -> f32 {
+                text.to_string_lossy().chars().count() as f32 * 16.0
+            }
+            fn cap_h(&self, size: i32) -> f32 { size as f32 }
+            fn line_h(&self, size: i32) -> f32 { size as f32 }
+        }
+
+        let mut page = RequestsScreen::new(EntryId(1), InstanceId(1));
+        page.prepare_bar(&Measure);
+        assert_eq!(page.bar_height(), layout::BAR_H);
+        page.browse.from = Some(1920);
+        page.browse.to = Some(1929);
+        let themes = ["Dark comedy", "Heist", "Time travel with a carefully chosen long title",
+            "A true story with another very long name to make the filter summary wrap on this screen"];
+        for (id, name) in (1..).zip(themes) {
+            page.browse.keywords.push(id);
+            page.selected_themes.push(Keyword { id, name: name.to_owned() });
+        }
+        page.relabel();
+        page.prepare_bar(&Measure);
+        assert!(page.filter_summary.contains(&year_label((Some(1920), Some(1929))).unwrap()));
+        assert!(themes.iter().all(|name| page.filter_summary.contains(name)));
+        assert!(page.summary_view(&Measure).unwrap().line_count(SUMMARY_W) > 1);
+        assert_eq!(page.pills.iter().map(|p| p.elem).collect::<Vec<_>>(), [GENRE, YEARS, THEMES, LANGUAGE, RUNTIME, RESET]);
+        for (n, pill) in page.pills.iter().enumerate() {
+            let rect = page.bar_rect(&Measure, n, Rect::new(0.0, 0.0, SCR_W, page.bar_height()));
+            assert!(rect.w >= plx_ui::widgets::Button::pill_w_measured(&pill.label, size::BODY, pill.icon.is_some(), None, &Measure));
+        }
     }
 }

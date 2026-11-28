@@ -207,9 +207,10 @@ pub struct RequestsScreen {
     chooser: Option<filters::Chooser>,
     /// The bar's controls as drawn.
     pills: Vec<filters::Pill>,
+    filter_summary: String,
     /// Moves whenever the bar's words change, which is when its measure is stale.
     bar_stamp: u64,
-    bar_layout: std::cell::RefCell<(u64, Vec<(f32, f32)>)>,
+    bar_layout: std::cell::RefCell<filters::BarLayout>,
 }
 
 impl RequestsScreen {
@@ -249,6 +250,7 @@ impl RequestsScreen {
             genres: filters::Genres::Unknown,
             chooser: None,
             pills: Vec::new(),
+            filter_summary: String::new(),
             bar_stamp: 0,
             bar_layout: Default::default(),
         };
@@ -846,10 +848,11 @@ impl<H: ContentLike> StackPage<H> for RequestsScreen {
         }
         h
     }
-    fn sections(&self, _cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
+    fn sections(&self, cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
         if self.bar_shown() {
+            self.prepare_bar(cx.measure);
             out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::HEAD_H, focusable: true }, FIELD_GROUP));
-            out.push(SectionSpec::new(Sec::Filters, plx_ui::cards::Kind::Custom { height: layout::BAR_H, focusable: true }, filters::GROUP));
+            out.push(SectionSpec::new(Sec::Filters, plx_ui::cards::Kind::Custom { height: self.bar_height(), focusable: true }, filters::GROUP));
             let actions = SectionSpec::new(Sec::Actions, plx_ui::cards::Kind::Custom { height: layout::ACTION_H, focusable: true }, matches::GROUP);
             if self.matches.open { out.push(actions); }
             if let Some(c) = &self.chooser {

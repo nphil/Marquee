@@ -13,7 +13,7 @@
   },
   "requests.filter_years": { "value": "Years", "description": "Filter label: movie release years." },
   "requests.filter_themes": { "value": "Themes", "description": "Filter label: themes such as Heist or Time travel." },
-  "requests.filter_language": { "value": "Original language", "description": "Filter label: language a movie was made in." },
+  "requests.filter_language": { "value": "Language", "description": "Short filter label: language a movie was made in." },
   "requests.filter_runtime": { "value": "Runtime", "description": "Filter label: movie length." },
   "requests.filter_any_genre": {
     "value": "Any genre",
@@ -33,7 +33,6 @@
   "requests.filter_find_theme": { "value": "Find a theme", "description": "Search the full theme catalog by name." },
   "requests.filter_clear_themes": { "value": "Clear themes", "description": "Remove all chosen themes." },
   "requests.filter_theme_rule": { "value": "Movies must match every selected theme.", "description": "Explains how multiple themes are combined." },
-  "requests.filter_theme_count": { "value": "{count} selected", "description": "Count of chosen themes.", "args": { "count": "str" } },
   "requests.filter_no_themes": { "value": "No themes found", "description": "The keyword search came back empty." },
   "requests.filter_default_language": { "value": "Seerr default", "description": "Inherit the original language restriction set in the Seerr profile." },
   "requests.filter_any_language": { "value": "Any language", "description": "Ignore the original language restriction set in the Seerr profile." },
@@ -42,7 +41,7 @@
   "requests.filter_medium": { "value": "91–120 min", "description": "Movie runtime preset from 91 to 120 minutes, inclusive." },
   "requests.filter_long": { "value": "121 min or more", "description": "Movie runtime preset from 121 minutes upward." },
   "requests.filter_reset": {
-    "value": "Clear filters",
+    "value": "Clear",
     "description": "Requests area, filter bar. Button that clears every filter at once. Shown only while a filter is set."
   },
   "requests.filter_decade": {

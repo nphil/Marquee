@@ -170,13 +170,20 @@ fn control(p: Painter, measure: &dyn plx_machine::machine::Measure, rect: Rect, 
 }
 
 fn bar<H: ContentLike>(screen: &RequestsScreen, f: &mut DrawFrame<'_, '_, H>, p: Painter) {
-    let section = Rect::new(0.0, layout::HEAD_H - screen.stack.scroll(), SCR_W, layout::BAR_H);
+    screen.prepare_bar(f.cx.measure);
+    let section = Rect::new(0.0, layout::HEAD_H - screen.stack.scroll(), SCR_W, screen.bar_height());
     if !plx_ui::on_axis(section.y, section.h, SCR_H, 0.0) { return; }
     for (n, pill) in screen.pills.iter().enumerate() {
         let rect = screen.bar_rect(f.cx.measure, n, section);
         let selected = matches!(pill.icon, Some(Icon::Check));
         control(p, f.cx.measure, rect, &pill.label, pill.icon, selected, f.cx.focus.current == Some(screen.key(pill.elem)));
         stop(screen, f, p, pill.elem);
+    }
+    if let Some(summary) = screen.summary_view(f.cx.measure) {
+        let rect = screen.summary_rect(section);
+        if plx_ui::on_axis(rect.y, rect.h, SCR_H, 0.0) {
+            summary.draw(p, rect);
+        }
     }
 }
 

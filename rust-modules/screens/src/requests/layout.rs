@@ -26,16 +26,24 @@ const KEYBOARD_H: f32 = 324.0;
 pub(super) static POSTER: RowStyle = RowStyle { w: CARD_W, h: CARD_H, ..RowStyle::HOME };
 
 impl RequestsScreen {
+    pub(super) fn bar_height(&self) -> f32 {
+        BAR_H + self.bar_layout.borrow().summary_h
+    }
+
+    fn bar_end(&self) -> f32 {
+        HEAD_H + self.bar_height()
+    }
+
     pub(super) fn actions_top(&self) -> f32 {
-        CONTENT_TOP + if self.matches.open { 0.0 } else { self.chooser_height() }
+        self.bar_end() + if self.matches.open { 0.0 } else { self.chooser_height() }
     }
 
     pub(super) fn chooser_top(&self) -> f32 {
-        CONTENT_TOP + if self.matches.open { ACTION_H } else { 0.0 }
+        self.bar_end() + if self.matches.open { ACTION_H } else { 0.0 }
     }
 
     pub(super) fn movie_content_top(&self) -> f32 {
-        CONTENT_TOP + ACTION_H + self.chooser_height()
+        self.bar_end() + ACTION_H + self.chooser_height()
     }
 
     fn chooser_height(&self) -> f32 {
